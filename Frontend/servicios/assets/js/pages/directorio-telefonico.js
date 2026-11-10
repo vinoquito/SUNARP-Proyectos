@@ -4,98 +4,6 @@ const CONFIG = {
     appId: 'directorio-telefonico'
 };
 
-
-/*
- * ================================================================
- * ESTRUCTURA JERÁRQUICA PARA EL PDF DEL DIRECTORIO
- * ================================================================
- */
-
-const getDirectoryStructurePath = item => {
-    const keys = Object.keys(item || {})
-        .filter(key => /^estructura_nivel_\d+$/i.test(key))
-        .sort((a, b) => Number(a.match(/\d+$/)[0]) - Number(b.match(/\d+$/)[0]));
-
-    const levels = keys
-        .map(key => String(item[key] ?? '').trim())
-        .filter(Boolean);
-
-    return levels.length
-        ? levels
-        : String(item.organo || '').split(/\s*\/\s*/).map(value => value.trim()).filter(Boolean);
-};
-
-const buildDirectoryPdfSections = data => {
-    const sectionsMap = new Map();
-
-    (Array.isArray(data) ? data : []).forEach(row => {
-        const sede = String(row.sede || 'Sede no especificada').trim();
-        const local = String(row.local || 'Local no especificado').trim();
-        const sectionKey = JSON.stringify([sede, local]);
-
-        if (!sectionsMap.has(sectionKey)) {
-            sectionsMap.set(sectionKey, {
-                sede,
-                local,
-                root: { children: [], childMap: new Map() }
-            });
-        }
-
-        const section = sectionsMap.get(sectionKey);
-        const path = getDirectoryStructurePath(row);
-        const levels = path.length ? path : ['Sin órgano / unidad asignado'];
-        let current = section.root;
-
-        levels.forEach(levelName => {
-            if (!current.childMap.has(levelName)) {
-                const node = {
-                    title: levelName,
-                    rows: [],
-                    children: [],
-                    childMap: new Map()
-                };
-                current.childMap.set(levelName, node);
-                current.children.push(node);
-            }
-            current = current.childMap.get(levelName);
-        });
-
-        current.rows.push(row);
-    });
-
-    const transformNode = node => {
-        const references = new Map();
-
-        node.rows.forEach(row => {
-            const reference = String(row.referencia || '').trim();
-            if (!references.has(reference)) references.set(reference, []);
-            references.get(reference).push(row);
-        });
-
-        return {
-            title: node.title,
-            blocks: [...references.entries()].map(([reference, rows]) => ({
-                subtitle: reference ? `Referencia: ${reference}` : '',
-                rows
-            })),
-            children: node.children.map(transformNode)
-        };
-    };
-
-    return [...sectionsMap.values()].map(section => ({
-        title: `Directorio telefónico - ${section.sede}`,
-        subtitle: `Sede: ${section.sede}`,
-        newPage: true,
-        groups: [{
-            title: section.local,
-            blocks: [],
-            children: section.root.children.map(transformNode)
-        }],
-        emptyMessage: 'No hay registros para exportar.'
-    }));
-};
-
-
 const app = createBaseApp({
 
     data() {
@@ -289,33 +197,6 @@ const app = createBaseApp({
              * CONFIGURACIÓN DE EXPORTACIÓN
              * ========================================================
              */
-
-
-            
-            /*
-             * Configuración específica del PDF del directorio.
-             * El componente reutilizable solo recibe y dibuja estos datos.
-             */
-            directoryPdfColumns: [
-                {
-                    key: 'nombreCompleto',
-                    label: 'Nombres y apellidos',
-                    width: 78,
-                    value: item => [item.nombres, item.apellidos].filter(Boolean).join(' ')
-                },
-                { key: 'cargo', label: 'Cargo', width: 83 },
-                { key: 'anexo', label: 'Anexo', width: 20, align: 'center' }
-            ],
-
-            directoryPdfGrouping: {
-                getSections: buildDirectoryPdfSections,
-                levelStyles: [
-                    { fontSize: 11, color: [30, 30, 30] },
-                    { fontSize: 10, color: [30, 30, 30] },
-                    { fontSize: 9, color: [55, 55, 55] },
-                    { fontSize: 8.5, color: [70, 70, 70] }
-                ]
-            },
 
             directoryExportColumns: [
 

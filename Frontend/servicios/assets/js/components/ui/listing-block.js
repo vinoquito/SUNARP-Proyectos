@@ -37,21 +37,6 @@ const ListingBlock = {
             default: 'exportacion'
         },
 
-        pdfColumns: {
-            type: Array,
-            default: () => []
-        },
-
-        pdfGrouping: {
-            type: Object,
-            default: null
-        },
-
-        pdfLogo: {
-            type: String,
-            default: ''
-        },
-
         showExport: {
             type: Boolean,
             default: true
@@ -799,20 +784,16 @@ const ListingBlock = {
 
                     <export-excel-button
                         :data="filteredRows"
-                        :columns="pdfColumns.length ? pdfColumns : resolvedExportColumns"
+                        :columns="resolvedExportColumns"
                         :filename="filename"
-                        :grouping="pdfGrouping"
-                        :logo="pdfLogo"
                     >
                     </export-excel-button>
 
 
                     <export-pdf-button
                         :data="filteredRows"
-                        :columns="pdfColumns.length ? pdfColumns : resolvedExportColumns"
+                        :columns="resolvedExportColumns"
                         :filename="filename"
-                        :grouping="pdfGrouping"
-                        :logo="pdfLogo"
                     >
                     </export-pdf-button>
 
