@@ -13,8 +13,8 @@ const CONFIG = {
 
 const getDirectoryStructurePath = item => {
     const keys = Object.keys(item || {})
-        .filter(key => /^estructura_nivel_\\d+$/i.test(key))
-        .sort((a, b) => Number(a.match(/\\d+$/)[0]) - Number(b.match(/\\d+$/)[0]));
+        .filter(key => /^estructura_nivel_\d+$/i.test(key))
+        .sort((a, b) => Number(a.match(/\d+$/)[0]) - Number(b.match(/\d+$/)[0]));
 
     const levels = keys
         .map(key => String(item[key] ?? '').trim())
@@ -22,7 +22,7 @@ const getDirectoryStructurePath = item => {
 
     return levels.length
         ? levels
-        : String(item.organo || '').split(/\\s*\\/\\s*/).map(value => value.trim()).filter(Boolean);
+        : String(item.organo || '').split(/\s*\/\s*/).map(value => value.trim()).filter(Boolean);
 };
 
 const buildDirectoryPdfSections = data => {
