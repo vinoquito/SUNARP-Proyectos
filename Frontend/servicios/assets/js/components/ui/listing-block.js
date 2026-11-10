@@ -37,6 +37,21 @@ const ListingBlock = {
             default: 'exportacion'
         },
 
+        pdfColumns: {
+            type: Array,
+            default: () => []
+        },
+
+        pdfGrouping: {
+            type: Object,
+            default: null
+        },
+
+        pdfLogo: {
+            type: String,
+            default: ''
+        },
+
         showExport: {
             type: Boolean,
             default: true
