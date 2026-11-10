@@ -809,8 +809,10 @@ const ListingBlock = {
 
                     <export-pdf-button
                         :data="filteredRows"
-                        :columns="resolvedExportColumns"
+                        :columns="pdfColumns.length ? pdfColumns : resolvedExportColumns"
                         :filename="filename"
+                        :grouping="pdfGrouping"
+                        :logo="pdfLogo"
                     >
                     </export-pdf-button>
 
