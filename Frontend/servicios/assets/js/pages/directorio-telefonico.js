@@ -90,7 +90,9 @@ const buildDirectoryPdfSections = data => {
         emptyMessage: 'No hay registros para exportar.'
     }));
 };
-\nconst app = createBaseApp({
+
+
+const app = createBaseApp({
 
     data() {
 
