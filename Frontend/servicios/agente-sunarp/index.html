@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <base href="/servicios/">
+
+    <link rel="stylesheet" href="assets/css/tailwind.css">
+
+    <link rel="stylesheet" href="assets/css/styles.css" />
+
+    <script src="assets/js/vue.global.prod.js"></script>
+
+    <link rel="icon" type="image/x-icon" href="assets/imagenes/ui/favicon-gob-pe.ico" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;800&display=swap" rel="stylesheet">
+
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet">
+
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0/dist/css/select2.min.css" rel="stylesheet" />
+
+
+    <title>Agente Sunarp</title>
+
+</head>
+
+<body>
+
+    <div id="app">
+
+        <!-- LOADER -->
+        <div v-if="loading" class="loader-overlay">
+
+            <app-loader></app-loader>
+
+        </div>
+
+        <!-- APP -->
+        <div v-show="!loading">
+
+            <navbar-gob :template="navbarData.template" :items="navbarData.items" title-class="navbar-title-gob"
+                separator-class="navbar-separator-gob">
+            </navbar-gob>
+
+            <main class="pt-24">
+
+                <page-header-gob template="page-header-split" :page="pageData">
+                </page-header-gob>
+
+
+                <listing-block :items="locations" :filter-fields="[
+                    {
+                        key: 'departamento',
+                        label: 'Departamento'
+                    }
+                    ]" :search-fields="[
+                        'nombre',
+                        'direccion',
+                        'departamento',
+                        'provincia',
+                        'distrito'
+                    ]" :export-columns="[
+                        {
+                            key: 'nombre',
+                            label: 'Nombre'
+                        },
+                        {
+                            key: 'direccion',
+                            label: 'Dirección'
+                        },
+                        {
+                            key: 'departamento',
+                            label: 'Departamento'
+                        },
+                        {
+                            key: 'provincia',
+                            label: 'Provincia'
+                        },
+                        {
+                            key: 'distrito',
+                            label: 'Distrito'
+                        },
+                        {
+                            key: 'referencia',
+                            label: 'Referencia'
+                        }
+                    ]" :per-page="9" :show-export="false" item-label="agentes" filename="agentes-sunarp">
+
+                    <!-- Resultado en formato CARD -->
+                    <template #results="{ items }">
+
+                        <card-default :items="items" :fields="agentCardFields" :link="agentCardLink"></card-default>
+
+                    </template>
+
+                </listing-block>
+
+            </main>
+
+            <footer-gob :template="footerData.template" :items="footerData.items">
+            </footer-gob>
+
+        </div>
+
+    </div>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0/dist/js/select2.min.js">
+    </script>
+
+    <!-- Excel -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
+    <!-- PDF -->
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+
+    <script src="assets/js/bootstrap.js"></script>
+
+    <!-- UI -->
+
+    <script src="assets/js/components/ui/card.js"></script>
+
+    <script src="assets/js/components/ui/cards/card-default.js"></script>
+
+    <script src="assets/js/components/ui/search-input.js"></script>
+
+    <script src="assets/js/components/ui/select.js"></script>
+
+    <script src="assets/js/components/ui/summary.js"></script>
+
+    <script src="assets/js/components/ui/pagination.js"></script>
+
+    <script src="assets/js/components/ui/pagination/pagination-default.js"></script>
+
+    <script src="assets/js/components/ui/listing-block.js"></script>
+
+    <script src="assets/js/components/ui/button.js"></script>
+
+    <script src="assets/js/components/ui/export-excel-button.js"></script>
+
+    <script src="assets/js/components/ui/export-pdf-button.js"></script>
+
+    <script src="assets/js/components/ui/clear-filters-button.js"></script>
+
+    <!-- REGISTER -->
+    <script src="assets/js/register-components.js"></script>
+
+    <!-- PAGE -->
+    <script src="assets/js/pages/agente-sunarp.js"></script>
+
+    <!-- FLOWBITE -->
+    <script src="assets/js/flowbite.min.js"></script>
+
+</body>
+
+</html>

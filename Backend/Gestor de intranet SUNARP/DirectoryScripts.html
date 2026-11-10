@@ -1,0 +1,1822 @@
+<script>
+  /**
+ * GESTOR DE INTRANET SUNARP
+ * Módulo: Directorios telefónicos
+ *
+ * Operaciones:
+ * - Listar servidores.
+ * - Buscar y filtrar.
+ * - Registrar.
+ * - Editar.
+ * - Desactivar.
+ * - Reactivar.
+ *
+ * Interfaz: SUNARP UI.
+ * Operaciones de datos: SUNARP Core.
+ * Reglas particulares: DirectoryService.gs.
+ */
+
+const DirectoryPage = (() => {
+
+  const state = {
+    records: [],
+    catalogs: null,
+    table: null,
+    hierarchyPath: [],
+    loading: false,
+    loaded: false,
+    eventsBound: false,
+    pageActionsActive: false
+  };
+
+
+  /* =====================================================
+     1. COMUNICACIÓN CON EL SERVIDOR
+     ===================================================== */
+
+  function callServer(functionName, ...args) {
+    return new Promise((resolve, reject) => {
+
+      const runner = google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(reject);
+
+      runner[functionName](...args);
+
+    });
+  }
+
+
+  function notify(type, message) {
+    if (window.SUNARPUI &&
+        typeof SUNARPUI.notify === 'function') {
+      SUNARPUI.notify(type, message);
+    }
+  }
+
+
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+
+  function key(value) {
+    return String(value ?? '').trim();
+  }
+
+
+  function isActive(record) {
+    return !(
+      record.active === false ||
+      record.active === 0 ||
+      String(record.active).toLowerCase() === 'false' ||
+      String(record.active) === '0'
+    );
+  }
+
+
+  /* =====================================================
+     2. ELEMENTOS DE LA VISTA
+     ===================================================== */
+
+  function getElements() {
+    return {
+      sedeFilter: document.getElementById(
+        'directorySedeFilter'
+      ),
+
+      hierarchyFilters: document.getElementById(
+        'directoryHierarchyFilters'
+      ),
+
+      cargoFilter: document.getElementById(
+        'directoryCargoFilter'
+      ),
+
+      table: document.getElementById(
+        'directoryTableContainer'
+      )
+    };
+  }
+
+
+
+  /* =====================================================
+     3. FILTROS DINÁMICOS DE SEDE, JERARQUÍA Y CARGO
+     ===================================================== */
+
+  function sortByName(a, b) {
+    return String(a.name || '').localeCompare(
+      String(b.name || ''),
+      'es',
+      { sensitivity: 'base' }
+    );
+  }
+
+
+  /**
+   * Devuelve la ruta orgánica completa de un servidor.
+   * Ejemplo: Órgano -> Oficina -> Unidad.
+   */
+  function getRecordStructurePath(record) {
+    const structureMap = new Map(
+      state.catalogs.estructuraOrg.map(node => [
+        key(node.id),
+        node
+      ])
+    );
+
+    const path = [];
+    const visited = new Set();
+
+    let current = structureMap.get(
+      key(record.estructura_id)
+    );
+
+    while (current) {
+      const currentId = key(current.id);
+
+      if (!currentId || visited.has(currentId)) {
+        break;
+      }
+
+      visited.add(currentId);
+      path.unshift(current);
+
+      const parentId = key(current.parent_id);
+
+      current = parentId
+        ? structureMap.get(parentId) || null
+        : null;
+    }
+
+    return path;
+  }
+
+
+  /**
+   * Comprueba si un registro corresponde a la ruta
+   * jerárquica que está seleccionada.
+   */
+  function recordMatchesHierarchyPath(record, path) {
+    if (!path || !path.length) return true;
+
+    const recordPath = getRecordStructurePath(record);
+
+    if (recordPath.length < path.length) {
+      return false;
+    }
+
+    return path.every((selectedId, index) =>
+      key(recordPath[index].id) === key(selectedId)
+    );
+  }
+
+
+  /**
+   * Aplica los filtros seleccionados.
+   *
+   * excludedFilters permite excluir uno de los filtros
+   * para calcular las opciones disponibles de ese filtro
+   * a partir de los otros dos.
+   */
+  function getRecordsForFilters(excludedFilters) {
+    const excluded = excludedFilters || new Set();
+    const elements = getElements();
+
+    const sedeId = elements.sedeFilter
+      ? key(elements.sedeFilter.value)
+      : '';
+
+    const cargoId = elements.cargoFilter
+      ? key(elements.cargoFilter.value)
+      : '';
+
+    return state.records.filter(record => {
+
+      if (
+        !excluded.has('sede') &&
+        sedeId &&
+        key(record.sede_id) !== sedeId
+      ) {
+        return false;
+      }
+
+      if (
+        !excluded.has('cargo') &&
+        cargoId &&
+        key(record.cargo_id) !== cargoId
+      ) {
+        return false;
+      }
+
+      if (
+        !excluded.has('hierarchy') &&
+        !recordMatchesHierarchyPath(
+          record,
+          state.hierarchyPath
+        )
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+  }
+
+
+  /**
+   * Obtiene únicamente los elementos del catálogo
+   * que están siendo utilizados por los registros.
+   */
+  function getUsedCatalogItems(records, field, catalog) {
+    const usedIds = new Set(
+      records
+        .map(record => key(record[field]))
+        .filter(Boolean)
+    );
+
+    return (catalog || [])
+      .filter(item => usedIds.has(key(item.id)))
+      .sort(sortByName);
+  }
+
+
+  /**
+   * Actualiza las opciones de un selector y conserva
+   * su selección si todavía está disponible.
+   */
+  function updateFilterOptions(select, placeholder, items) {
+    if (!select) return;
+
+    const selectedValue = key(select.value);
+
+    select.replaceChildren();
+
+    const defaultOption = document.createElement('option');
+
+    defaultOption.value = '';
+    defaultOption.textContent = placeholder;
+
+    select.appendChild(defaultOption);
+
+    items.forEach(item => {
+      const option = document.createElement('option');
+
+      option.value = key(item.id);
+      option.textContent = item.name;
+
+      select.appendChild(option);
+    });
+
+    const selectionExists = items.some(item =>
+      key(item.id) === selectedValue
+    );
+
+    select.value = selectionExists ? selectedValue : '';
+  }
+
+
+  /**
+   * Sedes utilizadas por los registros que cumplen
+   * los filtros de cargo y jerarquía.
+   */
+  function populateSedeFilter() {
+    const select = getElements().sedeFilter;
+
+    if (!select || !state.catalogs) return;
+
+    const records = getRecordsForFilters(
+      new Set(['sede'])
+    );
+
+    const sedes = getUsedCatalogItems(
+      records,
+      'sede_id',
+      state.catalogs.sedes
+    );
+
+    updateFilterOptions(
+      select,
+      'Todas las sedes',
+      sedes
+    );
+  }
+
+
+  /**
+   * Cargos utilizados por los registros que cumplen
+   * los filtros de sede y jerarquía.
+   */
+  function populateCargoFilter() {
+    const select = getElements().cargoFilter;
+
+    if (!select || !state.catalogs) return;
+
+    const records = getRecordsForFilters(
+      new Set(['cargo'])
+    );
+
+    const cargos = getUsedCatalogItems(
+      records,
+      'cargo_id',
+      state.catalogs.cargos
+    );
+
+    updateFilterOptions(
+      select,
+      'Todos los cargos',
+      cargos
+    );
+  }
+
+
+  /* =====================================================
+     4. FILTROS JERÁRQUICOS DE LA TABLA
+     ===================================================== */
+
+
+  /**
+   * Obtiene las unidades orgánicas que tienen registros
+   * asociados y corresponden al nivel jerárquico indicado.
+   *
+   * Incluye los órganos superiores necesarios para llegar
+   * a las unidades que sí tienen servidores registrados.
+   */
+  function getHierarchyNodes(parentId, level, records) {
+    const nodesMap = new Map();
+
+    records.forEach(record => {
+      const path = getRecordStructurePath(record);
+
+      if (path.length <= level) return;
+
+      const matchesParentPath = state.hierarchyPath
+        .slice(0, level)
+        .every((selectedId, index) =>
+          key(path[index].id) === key(selectedId)
+        );
+
+      if (!matchesParentPath) return;
+
+      if (
+        level > 0 &&
+        key(path[level - 1].id) !== key(parentId)
+      ) {
+        return;
+      }
+
+      const node = path[level];
+
+      nodesMap.set(
+        key(node.id),
+        node
+      );
+    });
+
+    return Array.from(nodesMap.values()).sort((a, b) => {
+      const orderA = Number(a.order) || 0;
+      const orderB = Number(b.order) || 0;
+
+      return orderA - orderB ||
+        String(a.name).localeCompare(String(b.name), 'es');
+    });
+  }
+
+
+  /**
+   * Determina la etiqueta del nivel jerárquico.
+   * También se utiliza en el formulario de registro.
+   */
+  function getHierarchyLabel(nodes, level) {
+    const types = [
+      ...new Set(
+        nodes
+          .map(node => key(node.tipo_estructura_name))
+          .filter(Boolean)
+      )
+    ];
+
+    if (types.length === 1) {
+      return types[0].charAt(0).toLocaleUpperCase() +
+        types[0].slice(1);
+    }
+
+    return level === 0
+      ? 'Órgano o dependencia'
+      : 'Unidad o dependencia';
+  }
+
+
+  /**
+   * Construye un selector para cada nivel jerárquico.
+   */
+  function appendHierarchyLevel(parentId, level, records) {
+    const container = getElements().hierarchyFilters;
+
+    if (!container) return;
+
+    const nodes = getHierarchyNodes(
+      parentId,
+      level,
+      records
+    );
+
+    if (!nodes.length) return;
+
+    const wrapper = document.createElement('div');
+
+    wrapper.className = 'sunarp-filter';
+
+    const selectId = `directoryHierarchyFilter${level}`;
+
+    const label = document.createElement('label');
+
+    label.htmlFor = selectId;
+    label.textContent = getHierarchyLabel(nodes, level);
+
+    const select = document.createElement('select');
+
+    select.id = selectId;
+    select.className = 'sunarp-select';
+
+    const placeholder = document.createElement('option');
+
+    placeholder.value = '';
+    placeholder.textContent = level === 0
+      ? 'Todas'
+      : 'Todas las dependencias';
+
+    select.appendChild(placeholder);
+
+    nodes.forEach(node => {
+      const option = document.createElement('option');
+
+      option.value = key(node.id);
+      option.textContent = node.name;
+
+      select.appendChild(option);
+    });
+
+    const previousSelection =
+      state.hierarchyPath[level] || '';
+
+    const exists = nodes.some(node =>
+      key(node.id) === key(previousSelection)
+    );
+
+    const selectedValue = exists
+      ? key(previousSelection)
+      : '';
+
+    if (!exists && previousSelection) {
+      state.hierarchyPath =
+        state.hierarchyPath.slice(0, level);
+    }
+
+    select.value = selectedValue;
+
+    select.addEventListener('change', () => {
+      const value = key(select.value);
+
+      state.hierarchyPath =
+        state.hierarchyPath.slice(0, level);
+
+      if (value) {
+        state.hierarchyPath.push(value);
+      }
+
+      refreshDependentFilters('hierarchy');
+    });
+
+    wrapper.appendChild(label);
+    wrapper.appendChild(select);
+
+    container.appendChild(wrapper);
+
+    if (selectedValue) {
+      appendHierarchyLevel(
+        selectedValue,
+        level + 1,
+        records
+      );
+    }
+  }
+
+
+  /**
+   * Reconstruye los filtros jerárquicos.
+   *
+   * Solo utiliza registros que cumplen los filtros
+   * de sede y cargo.
+   */
+  function renderHierarchyFilters() {
+    const container = getElements().hierarchyFilters;
+
+    if (!container || !state.catalogs) return;
+
+    container.replaceChildren();
+
+    const records = getRecordsForFilters(
+      new Set(['hierarchy'])
+    );
+
+    appendHierarchyLevel('', 0, records);
+  }
+
+
+  /**
+   * Comprueba si la selección de un filtro sigue teniendo
+   * registros compatibles con los demás filtros.
+   */
+  function hasAvailableFilterSelection(filter) {
+    const records = getRecordsForFilters(
+      new Set([filter])
+    );
+
+    if (filter === 'sede') {
+      const selectedId = key(
+        getElements().sedeFilter.value
+      );
+
+      return !selectedId || records.some(record =>
+        key(record.sede_id) === selectedId
+      );
+    }
+
+    if (filter === 'cargo') {
+      const selectedId = key(
+        getElements().cargoFilter.value
+      );
+
+      return !selectedId || records.some(record =>
+        key(record.cargo_id) === selectedId
+      );
+    }
+
+    if (filter === 'hierarchy') {
+      return !state.hierarchyPath.length ||
+        records.some(record =>
+          recordMatchesHierarchyPath(
+            record,
+            state.hierarchyPath
+          )
+        );
+    }
+
+    return true;
+  }
+
+
+  /**
+   * Recalcula los filtros relacionados cuando cambia
+   * cualquiera de ellos.
+   *
+   * Se conserva el filtro que acaba de modificar el usuario.
+   * Los demás se limpian cuando dejan de tener registros
+   * compatibles con las nuevas selecciones.
+   */
+  function refreshDependentFilters(changedFilter) {
+    const elements = getElements();
+
+    if (!elements.sedeFilter || !elements.cargoFilter) {
+      return;
+    }
+
+    // Cambiar de sede implica reiniciar la jerarquía.
+    if (changedFilter === 'sede') {
+      state.hierarchyPath = [];
+    }
+
+    const validationOrder = {
+      sede: ['cargo', 'hierarchy'],
+      cargo: ['sede', 'hierarchy'],
+      hierarchy: ['sede', 'cargo']
+    };
+
+    const filtersToValidate =
+      validationOrder[changedFilter] || [];
+
+    filtersToValidate.forEach(filter => {
+      if (hasAvailableFilterSelection(filter)) {
+        return;
+      }
+
+      if (filter === 'sede') {
+        elements.sedeFilter.value = '';
+      }
+
+      if (filter === 'cargo') {
+        elements.cargoFilter.value = '';
+      }
+
+      if (filter === 'hierarchy') {
+        state.hierarchyPath = [];
+      }
+    });
+
+    // Reconstruir las opciones disponibles.
+    populateSedeFilter();
+    populateCargoFilter();
+    renderHierarchyFilters();
+
+    // Actualizar los registros mostrados.
+    renderTable();
+  }
+
+
+  /* =====================================================
+     5. FILTRADO Y PREPARACIÓN DE REGISTROS
+     ===================================================== */
+
+  function getFilteredRecords() {
+    return getRecordsForFilters(new Set());
+  }
+
+  function prepareRows(records) {
+
+    return records.map(record => ({
+
+      ...record,
+
+      servidor: [
+        record.nombres,
+        record.apellidos
+      ].filter(Boolean).join(' '),
+
+      anexo_display:
+        record.anexo === '' ||
+        record.anexo === null ||
+        record.anexo === undefined
+          ? '—'
+          : String(record.anexo),
+
+      dependencia_display: record.estructura_name || '—',
+
+      local_display: record.local_name || '—',
+
+      estado_display: isActive(record)
+        ? 'Activo'
+        : 'Inactivo'
+
+    }));
+
+  }
+
+
+  /* =====================================================
+     6. TABLA REUTILIZABLE
+     ===================================================== */
+
+
+    
+  function renderTable() {
+
+    const container = getElements().table;
+
+    if (!container) return;
+
+    const records = prepareRows(
+      getFilteredRecords()
+    );
+
+    if (
+      !window.SUNARPUI ||
+      typeof SUNARPUI.createDataTable !== 'function'
+    ) {
+      throw new Error(
+        'No está disponible el componente DataTable de SUNARP UI.'
+      );
+    }
+
+    const options = {
+
+      containerId: 'directoryTableContainer',
+
+      mode: 'client',
+
+      columns: [
+
+        {
+          key: 'servidor',
+          label: 'Servidor',
+          searchable: true
+        },
+
+        {
+          key: 'cargo_name',
+          label: 'Cargo',
+          searchable: true
+        },
+
+        {
+          key: 'anexo_display',
+          label: 'Anexo',
+          align: 'center',
+          searchable: true
+        },
+
+        {
+          key: 'dependencia_display',
+          label: 'Dependencia',
+          searchable: true
+        },
+
+        {
+          key: 'local_display',
+          label: 'Local',
+          searchable: true
+        },
+
+        {
+          key: 'active',
+          label: 'Estado',
+          searchable: false,
+
+          render: (value, record) => {
+
+            const active = isActive(record);
+
+            const wrapper = document.createElement('div');
+
+            wrapper.className =
+              'sunarp-datatable-status access-status-cell';
+
+            // Badge de estado.
+            const badge = SUNARPUI.createBadge({
+              label: active ? 'Activo' : 'Inactivo',
+              variant: active ? 'success' : 'danger',
+              icon: active ? 'check_circle' : 'cancel'
+            });
+
+            wrapper.appendChild(badge);
+
+            // Acción de cambio de estado.
+            const statusButton = document.createElement('button');
+
+            statusButton.type = 'button';
+
+            statusButton.className =
+              `sunarp-datatable-status-link access-status-link ${
+                active
+                  ? 'sunarp-datatable-status-link--deactivate access-status-link--deactivate'
+                  : 'sunarp-datatable-status-link--activate access-status-link--activate'
+              }`;
+
+            statusButton.textContent = active
+              ? 'Desactivar'
+              : 'Activar';
+
+            statusButton.addEventListener('click', async () => {
+
+              statusButton.disabled = true;
+
+              try {
+
+                await changeDirectoryStatus(
+                  record,
+                  !active
+                );
+
+              } catch (error) {
+
+                notify(
+                  'error',
+                  error.message || 'No se pudo cambiar el estado.'
+                );
+
+              } finally {
+
+                if (statusButton.isConnected) {
+                  statusButton.disabled = false;
+                }
+
+              }
+
+            });
+
+            wrapper.appendChild(statusButton);
+
+            return wrapper;
+
+          }
+        }
+
+      ],
+
+      data: records,
+
+      pageSize: 10,
+
+      pageSizeOptions: [10, 25, 50],
+
+      rowActions: [
+
+        {
+          label: 'Editar',
+          icon: 'edit',
+          variant: 'primary',
+          title: 'Editar servidor',
+
+          onClick: record => openDirectoryForm(record)
+        },
+
+        {
+          label: 'Historial',
+          icon: 'history',
+          variant: 'primary',
+          title: 'Consultar historial del servidor',
+
+          onClick: record => {
+            if (
+              !window.SUNARPAccessHistory ||
+              typeof window.SUNARPAccessHistory.open !== 'function'
+            ) {
+              notify(
+                'error',
+                'No está disponible el componente de historial.'
+              );
+
+              return;
+            }
+
+            window.SUNARPAccessHistory.open(
+              'SERVIDOR',
+              record.id,
+              [
+                record.nombres,
+                record.apellidos
+              ].filter(Boolean).join(' ')
+            );
+          }
+        },
+
+        {
+          label: 'Eliminar',
+          icon: 'delete',
+          variant: 'danger',
+          title: 'Eliminar servidor',
+
+          onClick: record => deleteDirectoryEntry(record)
+        }
+
+      ]
+
+    };
+
+    if (!state.table) {
+
+      state.table = SUNARPUI.createDataTable(options);
+
+    } else {
+
+      state.table.setData(records);
+
+    }
+
+  }
+
+
+
+
+  /* =====================================================
+     7. FORMULARIO: ESTRUCTURA JERÁRQUICA
+     ===================================================== */
+
+  function getFormStructurePath(structureId) {
+
+    const structureMap = new Map(
+      state.catalogs.estructuraOrg.map(node => [
+        key(node.id),
+        node
+      ])
+    );
+
+    const path = [];
+    const visited = new Set();
+
+    let current = structureMap.get(key(structureId));
+
+    while (current) {
+
+      const currentId = key(current.id);
+
+      if (!currentId || visited.has(currentId)) {
+        break;
+      }
+
+      visited.add(currentId);
+      path.unshift(currentId);
+
+      const parentId = key(current.parent_id);
+
+      current = parentId
+        ? structureMap.get(parentId) || null
+        : null;
+
+    }
+
+    return path;
+  }
+
+
+  function getFormHierarchyNodes(parentId, sedeId) {
+
+    return state.catalogs.estructuraOrg
+      .filter(node => {
+
+        if (parentId) {
+          return key(node.parent_id) === key(parentId);
+        }
+
+        return (
+          !key(node.parent_id) &&
+          key(node.sede_id) === key(sedeId)
+        );
+
+      })
+      .sort((a, b) => {
+
+        const orderA = Number(a.order) || 0;
+        const orderB = Number(b.order) || 0;
+
+        return orderA - orderB ||
+          String(a.name).localeCompare(String(b.name), 'es');
+
+      });
+  }
+
+
+  function renderFormLocalOptions(
+    structureId,
+    selectedRelationId
+  ) {
+
+    const select = document.getElementById(
+      'directoryFormLocal'
+    );
+
+    if (!select) return;
+
+    select.innerHTML = '';
+
+    const placeholder = document.createElement('option');
+
+    placeholder.value = '';
+    placeholder.textContent = structureId
+      ? 'Selecciona un local'
+      : 'Selecciona una dependencia';
+
+    select.appendChild(placeholder);
+
+    const relations = state.catalogs.estructuraLocal
+      .filter(relation =>
+        key(relation.estructura_id) === key(structureId) &&
+        relation.active !== false &&
+        relation.active !== 0 &&
+        String(relation.active).toLowerCase() !== 'false'
+      );
+
+    relations.forEach(relation => {
+
+      const option = document.createElement('option');
+
+      option.value = key(relation.id);
+
+      option.textContent = [
+        relation.local_name,
+        relation.referencia
+      ].filter(Boolean).join(' — ');
+
+      select.appendChild(option);
+
+    });
+
+    select.value = relations.some(relation =>
+      key(relation.id) === key(selectedRelationId)
+    )
+      ? key(selectedRelationId)
+      : '';
+
+    select.disabled = relations.length === 0;
+
+  }
+
+
+  function renderFormHierarchy(
+    sedeId,
+    selectedPath,
+    selectedRelationId
+  ) {
+
+    const container = document.getElementById(
+      'directoryFormHierarchy'
+    );
+
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    let selectedStructureId = '';
+
+    function appendLevel(parentId, level) {
+
+      const nodes = getFormHierarchyNodes(
+        parentId,
+        sedeId
+      );
+
+      if (!nodes.length) return;
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'sunarp-form-field sunarp-form-field--full';
+
+      const label = document.createElement('label');
+      label.textContent = getHierarchyLabel(nodes, level);
+
+      const select = document.createElement('select');
+      select.className = 'sunarp-select';
+
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = 'Selecciona una opción';
+
+      select.appendChild(placeholder);
+
+      nodes.forEach(node => {
+
+        const option = document.createElement('option');
+
+        option.value = key(node.id);
+        option.textContent = node.name;
+
+        select.appendChild(option);
+
+      });
+
+      const previous = selectedPath[level] || '';
+
+      const exists = nodes.some(node =>
+        key(node.id) === previous
+      );
+
+      const selectedValue = exists ? previous : '';
+
+      if (!exists) {
+        selectedPath.splice(level);
+      }
+
+      select.value = selectedValue;
+
+      select.addEventListener('change', () => {
+
+        selectedPath.splice(level);
+
+        if (select.value) {
+          selectedPath.push(select.value);
+        }
+
+        renderFormHierarchy(
+          sedeId,
+          selectedPath,
+          ''
+        );
+
+      });
+
+      label.appendChild(select);
+      wrapper.appendChild(label);
+      container.appendChild(wrapper);
+
+      if (selectedValue) {
+        selectedStructureId = selectedValue;
+        appendLevel(selectedValue, level + 1);
+      }
+
+    }
+
+    appendLevel('', 0);
+
+    // El local se relaciona con el último elemento
+    // seleccionado de la jerarquía.
+    if (selectedPath.length) {
+      selectedStructureId = selectedPath[
+        selectedPath.length - 1
+      ];
+    }
+
+    renderFormLocalOptions(
+      selectedStructureId,
+      selectedRelationId
+    );
+
+  }
+
+
+  /* =====================================================
+     8. FORMULARIO: CONTENIDO
+     ===================================================== */
+
+  function buildDirectoryForm(record) {
+
+    const isEditing = Boolean(record);
+
+    const selectedSede = record
+      ? key(record.sede_id)
+      : key(getElements().sedeFilter?.value);
+
+    const selectedPath = record
+      ? getFormStructurePath(record.estructura_id)
+      : [];
+
+    const cargoOptions = state.catalogs.cargos
+      .filter(cargo =>
+        cargo.active !== false &&
+        cargo.active !== 0 &&
+        String(cargo.active).toLowerCase() !== 'false'
+      )
+      .slice()
+      .sort(sortByName)
+      .map(cargo => `
+        <option
+          value="${escapeHtml(cargo.id)}"
+          ${record && key(record.cargo_id) === key(cargo.id) ? 'selected' : ''}>
+          ${escapeHtml(cargo.name)}
+        </option>
+      `)
+      .join('');
+
+    const sedeOptions = state.catalogs.sedes
+      .filter(sede =>
+        sede.active !== false &&
+        sede.active !== 0
+      )
+      .slice()
+      .sort(sortByName)
+      .map(sede => `
+        <option
+          value="${escapeHtml(sede.id)}"
+          ${selectedSede === key(sede.id) ? 'selected' : ''}>
+          ${escapeHtml(sede.name)}
+        </option>
+      `)
+      .join('');
+
+    return {
+      html: `
+        <form id="directoryForm" class="sunarp-form-grid">
+
+          <input
+            type="hidden"
+            id="directoryFormId"
+            value="${escapeHtml(record?.id || '')}">
+
+          <div class="sunarp-form-field">
+            <label for="directoryFormNombres">
+              Nombres *
+            </label>
+
+            <input
+              type="text"
+              class="sunarp-input"
+              id="directoryFormNombres"
+              maxlength="100"
+              value="${escapeHtml(record?.nombres || '')}"
+              required>
+          </div>
+
+          <div class="sunarp-form-field">
+            <label for="directoryFormApellidos">
+              Apellidos *
+            </label>
+
+            <input
+              type="text"
+              class="sunarp-input"
+              id="directoryFormApellidos"
+              maxlength="150"
+              value="${escapeHtml(record?.apellidos || '')}"
+              required>
+          </div>
+
+          <div class="sunarp-form-field">
+            <label for="directoryFormCargo">
+              Cargo *
+            </label>
+
+            <select
+              id="directoryFormCargo"
+              class="sunarp-select"
+              required>
+
+              <option value="">Selecciona un cargo</option>
+
+              ${cargoOptions}
+
+            </select>
+          </div>
+
+          <div class="sunarp-form-field">
+            <label for="directoryFormAnexo">
+              Anexo
+            </label>
+
+            <input
+              type="number"
+              class="sunarp-input"
+              id="directoryFormAnexo"
+              min="1"
+              max="99999"
+              step="1"
+              value="${escapeHtml(record?.anexo ?? '')}">
+          </div>
+
+          <div class="sunarp-form-field sunarp-form-field--full">
+            <label for="directoryFormSede">
+              Sede *
+            </label>
+
+            <select
+              id="directoryFormSede"
+              class="sunarp-select"
+              required>
+
+              <option value="">Selecciona una sede</option>
+
+              ${sedeOptions}
+
+            </select>
+          </div>
+
+          <div
+            id="directoryFormHierarchy"
+            class="sunarp-form-field sunarp-form-field--full">
+          </div>
+
+          <div class="sunarp-form-field sunarp-form-field--full">
+            <label for="directoryFormLocal">
+              Local físico *
+            </label>
+
+            <select
+              id="directoryFormLocal"
+              class="sunarp-select"
+              required
+              disabled>
+
+              <option value="">Selecciona una dependencia</option>
+
+            </select>
+          </div>
+
+          <div class="sunarp-form-field sunarp-form-field--full">
+            <div class="directory-form-actions">
+
+              <button
+                type="button"
+                class="sunarp-btn sunarp-btn-outline"
+                id="directoryFormCancel">
+                Cancelar
+              </button>
+
+              <button
+                type="submit"
+                class="sunarp-btn sunarp-btn-primary"
+                id="directoryFormSave">
+                ${isEditing ? 'Guardar cambios' : 'Registrar servidor'}
+              </button>
+
+            </div>
+          </div>
+
+        </form>
+      `,
+
+      selectedSede,
+      selectedPath,
+      selectedRelationId: record
+        ? key(record.estructura_local_id)
+        : ''
+    };
+  }
+
+
+  /* =====================================================
+     9. FORMULARIO: ALTA Y EDICIÓN
+     ===================================================== */
+
+
+  function openDirectoryForm(record) {
+
+    const isEditing = Boolean(record);
+
+    const formData = buildDirectoryForm(record);
+
+    // Convertir la cadena HTML del formulario en un fragmento DOM.
+    const template = document.createElement('template');
+
+    template.innerHTML = formData.html.trim();
+
+    // SUNARP UI recibe un elemento DOM mediante la propiedad content.
+    SUNARPUI.openModal({
+      title: isEditing
+        ? 'Editar servidor'
+        : 'Registrar servidor',
+
+      content: template.content,
+      size: 'lg'
+    });
+
+    // Obtener los elementos una vez insertado el contenido en el modal.
+    const form = document.getElementById('directoryForm');
+
+    const sedeSelect = document.getElementById(
+      'directoryFormSede'
+    );
+
+    const cancelButton = document.getElementById(
+      'directoryFormCancel'
+    );
+
+    // Comprobar que el formulario se haya insertado correctamente.
+    if (!form || !sedeSelect || !cancelButton) {
+
+      SUNARPUI.closeModal();
+
+      notify(
+        'error',
+        'No se pudo inicializar el formulario del directorio.'
+      );
+
+      return;
+    }
+
+    // Construir los selectores jerárquicos y el local físico.
+    renderFormHierarchy(
+      formData.selectedSede,
+      formData.selectedPath,
+      formData.selectedRelationId
+    );
+
+    // Cambiar de sede reinicia la selección jerárquica.
+    sedeSelect.addEventListener('change', () => {
+
+      renderFormHierarchy(
+        sedeSelect.value,
+        [],
+        ''
+      );
+
+    });
+
+    // Cerrar el formulario.
+    cancelButton.addEventListener('click', () => {
+      SUNARPUI.closeModal();
+    });
+
+    // Guardar el registro.
+    form.addEventListener('submit', saveForm);
+
+  }
+
+
+
+  /* =====================================================
+     10. GUARDAR REGISTRO
+     ===================================================== */
+
+  async function saveForm(event) {
+
+    event.preventDefault();
+
+    const form = event.currentTarget;
+
+    if (!form.reportValidity()) return;
+
+    const id = document.getElementById(
+      'directoryFormId'
+    ).value;
+
+    const nombres = document.getElementById(
+      'directoryFormNombres'
+    ).value.trim();
+
+    const apellidos = document.getElementById(
+      'directoryFormApellidos'
+    ).value.trim();
+
+    const cargoId = document.getElementById(
+      'directoryFormCargo'
+    ).value;
+
+    const anexoInput = document.getElementById(
+      'directoryFormAnexo'
+    ).value;
+
+    const estructuraLocalId = document.getElementById(
+      'directoryFormLocal'
+    ).value;
+
+    if (!estructuraLocalId) {
+      notify(
+        'warning',
+        'Selecciona la dependencia y su local físico.'
+      );
+
+      return;
+    }
+
+    const payload = {
+      nombres,
+      apellidos,
+      cargo_id: cargoId,
+      anexo: anexoInput === ''
+        ? ''
+        : Number(anexoInput),
+      estructura_local_id: estructuraLocalId
+    };
+
+    if (id) {
+      payload.id = id;
+    }
+
+    const saveButton = document.getElementById(
+      'directoryFormSave'
+    );
+
+    saveButton.disabled = true;
+    saveButton.textContent = 'Guardando...';
+
+    try {
+
+      const result = await callServer(
+        'saveDirectoryEntry',
+        payload
+      );
+
+      SUNARPUI.closeModal();
+
+      notify(
+        'success',
+        result.message || 'Registro guardado correctamente.'
+      );
+
+      await load(true);
+
+    } catch (error) {
+
+      notify(
+        'error',
+        error.message || 'No se pudo guardar el registro.'
+      );
+
+      saveButton.disabled = false;
+      saveButton.textContent = id
+        ? 'Guardar cambios'
+        : 'Registrar servidor';
+
+    }
+
+  }
+
+
+  /* =====================================================
+     11. DESACTIVAR Y REACTIVAR
+     ===================================================== */
+
+  
+/**
+ * Activa o desactiva un servidor desde su celda de estado.
+ */
+async function changeDirectoryStatus(record, active) {
+
+  const result = await callServer(
+    'setDirectoryEntryActive',
+    record.id,
+    active
+  );
+
+  await load(true);
+
+  notify(
+    'success',
+    result.message ||
+      `Servidor ${active ? 'activado' : 'desactivado'} correctamente.`
+  );
+
+}
+
+
+/**
+ * Elimina definitivamente un servidor.
+ * Utiliza SweetAlert2 para solicitar confirmación.
+ */
+async function deleteDirectoryEntry(record) {
+
+  if (!window.Swal) {
+    throw new Error(
+      'SweetAlert2 no está disponible. Verifica su carga en SUNARP UI.'
+    );
+  }
+
+  const fullName = [
+    record.nombres,
+    record.apellidos
+  ].filter(Boolean).join(' ');
+
+  // Confirmación de eliminación.
+  const confirmation = await Swal.fire({
+
+    title: '¿Eliminar servidor?',
+
+    text: `Se eliminará definitivamente el registro de ${fullName}. Esta acción no se puede deshacer.`,
+
+    icon: 'warning',
+
+    showCancelButton: true,
+
+    confirmButtonText: 'Sí, eliminar',
+
+    cancelButtonText: 'Cancelar',
+
+    reverseButtons: true,
+
+    focusCancel: true,
+
+    customClass: {
+      popup: 'sunarp-swal-popup'
+    }
+
+  });
+
+  if (!confirmation.isConfirmed) {
+    return;
+  }
+
+  // Ejecutar eliminación en el servidor.
+  const result = await callServer(
+    'deleteDirectoryEntry',
+    record.id
+  );
+
+  // Recargar la información actualizada.
+  await load(true);
+
+  notify(
+    'success',
+    result.message || 'Servidor eliminado correctamente.'
+  );
+
+}
+
+
+  /* =====================================================
+     12. ACCIÓN SUPERIOR: NUEVO SERVIDOR
+     ===================================================== */
+
+  function setPageActions() {
+
+    if (
+      !window.SUNARPUI ||
+      typeof SUNARPUI.setPageActions !== 'function'
+    ) {
+      return;
+    }
+
+    SUNARPUI.setPageActions([
+
+      {
+        label: 'Nuevo servidor',
+        icon: 'person_add',
+        variant: 'primary',
+        onClick: () => openDirectoryForm(null)
+      }
+
+    ]);
+
+    state.pageActionsActive = true;
+
+  }
+
+
+  function clearPageActions() {
+
+    if (
+      state.pageActionsActive &&
+      window.SUNARPUI &&
+      typeof SUNARPUI.clearPageActions === 'function'
+    ) {
+      SUNARPUI.clearPageActions();
+    }
+
+    state.pageActionsActive = false;
+
+  }
+
+
+  /* =====================================================
+     13. EVENTOS DE FILTROS
+     ===================================================== */
+
+
+  function bindEvents() {
+
+    if (state.eventsBound) return;
+
+    const elements = getElements();
+
+    if (
+      !elements.sedeFilter ||
+      !elements.cargoFilter
+    ) {
+      return;
+    }
+
+    // Cambio de sede.
+    elements.sedeFilter.addEventListener('change', () => {
+      refreshDependentFilters('sede');
+    });
+
+    // Cambio de cargo.
+    elements.cargoFilter.addEventListener('change', () => {
+      refreshDependentFilters('cargo');
+    });
+
+    state.eventsBound = true;
+  }
+
+  /* =====================================================
+     14. CARGA PRINCIPAL
+     ===================================================== */
+
+  
+  async function load(force = false) {
+
+    if (state.loading) return;
+
+    // Evitar volver a consultar los archivos si ya se cargaron.
+    if (state.loaded && !force) {
+      setPageActions();
+      return;
+    }
+
+    state.loading = true;
+
+    let finishLoading = null;
+
+    const totalStart = performance.now();
+
+    const timings = {
+      server: 0,
+      filters: 0,
+      table: 0
+    };
+
+    try {
+
+      if (
+        window.SUNARPUI &&
+        typeof SUNARPUI.beginLoading === 'function'
+      ) {
+        finishLoading = SUNARPUI.beginLoading();
+      }
+
+      setPageActions();
+
+      // 1. Obtener información del servidor.
+      const serverStart = performance.now();
+
+      const result = await callServer(
+        'getDirectoryInitialData'
+      );
+
+      timings.server = performance.now() - serverStart;
+
+      if (
+        !result ||
+        !result.catalogs ||
+        !Array.isArray(result.records)
+      ) {
+        throw new Error(
+          'El servidor devolvió una respuesta incompleta.'
+        );
+      }
+
+      state.records = result.records;
+      state.catalogs = result.catalogs;
+
+      // 2. Preparar filtros.
+      const filtersStart = performance.now();
+
+      populateSedeFilter();
+      populateCargoFilter();
+
+      renderHierarchyFilters();
+
+      bindEvents();
+
+      timings.filters = performance.now() - filtersStart;
+
+      // 3. Crear o actualizar la tabla.
+      const tableStart = performance.now();
+
+      renderTable();
+
+      timings.table = performance.now() - tableStart;
+
+      state.loaded = true;
+
+      // Diagnóstico de rendimiento.
+      const totalTime = performance.now() - totalStart;
+
+      console.group('Rendimiento - Directorios telefónicos');
+
+      console.table({
+        'Consulta al servidor': {
+          milisegundos: Math.round(timings.server),
+          segundos: (timings.server / 1000).toFixed(2)
+        },
+        'Preparación de filtros': {
+          milisegundos: Math.round(timings.filters),
+          segundos: (timings.filters / 1000).toFixed(2)
+        },
+        'Creación de tabla': {
+          milisegundos: Math.round(timings.table),
+          segundos: (timings.table / 1000).toFixed(2)
+        },
+        'Tiempo total': {
+          milisegundos: Math.round(totalTime),
+          segundos: (totalTime / 1000).toFixed(2)
+        }
+      });
+
+      console.log('Registros recibidos:', state.records.length);
+
+      console.groupEnd();
+
+    } catch (error) {
+
+      state.loaded = false;
+
+      console.error(
+        'Error al cargar Directorios telefónicos:',
+        error
+      );
+
+      notify(
+        'error',
+        error.message || 'No se pudo cargar el directorio.'
+      );
+
+      const container = getElements().table;
+
+      if (container) {
+        container.textContent =
+          'No se pudo cargar la información del directorio.';
+      }
+
+    } finally {
+
+      state.loading = false;
+
+      if (typeof finishLoading === 'function') {
+        finishLoading();
+      }
+
+    }
+
+  }
+
+
+
+  /* =====================================================
+     15. NAVEGACIÓN
+     ===================================================== */
+
+  document.addEventListener('sunarp:navigate', event => {
+
+    const route = String(
+      event.detail?.route || ''
+    );
+
+    if (route === 'directorios-telefonicos') {
+      load();
+    } else {
+      clearPageActions();
+    }
+
+  });
+
+
+  return Object.freeze({
+    load,
+    refresh: load
+  });
+
+})();
+</script>

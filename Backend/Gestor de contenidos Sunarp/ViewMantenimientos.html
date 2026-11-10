@@ -1,0 +1,107 @@
+<section id="view-mantenimientos" class="app-view" hidden>
+
+  <header class="topbar">
+    <div>
+      <span class="breadcrumb">Configuración / Mantenimientos</span>
+      <h1 id="locationPageTitle">Sedes</h1>
+      <p class="subtitle" id="locationPageDescription">
+        Gestiona los catálogos institucionales.
+      </p>
+    </div>
+
+    <button class="btn btn-primary" id="addLocationButton" type="button">
+      <span>＋</span> Nuevo registro
+    </button>
+  </header>
+
+  <section class="panel">
+
+    <div class="panel-heading">
+      <h2 id="locationPanelTitle">Listado de sedes</h2>
+      <p>Los cambios se guardan en la fuente maestra.</p>
+    </div>
+
+    <div class="toolbar">
+      <label class="search-box" for="locationSearch">
+        <span aria-hidden="true">⌕</span>
+        <input type="search" id="locationSearch"
+          placeholder="Buscar por código, nombre o ubicación superior..."
+          autocomplete="off">
+      </label>
+    </div>
+
+    <div id="locationTableContainer" class="table-wrap">
+      <div class="loading">Selecciona un mantenimiento.</div>
+    </div>
+
+    <div class="table-footer">
+      <span id="locationResultsCount">—</span>
+      <div id="locationsPaginationHost"></div>
+    </div>
+
+  </section>
+
+</section>
+
+<!-- Este modal queda fuera de la sección oculta para poder abrirse. -->
+<div class="modal" id="locationModal" aria-hidden="true">
+
+  <div class="modal-backdrop" data-location-close></div>
+
+  <section class="modal-card" role="dialog" aria-modal="true"
+    aria-labelledby="locationModalTitle">
+
+    <header class="modal-header">
+      <div>
+        <span class="eyebrow">MANTENIMIENTO DE CATÁLOGOS</span>
+        <h2 id="locationModalTitle">Nuevo registro</h2>
+        <p id="locationModalDescription">
+          Completa la información solicitada.
+        </p>
+      </div>
+
+      <button type="button" class="close-btn"
+        data-location-close aria-label="Cerrar">×</button>
+    </header>
+
+    <form id="locationForm" class="location-form">
+
+      <div class="form-grid">
+
+        <div class="field" id="locationIdGroup">
+          <label for="locationId">Código <span>*</span></label>
+          <input type="text" id="locationId" maxlength="50" required>
+          <small>El código de un registro existente no se modifica.</small>
+        </div>
+
+        <div class="field" id="locationParentGroup" hidden>
+          <label for="locationParentId" id="locationParentLabel">
+            Pertenece a <span>*</span>
+          </label>
+          <select id="locationParentId">
+            <option value="">Selecciona una opción</option>
+          </select>
+        </div>
+
+        <div class="field full">
+          <label for="locationName">Nombre <span>*</span></label>
+          <input type="text" id="locationName"
+            maxlength="200" required>
+        </div>
+
+      </div>
+
+      <div id="locationFormError" class="form-error" hidden></div>
+
+      <footer class="modal-footer">
+        <button type="button" class="btn btn-outline"
+          data-location-close>Cancelar</button>
+
+        <button type="submit" class="btn btn-primary"
+          id="saveLocationButton">Guardar registro</button>
+      </footer>
+
+    </form>
+
+  </section>
+</div>

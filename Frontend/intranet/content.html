@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+
+    <!-- Google Fonts  -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <script src="https://unpkg.com/vue@3"></script>
+    <base href="/intranet/">
+    <title>Intranet</title>
+</head>
+
+<body class="bg-gray-200">
+    <div id="app">
+        <!-- LOADER -->
+        <div v-if="loading" class="loader-overlay">
+            <app-loader></app-loader>
+        </div>
+
+        <!-- APP -->
+        <div v-show="!loading">
+            <div
+                class="max-w-[1420px] mx-auto min-h-screen grid grid-rows-[64px_1fr] grid-cols-[0px_1fr] sm:grid-cols-[256px_1fr] bg-gray-50 shadow-xl">
+
+                <!-- NAVBAR -->
+                <navbar-intranet :brand="brand" :social-items="socialItems"></navbar-intranet>
+
+                <!-- SIDEBAR -->
+                <sidebar-intranet :primary="sidebarPrimary" :secondary="sidebarSecondary">
+                </sidebar-intranet>
+
+                <!-- MAIN -->
+                <!-- <main class="row-start-2 col-start-2 p-4 overflow-y-auto">
+
+                    <content-page-template v-if="page" :page="page" :blocks="blocks"
+                        :breadcrumb-items="breadcrumbItems" />
+
+                </main> -->
+
+                <main class="row-start-2 col-start-2 p-4 overflow-y-auto">
+
+                    <component v-if="page" :is="getTemplate(page)" :page="page" :blocks="blocks"
+                        :breadcrumb-items="breadcrumbItems" :record="record" :detail-config="detailConfig" />
+
+                </main>
+            </div>
+        </div>
+    </div>
+
+    <!-- FLOWBITE -->
+    <script src="https://cdn.jsdelivr.net/npm/flowbite@4.0.1/dist/flowbite.min.js"></script>
+
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+
+    <!-- GLOBAL -->
+    <script src="js/bootstrap.js"></script>
+    <script src="js/services/breadcrumb.service.js"></script>
+    <script src="js/services/content.service.js"></script>
+
+    <!-- UI -->
+    <script src="js/components/ui/accordion.js"></script>
+    <script src="js/components/ui/list.js"></script>
+    <script src="js/components/ui/breadcrumb.js"></script>
+    <script src="js/components/features/headers.js"></script>
+    <script src="js/components/ui/cards/cardList.js"></script>
+    <script src="js/components/ui/cards/CardGrid.js"></script>
+    <script src="js/components/ui/cards/CardGridCompact.js"></script>
+    <script src="js/components/ui/cards/CardVerticalDesc.js"></script>
+    <script src="js/components/ui/cards/CardVerticalSimple.js"></script>
+    <script src="js/components/ui/cards/InfoCard.js"></script>
+    <script src="js/components/ui/slider.js"></script>
+    <script src="js/components/ui/table.js"></script>
+    <script src="js/components/ui/select.js"></script>
+    <script src="js/components/ui/inputSearch.js"></script>
+    <script src="js/components/ui/listing-block.js"></script>
+    <script src="js/components/ui/button.js"></script>
+    <script src="js/components/ui/exportExcelButton.js"></script>
+    <script src="js/components/ui/exportPdfButton.js"></script>
+    <script src="js/components/ui/badges.js"></script>
+
+    <!-- CONTENT -->
+    <script src="js/components/content/contentRenderer.js"></script>
+    <script src="js/components/templates/contentPageTemplate.js"></script>
+    <script src="js/components/templates/detailPageTemplate.js"></script>
+
+    <!-- REGISTER -->
+    <script src="js/register-components.js"></script>
+
+    <!-- APP -->
+    <script src="js/pages/content.js"></script>
+</body>
+
+</html>

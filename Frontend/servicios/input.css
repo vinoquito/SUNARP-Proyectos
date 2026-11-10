@@ -1,0 +1,12 @@
+@import "tailwindcss";
+
+@import "./assets/css/gobpe-tokens.css";
+
+@import "flowbite/src/themes/default";
+
+@plugin "flowbite/plugin";
+
+@source "../node_modules/flowbite";
+
+/* Vue templates */
+@source "./assets/js";

@@ -1,0 +1,30 @@
+<template id="pagination-template">
+  <div class="pagination">
+
+    <label>
+      Mostrar
+      <select data-pagination-size aria-label="Registros por página">
+        <option value="10">10</option>
+        <option value="25">25</option>
+        <option value="50">50</option>
+      </select>
+    </label>
+
+    <span data-pagination-info>Página 1 de 1</span>
+
+    <button type="button"
+      class="btn btn-outline btn-sm"
+      data-pagination-prev
+      disabled>
+      Anterior
+    </button>
+
+    <button type="button"
+      class="btn btn-outline btn-sm"
+      data-pagination-next
+      disabled>
+      Siguiente
+    </button>
+
+  </div>
+</template>

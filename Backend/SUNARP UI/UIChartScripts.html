@@ -1,0 +1,403 @@
+<script>
+window.SUNARPUIChart = function (options = {}) {
+  if (typeof window.Chart !== 'function') {
+    throw new Error(
+      'Chart.js no está cargado. Comprueba la conexión y la URL de la librería.'
+    );
+  }
+
+  const container = document.getElementById(options.containerId);
+
+  if (!container) {
+    throw new Error(
+      `No existe el contenedor del gráfico "${options.containerId}".`
+    );
+  }
+
+  const requestedType = options.type || 'bar';
+  const validTypes = ['bar', 'line', 'donut', 'doughnut'];
+
+  if (!validTypes.includes(requestedType)) {
+    throw new Error(
+      `Tipo de gráfico no admitido: "${requestedType}".`
+    );
+  }
+
+  const type = requestedType === 'doughnut'
+    ? 'donut'
+    : requestedType;
+
+  const chartType = type === 'donut' ? 'doughnut' : type;
+
+  const palette = [
+    '#8EC321',
+    '#00A5A5',
+    '#FFAF00',
+    '#EB3219',
+    '#323C37',
+    '#7896AA'
+  ];
+
+  const colors = Array.isArray(options.colors) && options.colors.length
+    ? options.colors
+    : palette;
+
+  const formatter = new Intl.NumberFormat(
+    options.locale || 'es-PE',
+    { maximumFractionDigits: 2 }
+  );
+
+  const valuePrefix = String(options.valuePrefix || '');
+  const valueSuffix = String(options.valueSuffix || '');
+
+  function normalizeData(items) {
+    if (!Array.isArray(items)) return [];
+
+    return items.map((item, index) => {
+      const value = Number(item?.value);
+
+      if (!Number.isFinite(value)) {
+        throw new Error(
+          `El valor del elemento ${index + 1} no es numérico.`
+        );
+      }
+
+      if (type === 'donut' && value < 0) {
+        throw new Error(
+          'Los valores de un gráfico de dona no pueden ser negativos.'
+        );
+      }
+
+      return {
+        label: String(item?.label ?? `Elemento ${index + 1}`),
+        value,
+        color: item?.color || null
+      };
+    });
+  }
+
+  function getColor(item, index) {
+    return item.color || colors[index % colors.length];
+  }
+
+  function formatValue(value) {
+    return valuePrefix + formatter.format(value) + valueSuffix;
+  }
+
+  let data = normalizeData(options.data);
+  let chart = null;
+  let destroyed = false;
+
+  if (container.__sunarpChartInstance) {
+    container.__sunarpChartInstance.destroy();
+  }
+
+  const root = document.createElement('section');
+  root.className = 'sunarp-chart';
+
+  const header = document.createElement('header');
+  header.className = 'sunarp-chart-header';
+
+  const title = document.createElement('h2');
+  title.className = 'sunarp-chart-title';
+  title.textContent = options.title || 'Gráfico';
+
+  header.appendChild(title);
+
+  if (options.description) {
+    const description = document.createElement('p');
+    description.className = 'sunarp-chart-description';
+    description.textContent = options.description;
+    header.appendChild(description);
+  }
+
+  const plot = document.createElement('div');
+  plot.className = 'sunarp-chart-plot';
+
+  const canvas = document.createElement('canvas');
+  canvas.className = 'sunarp-chart-canvas';
+  canvas.setAttribute('role', 'img');
+  canvas.setAttribute(
+    'aria-label',
+    options.title || 'Gráfico de datos'
+  );
+
+  const empty = document.createElement('p');
+  empty.className = 'sunarp-chart-empty';
+  empty.textContent =
+    options.emptyMessage || 'No hay datos disponibles para mostrar.';
+
+  plot.append(canvas, empty);
+  root.append(header, plot);
+
+  container.replaceChildren(root);
+
+  function getDataset() {
+    const labels = data.map(item => item.label);
+    const values = data.map(item => item.value);
+    const pointColors = data.map(getColor);
+
+    if (type === 'bar') {
+      return {
+        labels,
+        datasets: [{
+          label: options.datasetLabel || options.title || 'Valores',
+          data: values,
+          backgroundColor: pointColors,
+          borderColor: pointColors,
+          borderWidth: 1,
+          borderRadius: 3,
+          borderSkipped: false,
+          maxBarThickness: Number(options.maxBarThickness) || 60
+        }]
+      };
+    }
+
+    if (type === 'line') {
+      const lineColor = options.lineColor || colors[0] || palette[0];
+
+      return {
+        labels,
+        datasets: [{
+          label: options.datasetLabel || options.title || 'Valores',
+          data: values,
+          borderColor: lineColor,
+          backgroundColor: options.fill
+            ? (options.fillColor || 'rgb(142 195 33 / 15%)')
+            : 'transparent',
+          pointBackgroundColor: pointColors,
+          pointBorderColor: '#FFFFFF',
+          pointBorderWidth: 2,
+          pointRadius: Number(options.pointRadius) || 4,
+          pointHoverRadius: 6,
+          borderWidth: Number(options.borderWidth) || 2,
+          tension: options.tension == null
+            ? 0.25
+            : Math.max(0, Math.min(1, Number(options.tension))),
+          fill: Boolean(options.fill)
+        }]
+      };
+    }
+
+    return {
+      labels,
+      datasets: [{
+        label: options.datasetLabel || options.title || 'Valores',
+        data: values,
+        backgroundColor: pointColors,
+        borderColor: '#FFFFFF',
+        borderWidth: 2,
+        hoverOffset: 5
+      }]
+    };
+  }
+
+  const valueLabelsPlugin = {
+    id: 'sunarpValueLabels',
+
+    afterDatasetsDraw(chartInstance) {
+      if (!options.showValues || type === 'donut') return;
+
+      const context = chartInstance.ctx;
+      const chartArea = chartInstance.chartArea;
+
+      context.save();
+      context.font = '11px Arial, Helvetica, sans-serif';
+      context.fillStyle = options.valueColor || '#323C37';
+      context.textAlign = 'center';
+      context.textBaseline = 'bottom';
+
+      chartInstance.data.datasets.forEach((dataset, datasetIndex) => {
+        const metadata = chartInstance.getDatasetMeta(datasetIndex);
+
+        metadata.data.forEach((element, index) => {
+          const value = Number(dataset.data[index]);
+
+          if (!Number.isFinite(value)) return;
+
+          const position = element.getProps(
+            ['x', 'y', 'base'],
+            true
+          );
+
+          const y = type === 'bar' && value < 0
+            ? position.base + 15
+            : position.y - 7;
+
+          context.fillText(
+            formatValue(value),
+            position.x,
+            Math.max(chartArea.top + 12, y)
+          );
+        });
+      });
+
+      context.restore();
+    }
+  };
+
+  function buildConfig() {
+    const showLegend = options.showLegend == null
+      ? type === 'donut'
+      : Boolean(options.showLegend);
+
+    const config = {
+      type: chartType,
+      data: getDataset(),
+
+      plugins: [valueLabelsPlugin],
+
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+
+        animation: options.animation === false
+          ? false
+          : { duration: 250 },
+
+        layout: {
+          padding: {
+            top: options.showValues ? 20 : 5,
+            right: 8,
+            bottom: 2,
+            left: 4
+          }
+        },
+
+        plugins: {
+          legend: {
+            display: showLegend,
+            position: options.legendPosition ||
+              (type === 'donut' ? 'bottom' : 'top'),
+
+            labels: {
+              color: '#58635C',
+              usePointStyle: true,
+              boxWidth: 10,
+              padding: 16,
+              font: {
+                family: 'Arial, Helvetica, sans-serif',
+                size: 12
+              }
+            }
+          },
+
+          tooltip: {
+            enabled: options.tooltips !== false,
+
+            callbacks: {
+              label(context) {
+                const value = Number(context.raw ?? 0);
+                const label = context.label || '';
+
+                return label
+                  ? `${label}: ${formatValue(value)}`
+                  : formatValue(value);
+              }
+            }
+          }
+        }
+      }
+    };
+
+    if (type !== 'donut') {
+      config.options.scales = {
+        x: {
+          grid: {
+            display: false
+          },
+          ticks: {
+            color: '#58635C',
+            font: {
+              family: 'Arial, Helvetica, sans-serif',
+              size: 11
+            }
+          }
+        },
+
+        y: {
+          beginAtZero: options.beginAtZero !== false,
+
+          grid: {
+            color: '#E5E9E3'
+          },
+
+          ticks: {
+            color: '#748078',
+
+            callback(value) {
+              return formatValue(value);
+            }
+          }
+        }
+      };
+    } else {
+      config.options.cutout = options.cutout || '65%';
+    }
+
+    return config;
+  }
+
+  function render() {
+    if (destroyed) return;
+
+    const total = data.reduce(
+      (sum, item) => sum + item.value,
+      0
+    );
+
+    const hasNoData = data.length === 0 ||
+      (type === 'donut' && total === 0);
+
+    if (chart) {
+      chart.destroy();
+      chart = null;
+    }
+
+    if (hasNoData) {
+      canvas.hidden = true;
+      empty.hidden = false;
+      return;
+    }
+
+    empty.hidden = true;
+    canvas.hidden = false;
+
+    chart = new window.Chart(canvas, buildConfig());
+  }
+
+  render();
+
+  const instance = Object.freeze({
+    setData(nextData) {
+      data = normalizeData(nextData);
+      render();
+    },
+
+    refresh() {
+      render();
+    },
+
+    destroy() {
+      if (destroyed) return;
+
+      destroyed = true;
+
+      if (chart) {
+        chart.destroy();
+        chart = null;
+      }
+
+      if (container.__sunarpChartInstance === instance) {
+        delete container.__sunarpChartInstance;
+      }
+
+      root.remove();
+    }
+  });
+
+  container.__sunarpChartInstance = instance;
+
+  return instance;
+};
+</script>

@@ -1,0 +1,1385 @@
+<script>
+'use strict';
+
+const accessManagementState = {
+  data: null,
+  activeTab: null,
+  editing: null
+};
+
+const accessAuditState = {
+  contextFilters: null
+};
+
+function accessEscape(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[char]);
+}
+
+function accessCallServer(method, ...args) {
+  return new Promise((resolve, reject) => {
+    google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler(error => reject(
+        new Error(error && error.message
+          ? error.message
+          : String(error))
+      ))[method](...args);
+  });
+}
+
+function accessNotify(message, isError = false) {
+  if (typeof showToast === 'function') {
+    showToast(message, isError);
+  } else {
+    console[isError ? 'error' : 'log'](message);
+  }
+}
+
+function applyApplicationPermissions() {
+  const permissions = userPermissions;
+
+  document.querySelectorAll('[data-permission]').forEach(element => {
+    const required = element.dataset.permission;
+    element.hidden = !permissions.has(required);
+  });
+
+  document.querySelectorAll('[data-any-permission]').forEach(element => {
+    const required = element.dataset.anyPermission
+      .split(',')
+      .map(value => value.trim())
+      .filter(Boolean);
+
+    element.hidden = !required.some(permission =>
+      permissions.has(permission)
+    );
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const accessLink =
+    document.querySelector('[data-view-target="accesos"]');
+
+  if (accessLink) {
+    accessLink.hidden = true;
+
+    accessLink.addEventListener('click', () => {
+      loadAccessManagement();
+    });
+  }
+
+  document.querySelectorAll('[data-access-tab]').forEach(button => {
+    button.addEventListener('click', () => {
+      switchAccessTab(button.dataset.accessTab);
+    });
+  });
+
+  $('addAccessUserButton').addEventListener('click', () => {
+    openAccessEntity('user');
+  });
+
+  $('addAccessRoleButton').addEventListener('click', () => {
+    openAccessEntity('role');
+  });
+
+  $('addAccessPermissionButton').addEventListener('click', () => {
+    openAccessEntity('permission');
+  });
+
+  $('accessAssignmentRole').addEventListener(
+    'change',
+    renderRolePermissionChecklist
+  );
+
+  $('saveRolePermissionsButton').addEventListener(
+    'click',
+    saveAccessRolePermissions
+  );
+
+  $('accessEntityForm').addEventListener(
+    'submit',
+    submitAccessEntity
+  );
+
+  createPaginator('auditPaginationHost', loadAuditHistory);
+
+  $('auditFiltersForm').addEventListener('submit', event => {
+    event.preventDefault();
+
+    paginatorInstances.auditPaginationHost.reset();
+    loadAuditHistory();
+  });
+
+  $('auditClearFilters').addEventListener('click', clearAuditFilters);
+
+  document.querySelectorAll('[data-access-close]').forEach(element => {
+    element.addEventListener('click', closeAccessEntity);
+  });
+
+  ['accessUsersTable', 'accessRolesTable', 'accessPermissionsTable']
+    .forEach(containerId => {
+      $(containerId).addEventListener('click', handleAccessTableAction);
+    });
+});
+
+function switchAccessTab(tab) {
+  const data = accessManagementState.data;
+
+  if (!data) return;
+
+  const permitted = {
+    users: data.capabilities.users,
+    roles: data.capabilities.roles,
+    permissions: data.capabilities.permissions,
+    assignments: data.capabilities.assignments,
+    audit: data.capabilities.audit
+  };
+
+  if (!permitted[tab]) return;
+
+  accessManagementState.activeTab = tab;
+
+  document.querySelectorAll('[data-access-tab]').forEach(button => {
+    button.classList.toggle(
+      'active',
+      button.dataset.accessTab === tab
+    );
+  });
+
+  document.querySelectorAll('[data-access-panel]').forEach(panel => {
+    panel.hidden = panel.dataset.accessPanel !== tab;
+  });
+
+  if (tab === 'audit') {
+    loadAuditHistory();
+  }
+}
+
+async function loadAccessManagement() {
+  const message = $('accessManagementMessage');
+  message.hidden = true;
+
+  try {
+    const data = await accessCallServer('getAccessManagementData');
+
+    accessManagementState.data = data;
+
+    const canAccess = (
+      data.capabilities.users ||
+      data.capabilities.roles ||
+      data.capabilities.permissions ||
+      data.capabilities.audit
+    );
+
+    const accessLink =
+      document.querySelector('[data-view-target="accesos"]');
+
+    if (accessLink) {
+      accessLink.hidden = !canAccess;
+    }
+
+    applyAccessCapabilities(data.capabilities);
+    renderAccessManagement();
+
+    const availableTabs = [
+      'users',
+      'roles',
+      'permissions',
+      'assignments',
+      'audit'
+    ].filter(tab => {
+      return tab === 'assignments'
+        ? data.capabilities.assignments
+        : Boolean(data.capabilities[tab]);
+    });
+
+    const activeTab = availableTabs.includes(
+      accessManagementState.activeTab
+    )
+      ? accessManagementState.activeTab
+      : availableTabs[0];
+
+    if (activeTab) {
+      switchAccessTab(activeTab);
+    }
+
+  } catch (error) {
+    message.textContent = error.message;
+    message.hidden = false;
+
+    const accessLink =
+      document.querySelector('[data-view-target="accesos"]');
+
+    if (accessLink) {
+      accessLink.hidden = true;
+    }
+
+    accessNotify(error.message, true);
+  }
+}
+
+function applyAccessCapabilities(capabilities) {
+  document.querySelectorAll('[data-access-tab]').forEach(button => {
+    const tab = button.dataset.accessTab;
+
+    const visible = tab === 'assignments'
+      ? capabilities.assignments
+      : Boolean(capabilities[tab]);
+
+    button.hidden = !visible;
+  });
+
+  $('addAccessUserButton').hidden = !capabilities.users;
+  $('addAccessRoleButton').hidden = !capabilities.roles;
+  $('addAccessPermissionButton').hidden = !capabilities.permissions;
+  $('saveRolePermissionsButton').hidden = !capabilities.assignments;
+
+  document.querySelectorAll('[data-access-panel]').forEach(panel => {
+    const tab = panel.dataset.accessPanel;
+
+    panel.hidden = tab === 'assignments'
+      ? !capabilities.assignments
+      : !capabilities[tab];
+  });
+}
+
+function renderAccessManagement() {
+  const data = accessManagementState.data;
+
+  if (!data) return;
+
+  renderAccessUsers(data);
+  renderAccessRoles(data);
+  renderAccessPermissions(data);
+  renderRoleAssignmentSelect(data);
+}
+
+function renderAccessUsers(data) {
+  if (!data.capabilities.users) return;
+
+  const roleNames = new Map(
+    data.roles.map(role => [role.roleId, role.name])
+  );
+
+  if (!data.users.length) {
+    $('accessUsersTable').innerHTML = `
+      <div class="empty-state">No hay usuarios registrados.</div>`;
+    return;
+  }
+
+  const rows = data.users.map(user => {
+    const actions = [];
+
+    actions.push(`
+      <button type="button" class="btn btn-outline btn-sm"
+        data-access-edit="user"
+        data-access-key="${accessEscape(user.email)}">
+        Editar
+      </button>
+    `);
+
+    actions.push(`
+      <button type="button" class="btn btn-outline btn-sm"
+        data-access-toggle="user"
+        data-access-key="${accessEscape(user.email)}"
+        data-access-next="${user.state === 'ACTIVO' ? 'INACTIVO' : 'ACTIVO'}">
+        ${user.state === 'ACTIVO' ? 'Desactivar' : 'Activar'}
+      </button>
+    `);
+
+    if (data.capabilities.audit) {
+      actions.push(`
+        <button type="button" class="btn btn-outline btn-sm"
+          data-context-user-email="${accessEscape(user.email)}"
+          onclick="openUserAuditHistory(this.dataset.contextUserEmail)">
+          Historial de actividad
+        </button>
+      `);
+    }
+
+    return `
+      <tr>
+        <td>${accessEscape(user.email)}</td>
+        <td>${accessEscape(user.name)}</td>
+        <td>${accessEscape(roleNames.get(user.roleId) || user.roleId)}</td>
+        <td>${accessEscape(user.state)}</td>
+        <td><div class="actions">${actions.join('')}</div></td>
+      </tr>`;
+  }).join('');
+
+  $('accessUsersTable').innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Correo institucional</th>
+          <th>Nombre</th>
+          <th>Rol</th>
+          <th>Estado</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function renderAccessRoles(data) {
+  if (!data.capabilities.roles) return;
+
+  if (!data.roles.length) {
+    $('accessRolesTable').innerHTML = `
+      <div class="empty-state">No hay roles registrados.</div>`;
+    return;
+  }
+
+  const rows = data.roles.map(role => `
+    <tr>
+      <td>${accessEscape(role.roleId)}</td>
+      <td><strong>${accessEscape(role.name)}</strong></td>
+      <td>${accessEscape(role.description || '—')}</td>
+      <td>${accessEscape(role.state)}</td>
+      <td>
+        <div class="actions">
+          <button type="button" class="btn btn-outline btn-sm"
+            data-access-edit="role"
+            data-access-key="${accessEscape(role.roleId)}">
+            Editar
+          </button>
+
+          <button type="button" class="btn btn-outline btn-sm"
+            data-access-toggle="role"
+            data-access-key="${accessEscape(role.roleId)}"
+            data-access-next="${role.state === 'ACTIVO' ? 'INACTIVO' : 'ACTIVO'}">
+            ${role.state === 'ACTIVO' ? 'Desactivar' : 'Activar'}
+          </button>
+
+          ${data.capabilities.audit ? `
+          <button type="button" class="btn btn-outline btn-sm"
+            data-access-history-record
+            data-access-history-type="ROL"
+            data-access-key="${accessEscape(role.roleId)}"
+            data-access-name="${accessEscape(role.name)}">
+            Historial
+          </button>
+        ` : ''}
+        </div>
+      </td>
+    </tr>
+  `).join('');
+
+  $('accessRolesTable').innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Identificador</th>
+          <th>Rol</th>
+          <th>Descripción</th>
+          <th>Estado</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function renderAccessPermissions(data) {
+  if (!data.capabilities.permissions) return;
+
+  if (!data.permissions.length) {
+    $('accessPermissionsTable').innerHTML = `
+      <div class="empty-state">No hay permisos registrados.</div>`;
+    return;
+  }
+
+  const rows = data.permissions.map(permission => `
+    <tr>
+      <td>${accessEscape(permission.permissionId)}</td>
+      <td><strong>${accessEscape(permission.code)}</strong></td>
+      <td>${accessEscape(permission.module)}</td>
+      <td>${accessEscape(permission.operation)}</td>
+      <td>${accessEscape(permission.description)}</td>
+      <td>${accessEscape(permission.state)}</td>
+      <td>
+        <div class="actions">
+          <button type="button" class="btn btn-outline btn-sm"
+            data-access-edit="permission"
+            data-access-key="${accessEscape(permission.permissionId)}">
+            Editar
+          </button>
+
+          <button type="button" class="btn btn-outline btn-sm"
+            data-access-toggle="permission"
+            data-access-key="${accessEscape(permission.permissionId)}"
+            data-access-next="${permission.state === 'ACTIVO' ? 'INACTIVO' : 'ACTIVO'}">
+            ${permission.state === 'ACTIVO' ? 'Desactivar' : 'Activar'}
+          </button>
+
+          ${data.capabilities.audit ? `
+            <button type="button" class="btn btn-outline btn-sm"
+              data-access-history-record
+              data-access-history-type="PERMISO"
+              data-access-key="${accessEscape(permission.permissionId)}"
+              data-access-name="${accessEscape(permission.code)}">
+              Historial
+            </button>
+          ` : ''}
+        </div>
+      </td>
+    </tr>
+  `).join('');
+
+  $('accessPermissionsTable').innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Código</th>
+          <th>Módulo</th>
+          <th>Operación</th>
+          <th>Descripción</th>
+          <th>Estado</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function renderRoleAssignmentSelect(data) {
+  if (!data.capabilities.assignments) return;
+
+  const select = $('accessAssignmentRole');
+  const previousValue = select.value;
+
+  select.replaceChildren(
+    new Option('Selecciona un rol', '')
+  );
+
+  data.roles
+    .filter(role => role.state === 'ACTIVO')
+    .forEach(role => {
+      select.add(
+        new Option(`${role.name} (${role.roleId})`, role.roleId)
+      );
+    });
+
+  if (data.roles.some(role =>
+    role.roleId === previousValue && role.state === 'ACTIVO'
+  )) {
+    select.value = previousValue;
+  } else if (select.options.length > 1) {
+    select.selectedIndex = 1;
+  }
+
+  renderRolePermissionChecklist();
+}
+
+function renderRolePermissionChecklist() {
+  const data = accessManagementState.data;
+  const container = $('accessPermissionChecklist');
+
+  if (!data || !data.capabilities.assignments) return;
+
+  const roleId = $('accessAssignmentRole').value;
+
+  if (!roleId) {
+    container.innerHTML = `
+      <div class="empty-state">
+        Selecciona un rol para consultar sus permisos.
+      </div>`;
+    return;
+  }
+
+  const assigned = new Set(
+    data.rolePermissions
+      .filter(item =>
+        item.roleId === roleId && item.state === 'ACTIVO'
+      )
+      .map(item => item.permissionId)
+  );
+
+  const permissions = data.permissions.filter(
+    permission => permission.state === 'ACTIVO'
+  );
+
+  if (!permissions.length) {
+    container.innerHTML = `
+      <div class="empty-state">
+        No existen permisos activos para asignar.
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = permissions.map(permission => `
+    <label class="access-permission-option">
+      <input type="checkbox"
+        data-role-permission="${accessEscape(permission.permissionId)}"
+        ${assigned.has(permission.permissionId) ? 'checked' : ''}>
+
+      <span>
+        <strong>${accessEscape(permission.code)}</strong>
+        <small>
+          ${accessEscape(permission.module)} /
+          ${accessEscape(permission.operation)}
+          — ${accessEscape(permission.description)}
+        </small>
+      </span>
+    </label>
+  `).join('');
+}
+
+function openAccessEntity(type, record = null) {
+  const data = accessManagementState.data;
+
+  if (!data) return;
+
+  const editing = Boolean(record);
+
+  accessManagementState.editing = {
+    type,
+    record
+  };
+
+  $('accessEntityForm').reset();
+  $('accessEntityError').hidden = true;
+
+  const title = {
+    user: editing ? 'Editar usuario' : 'Nuevo usuario',
+    role: editing ? 'Editar rol' : 'Nuevo rol',
+    permission: editing ? 'Editar permiso' : 'Nuevo permiso'
+  };
+
+  $('accessEntityTitle').textContent = title[type];
+  $('accessEntityDescription').textContent = editing
+    ? 'Actualiza los datos del registro.'
+    : 'Completa los datos solicitados.';
+
+  let fields = '';
+
+  if (type === 'user') {
+    const activeRoles = data.roles.filter(role =>
+      role.state === 'ACTIVO' ||
+      (record && role.roleId === record.roleId)
+    );
+
+    fields = `
+      <div class="field full">
+        <label for="accessEmail">Correo institucional <span>*</span></label>
+        <input id="accessEmail" type="email" required
+          maxlength="254" value="${accessEscape(record?.email || '')}">
+      </div>
+
+      <div class="field full">
+        <label for="accessName">Nombre completo <span>*</span></label>
+        <input id="accessName" required maxlength="200"
+          value="${accessEscape(record?.name || '')}">
+      </div>
+
+      <div class="field">
+        <label for="accessRoleId">Rol <span>*</span></label>
+        <select id="accessRoleId" required>
+          <option value="">Selecciona un rol</option>
+          ${activeRoles.map(role => `
+            <option value="${accessEscape(role.roleId)}"
+              ${record?.roleId === role.roleId ? 'selected' : ''}>
+              ${accessEscape(role.name)}
+            </option>
+          `).join('')}
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="accessState">Estado <span>*</span></label>
+        <select id="accessState" required>
+          <option value="ACTIVO"
+            ${!record || record.state === 'ACTIVO' ? 'selected' : ''}>
+            Activo
+          </option>
+          <option value="INACTIVO"
+            ${record?.state === 'INACTIVO' ? 'selected' : ''}>
+            Inactivo
+          </option>
+        </select>
+      </div>`;
+  }
+
+  if (type === 'role') {
+    fields = `
+      <div class="field full">
+        <label for="accessRoleCode">Identificador <span>*</span></label>
+        <input id="accessRoleCode" required maxlength="50"
+          value="${accessEscape(record?.roleId || '')}"
+          ${editing ? 'disabled' : ''}>
+        <small>En edición, el identificador permanece fijo.</small>
+      </div>
+
+      <div class="field full">
+        <label for="accessRoleName">Nombre <span>*</span></label>
+        <input id="accessRoleName" required maxlength="100"
+          value="${accessEscape(record?.name || '')}">
+      </div>
+
+      <div class="field full">
+        <label for="accessRoleDescription">Descripción</label>
+        <textarea id="accessRoleDescription" rows="3"
+          maxlength="500">${accessEscape(record?.description || '')}</textarea>
+      </div>
+
+      <div class="field">
+        <label for="accessState">Estado <span>*</span></label>
+        <select id="accessState" required>
+          <option value="ACTIVO"
+            ${!record || record.state === 'ACTIVO' ? 'selected' : ''}>
+            Activo
+          </option>
+          <option value="INACTIVO"
+            ${record?.state === 'INACTIVO' ? 'selected' : ''}>
+            Inactivo
+          </option>
+        </select>
+      </div>`;
+  }
+
+  if (type === 'permission') {
+    fields = `
+      <div class="field full">
+        <label for="accessPermissionCode">Código <span>*</span></label>
+        <input id="accessPermissionCode" required maxlength="100"
+          value="${accessEscape(record?.code || '')}"
+          ${editing ? 'disabled' : ''}>
+        <small>
+          El código se utiliza en las reglas del servidor y no se modifica
+          después de crear el permiso.
+        </small>
+      </div>
+
+      <div class="field">
+        <label for="accessPermissionModule">Módulo <span>*</span></label>
+        <input id="accessPermissionModule" required maxlength="100"
+          value="${accessEscape(record?.module || '')}">
+      </div>
+
+      <div class="field">
+        <label for="accessPermissionOperation">Operación <span>*</span></label>
+        <input id="accessPermissionOperation" required maxlength="100"
+          value="${accessEscape(record?.operation || '')}">
+      </div>
+
+      <div class="field full">
+        <label for="accessPermissionDescription">Descripción <span>*</span></label>
+        <textarea id="accessPermissionDescription" rows="3"
+          required maxlength="500">${accessEscape(record?.description || '')}</textarea>
+      </div>
+
+      <div class="field">
+        <label for="accessState">Estado <span>*</span></label>
+        <select id="accessState" required>
+          <option value="ACTIVO"
+            ${!record || record.state === 'ACTIVO' ? 'selected' : ''}>
+            Activo
+          </option>
+          <option value="INACTIVO"
+            ${record?.state === 'INACTIVO' ? 'selected' : ''}>
+            Inactivo
+          </option>
+        </select>
+      </div>`;
+  }
+
+  $('accessEntityFields').innerHTML = fields;
+  $('saveAccessEntityButton').textContent =
+    editing ? 'Guardar cambios' : 'Crear registro';
+
+  $('accessEntityModal').classList.add('open');
+  $('accessEntityModal').setAttribute('aria-hidden', 'false');
+}
+
+function closeAccessEntity() {
+  $('accessEntityModal').classList.remove('open');
+  $('accessEntityModal').setAttribute('aria-hidden', 'true');
+  accessManagementState.editing = null;
+}
+
+async function submitAccessEntity(event) {
+  event.preventDefault();
+
+  const error = $('accessEntityError');
+  const button = $('saveAccessEntityButton');
+  const editing = accessManagementState.editing;
+
+  if (!editing) return;
+
+  const { type, record } = editing;
+  const action = record ? 'edit' : 'create';
+
+  let method;
+  let payload;
+
+  if (type === 'user') {
+    method = 'saveAccessUser';
+
+    payload = {
+      action,
+      originalEmail: record?.email || '',
+      email: $('accessEmail').value.trim(),
+      name: $('accessName').value.trim(),
+      roleId: $('accessRoleId').value,
+      state: $('accessState').value
+    };
+  }
+
+  if (type === 'role') {
+    method = 'saveAccessRole';
+
+    payload = {
+      action,
+      originalRoleId: record?.roleId || '',
+      roleId: record?.roleId || $('accessRoleCode').value.trim(),
+      name: $('accessRoleName').value.trim(),
+      description: $('accessRoleDescription').value.trim(),
+      state: $('accessState').value
+    };
+  }
+
+  if (type === 'permission') {
+    method = 'saveAccessPermission';
+
+    payload = {
+      action,
+      originalPermissionId: record?.permissionId || '',
+      code: record?.code || $('accessPermissionCode').value.trim(),
+      module: $('accessPermissionModule').value.trim(),
+      operation: $('accessPermissionOperation').value.trim(),
+      description: $('accessPermissionDescription').value.trim(),
+      state: $('accessState').value
+    };
+  }
+
+  button.disabled = true;
+  button.textContent = 'Guardando...';
+  error.hidden = true;
+
+  try {
+    const result = await accessCallServer(method, payload);
+
+    closeAccessEntity();
+    accessNotify(result.message);
+
+    await loadAccessManagement();
+
+  } catch (exception) {
+    error.textContent = exception.message;
+    error.hidden = false;
+
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Guardar';
+  }
+}
+
+async function handleAccessTableAction(event) {
+  const historyUserButton =
+    event.target.closest('[data-access-history-user]');
+
+  if (historyUserButton) {
+    openAuditHistory({
+      actorEmail: historyUserButton.dataset.accessHistoryUser
+    });
+    return;
+  }
+
+  const historyRecordButton =
+    event.target.closest('[data-access-history-record]');
+
+  if (historyRecordButton) {
+    openAuditHistory({
+      entityType: historyRecordButton.dataset.accessHistoryType,
+      recordId: historyRecordButton.dataset.accessKey,
+      recordName: historyRecordButton.dataset.accessName
+    });
+    return;
+  }
+
+  const editButton = event.target.closest('[data-access-edit]');
+  const toggleButton = event.target.closest('[data-access-toggle]');
+
+  if (editButton) {
+    const type = editButton.dataset.accessEdit;
+    const key = editButton.dataset.accessKey;
+    const data = accessManagementState.data;
+
+    let record = null;
+
+    if (type === 'user') {
+      record = data.users.find(item => item.email === key);
+    } else if (type === 'role') {
+      record = data.roles.find(item => item.roleId === key);
+    } else if (type === 'permission') {
+      record = data.permissions.find(
+        item => item.permissionId === key
+      );
+    }
+
+    if (record) openAccessEntity(type, record);
+    return;
+  }
+
+  if (!toggleButton) return;
+
+  const type = toggleButton.dataset.accessToggle;
+  const key = toggleButton.dataset.accessKey;
+  const nextState = toggleButton.dataset.accessNext;
+  const data = accessManagementState.data;
+
+  let record;
+  let method;
+  let payload;
+
+  if (type === 'user') {
+    record = data.users.find(item => item.email === key);
+    method = 'saveAccessUser';
+
+    if (record) {
+      payload = {
+        action: 'edit',
+        originalEmail: record.email,
+        email: record.email,
+        name: record.name,
+        roleId: record.roleId,
+        state: nextState
+      };
+    }
+
+  } else if (type === 'role') {
+    record = data.roles.find(item => item.roleId === key);
+    method = 'saveAccessRole';
+
+    if (record) {
+      payload = {
+        action: 'edit',
+        originalRoleId: record.roleId,
+        roleId: record.roleId,
+        name: record.name,
+        description: record.description,
+        state: nextState
+      };
+    }
+
+  } else if (type === 'permission') {
+    record = data.permissions.find(
+      item => item.permissionId === key
+    );
+    method = 'saveAccessPermission';
+
+    if (record) {
+      payload = {
+        action: 'edit',
+        originalPermissionId: record.permissionId,
+        code: record.code,
+        module: record.module,
+        operation: record.operation,
+        description: record.description,
+        state: nextState
+      };
+    }
+  }
+
+  if (!record) return;
+
+  if (!confirm(
+    `¿Deseas cambiar el estado de "${key}" a ${nextState}?`
+  )) {
+    return;
+  }
+
+  try {
+    const result = await accessCallServer(method, payload);
+
+    accessNotify(result.message);
+    await loadAccessManagement();
+
+  } catch (error) {
+    accessNotify(error.message, true);
+  }
+}
+
+async function saveAccessRolePermissions() {
+  const roleId = $('accessAssignmentRole').value;
+
+  if (!roleId) {
+    accessNotify('Selecciona un rol.', true);
+    return;
+  }
+
+  const permissionIds = Array.from(
+    document.querySelectorAll('[data-role-permission]:checked')
+  ).map(input => input.dataset.rolePermission);
+
+  const button = $('saveRolePermissionsButton');
+  button.disabled = true;
+
+  try {
+    const result = await accessCallServer(
+      'saveRolePermissions',
+      { roleId, permissionIds }
+    );
+
+    accessNotify(result.message);
+
+    await loadAccessManagement();
+
+    $('accessAssignmentRole').value = roleId;
+    renderRolePermissionChecklist();
+
+  } catch (error) {
+    accessNotify(error.message, true);
+
+  } finally {
+    button.disabled = false;
+  }
+}
+
+// ============================================================
+// AUDITORÍA: APERTURA DE HISTORIALES
+// ============================================================
+
+let contextAuditState = {
+  mode: '',
+  actorEmail: '',
+  entityType: '',
+  recordId: '',
+  recordName: '',
+  returnView: 'accesos',
+  page: 1,
+  pageSize: 20,
+  totalPages: 1
+};
+
+function openAuditHistory(filters = {}) {
+  const sourceView = document.querySelector(
+    '.app-view:not([hidden])'
+  );
+
+  const returnView = sourceView
+    ? sourceView.id.replace(/^view-/, '')
+    : 'accesos';
+
+  const actorEmail = String(
+    filters.actorEmail ||
+    filters.actorCorreo ||
+    filters.userEmail ||
+    filters.usuarioCorreo ||
+    filters.correoUsuario ||
+    filters.email ||
+    ''
+  ).trim();
+
+  const recordId = String(
+    filters.recordId ||
+    filters.idRegistro ||
+    ''
+  ).trim();
+
+  const entityType = String(
+    filters.entityType ||
+    filters.tipoEntidad ||
+    ''
+  ).trim();
+
+  const recordName = String(
+    filters.recordName ||
+    filters.nombreRegistro ||
+    filters.name ||
+    filters.nombre ||
+    ''
+  ).trim();
+
+  if (!actorEmail && !recordId) {
+    showToast(
+      'No se identificó el usuario o el registro cuyo historial se desea consultar.',
+      true
+    );
+    return;
+  }
+
+  contextAuditState = {
+    mode: actorEmail ? 'usuario' : 'registro',
+    actorEmail,
+    entityType,
+    recordId,
+    recordName,
+    returnView,
+    page: 1,
+    pageSize: 20,
+    totalPages: 1
+  };
+
+  if (contextAuditState.mode === 'usuario') {
+    $('contextAuditTitle').textContent =
+      'Historial de actividad del usuario';
+
+    $('contextAuditDescription').textContent =
+      `${actorEmail}${recordName ? ' · ' + recordName : ''}`;
+  } else {
+    $('contextAuditTitle').textContent =
+      'Historial de actividad del registro';
+
+    $('contextAuditDescription').textContent =
+      `${recordName || 'Registro'} · ID: ${recordId}`;
+  }
+
+  switchGestorView('historial');
+
+  loadContextAuditHistory(1);
+}
+
+function openUserAuditHistory(email, name = '') {
+  openAuditHistory({
+    actorEmail: email,
+    recordName: name
+  });
+}
+
+function openAgentAuditHistory(id, name = '') {
+  openAuditHistory({
+    entityType: 'AGENTE',
+    recordId: id,
+    recordName: name
+  });
+}
+
+function closeContextAuditHistory() {
+  switchGestorView(contextAuditState.returnView || 'accesos');
+}
+
+function previousContextAuditPage() {
+  if (contextAuditState.page > 1) {
+    loadContextAuditHistory(contextAuditState.page - 1);
+  }
+}
+
+function nextContextAuditPage() {
+  if (contextAuditState.page < contextAuditState.totalPages) {
+    loadContextAuditHistory(contextAuditState.page + 1);
+  }
+}
+
+async function loadContextAuditHistory(page = 1) {
+  const host = $('contextAuditTableHost');
+
+  host.innerHTML =
+    '<p style="padding:16px;">Cargando historial...</p>';
+
+  try {
+    const data = await callServer('getContextAuditHistory', {
+      mode: contextAuditState.mode,
+      actorEmail: contextAuditState.actorEmail,
+      entityType: contextAuditState.entityType,
+      recordId: contextAuditState.recordId,
+      page,
+      pageSize: contextAuditState.pageSize
+    });
+
+    contextAuditState.page = data.page;
+    contextAuditState.totalPages = data.totalPages;
+
+    renderContextAuditHistory(data);
+
+  } catch (error) {
+    host.innerHTML = `
+      <p style="padding:16px;">
+        No se pudo cargar el historial:
+        ${escapeHtml(error.message)}
+      </p>`;
+
+    $('contextAuditCount').textContent = '';
+    $('contextAuditPageInfo').textContent = '';
+
+    $('contextAuditPrev').disabled = true;
+    $('contextAuditNext').disabled = true;
+  }
+}
+
+function renderContextAuditHistory(data) {
+  const host = $('contextAuditTableHost');
+  const items = data.items || [];
+
+  $('contextAuditCount').textContent =
+    `${Number(data.total || 0).toLocaleString('es-PE')} acciones registradas`;
+
+  $('contextAuditPageInfo').textContent =
+    `Página ${data.page} de ${data.totalPages}`;
+
+  $('contextAuditPrev').disabled = data.page <= 1;
+  $('contextAuditNext').disabled =
+    data.page >= data.totalPages;
+
+  if (!items.length) {
+    host.innerHTML = `
+      <p style="padding:16px;">
+        No se encontraron acciones para este historial.
+      </p>`;
+    return;
+  }
+
+  const rows = items.map(item => {
+    const changes = item.before || item.after
+      ? `
+        <details>
+          <summary>Ver cambios</summary>
+          <strong>Antes</strong>
+          <pre>${escapeHtml(item.before || 'Sin información')}</pre>
+          <strong>Después</strong>
+          <pre>${escapeHtml(item.after || 'Sin información')}</pre>
+        </details>`
+      : '';
+
+    return `
+      <tr>
+        <td>${escapeHtml(item.dateTime || '—')}</td>
+
+        <td>
+          <strong>${escapeHtml(item.actorName || '—')}</strong>
+          <small>${escapeHtml(item.actorEmail || '')}</small>
+        </td>
+
+        <td>${escapeHtml(item.action || '—')}</td>
+
+        <td>${escapeHtml(item.module || '—')}</td>
+
+        <td>
+          ${escapeHtml(item.recordName || item.recordId || '—')}
+        </td>
+
+        <td>${escapeHtml(item.result || '—')}</td>
+
+        <td>
+          ${escapeHtml(item.detail || '—')}
+          ${changes}
+        </td>
+      </tr>`;
+  }).join('');
+
+  host.innerHTML = `
+    <table class="context-audit-table">
+      <thead>
+        <tr>
+          <th>Fecha y hora</th>
+          <th>Usuario responsable</th>
+          <th>Acción</th>
+          <th>Módulo</th>
+          <th>Registro</th>
+          <th>Resultado</th>
+          <th>Detalle y cambios</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ============================================================
+// AUDITORÍA: LIMPIAR FILTROS
+// ============================================================
+
+function clearAuditFilters() {
+  $('auditFilterActor').value = '';
+  $('auditFilterModule').value = '';
+  $('auditFilterAction').value = '';
+  $('auditFilterResult').value = '';
+  $('auditFilterEntityType').value = '';
+  $('auditFilterRecordId').value = '';
+  $('auditFilterFrom').value = '';
+  $('auditFilterTo').value = '';
+  $('auditFilterQuery').value = '';
+
+  accessAuditState.contextFilters = null;
+
+  $('auditContextNotice').textContent = '';
+  $('auditContextNotice').hidden = true;
+
+  paginatorInstances.auditPaginationHost.reset();
+
+  loadAuditHistory();
+}
+
+// ============================================================
+// AUDITORÍA: CONSULTA PAGINADA
+// ============================================================
+
+async function loadAuditHistory() {
+  const data = accessManagementState.data;
+
+  if (!data || !data.capabilities.audit) return;
+
+  const paginator = paginatorInstances.auditPaginationHost;
+
+  if (!paginator) return;
+
+  const filters = {
+    actorEmail: $('auditFilterActor').value.trim(),
+    module: $('auditFilterModule').value,
+    action: $('auditFilterAction').value,
+    result: $('auditFilterResult').value,
+    entityType: $('auditFilterEntityType').value,
+    recordId: $('auditFilterRecordId').value.trim(),
+    fromDate: $('auditFilterFrom').value,
+    toDate: $('auditFilterTo').value,
+    query: $('auditFilterQuery').value.trim(),
+    recordName: (
+      accessAuditState.contextFilters?.recordId ===
+        $('auditFilterRecordId').value.trim() &&
+      accessAuditState.contextFilters?.entityType ===
+        $('auditFilterEntityType').value
+    )
+      ? accessAuditState.contextFilters.recordName || ''
+      : '',
+  };
+
+  const contextKey = JSON.stringify(filters);
+  const state = paginator.getState();
+
+  $('auditResultsTable').innerHTML =
+    '<div class="loading">Consultando historial...</div>';
+
+  try {
+    const result = await accessCallServer('getAuditHistory', {
+      ...filters,
+      page: state.currentPage,
+      pageSize: state.pageSize
+    });
+
+    // Mantener sincronizada la página con el total filtrado.
+    const page = paginator.getPage(result.total, contextKey);
+
+    if (page.currentPage !== result.page) {
+      return loadAuditHistory();
+    }
+
+    $('auditResultsCount').textContent =
+      result.total === 1
+        ? '1 evento'
+        : `${result.total.toLocaleString('es-PE')} eventos`;
+
+    renderAuditResults(result.items || []);
+
+  } catch (error) {
+    $('auditResultsTable').innerHTML = `
+      <div class="empty-state">
+        <strong>No se pudo consultar la auditoría</strong>
+        ${accessEscape(error.message)}
+      </div>`;
+
+    accessNotify(error.message, true);
+  }
+}
+
+// ============================================================
+// AUDITORÍA: REPRESENTACIÓN DE DATOS ANTERIORES Y POSTERIORES
+// ============================================================
+
+function formatAuditSnapshot(value) {
+  if (!value) return 'Sin datos registrados';
+
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch (error) {
+    return value;
+  }
+}
+
+function renderAuditResults(items) {
+  if (!items.length) {
+    $('auditResultsTable').innerHTML = `
+      <div class="empty-state">
+        <strong>No se encontraron eventos</strong>
+        Prueba modificando los filtros de búsqueda.
+      </div>`;
+    return;
+  }
+
+  const rows = items.map(item => {
+    const recordLabel = item.recordName || item.recordId || '—';
+
+    const before = formatAuditSnapshot(item.before);
+    const after = formatAuditSnapshot(item.after);
+
+    const changes = item.before || item.after
+      ? `
+        <details class="audit-change-details">
+          <summary>Ver cambios</summary>
+          <div class="audit-change-grid">
+            <div>
+              <strong>Antes</strong>
+              <pre>${accessEscape(before)}</pre>
+            </div>
+            <div>
+              <strong>Después</strong>
+              <pre>${accessEscape(after)}</pre>
+            </div>
+          </div>
+        </details>`
+      : '—';
+
+    return `
+      <tr>
+        <td>
+          ${accessEscape(item.timestamp)}
+        </td>
+
+        <td>
+          <strong>
+            ${accessEscape(item.actorName || 'Nombre no registrado')}
+          </strong>
+          <small>${accessEscape(item.actorEmail)}</small>
+        </td>
+
+        <td>
+          ${accessEscape(item.action)}
+          <small>${accessEscape(item.module)}</small>
+        </td>
+
+        <td>
+          <strong>${accessEscape(recordLabel)}</strong>
+          <small>
+            ${accessEscape(item.entityType)}
+            ${item.recordId
+              ? ' · ' + accessEscape(item.recordId)
+              : ''}
+          </small>
+        </td>
+
+        <td>
+          <span class="audit-status"
+            data-status="${accessEscape(item.result)}">
+            ${accessEscape(item.result)}
+          </span>
+        </td>
+
+        <td>${accessEscape(item.detail || '—')}</td>
+
+        <td>${changes}</td>
+      </tr>`;
+  }).join('');
+
+  $('auditResultsTable').innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Fecha y hora</th>
+          <th>Usuario</th>
+          <th>Acción / módulo</th>
+          <th>Registro afectado</th>
+          <th>Resultado</th>
+          <th>Detalle</th>
+          <th>Cambios</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+</script>

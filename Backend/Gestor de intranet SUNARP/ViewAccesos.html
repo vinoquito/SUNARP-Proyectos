@@ -1,0 +1,48 @@
+<section
+  class="access-page"
+  id="viewAccesos"
+  data-app-view="accesos"
+  hidden>
+
+  <div class="sunarp-card access-card">
+    <div class="access-page-heading">
+      <div>
+        <h2>Administración de accesos</h2>
+        <p>
+          Gestiona usuarios, roles, permisos, ámbitos de acceso
+          y el historial de operaciones.
+        </p>
+      </div>
+
+      <button
+        type="button"
+        class="sunarp-btn sunarp-btn--outline"
+        id="accessRefreshButton">
+
+        <span
+          class="material-symbols-outlined"
+          aria-hidden="true">refresh</span>
+
+        <span>Actualizar</span>
+      </button>
+    </div>
+
+    <div
+      id="accessPageMessage"
+      class="access-page-message"
+      role="status"
+      aria-live="polite">
+
+      Cargando administración de accesos...
+    </div>
+
+    <div id="accessTabs"></div>
+
+    <div
+      id="accessTabPanel"
+      class="access-tab-panel"
+      aria-live="polite">
+    </div>
+  </div>
+
+</section>

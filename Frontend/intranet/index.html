@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="es">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <script src="https://unpkg.com/vue@3"></script>
+
+    <link rel="stylesheet" href="css/styles.css">
+
+    <!-- Google Fonts  -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <!-- raiz directorio -->
+    <base href="/intranet/">
+
+    <title>
+        Intranet Sunarp
+    </title>
+
+</head>
+
+<body class="bg-gray-200">
+
+    <div id="app">
+
+        <!-- LOADER -->
+        <div v-if="loading" class="loader-overlay">
+
+            <app-loader></app-loader>
+
+        </div>
+
+        <!-- APP -->
+        <div v-show="!loading">
+
+            <div class="max-w-[1420px]
+                    mx-auto
+                    min-h-screen
+                    grid
+                    grid-rows-[64px_1fr]
+                    grid-cols-[0px_1fr]
+                    sm:grid-cols-[256px_1fr]
+                    bg-gray-50
+                    shadow-xl">
+
+                <!-- NAVBAR -->
+                <navbar-intranet :brand="brand" :social-items="socialItems"></navbar-intranet>
+
+                <!-- SIDEBAR -->
+                <sidebar-intranet :primary="sidebarPrimary" :secondary="sidebarSecondary">
+
+                </sidebar-intranet>
+
+                <!-- MAIN -->
+                <main class="row-start-2
+                         col-start-2
+                         p-2
+                         overflow-y-auto">
+
+                    <div class="p-8">
+
+                        <!-- HERO -->
+                        <div class="grid
+                            grid-cols-1
+                            md:grid-cols-3
+                            gap-16
+                            mb-4
+                            items-stretch">
+
+                            <!-- SLIDER -->
+                            <div class="md:col-span-2">
+
+                                <slider :items="sliderItems" height="100%"></slider>
+
+                            </div>
+
+                            <!-- CARD -->
+                            <div class="
+                                border
+                                border-gray-200
+                                shadow-lg
+                                bg-gray-50
+                                self-start">
+
+                                <card-list v-if="sections.find(
+                                    s => s.title === 'gestion institucional'
+                                    )" :items="sections.find(
+                                        s => s.title === 'gestion institucional'
+                                        ).items" title="Gestión institucional" variant="vertical-desc">
+
+                                </card-list>
+
+                            </div>
+
+                        </div>
+
+                        <!-- RECURSOS -->
+                        <div class="grid 
+                                grid-cols-1
+                                md:grid-cols-3
+                                gap-16
+                                mb-4">
+
+                            <div class="md:col-span-2">
+
+                                <card-list v-if="sections.find(
+                                        s =>
+                                        s.title ===
+                                        'recursos y servicios'
+                                    )" :items="sections.find(
+                                        s =>
+                                        s.title ===
+                                        'recursos y servicios'
+                                    ).items" title="Recursos y servicios" variant="grid" layout="horizontal"
+                                    :columns="2">
+                                </card-list>
+
+                            </div>
+
+                            <!-- INNOVACION -->
+                            <card-list v-if="sections.find(
+                                s =>
+                                s.title ===
+                                'gestion de la innovacion'
+                            )" :items="sections.find(
+                                s =>
+                                s.title ===
+                                'gestion de la innovacion'
+                            ).items" title="Gestión de la innovación" variant="vertical-simple">
+
+                            </card-list>
+
+                        </div>
+
+                        <!-- UTILITIES -->
+                        <div class="grid
+                                grid-cols-1
+                                md:grid-cols-3
+                                gap-16
+                                mb-4">
+
+                            <card-list v-for="section in sections.filter(
+                                s =>
+
+                                    s.block === 'utility-links' &&
+
+                                    [
+                                        'herramientas y aplicaciones',
+                                        'productividad y apoyo digital',
+                                        'enlaces de interes'
+                                    ].includes(
+                                        s.title?.toLowerCase()
+                                    )
+                            )" :key="section.title" :items="section.items" :title="section.title"
+                                variant="grid-compact"
+                                :show-more="['enlaces de interes'].includes(section.title?.toLowerCase())">
+
+                            </card-list>
+
+                        </div>
+
+                        <!-- FOOTER -->
+                        <footer-intranet>
+                        </footer-intranet>
+
+                    </div>
+
+                </main>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <!-- FLOWBITE -->
+    <script src="https://cdn.jsdelivr.net/npm/flowbite@4.0.1/dist/flowbite.min.js"></script>
+
+    <!-- GLOBAL -->
+    <script src="js/bootstrap.js"></script>
+
+    <!-- UI -->
+
+    <script src="js/components/ui/slider.js"></script>
+
+    <script src="js/components/ui/cards/cardList.js"></script>
+
+    <script src="js/components/ui/cards/cardVerticalDesc.js"></script>
+
+    <script src="js/components/ui/cards/cardVerticalSimple.js"></script>
+
+    <script src="js/components/ui/cards/cardGrid.js"></script>
+
+    <script src="js/components/ui/cards/cardGridCompact.js"></script>
+
+    <!-- REGISTER -->
+    <script src="js/register-components.js"></script>
+
+    <!-- PAGE -->
+    <script src="js/pages/index.js"></script>
+
+
+
+</body>
+
+</html>

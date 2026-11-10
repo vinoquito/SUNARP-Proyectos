@@ -1,0 +1,1185 @@
+<script>
+  window.SUNARPUI = (function () {
+  'use strict';
+
+  const state = {
+    navigation: [],
+    currentRoute: null,
+    previousFocus: null
+  };
+
+  const $ = (selector, root = document) =>
+    root.querySelector(selector);
+
+  const $$ = (selector, root = document) =>
+    Array.from(root.querySelectorAll(selector));
+
+  // ============================================================
+  // CONTROL DEL LOADER GLOBAL
+  // ============================================================
+
+  let pendingLoads = 0;
+  let shellInitialized = false;
+  let resourcesLoaded = document.readyState === 'complete';
+  let loaderHideTimer = null;
+
+  function showLoader() {
+    const loader = $('#sunarpLoader');
+
+    if (!loader) return;
+
+    if (loaderHideTimer !== null) {
+      clearTimeout(loaderHideTimer);
+      loaderHideTimer = null;
+    }
+
+    loader.hidden = false;
+    loader.classList.remove('is-hidden');
+    document.body.classList.add('sunarp-loading');
+  }
+
+  function updateLoaderVisibility() {
+    if (
+      !resourcesLoaded ||
+      !shellInitialized ||
+      pendingLoads > 0
+    ) {
+      return;
+    }
+
+    const loader = $('#sunarpLoader');
+
+    if (!loader) return;
+
+    loader.classList.add('is-hidden');
+    document.body.classList.remove('sunarp-loading');
+
+    if (loaderHideTimer !== null) {
+      clearTimeout(loaderHideTimer);
+    }
+
+    loaderHideTimer = window.setTimeout(() => {
+      if (
+        resourcesLoaded &&
+        shellInitialized &&
+        pendingLoads === 0
+      ) {
+        loader.hidden = true;
+      }
+
+      loaderHideTimer = null;
+    }, 230);
+  }
+
+  function markShellInitialized() {
+    shellInitialized = true;
+    updateLoaderVisibility();
+  }
+
+  /**
+   * Registra una operación asíncrona.
+   * Devuelve una función para indicar que terminó.
+   */
+  function beginLoading() {
+    pendingLoads++;
+    showLoader();
+
+    let finished = false;
+
+    return function finishLoading() {
+      if (finished) return;
+
+      finished = true;
+      pendingLoads = Math.max(0, pendingLoads - 1);
+
+      updateLoaderVisibility();
+    };
+  }
+
+  // Mantener el loader hasta que carguen los recursos del navegador.
+  if (!resourcesLoaded) {
+    window.addEventListener('load', () => {
+      resourcesLoaded = true;
+      updateLoaderVisibility();
+    }, { once: true });
+  }
+
+  showLoader();
+
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    })[char]);
+  }
+
+  function notify(type, message, duration = 4500) {
+    const region = $('#sunarpToastRegion');
+
+    if (!region) return;
+
+    const allowedTypes = ['success', 'error', 'warning', 'info'];
+    const safeType = allowedTypes.includes(type) ? type : 'info';
+
+    const toast = document.createElement('div');
+    toast.className = `sunarp-toast sunarp-toast--${safeType}`;
+    toast.setAttribute('role', safeType === 'error' ? 'alert' : 'status');
+    toast.textContent = String(message ?? '');
+
+    region.appendChild(toast);
+
+    window.setTimeout(() => {
+      toast.classList.add('sunarp-toast--leaving');
+
+      window.setTimeout(() => toast.remove(), 220);
+    }, Math.max(1000, Number(duration) || 4500));
+  }
+
+  function setModalSlot(element, content) {
+    element.replaceChildren();
+
+    if (content instanceof Node) {
+      element.appendChild(content);
+      return;
+    }
+
+    if (content !== null && content !== undefined && content !== '') {
+      const paragraph = document.createElement('p');
+      paragraph.textContent = String(content);
+      element.appendChild(paragraph);
+    }
+  }
+
+  function openModal(options = {}) {
+    const layer = $('#sunarpModalLayer');
+    const modal = $('#sunarpModal');
+
+    if (!layer || !modal) return;
+
+    const sizes = ['sm', 'md', 'lg', 'xl'];
+    const requestedSize = sizes.includes(options.size)
+      ? options.size
+      : 'md';
+
+    state.previousFocus = document.activeElement;
+
+    $('#sunarpModalTitle').textContent = String(options.title || '');
+
+    setModalSlot($('#sunarpModalBody'), options.content);
+    setModalSlot($('#sunarpModalFooter'), options.footer);
+
+    modal.classList.remove(
+      'sunarp-modal--sm',
+      'sunarp-modal--md',
+      'sunarp-modal--lg',
+      'sunarp-modal--xl'
+    );
+
+    modal.classList.add(`sunarp-modal--${requestedSize}`);
+
+    layer.hidden = false;
+    document.body.style.overflow = 'hidden';
+
+    const closeButton = $('[data-ui-modal-close]', modal);
+
+    if (closeButton) closeButton.focus();
+  }
+
+  function closeModal() {
+    const layer = $('#sunarpModalLayer');
+
+    if (!layer || layer.hidden) return;
+
+    layer.hidden = true;
+    document.body.style.overflow = '';
+
+    $('#sunarpModalBody').replaceChildren();
+    $('#sunarpModalFooter').replaceChildren();
+
+    if (
+      state.previousFocus &&
+      typeof state.previousFocus.focus === 'function'
+    ) {
+      state.previousFocus.focus();
+    }
+
+    state.previousFocus = null;
+  }
+
+  function renderNavigationLevel(parentId = '') {
+    const children = state.navigation.filter(item =>
+      String(item.parentId || '') === String(parentId || '')
+    );
+
+    if (!children.length) return '';
+
+    return `
+      <ul class="sunarp-nav-list">
+        ${children.map(item => {
+          const hasChildren = state.navigation.some(child =>
+            String(child.parentId || '') === String(item.id)
+          );
+
+          const icon = item.icon
+            ? `<span class="material-symbols-outlined sunarp-nav-icon"
+                aria-hidden="true">${escapeHtml(item.icon)}</span>`
+            : '';
+
+          if (hasChildren || !item.route) {
+            return `
+              <li class="sunarp-nav-item">
+                <button
+                  type="button"
+                  class="sunarp-nav-link sunarp-nav-parent"
+                  data-nav-toggle="${escapeHtml(item.id)}"
+                  aria-expanded="false"
+                  ${hasChildren ? '' : 'disabled'}>
+
+                  ${icon}
+                  <span class="sunarp-nav-label">
+                    ${escapeHtml(item.label)}
+                  </span>
+
+                  ${hasChildren
+                    ? '<span class="sunarp-nav-chevron" aria-hidden="true">›</span>'
+                    : ''}
+
+                </button>
+
+                ${hasChildren
+                  ? `
+                    <div
+                      class="sunarp-nav-submenu"
+                      data-nav-submenu="${escapeHtml(item.id)}"
+                      hidden>
+
+                      ${renderNavigationLevel(item.id)}
+
+                    </div>
+                  `
+                  : ''}
+
+              </li>
+            `;
+          }
+
+          return `
+            <li class="sunarp-nav-item">
+              <button
+                type="button"
+                class="sunarp-nav-link"
+                data-nav-route="${escapeHtml(item.route)}">
+
+                ${icon}
+
+                <span class="sunarp-nav-label">
+                  ${escapeHtml(item.label)}
+                </span>
+
+              </button>
+            </li>
+          `;
+        }).join('')}
+      </ul>
+    `;
+  }
+
+  function renderNavigation() {
+    const navigation = $('#sunarpNavigation');
+
+    if (!navigation) return;
+
+    navigation.innerHTML = renderNavigationLevel('');
+  }
+
+  function getAncestors(item) {
+    const result = [];
+    const visited = new Set();
+    let current = item;
+
+    while (current && current.parentId) {
+      const parentId = String(current.parentId);
+
+      if (visited.has(parentId)) break;
+
+      visited.add(parentId);
+
+      const parent = state.navigation.find(entry =>
+        String(entry.id) === parentId
+      );
+
+      if (!parent) break;
+
+      result.unshift(parent);
+      current = parent;
+    }
+
+    return result;
+  }
+
+  function renderBreadcrumbs(items) {
+    const container = $('#sunarpBreadcrumbs');
+
+    if (!container) return;
+
+    const fragment = document.createDocumentFragment();
+
+    items.forEach((item, index) => {
+      if (index > 0) {
+        const separator = document.createElement('span');
+        separator.className = 'sunarp-breadcrumb-separator';
+        separator.setAttribute('aria-hidden', 'true');
+        separator.textContent = '›';
+
+        fragment.appendChild(separator);
+      }
+
+      const crumb = document.createElement('span');
+      crumb.textContent = item.label;
+
+      if (index === items.length - 1) {
+        crumb.className = 'sunarp-breadcrumb-current';
+        crumb.setAttribute('aria-current', 'page');
+      }
+
+      fragment.appendChild(crumb);
+    });
+
+    container.replaceChildren(fragment);
+  }
+
+  function setExpandedParent(parentId, expanded) {
+    const button = $$('#sunarpNavigation [data-nav-toggle]')
+      .find(element => element.dataset.navToggle === String(parentId));
+
+    const submenu = $$('#sunarpNavigation [data-nav-submenu]')
+      .find(element => element.dataset.navSubmenu === String(parentId));
+
+    if (button) {
+      button.setAttribute('aria-expanded', String(expanded));
+      button.classList.toggle('is-current', expanded);
+    }
+
+    if (submenu) submenu.hidden = !expanded;
+  }
+
+  function navigate(route) {
+    const item = state.navigation.find(entry =>
+      entry.route === String(route)
+    );
+
+    if (!item) return;
+
+    state.currentRoute = item.route;
+
+    clearPageActions();
+
+    const ancestors = getAncestors(item);
+
+    $$('#sunarpNavigation [data-nav-route]').forEach(button => {
+      const active = button.dataset.navRoute === item.route;
+
+      button.classList.toggle('is-active', active);
+
+      if (active) {
+        button.setAttribute('aria-current', 'page');
+      } else {
+        button.removeAttribute('aria-current');
+      }
+    });
+
+    state.navigation.forEach(entry => {
+      const hasChildren = state.navigation.some(child =>
+        String(child.parentId || '') === String(entry.id)
+      );
+
+      if (hasChildren) {
+        setExpandedParent(entry.id, ancestors.some(parent =>
+          String(parent.id) === String(entry.id)
+        ));
+      }
+    });
+
+    $('#sunarpPageTitle').textContent = item.label;
+    $('#sunarpPageDescription').textContent = item.description || '';
+
+    renderBreadcrumbs([...ancestors, item]);
+
+    document.dispatchEvent(new CustomEvent('sunarp:navigate', {
+      detail: {
+        route: item.route,
+        item: { ...item }
+      }
+    }));
+
+    closeMobileSidebar();
+  }
+
+  function openMobileSidebar() {
+    const sidebar = $('#sunarpSidebar');
+    const overlay = $('#sunarpSidebarOverlay');
+    const button = $('#sunarpMobileMenuButton');
+
+    sidebar.classList.add('is-open');
+    overlay.hidden = false;
+
+    if (button) button.setAttribute('aria-expanded', 'true');
+  }
+
+  function closeMobileSidebar() {
+    const sidebar = $('#sunarpSidebar');
+    const overlay = $('#sunarpSidebarOverlay');
+    const button = $('#sunarpMobileMenuButton');
+
+    if (!sidebar || !overlay) return;
+
+    sidebar.classList.remove('is-open');
+    overlay.hidden = true;
+
+    if (button) button.setAttribute('aria-expanded', 'false');
+  }
+
+  
+  /* ============================================================
+    COMPONENTE ALERT
+    ============================================================ */
+
+  /**
+   * Muestra una alerta reutilizable dentro de un contenedor.
+   *
+   * Opciones:
+   * {
+   *   containerId: 'alertsContainer',
+   *   type: 'success' | 'error' | 'warning' | 'info',
+   *   title: 'Operación completada',
+   *   message: 'El registro se guardó correctamente.',
+   *   dismissible: true,
+   *   replace: false
+   * }
+   */
+  function showAlert(options = {}) {
+
+    const container = document.getElementById(
+      options.containerId
+    );
+
+    if (!container) {
+      throw new Error(
+        `No existe el contenedor Alert "${options.containerId}".`
+      );
+    }
+
+    const allowedTypes = [
+      'success',
+      'error',
+      'warning',
+      'info'
+    ];
+
+    const type = allowedTypes.includes(options.type)
+      ? options.type
+      : 'info';
+
+    const icons = {
+      success: 'check_circle',
+      error: 'error',
+      warning: 'warning',
+      info: 'info'
+    };
+
+    const alert = document.createElement('div');
+
+    alert.className = `sunarp-alert sunarp-alert--${type}`;
+
+    alert.setAttribute(
+      'role',
+      type === 'error' ? 'alert' : 'status'
+    );
+
+    alert.setAttribute(
+      'aria-live',
+      type === 'error' ? 'assertive' : 'polite'
+    );
+
+    const icon = document.createElement('span');
+
+    icon.className =
+      'material-symbols-outlined sunarp-alert-icon';
+
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = icons[type];
+
+    const content = document.createElement('div');
+
+    content.className = 'sunarp-alert-content';
+
+    if (options.title) {
+      const title = document.createElement('strong');
+
+      title.className = 'sunarp-alert-title';
+      title.textContent = String(options.title);
+
+      content.appendChild(title);
+    }
+
+    if (options.message) {
+      const message = document.createElement('p');
+
+      message.className = 'sunarp-alert-message';
+      message.textContent = String(options.message);
+
+      content.appendChild(message);
+    }
+
+    alert.appendChild(icon);
+    alert.appendChild(content);
+
+    if (options.dismissible !== false) {
+
+      const closeButton = document.createElement('button');
+
+      closeButton.type = 'button';
+      closeButton.className = 'sunarp-alert-close';
+      closeButton.setAttribute('aria-label', 'Cerrar mensaje');
+
+      const closeIcon = document.createElement('span');
+
+      closeIcon.className = 'material-symbols-outlined';
+      closeIcon.setAttribute('aria-hidden', 'true');
+      closeIcon.textContent = 'close';
+
+      closeButton.appendChild(closeIcon);
+
+      closeButton.addEventListener('click', () => {
+        alert.remove();
+      });
+
+      alert.appendChild(closeButton);
+
+    }
+
+    if (options.replace === true) {
+      container.replaceChildren(alert);
+    } else {
+      container.appendChild(alert);
+    }
+
+    return Object.freeze({
+      element: alert,
+
+      close() {
+        alert.remove();
+      }
+    });
+
+  }
+
+
+  /* ============================================================
+    COMPONENTE BADGE
+    ============================================================ */
+
+  /**
+   * Crea una etiqueta reutilizable.
+   *
+   * Variantes:
+   * success, danger, warning, info, neutral
+   *
+   * Opciones:
+   * {
+   *   label: 'Activo',
+   *   variant: 'success',
+   *   icon: 'check_circle'
+   * }
+   */
+  function createBadge(options = {}) {
+
+    const allowedVariants = [
+      'success',
+      'danger',
+      'warning',
+      'info',
+      'neutral'
+    ];
+
+    const variant = allowedVariants.includes(options.variant)
+      ? options.variant
+      : 'neutral';
+
+    const badge = document.createElement('span');
+
+    badge.className = `sunarp-badge sunarp-badge--${variant}`;
+
+    if (options.icon) {
+
+      const icon = document.createElement('span');
+
+      icon.className = 'material-symbols-outlined sunarp-badge-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      icon.textContent = String(options.icon);
+
+      badge.appendChild(icon);
+
+    }
+
+    const label = document.createElement('span');
+
+    label.className = 'sunarp-badge-label';
+    label.textContent = String(options.label || '');
+
+    badge.appendChild(label);
+
+    return badge;
+
+  }
+
+  function clearPageActions() {
+    const container = $('#sunarpPageActions');
+
+    if (container) {
+      container.replaceChildren();
+    }
+  }
+
+  function setPageActions(actions = []) {
+    const container = $('#sunarpPageActions');
+
+    if (!container) {
+      throw new Error('No existe el contenedor de acciones de página.');
+    }
+
+    if (!Array.isArray(actions)) {
+      throw new Error('Las acciones deben proporcionarse como un arreglo.');
+    }
+
+    const fragment = document.createDocumentFragment();
+
+    actions
+      .filter(action => action && action.visible !== false)
+      .forEach(action => {
+        if (!action.label || typeof action.onClick !== 'function') {
+          throw new Error(
+            'Cada acción necesita label y una función onClick.'
+          );
+        }
+
+        const variants = ['primary', 'outline', 'danger'];
+        const variant = variants.includes(action.variant)
+          ? action.variant
+          : 'outline';
+
+        const button = document.createElement('button');
+
+        button.type = 'button';
+        button.className = `sunarp-btn sunarp-btn--${variant}`;
+        button.disabled = Boolean(action.disabled);
+
+        if (action.title) {
+          button.title = String(action.title);
+        }
+
+        if (action.icon) {
+          const icon = document.createElement('span');
+
+          icon.className = 'material-symbols-outlined sunarp-action-icon';
+          icon.setAttribute('aria-hidden', 'true');
+          icon.textContent = String(action.icon);
+
+          button.appendChild(icon);
+        }
+
+        const label = document.createElement('span');
+        label.textContent = String(action.label);
+        button.appendChild(label);
+
+        button.addEventListener('click', async () => {
+          if (button.disabled) return;
+
+          button.disabled = true;
+
+          try {
+            await action.onClick({
+              id: action.id || '',
+              route: state.currentRoute
+            });
+          } catch (error) {
+            notify(
+              'error',
+              error?.message || 'No se pudo ejecutar la acción.'
+            );
+          } finally {
+            if (button.isConnected) {
+              button.disabled = Boolean(action.disabled);
+            }
+          }
+        });
+
+        fragment.appendChild(button);
+      });
+
+    container.replaceChildren(fragment);
+  }
+
+  function createCard(options = {}) {
+    const container = document.getElementById(options.containerId);
+
+    if (!container) {
+      throw new Error(
+        `No existe el contenedor de la tarjeta "${options.containerId}".`
+      );
+    }
+
+    let config = { ...options };
+
+    const card = document.createElement('article');
+
+    function render() {
+      const variants = ['default', 'metric', 'compact'];
+      const variant = variants.includes(config.variant)
+        ? config.variant
+        : 'default';
+
+      card.className =
+        `sunarp-card sunarp-card--${variant}`;
+
+      const isInteractive = typeof config.onClick === 'function';
+
+      card.classList.toggle(
+        'sunarp-card--interactive',
+        isInteractive
+      );
+
+      if (isInteractive) {
+        card.setAttribute('role', 'button');
+        card.setAttribute('tabindex', '0');
+        card.setAttribute(
+          'aria-label',
+          config.title || 'Abrir tarjeta'
+        );
+      } else {
+        card.removeAttribute('role');
+        card.removeAttribute('tabindex');
+        card.removeAttribute('aria-label');
+      }
+
+      card.replaceChildren();
+
+      if (config.icon) {
+        const icon = document.createElement('span');
+
+        icon.className = 'sunarp-card-icon material-symbols-outlined';
+        icon.textContent = String(config.icon);
+        icon.setAttribute('aria-hidden', 'true');
+
+        card.appendChild(icon);
+      }
+
+      if (config.title) {
+        const title = document.createElement('h2');
+        title.className = 'sunarp-card-title';
+        title.textContent = String(config.title);
+        card.appendChild(title);
+      }
+
+      if (config.value !== undefined && config.value !== null) {
+        const value = document.createElement('strong');
+        value.className = 'sunarp-card-value';
+        value.textContent = String(config.value);
+        card.appendChild(value);
+      }
+
+      if (config.description) {
+        const description = document.createElement('p');
+        description.className = 'sunarp-card-description';
+        description.textContent = String(config.description);
+        card.appendChild(description);
+      }
+
+      if (config.footer) {
+        const footer = document.createElement('div');
+        footer.className = 'sunarp-card-footer';
+        footer.textContent = String(config.footer);
+        card.appendChild(footer);
+      }
+    }
+
+    card.addEventListener('click', () => {
+      if (typeof config.onClick === 'function') {
+        config.onClick();
+      }
+    });
+
+    card.addEventListener('keydown', event => {
+      if (
+        typeof config.onClick === 'function' &&
+        (event.key === 'Enter' || event.key === ' ')
+      ) {
+        event.preventDefault();
+        config.onClick();
+      }
+    });
+
+    render();
+    container.replaceChildren(card);
+
+    return Object.freeze({
+      update(nextOptions = {}) {
+        config = { ...config, ...nextOptions };
+        render();
+      },
+
+      destroy() {
+        card.remove();
+
+        if (container.childElementCount === 0) {
+          container.replaceChildren();
+        }
+      }
+    });
+  }
+
+  /* ============================================================
+   COMPONENTE REUTILIZABLE: TABS
+   ============================================================ */
+
+  function createTabs(options = {}) {
+    const container = document.getElementById(options.containerId);
+
+    if (!container) {
+      throw new Error(
+        `No existe el contenedor de pestañas "${options.containerId}".`
+      );
+    }
+
+    let tabs = Array.isArray(options.tabs)
+      ? options.tabs.filter(tab => tab && tab.id && tab.label && !tab.disabled)
+      : [];
+
+    let activeId = String(
+      options.activeId || (tabs[0] && tabs[0].id) || ''
+    );
+
+    const nav = document.createElement('div');
+
+    nav.className = 'sunarp-tabs';
+    nav.setAttribute('role', 'tablist');
+    nav.setAttribute('aria-label', options.label || 'Secciones');
+
+
+    function render() {
+      const fragment = document.createDocumentFragment();
+
+      tabs.forEach(tab => {
+        const button = document.createElement('button');
+
+        const selected = String(tab.id) === activeId;
+
+        button.type = 'button';
+        button.className = 'sunarp-tab';
+
+        button.id =
+          `sunarp-tab-${String(tab.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+
+        button.dataset.tabId = String(tab.id);
+
+        button.setAttribute('role', 'tab');
+        button.setAttribute(
+          'aria-selected',
+          selected ? 'true' : 'false'
+        );
+
+        button.setAttribute(
+          'tabindex',
+          selected ? '0' : '-1'
+        );
+
+        if (options.panelId) {
+          button.setAttribute(
+            'aria-controls',
+            options.panelId
+          );
+        }
+
+        button.textContent = String(tab.label);
+
+        button.addEventListener(
+          'click',
+          () => setActive(tab.id, true)
+        );
+
+        button.addEventListener('keydown', event => {
+          const currentIndex = tabs.findIndex(
+            item => String(item.id) === activeId
+          );
+
+          let nextIndex = currentIndex;
+
+          if (event.key === 'ArrowRight') {
+            nextIndex = (currentIndex + 1) % tabs.length;
+
+          } else if (event.key === 'ArrowLeft') {
+            nextIndex =
+              (currentIndex - 1 + tabs.length) % tabs.length;
+
+          } else if (event.key === 'Home') {
+            nextIndex = 0;
+
+          } else if (event.key === 'End') {
+            nextIndex = tabs.length - 1;
+
+          } else {
+            return;
+          }
+
+          event.preventDefault();
+
+          const next = tabs[nextIndex];
+
+          if (next) {
+            setActive(next.id, true);
+
+            const focusTarget = nav.querySelector(
+              `[data-tab-id="${CSS.escape(String(next.id))}"]`
+            );
+
+            if (focusTarget) {
+              focusTarget.focus();
+            }
+          }
+        });
+
+        fragment.appendChild(button);
+      });
+
+      nav.replaceChildren(fragment);
+      container.replaceChildren(nav);
+
+      const panel = options.panelId
+        ? document.getElementById(options.panelId)
+        : null;
+
+      if (panel) {
+        const selectedTab = nav.querySelector(
+          '[aria-selected="true"]'
+        );
+
+        if (selectedTab) {
+          panel.setAttribute(
+            'aria-labelledby',
+            selectedTab.id
+          );
+        }
+
+        panel.setAttribute('role', 'tabpanel');
+        panel.setAttribute('tabindex', '0');
+      }
+    }
+
+
+    function setActive(id, notifyChange) {
+      const nextId = String(id || '');
+
+      if (!tabs.some(tab => String(tab.id) === nextId)) {
+        return;
+      }
+
+      const changed = activeId !== nextId;
+
+      activeId = nextId;
+
+      render();
+
+      if (
+        changed &&
+        notifyChange &&
+        typeof options.onChange === 'function'
+      ) {
+        options.onChange(activeId);
+      }
+    }
+
+
+    render();
+
+    return Object.freeze({
+      getActive() {
+        return activeId;
+      },
+
+      setActive(id) {
+        setActive(id, true);
+      },
+
+      update(nextTabs, nextActiveId) {
+        tabs = Array.isArray(nextTabs)
+          ? nextTabs.filter(
+              tab => tab && tab.id && tab.label && !tab.disabled
+            )
+          : [];
+
+        const requested = String(
+          nextActiveId || activeId
+        );
+
+        activeId = tabs.some(
+          tab => String(tab.id) === requested
+        )
+          ? requested
+          : String((tabs[0] && tabs[0].id) || '');
+
+        render();
+      },
+
+      destroy() {
+        container.replaceChildren();
+      }
+    });
+  }
+
+  function initialize() {
+    const menuButton = $('#sunarpMobileMenuButton');
+    const overlay = $('#sunarpSidebarOverlay');
+    const navigation = $('#sunarpNavigation');
+    const modalLayer = $('#sunarpModalLayer');
+
+    if (menuButton) {
+      menuButton.addEventListener('click', () => {
+        const sidebar = $('#sunarpSidebar');
+
+        if (sidebar.classList.contains('is-open')) {
+          closeMobileSidebar();
+        } else {
+          openMobileSidebar();
+        }
+      });
+    }
+
+    if (overlay) {
+      overlay.addEventListener('click', closeMobileSidebar);
+    }
+
+    document.addEventListener('click', event => {
+      const routeButton = event.target.closest('[data-nav-route]');
+
+      if (routeButton) {
+        navigate(routeButton.dataset.navRoute);
+        return;
+      }
+
+      const toggleButton = event.target.closest('[data-nav-toggle]');
+
+      if (toggleButton) {
+        const id = toggleButton.dataset.navToggle;
+        const expanded =
+          toggleButton.getAttribute('aria-expanded') === 'true';
+
+        setExpandedParent(id, !expanded);
+        return;
+      }
+
+      if (event.target.closest('[data-ui-modal-close]')) {
+        closeModal();
+      }
+    });
+
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') {
+        closeModal();
+        closeMobileSidebar();
+      }
+    });
+
+    if (modalLayer) {
+      modalLayer.addEventListener('click', event => {
+        if (event.target === modalLayer) closeModal();
+      });
+    }
+
+    google.script.run
+      .withSuccessHandler(config => {
+        try {
+          state.navigation = Array.isArray(config.navigation)
+            ? config.navigation
+            : [];
+
+          $('#sunarpBrandName').textContent =
+            config.appName || 'SUNARP';
+
+          renderNavigation();
+
+          const defaultItem =
+            state.navigation.find(item => item.route && !item.parentId) ||
+            state.navigation.find(item => item.route);
+
+          if (defaultItem) {
+            navigate(defaultItem.route);
+          } else {
+            notify(
+              'warning',
+              'No hay opciones de navegación activas en la hoja Menu.'
+            );
+          }
+        } catch (error) {
+          notify(
+            'error',
+            error?.message || 'No se pudo inicializar la aplicación.'
+          );
+        } finally {
+          markShellInitialized();
+        }
+      })
+      .withFailureHandler(error => {
+        if (navigation) {
+          navigation.textContent = 'No se pudo cargar el menú.';
+        }
+
+        notify(
+          'error',
+          error?.message ||
+            'No se pudo cargar la configuración de la aplicación.'
+        );
+
+        markShellInitialized();
+      })
+      .getAppShellConfig();
+  }
+
+  document.addEventListener('DOMContentLoaded', initialize);
+
+  return Object.freeze({
+    notify,
+    showAlert,
+    createBadge,
+    openModal,
+    closeModal,
+    beginLoading,
+    navigate,
+    setPageActions,
+    clearPageActions,
+    createCard,
+    createTabs,
+
+    createDataTable(options) {
+      if (typeof window.SUNARPUIDataTable !== 'function') {
+        throw new Error('El componente DataTable no está cargado.');
+      }
+
+      return window.SUNARPUIDataTable(options, {
+        escapeHtml,
+        notify
+      });
+    },
+
+    createChart(options) {
+      if (typeof window.SUNARPUIChart !== 'function') {
+        throw new Error('El componente Chart no está cargado.');
+      }
+
+      return window.SUNARPUIChart(options);
+    }
+  });
+})();
+</script>

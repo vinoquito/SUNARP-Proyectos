@@ -1,0 +1,415 @@
+/* ==========================================================================
+   GOB.PE DESIGN TOKENS
+   Basado en la Guía de Estilos Gob.pe
+   ========================================================================== */
+
+/*
+==============================================================================
+IMÁGENES
+==============================================================================
+
+HOME HERO
+- Sugerido: 1230x420
+- Mínimo: 1230x420
+- Máximo: 2564x804
+- Peso: 300KB - 2MB
+
+CAMPAÑA
+- Sugerido: 581x363
+- Mínimo: 581x363
+- Máximo: 1200x750
+- Peso: 50KB - 2MB
+
+CATÁLOGO
+- Sugerido: 331x221
+- Mínimo: 443x296
+- Máximo: 1200x800
+- Peso: 50KB - 2MB
+
+NOTICIA HOME
+- Sugerido: 594x334
+- Mínimo: 594x334
+- Máximo: 1200x675
+- Peso: 40KB - 2MB
+
+NOTICIA INTERNA
+- Sugerido: 656x370
+- Mínimo: 656x370
+- Máximo: 1200x685
+- Peso: 40KB - 2MB
+
+CAMPAÑA HOME
+- Sugerido: 343x184
+- Mínimo: 343x184
+- Máximo: 800x450
+- Peso: 40KB - 1MB
+
+FUNCIONARIOS
+- Sugerido: 200x200
+- Mínimo: 200x200
+- Máximo: 500x500
+- Peso: 20KB - 500KB
+
+ALT TEXT
+
+✓ Describir contenido y función
+✓ Ser específico
+✓ Ser significativo
+✓ Ser conciso
+
+✗ No iniciar con "Imagen de"
+✗ No iniciar con "Fotografía de"
+✗ No repetir información visible
+✗ No agregar información ajena al contenido
+
+EXCEPCIONES
+
+- Imágenes decorativas
+- Íconos con texto visible
+- Imágenes dentro de enlaces cuando no aportan significado
+*/
+
+/*
+==============================================================================
+ICONOGRAFÍA
+==============================================================================
+
+Sistema:
+Material Design Icons
+
+Área activa:
+20px x 20px
+
+Padding:
+2px
+
+Espaciado icono-texto:
+8px
+
+Espaciado exterior:
+16px
+
+Densidad mínima:
+16px
+*/
+
+:root {
+
+   /* ======================================================================
+       FUENTE
+       ====================================================================== */
+
+   --gob-font-family: "Roboto", sans-serif;
+
+   --gob-fw-regular: 400;
+   --gob-fw-medium: 500;
+   --gob-fw-bold: 700;
+   --gob-fw-extrabold: 800;
+
+   /* ======================================================================
+       RED
+       ====================================================================== */
+
+   --gob-red-800: #BF0909;
+   --gob-red-700: #DC362E;
+   --gob-red-600: #E46962;
+   --gob-red-500: #EB918E;
+   --gob-red-400: #F2B8B5;
+   --gob-red-300: #F9DEDC;
+   --gob-red-200: #FCEEEE;
+
+   /* ======================================================================
+       GRAY
+       ====================================================================== */
+
+   --gob-gray-800: #26292E;
+   --gob-gray-700: #3C3E43;
+   --gob-gray-600: #515458;
+   --gob-gray-500: #7D7F82;
+   --gob-gray-450: #979797;
+   --gob-gray-400: #A8A9AB;
+   --gob-gray-300: #BEBFC0;
+   --gob-gray-200: #E9EAEA;
+   --gob-gray-100: #FFFFFF;
+
+   /* ======================================================================
+       NEUTRAL
+       ====================================================================== */
+
+   --gob-neutral-800: #0D1028;
+   --gob-neutral-700: #3D4053;
+   --gob-neutral-600: #555869;
+   --gob-neutral-550: #656A8A;
+   --gob-neutral-500: #8A94A2;
+   --gob-neutral-400: #C5CDDA;
+   --gob-neutral-350: #D4DDEC;
+   --gob-neutral-300: #DEE3EA;
+   --gob-neutral-250: #EEF3FB;
+   --gob-neutral-200: #EDF0F4;
+   --gob-neutral-100: #F6F9FC;
+
+   /* ======================================================================
+       BLUE
+       ====================================================================== */
+
+   --gob-blue-800: #184397;
+   --gob-blue-700: #0056AC;
+   --gob-blue-650: #1363D0;
+   --gob-blue-600: #0071E3;
+   --gob-blue-500: #4597E8;
+   --gob-blue-400: #E1F0FF;
+   --gob-blue-350: #E8F2F7;
+   --gob-blue-300: #EEF3FB;
+   --gob-blue-200: #F2F9FF;
+   --gob-blue-150: #F4F8FB;
+
+   /* ======================================================================
+       GREEN
+       ====================================================================== */
+
+   --gob-green-800: #126B49;
+   --gob-green-700: #1B9D6B;
+   --gob-green-600: #54B690;
+   --gob-green-500: #C9F0D8;
+   --gob-green-400: #E3F3EC;
+
+   /* ======================================================================
+       ORANGE
+       ====================================================================== */
+
+   --gob-orange-800: #D75600;
+   --gob-orange-700: #FF6701;
+   --gob-orange-600: #FF8C41;
+   --gob-orange-500: #FFC6A0;
+   --gob-orange-400: #FFF3EA;
+
+   /* ======================================================================
+       YELLOW
+       ====================================================================== */
+
+   --gob-yellow-800: #997300;
+   --gob-yellow-700: #C69810;
+   --gob-yellow-600: #EAB824;
+   --gob-yellow-500: #FFD147;
+   --gob-yellow-400: #FFE8A3;
+   --gob-yellow-300: #FFF9E8;
+
+   /* ======================================================================
+       INDIGO
+       ====================================================================== */
+
+   --gob-indigo-800: #2A2D59;
+   --gob-indigo-700: #474D98;
+   --gob-indigo-600: #6C74E6;
+   --gob-indigo-500: #C1C5FF;
+   --gob-indigo-400: #DFE1FF;
+   --gob-indigo-300: #F1F2FF;
+
+   /* ======================================================================
+       PURPLE
+       ====================================================================== */
+
+   --gob-purple-800: #331980;
+   --gob-purple-700: #5D2EE5;
+   --gob-purple-650: #5D48E0;
+   --gob-purple-600: #7865EC;
+   --gob-purple-400: #9A7CEF;
+   --gob-purple-300: #C2B1F5;
+   --gob-purple-200: #F6F6FE;
+
+   /* ======================================================================
+       STRAWBERRY
+       ====================================================================== */
+
+   --gob-strawberry-800: #D20042;
+   --gob-strawberry-700: #DD4071;
+   --gob-strawberry-600: #EE9FB8;
+   --gob-strawberry-500: #F9DFE7;
+   --gob-strawberry-400: #FFF3F7;
+
+   /* ======================================================================
+       SKY BLUE
+       ====================================================================== */
+
+   --gob-sky-800: #0995AD;
+   --gob-sky-700: #87DFEF;
+   --gob-sky-600: #AAF2FF;
+   --gob-sky-500: #E2FBFF;
+   --gob-sky-400: #F2FDFF;
+
+   /* ======================================================================
+       TIPOGRAFÍA
+       ====================================================================== */
+
+   --gob-h1-desktop-size: 2.5rem;
+   --gob-h1-desktop-line-height: 2.5rem;
+   --gob-h1-mobile-size: 1.875rem;
+   --gob-h1-mobile-line-height: 2.25rem;
+   --gob-h1-weight: 800;
+
+   --gob-h2-desktop-size: 1.875rem;
+   --gob-h2-desktop-line-height: 2.25rem;
+   --gob-h2-mobile-size: 1.5rem;
+   --gob-h2-mobile-line-height: 1.5rem;
+   --gob-h2-weight: 700;
+
+   --gob-h3-desktop-size: 1.5rem;
+   --gob-h3-desktop-line-height: 2rem;
+   --gob-h3-mobile-size: 1.25rem;
+   --gob-h3-mobile-line-height: 1.75rem;
+   --gob-h3-weight: 700;
+
+   --gob-h4-desktop-size: 1.25rem;
+   --gob-h4-desktop-line-height: 1.75rem;
+   --gob-h4-mobile-size: 1rem;
+   --gob-h4-mobile-line-height: 1.38rem;
+   --gob-h4-weight: 700;
+
+   --gob-h5-size: 1rem;
+   --gob-h5-line-height: 1.38rem;
+   --gob-h5-weight: 500;
+
+   --gob-paragraph-size: 1rem;
+   --gob-paragraph-line-height: 1.5rem;
+   --gob-paragraph-weight: 400;
+
+   --gob-button-font-size-desktop: 1.125rem;
+   --gob-button-font-size-mobile: 1rem;
+   --gob-button-line-height-desktop: 1.75rem;
+   --gob-button-line-height-mobile: 1.38rem;
+   --gob-button-font-weight: 700;
+
+   --gob-tag-size: 0.875rem;
+   --gob-tag-line-height: 1.25rem;
+
+   /* ======================================================================
+       BOTONES
+       ====================================================================== */
+
+   --gob-btn-primary-bg: var(--gob-blue-700);
+   --gob-btn-primary-hover: var(--gob-blue-800);
+   --gob-btn-primary-text: #FFFFFF;
+
+   --gob-btn-secondary-bg: #FFFFFF;
+   --gob-btn-secondary-text: var(--gob-blue-700);
+   --gob-btn-secondary-border: var(--gob-blue-700);
+
+   --gob-btn-alternative-bg: var(--gob-purple-700);
+   --gob-btn-alternative-hover: var(--gob-purple-800);
+
+   --gob-btn-disabled-bg: var(--gob-neutral-300);
+   --gob-btn-disabled-text: var(--gob-neutral-600);
+
+   /* ======================================================================
+       TEXTO
+       ====================================================================== */
+
+   --gob-text-primary: var(--gob-gray-800);
+   --gob-text-secondary: var(--gob-neutral-600);
+   --gob-text-muted: var(--gob-gray-450);
+
+   /* ======================================================================
+       ENLACES
+       ====================================================================== */
+
+   --gob-link-color: var(--gob-blue-700);
+   --gob-link-hover: var(--gob-blue-800);
+
+   /* ======================================================================
+       FONDOS
+       ====================================================================== */
+
+   --gob-bg-page: var(--gob-neutral-200);
+   --gob-bg-container: var(--gob-blue-350);
+   --gob-bg-section: var(--gob-blue-150);
+   --gob-bg-section-alt: var(--gob-blue-300);
+   --gob-bg-highlight: var(--gob-blue-650);
+   --gob-bg-footer: var(--gob-gray-800);
+
+   /* ======================================================================
+       BORDES
+       ====================================================================== */
+
+   --gob-border-width: 1px;
+   --gob-border-color: var(--gob-neutral-300);
+   --gob-border-dark: var(--gob-gray-800);
+
+   /* ======================================================================
+       FOCUS
+       ====================================================================== */
+
+   --gob-focus-color: var(--gob-yellow-500);
+   --gob-focus-outline-width: 3px;
+
+   /* ======================================================================
+       CARDS
+       ====================================================================== */
+
+   --gob-card-padding: 1.5rem;
+   --gob-card-border-color: var(--gob-neutral-300);
+   --gob-card-bar-height: 5px;
+
+   --gob-card-title-large: 1.5rem;
+   --gob-card-title-medium: 1.25rem;
+   --gob-card-title-small: 1.125rem;
+
+   /* ======================================================================
+       BADGES
+       ====================================================================== */
+
+   --gob-badge-size: 0.75rem;
+   --gob-badge-padding: 0.25rem;
+
+   --gob-badge-featured-bg: var(--gob-gray-800);
+   --gob-badge-featured-text: #FFFFFF;
+
+   --gob-badge-viewed-bg: var(--gob-strawberry-800);
+   --gob-badge-viewed-text: #FFFFFF;
+
+   --gob-badge-new-bg: var(--gob-indigo-700);
+   --gob-badge-new-text: #FFFFFF;
+
+   /* ======================================================================
+       ICONOGRAFÍA
+       ====================================================================== */
+
+   --gob-icon-size: 24px;
+   --gob-icon-active-area: 20px;
+   --gob-icon-padding: 2px;
+   --gob-icon-spacing: 8px;
+   --gob-icon-container-spacing: 16px;
+   --gob-icon-density-min: 16px;
+
+
+   /*
+      ==============================================================================
+      IMÁGENES
+      ============================================================================== */
+
+   --gob-image-hero-ratio: 1230 / 420;
+   --gob-image-campaign-ratio: 581 / 363;
+   --gob-image-catalog-ratio: 331 / 221;
+   --gob-image-news-ratio: 594 / 334;
+   --gob-image-news-detail-ratio: 656 / 370;
+   --gob-image-official-ratio: 1 / 1;
+
+   /* ==========================================================================
+   SPACING
+   ========================================================================== */
+
+   --gob-space-xs: 0.5rem; /* 8px */
+   --gob-space-sm: 1rem; /* 16px */
+   --gob-space-md: 1.5rem; /* 24px */
+   --gob-space-lg: 2rem; /* 32px */
+   --gob-space-xl: 3rem; /* 48px */
+
+   /* ======================================================================
+       BREAKPOINTS
+       ====================================================================== */
+
+   --gob-breakpoint-sm: 640px;
+   --gob-breakpoint-md: 768px;
+   --gob-breakpoint-lg: 1024px;
+   --gob-breakpoint-xl: 1280px;
+   --gob-breakpoint-2xl: 1536px;
+}

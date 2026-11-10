@@ -1,0 +1,1389 @@
+<script>
+'use strict';
+
+// ============================================================
+// ESTADO DE LA APLICACIÓN
+// ============================================================
+
+let welcomeShown = false;
+
+let agents = [];
+
+let catalogs = {
+  departments: [],
+  provinces: [],
+  districts: [],
+  sedes: []
+};
+
+let formMode = 'create';
+
+let currentUser = null;
+let userPermissions = new Set();
+
+// Registro de instancias del componente reutilizable.
+const paginatorInstances = Object.create(null);
+
+let locationCatalogs = {
+  sedes: [],
+  departamentos: [],
+  provincias: [],
+  distritos: []
+};
+
+let locationType = 'sedes';
+let locationEditingItem = null;
+let locationFilteredItems = [];
+
+let toastTimer;
+
+const $ = id => document.getElementById(id);
+
+const locationLabels = {
+  sedes: 'Sedes',
+  departamentos: 'Departamentos',
+  provincias: 'Provincias',
+  distritos: 'Distritos'
+};
+
+// ============================================================
+// INICIALIZACIÓN
+// ============================================================
+
+document.addEventListener('DOMContentLoaded', () => {
+  $('departamento').addEventListener('change', () => {
+    populateProvinces();
+    populateDistricts();
+  });
+
+  $('provincia').addEventListener('change', populateDistricts);
+
+  initGestorNavigation();
+  switchGestorView('dashboard');
+  loadData();
+});
+
+// ============================================================
+// UTILIDADES
+// ============================================================
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[char]);
+}
+
+function normalizeText(value) {
+  return String(value ?? '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('es-PE');
+}
+
+function callServer(method, ...args) {
+  return new Promise((resolve, reject) => {
+    google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler(error => reject(
+        new Error(
+          error && error.message
+            ? error.message
+            : String(error)
+        )
+      ))[method](...args);
+  });
+}
+
+// ============================================================
+// COMPONENTE REUTILIZABLE DE PAGINACIÓN
+// ============================================================
+
+function createPaginator(hostId, onChange) {
+  if (paginatorInstances[hostId]) {
+    return paginatorInstances[hostId];
+  }
+
+  const host = $(hostId);
+  const template = $('pagination-template');
+
+  if (!host || !template) {
+    throw new Error(
+      `No se encontró el contenedor o la plantilla del paginador: ${hostId}`
+    );
+  }
+
+  host.replaceChildren(template.content.cloneNode(true));
+
+  const root = host.querySelector('.pagination');
+
+  if (!root) {
+    throw new Error(
+      'La plantilla del paginador no contiene el elemento .pagination.'
+    );
+  }
+
+  const sizeSelect = root.querySelector('[data-pagination-size]');
+  const info = root.querySelector('[data-pagination-info]');
+  const previous = root.querySelector('[data-pagination-prev]');
+  const next = root.querySelector('[data-pagination-next]');
+
+  if (!sizeSelect || !info || !previous || !next) {
+    throw new Error(
+      'Faltan controles obligatorios en la plantilla del paginador.'
+    );
+  }
+
+  // Estado privado de esta instancia.
+  // Cada tabla conserva su propia página y tamaño sin variables globales.
+  let currentPage = 1;
+  let pageSize = 10;
+  let totalItems = 0;
+  let lastContextKey = null;
+
+  function getPage(total, contextKey = '') {
+    // Cambiar la búsqueda o el conjunto de datos reinicia la página.
+    if (lastContextKey !== contextKey) {
+      currentPage = 1;
+      lastContextKey = contextKey;
+    }
+
+    totalItems = Math.max(0, Number(total) || 0);
+
+    const totalPages = Math.max(
+      1,
+      Math.ceil(totalItems / pageSize)
+    );
+
+    // Si se eliminan registros, evita conservar una página inexistente.
+    currentPage = Math.min(currentPage, totalPages);
+
+    const start = totalItems === 0
+      ? 0
+      : (currentPage - 1) * pageSize;
+
+    const end = Math.min(start + pageSize, totalItems);
+
+    sizeSelect.value = String(pageSize);
+
+    info.textContent = totalItems === 0
+      ? 'Sin registros'
+      : `Mostrando ${start + 1}–${end} de ${totalItems} · Página ${currentPage} de ${totalPages}`;
+
+    previous.disabled = currentPage <= 1 || totalItems === 0;
+    next.disabled = currentPage >= totalPages || totalItems === 0;
+
+    return {
+      start,
+      end,
+      currentPage,
+      pageSize,
+      totalPages
+    };
+  }
+
+  previous.addEventListener('click', () => {
+    if (currentPage > 1) {
+      currentPage--;
+      onChange();
+    }
+  });
+
+  next.addEventListener('click', () => {
+    const totalPages = Math.max(
+      1,
+      Math.ceil(totalItems / pageSize)
+    );
+
+    if (currentPage < totalPages) {
+      currentPage++;
+      onChange();
+    }
+  });
+
+  sizeSelect.addEventListener('change', () => {
+    pageSize = Number(sizeSelect.value) || 10;
+    currentPage = 1;
+    onChange();
+  });
+
+  const instance = {
+    getPage,
+
+    getState() {
+      return {
+        currentPage,
+        pageSize,
+        totalItems
+      };
+    },
+
+    reset() {
+      currentPage = 1;
+      lastContextKey = null;
+    }
+  };
+
+  paginatorInstances[hostId] = instance;
+
+  return instance;
+}
+
+// ============================================================
+// NAVEGACIÓN INTERNA
+// ============================================================
+
+function initGestorNavigation() {
+  // Ambas tablas utilizan la misma implementación.
+  createPaginator('agentsPaginationHost', renderAgents);
+  createPaginator('locationsPaginationHost', renderLocationTable);
+
+  // Filtros de agentes gestionados desde JavaScript.
+  $('searchInput').addEventListener('input', renderAgents);
+  $('zoneFilter').addEventListener('change', renderAgents);
+  $('departmentFilter').addEventListener('change', renderAgents);
+
+  $('tableContainer').addEventListener('click', event => {
+    const button = event.target.closest('[data-audit-record]');
+
+    if (!button) return;
+
+    openAuditHistory({
+      entityType: button.dataset.auditEntity,
+      recordId: button.dataset.auditId,
+      recordName: button.dataset.auditName
+    });
+  });
+
+  // Navegación entre vistas.
+  document.querySelectorAll('[data-view-target]').forEach(button => {
+    button.addEventListener('click', () => {
+      switchGestorView(button.dataset.viewTarget);
+    });
+  });
+
+  // Desplegar o contraer el menú de mantenimientos.
+  const toggle = document.querySelector('[data-maintenance-toggle]');
+  const submenu = $('maintenanceSubmenu');
+
+  toggle.addEventListener('click', () => {
+    const open = submenu.hidden;
+
+    submenu.hidden = !open;
+    toggle.setAttribute('aria-expanded', String(open));
+  });
+
+  // Seleccionar catálogo de mantenimiento.
+  document.querySelectorAll('[data-catalog-type]').forEach(button => {
+    button.addEventListener('click', () => {
+      openLocationMaintenance(button.dataset.catalogType);
+    });
+  });
+
+  $('addLocationButton').addEventListener('click', () => {
+    openLocationForm();
+  });
+
+  $('locationForm').addEventListener(
+    'submit',
+    saveLocationForm
+  );
+
+  $('locationSearch').addEventListener(
+    'input',
+    renderLocationTable
+  );
+
+  // Delegación de eventos para las acciones de las tablas.
+  $('locationTableContainer').addEventListener('click', event => {
+    const auditButton = event.target.closest('[data-audit-record]');
+
+    if (auditButton) {
+      openAuditHistory({
+        entityType: auditButton.dataset.auditEntity,
+        recordId: auditButton.dataset.auditId,
+        recordName: auditButton.dataset.auditName
+      });
+      return;
+    }
+
+    const editButton = event.target.closest('[data-location-edit]');
+    const deleteButton = event.target.closest('[data-location-delete]');
+
+    if (editButton) {
+      editLocationItem(Number(editButton.dataset.locationEdit));
+      return;
+    }
+
+    if (deleteButton) {
+      removeLocationItem(Number(deleteButton.dataset.locationDelete));
+    }
+  });
+
+  document.querySelectorAll('[data-location-close]').forEach(element => {
+    element.addEventListener('click', closeLocationForm);
+  });
+}
+
+function switchGestorView(view) {
+  document.querySelectorAll('.app-view').forEach(section => {
+    section.hidden = section.id !== `view-${view}`;
+  });
+
+  document.querySelectorAll('[data-view-target]').forEach(button => {
+    button.classList.toggle(
+      'active',
+      button.dataset.viewTarget === view
+    );
+  });
+
+  document.querySelectorAll('[data-catalog-type]').forEach(button => {
+    button.classList.remove('active');
+  });
+
+  const maintenanceButton =
+    document.querySelector('[data-maintenance-toggle]');
+
+  maintenanceButton.classList.toggle(
+    'active',
+    view === 'mantenimientos'
+  );
+
+  if (view === 'dashboard') {
+    renderDashboard();
+  }
+}
+
+// ============================================================
+// CARGA DE AGENTES Y CATÁLOGOS
+// ============================================================
+
+async function loadData() {
+  $('tableContainer').innerHTML =
+    '<div class="loading">Cargando directorio...</div>';
+
+  try {
+    const data = await callServer('getInitialData');
+
+    // Identidad y permisos obtenidos del servidor.
+    currentUser = data.user || null;
+    userPermissions = new Set(data.permissions || []);
+
+    agents = data.agents || [];
+
+    catalogs = data.catalogs || {
+      departments: [],
+      provinces: [],
+      districts: [],
+      sedes: []
+    };
+
+    populateStaticSelects();
+    renderAgents();
+    renderDashboard();
+
+    // Aplicar la visibilidad correspondiente a los permisos.
+    if (typeof applyApplicationPermissions === 'function') {
+      applyApplicationPermissions();
+    }
+
+    // Mostrar la bienvenida una sola vez por carga de la aplicación.
+    if (!welcomeShown && currentUser) {
+      const name = currentUser.name || 'usuario';
+      const email = currentUser.email || '';
+      const role = currentUser.roleName || '';
+
+      const message =
+        `Sesión autenticada correctamente. ¡Bienvenido/a, ${name}!` +
+        (email ? ` Cuenta: ${email}.` : '') +
+        (role ? ` Rol: ${role}.` : '');
+
+      showToast(message);
+      welcomeShown = true;
+    }
+
+  } catch (error) {
+    $('tableContainer').innerHTML = `
+      <div class="empty-state">
+        <strong>No se pudo cargar el directorio</strong>
+        ${escapeHtml(error.message)}
+        <p>
+          Verifica el acceso, la configuración de seguridad
+          y los permisos del proyecto.
+        </p>
+      </div>`;
+
+    showToast(error.message, true);
+  }
+}
+
+function setOptions(select, items, placeholder, getValue, getLabel) {
+  select.replaceChildren(new Option(placeholder, ''));
+
+  items.forEach(item => {
+    select.add(new Option(getLabel(item), getValue(item)));
+  });
+}
+
+function populateStaticSelects() {
+  setOptions(
+    $('sede'),
+    catalogs.sedes,
+    'Selecciona una sede',
+    sede => sede,
+    sede => sede
+  );
+
+  setOptions(
+    $('zoneFilter'),
+    catalogs.sedes,
+    'Todas las sedes',
+    sede => sede,
+    sede => sede
+  );
+
+  setOptions(
+    $('departmentFilter'),
+    catalogs.departments,
+    'Todos los departamentos',
+    item => item.name,
+    item => item.name
+  );
+
+  setOptions(
+    $('departamento'),
+    catalogs.departments,
+    'Selecciona un departamento',
+    item => item.id,
+    item => item.name
+  );
+
+  populateProvinces();
+  populateDistricts();
+}
+
+function populateProvinces(selectedName = '') {
+  const departmentId = $('departamento').value;
+
+  const items = catalogs.provinces.filter(
+    item => item.parentId === departmentId
+  );
+
+  setOptions(
+    $('provincia'),
+    items,
+    'Selecciona una provincia',
+    item => item.id,
+    item => item.name
+  );
+
+  $('provincia').disabled = !departmentId;
+  $('distrito').disabled = true;
+
+  if (selectedName) {
+    const selected = items.find(item => item.name === selectedName);
+
+    if (selected) {
+      $('provincia').value = selected.id;
+    }
+  }
+}
+
+function populateDistricts(selectedName = '') {
+  const provinceId = $('provincia').value;
+
+  const items = catalogs.districts.filter(
+    item => item.parentId === provinceId
+  );
+
+  setOptions(
+    $('distrito'),
+    items,
+    'Selecciona un distrito',
+    item => item.id,
+    item => item.name
+  );
+
+  $('distrito').disabled = !provinceId;
+
+  if (selectedName) {
+    const selected = items.find(item => item.name === selectedName);
+
+    if (selected) {
+      $('distrito').value = selected.id;
+    }
+  }
+}
+
+// ============================================================
+// LISTADO DE AGENTES
+// ============================================================
+
+function renderAgents() {
+  const query = normalizeText($('searchInput').value);
+  const sede = $('zoneFilter').value;
+  const department = $('departmentFilter').value;
+
+  const filtered = agents.filter(agent => {
+    const searchable = normalizeText([
+      agent.nombre,
+      agent.sede,
+      agent.departamento,
+      agent.provincia,
+      agent.distrito,
+      agent.direccion,
+      agent.referencia
+    ].join(' '));
+
+    return searchable.includes(query) &&
+      (!sede || agent.sede === sede) &&
+      (!department || agent.departamento === department);
+  });
+
+  const total = filtered.length;
+  const paginator = paginatorInstances.agentsPaginationHost;
+
+  const page = paginator.getPage(
+    total,
+    JSON.stringify([query, sede, department])
+  );
+
+  const visibleAgents = filtered.slice(page.start, page.end);
+
+  $('resultsCount').textContent = total === 1
+    ? '1 registro'
+    : `${total.toLocaleString('es-PE')} registros`;
+
+  if (!visibleAgents.length) {
+    $('tableContainer').innerHTML = `
+      <div class="empty-state">
+        <strong>No se encontraron agentes</strong>
+        Prueba cambiando los filtros o registra un nuevo agente.
+      </div>`;
+    return;
+  }
+
+  const rows = visibleAgents.map(agent => {
+    const actions = [];
+
+    if (userPermissions.has('AGENTES_VER')) {
+      actions.push(`
+        <button type="button" class="icon-btn"
+          title="Ver detalles" aria-label="Ver detalles"
+          onclick="viewAgent('${escapeHtml(agent.id)}')">◉</button>
+      `);
+    }
+
+    if (userPermissions.has('AGENTES_EDITAR')) {
+      actions.push(`
+        <button type="button" class="icon-btn"
+          title="Editar" aria-label="Editar"
+          onclick="editAgent('${escapeHtml(agent.id)}')">✎</button>
+      `);
+    }
+
+    if (userPermissions.has('AGENTES_ELIMINAR')) {
+      actions.push(`
+        <button type="button" class="icon-btn danger"
+          title="Eliminar" aria-label="Eliminar"
+          onclick="removeAgent('${escapeHtml(agent.id)}')">⌫</button>
+      `);
+    }
+
+    if (userPermissions.has('AUDITORIA_VER')) {
+      actions.push(`
+        <button type="button" class="btn btn-outline btn-sm"
+          data-context-audit-id="${escapeHtml(agent.id)}"
+          data-context-audit-name="${escapeHtml(agent.nombre)}"
+          onclick="openAgentAuditHistory(this.dataset.contextAuditId, this.dataset.contextAuditName)">
+          Historial
+        </button>
+      `);
+    }
+
+    return `
+      <tr>
+        <td>
+          <strong>${escapeHtml(agent.nombre)}</strong>
+          <small>${escapeHtml(agent.direccion)}</small>
+        </td>
+
+        <td>
+          <span class="zone-pill">
+            ${escapeHtml(agent.sede)}
+          </span>
+        </td>
+
+        <td class="location">
+          ${escapeHtml(agent.departamento)}
+          <small>
+            ${escapeHtml(agent.provincia)} /
+            ${escapeHtml(agent.distrito)}
+          </small>
+        </td>
+
+        <td>${escapeHtml(agent.referencia || '—')}</td>
+        <td><div class="actions">${actions.join('')}</div></td>
+      </tr>
+    `;
+  }).join('');
+
+  $('tableContainer').innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Agente / dirección</th>
+          <th>Sede</th>
+          <th>Ubicación</th>
+          <th>Referencia</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ============================================================
+// FORMULARIO DE AGENTES
+// ============================================================
+
+function openForm(agent = null, mode = 'create') {
+  formMode = mode;
+
+  $('agentForm').reset();
+  $('formError').hidden = true;
+  $('agentId').value = agent ? agent.id : '';
+
+  populateStaticSelects();
+
+  if (agent) {
+    $('sede').value = agent.sede;
+    $('nombre').value = agent.nombre;
+
+    $('departamento').value =
+      (catalogs.departments.find(
+        item => item.name === agent.departamento
+      ) || {}).id || '';
+
+    populateProvinces(agent.provincia);
+    populateDistricts(agent.distrito);
+
+    $('direccion').value = agent.direccion;
+    $('referencia').value = agent.referencia;
+    $('urlDestination').value = agent.urlDestination;
+  }
+
+  const readonly = mode === 'view';
+
+  [
+    'sede',
+    'nombre',
+    'departamento',
+    'provincia',
+    'distrito',
+    'direccion',
+    'referencia',
+    'urlDestination'
+  ].forEach(id => {
+    $(id).disabled = readonly;
+  });
+
+  $('modalTitle').textContent =
+    mode === 'create' ? 'Nuevo agente SUNARP'
+      : mode === 'edit' ? 'Editar agente SUNARP'
+      : 'Detalle del agente';
+
+  $('modalDescription').textContent =
+    mode === 'view'
+      ? 'Consulta la información registrada.'
+      : mode === 'edit'
+        ? 'Modifica los datos del agente.'
+        : 'Completa los datos para registrar un agente.';
+
+  $('saveButton').hidden = readonly;
+
+  $('saveButton').textContent = mode === 'edit'
+    ? 'Guardar cambios'
+    : 'Guardar agente';
+
+  $('agentModal').classList.add('open');
+  $('agentModal').setAttribute('aria-hidden', 'false');
+}
+
+function closeForm() {
+  $('agentModal').classList.remove('open');
+  $('agentModal').setAttribute('aria-hidden', 'true');
+}
+
+function findAgent(id) {
+  return agents.find(agent => agent.id === id);
+}
+
+function viewAgent(id) {
+  const agent = findAgent(id);
+
+  if (agent) {
+    openForm(agent, 'view');
+  }
+}
+
+function editAgent(id) {
+  const agent = findAgent(id);
+
+  if (agent) {
+    openForm(agent, 'edit');
+  }
+}
+
+async function submitForm(event) {
+  event.preventDefault();
+
+  const errorBox = $('formError');
+  errorBox.hidden = true;
+
+  const department = catalogs.departments.find(
+    item => item.id === $('departamento').value
+  );
+
+  const province = catalogs.provinces.find(
+    item => item.id === $('provincia').value
+  );
+
+  const district = catalogs.districts.find(
+    item => item.id === $('distrito').value
+  );
+
+  if (!department || !province || !district) {
+    errorBox.textContent =
+      'Selecciona un departamento, provincia y distrito válidos.';
+    errorBox.hidden = false;
+    return;
+  }
+
+  const agent = {
+    id: $('agentId').value,
+    sede: $('sede').value,
+    nombre: $('nombre').value.trim(),
+    departamento: department.name,
+    provincia: province.name,
+    distrito: district.name,
+    direccion: $('direccion').value.trim(),
+    referencia: $('referencia').value.trim(),
+    urlDestination: $('urlDestination').value.trim()
+  };
+
+  const button = $('saveButton');
+
+  button.disabled = true;
+  button.textContent = 'Guardando...';
+
+  try {
+    const result = await callServer('saveAgent', agent);
+
+    closeForm();
+    showToast(result.message);
+
+    await loadData();
+
+  } catch (error) {
+    errorBox.textContent = error.message;
+    errorBox.hidden = false;
+
+  } finally {
+    button.disabled = false;
+
+    button.textContent = formMode === 'edit'
+      ? 'Guardar cambios'
+      : 'Guardar agente';
+  }
+}
+
+async function removeAgent(id) {
+  const agent = findAgent(id);
+
+  if (!agent) return;
+
+  if (!confirm(
+    `¿Deseas eliminar el agente "${agent.nombre}"?\n\n` +
+    'Esta acción no se puede deshacer.'
+  )) {
+    return;
+  }
+
+  try {
+    const result = await callServer('deleteAgent', id);
+
+    showToast(result.message);
+    await loadData();
+
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
+// ============================================================
+// DASHBOARD
+// ============================================================
+
+function getDashboardRanking(field) {
+  const counts = new Map();
+
+  agents.forEach(agent => {
+    const name = String(agent[field] || '').trim();
+
+    if (!name) return;
+
+    const key = normalizeText(name);
+
+    if (!counts.has(key)) {
+      counts.set(key, {
+        name,
+        count: 0
+      });
+    }
+
+    counts.get(key).count++;
+  });
+
+  return Array.from(counts.values())
+    .sort((a, b) =>
+      b.count - a.count ||
+      a.name.localeCompare(b.name, 'es')
+    )
+    .slice(0, 5);
+}
+
+function renderDashboardChart(containerId, items) {
+  const container = $(containerId);
+
+  if (!container) return;
+
+  if (!items.length) {
+    container.innerHTML = `
+      <div class="empty-state">
+        No hay datos para mostrar.
+      </div>`;
+    return;
+  }
+
+  const maxCount = Math.max(
+    ...items.map(item => item.count),
+    1
+  );
+
+  container.innerHTML = items.map(item => {
+    const width = Math.max(3, item.count / maxCount * 100);
+
+    return `
+      <div class="dashboard-chart-row">
+        <span class="dashboard-chart-label"
+          title="${escapeHtml(item.name)}">
+          ${escapeHtml(item.name)}
+        </span>
+
+        <div class="dashboard-bar-track">
+          <div class="dashboard-bar-fill"
+            style="width:${width}%"></div>
+        </div>
+
+        <strong>${item.count.toLocaleString('es-PE')}</strong>
+      </div>`;
+  }).join('');
+}
+
+function renderDashboard() {
+  if (!$('dashboardTotalAgents')) return;
+
+  const sedes = getDashboardRanking('sede');
+  const departments = getDashboardRanking('departamento');
+
+  const total = agents.length.toLocaleString('es-PE');
+
+  $('dashboardTotalAgents').textContent = total;
+  $('totalAgents').textContent = total;
+
+  const sede = sedes[0];
+  const department = departments[0];
+
+  $('dashboardTopZoneCount').textContent =
+    sede ? sede.count.toLocaleString('es-PE') : '0';
+
+  $('dashboardTopZoneName').textContent =
+    sede ? sede.name : 'Sin datos';
+
+  $('dashboardTopDepartmentCount').textContent =
+    department ? department.count.toLocaleString('es-PE') : '0';
+
+  $('dashboardTopDepartmentName').textContent =
+    department ? department.name : 'Sin datos';
+
+  // Indicadores de la vista de agentes.
+  $('totalZones').textContent =
+    sede ? sede.count.toLocaleString('es-PE') : '0';
+
+  $('totalZonesNote').textContent =
+    sede ? `Sede: ${sede.name}` : 'Sin datos';
+
+  $('totalDepartments').textContent =
+    department ? department.count.toLocaleString('es-PE') : '0';
+
+  $('totalDepartmentsNote').textContent =
+    department
+      ? `Departamento: ${department.name}`
+      : 'Sin datos';
+
+  $('dashboardSedes').textContent =
+    (catalogs.sedes || []).length.toLocaleString('es-PE');
+
+  $('dashboardDepartments').textContent =
+    (catalogs.departments || []).length.toLocaleString('es-PE');
+
+  $('dashboardProvinces').textContent =
+    (catalogs.provinces || []).length.toLocaleString('es-PE');
+
+  $('dashboardDistricts').textContent =
+    (catalogs.districts || []).length.toLocaleString('es-PE');
+
+  renderDashboardChart('dashboardZonesChart', sedes);
+  renderDashboardChart('dashboardDepartmentsChart', departments);
+}
+
+// ============================================================
+// MANTENIMIENTOS: NAVEGACIÓN Y CONSULTA
+// ============================================================
+
+async function openLocationMaintenance(type) {
+  if (!Object.prototype.hasOwnProperty.call(locationLabels, type)) {
+    showToast('El mantenimiento solicitado no es válido.', true);
+    return;
+  }
+
+  locationType = type;
+  paginatorInstances.locationsPaginationHost.reset();
+
+  switchGestorView('mantenimientos');
+
+  const submenu = $('maintenanceSubmenu');
+  const toggle = document.querySelector('[data-maintenance-toggle]');
+
+  submenu.hidden = false;
+  toggle.setAttribute('aria-expanded', 'true');
+
+  document.querySelectorAll('[data-catalog-type]').forEach(button => {
+    button.classList.toggle(
+      'active',
+      button.dataset.catalogType === type
+    );
+  });
+
+  const label = locationLabels[type];
+
+  $('locationPageTitle').textContent = label;
+  $('locationPanelTitle').textContent =
+    `Listado de ${label.toLowerCase()}`;
+
+  $('locationPageDescription').textContent =
+    `Administra el catálogo de ${label.toLowerCase()}.`;
+
+  $('locationSearch').value = '';
+
+  $('locationTableContainer').innerHTML =
+    '<div class="loading">Cargando registros...</div>';
+
+  try {
+    await loadLocationCatalogs();
+    renderLocationTable();
+
+  } catch (error) {
+    $('locationTableContainer').innerHTML = `
+      <div class="empty-state">
+        <strong>No se pudo cargar el catálogo</strong>
+        ${escapeHtml(error.message)}
+      </div>`;
+
+    showToast(error.message, true);
+  }
+}
+
+async function loadLocationCatalogs() {
+  locationCatalogs = await callServer(
+    'getLocationCatalogsForMaintenance'
+  );
+}
+
+// ============================================================
+// MANTENIMIENTOS: TABLAS Y BÚSQUEDA
+// ============================================================
+
+function locationActionButtons(index) {
+  const item = locationFilteredItems[index];
+  const actions = [];
+
+  if (userPermissions.has('UBICACIONES_EDITAR')) {
+    actions.push(`
+      <button type="button" class="icon-btn"
+        title="Editar" aria-label="Editar"
+        data-location-edit="${index}">✎</button>
+    `);
+  }
+
+  if (userPermissions.has('UBICACIONES_ELIMINAR')) {
+    actions.push(`
+      <button type="button" class="icon-btn danger"
+        title="Eliminar" aria-label="Eliminar"
+        data-location-delete="${index}">⌫</button>
+    `);
+  }
+
+  if (item && userPermissions.has('AUDITORIA_VER')) {
+    const entityTypes = {
+      sedes: 'SEDE',
+      departamentos: 'DEPARTAMENTO',
+      provincias: 'PROVINCIA',
+      distritos: 'DISTRITO'
+    };
+
+    actions.push(`
+      <button type="button" class="btn btn-outline btn-sm"
+        data-audit-record
+        data-audit-entity="${entityTypes[locationType]}"
+        data-audit-id="${escapeHtml(item.id)}"
+        data-audit-name="${escapeHtml(item.name)}">
+        Historial
+      </button>
+    `);
+  }
+
+  return `<div class="actions">${actions.join('')}</div>`;
+}
+
+function renderLocationTable() {
+  const items = locationCatalogs[locationType] || [];
+  const query = normalizeText($('locationSearch').value);
+
+  locationFilteredItems = items.filter(item => {
+    const searchable = normalizeText([
+      item.id,
+      item.name,
+      item.parentName,
+      item.departmentName
+    ].join(' '));
+
+    return searchable.includes(query);
+  });
+
+  const count = locationFilteredItems.length;
+  const paginator = paginatorInstances.locationsPaginationHost;
+
+  const page = paginator.getPage(
+    count,
+    JSON.stringify([locationType, query])
+  );
+
+  const visibleItems = locationFilteredItems.slice(
+    page.start,
+    page.end
+  );
+
+  $('locationResultsCount').textContent = count === 1
+    ? '1 registro'
+    : `${count.toLocaleString('es-PE')} registros`;
+
+  if (!count) {
+    $('locationTableContainer').innerHTML = `
+      <div class="empty-state">
+        <strong>No se encontraron registros</strong>
+        Registra uno nuevo o cambia el criterio de búsqueda.
+      </div>`;
+    return;
+  }
+
+  let headers;
+
+  if (locationType === 'sedes') {
+    headers = '<th>Sede</th><th>Acciones</th>';
+
+  } else if (locationType === 'departamentos') {
+    headers = `
+      <th>Código</th>
+      <th>Departamento</th>
+      <th>Acciones</th>`;
+
+  } else if (locationType === 'provincias') {
+    headers = `
+      <th>Código</th>
+      <th>Provincia</th>
+      <th>Departamento</th>
+      <th>Acciones</th>`;
+
+  } else {
+    headers = `
+      <th>Código</th>
+      <th>Distrito</th>
+      <th>Provincia</th>
+      <th>Departamento</th>
+      <th>Acciones</th>`;
+  }
+
+  const rows = visibleItems.map((item, pageIndex) => {
+    // Índice absoluto dentro de la lista filtrada.
+    // Esto mantiene correctas las acciones de editar y eliminar.
+    const index = page.start + pageIndex;
+
+    let cells = '';
+
+    if (locationType === 'sedes') {
+      cells = `
+        <td><strong>${escapeHtml(item.name)}</strong></td>`;
+
+    } else if (locationType === 'departamentos') {
+      cells = `
+        <td>${escapeHtml(item.id)}</td>
+        <td><strong>${escapeHtml(item.name)}</strong></td>`;
+
+    } else if (locationType === 'provincias') {
+      cells = `
+        <td>${escapeHtml(item.id)}</td>
+        <td><strong>${escapeHtml(item.name)}</strong></td>
+        <td>${escapeHtml(item.parentName || '—')}</td>`;
+
+    } else {
+      cells = `
+        <td>${escapeHtml(item.id)}</td>
+        <td><strong>${escapeHtml(item.name)}</strong></td>
+        <td>${escapeHtml(item.parentName || '—')}</td>
+        <td>${escapeHtml(item.departmentName || '—')}</td>`;
+    }
+
+    return `
+      <tr>
+        ${cells}
+        <td>${locationActionButtons(index)}</td>
+      </tr>`;
+  }).join('');
+
+  $('locationTableContainer').innerHTML = `
+    <table>
+      <thead>
+        <tr>${headers}</tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ============================================================
+// MANTENIMIENTOS: FORMULARIO
+// ============================================================
+
+function openLocationForm(item = null) {
+  locationEditingItem = item;
+
+  const isEdit = Boolean(item);
+  const hasParent = ['provincias', 'distritos'].includes(locationType);
+  const hasId = locationType !== 'sedes';
+
+  $('locationForm').reset();
+  $('locationFormError').hidden = true;
+
+  $('locationModalTitle').textContent =
+    isEdit
+      ? `Editar ${locationLabels[locationType].toLowerCase()}`
+      : `Nuevo registro de ${locationLabels[locationType].toLowerCase()}`;
+
+  $('locationModalDescription').textContent = isEdit
+    ? 'Actualiza el nombre del registro.'
+    : 'Completa los datos para incorporar un registro al catálogo maestro.';
+
+  $('locationIdGroup').hidden = !hasId;
+  $('locationId').required = hasId;
+  $('locationId').disabled = isEdit;
+  $('locationId').value = item ? item.id : '';
+
+  $('locationName').value = item ? item.name : '';
+
+  $('locationParentGroup').hidden = !hasParent;
+  $('locationParentId').required = hasParent;
+  $('locationParentId').disabled = isEdit;
+
+  if (hasParent) {
+    const parentType = locationType === 'provincias'
+      ? 'departamentos'
+      : 'provincias';
+
+    const parentSelect = $('locationParentId');
+
+    parentSelect.replaceChildren(
+      new Option('Selecciona una opción', '')
+    );
+
+    locationCatalogs[parentType].forEach(parent => {
+      parentSelect.add(new Option(parent.name, parent.id));
+    });
+
+    parentSelect.value = item ? item.parentId : '';
+
+    $('locationParentLabel').innerHTML =
+      (locationType === 'provincias'
+        ? 'Departamento'
+        : 'Provincia') + ' <span>*</span>';
+
+  } else {
+    $('locationParentId').value = '';
+  }
+
+  $('saveLocationButton').textContent =
+    isEdit ? 'Guardar cambios' : 'Guardar registro';
+
+  $('locationModal').classList.add('open');
+  $('locationModal').setAttribute('aria-hidden', 'false');
+
+  $('locationName').focus();
+}
+
+function closeLocationForm() {
+  $('locationModal').classList.remove('open');
+  $('locationModal').setAttribute('aria-hidden', 'true');
+
+  locationEditingItem = null;
+}
+
+function editLocationItem(index) {
+  const item = locationFilteredItems[index];
+
+  if (item) {
+    openLocationForm(item);
+  }
+}
+
+async function saveLocationForm(event) {
+  event.preventDefault();
+
+  const errorBox = $('locationFormError');
+  const button = $('saveLocationButton');
+
+  errorBox.hidden = true;
+
+  const wasEditing = Boolean(locationEditingItem);
+  const name = $('locationName').value.trim();
+
+  const payload = {
+    action: wasEditing ? 'edit' : 'create',
+    id: locationType === 'sedes'
+      ? name
+      : $('locationId').value.trim(),
+    originalKey: wasEditing
+      ? locationEditingItem.id
+      : '',
+    name,
+    parentId: $('locationParentId').value
+  };
+
+  if (!payload.name) {
+    errorBox.textContent = 'Ingresa el nombre del registro.';
+    errorBox.hidden = false;
+    return;
+  }
+
+  if (locationType !== 'sedes' && !payload.id) {
+    errorBox.textContent = 'Ingresa el código del registro.';
+    errorBox.hidden = false;
+    return;
+  }
+
+  if (
+    ['provincias', 'distritos'].includes(locationType) &&
+    !payload.parentId
+  ) {
+    errorBox.textContent =
+      'Selecciona el registro superior correspondiente.';
+    errorBox.hidden = false;
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = 'Guardando...';
+
+  try {
+    const result = await callServer(
+      'saveLocationCatalog',
+      locationType,
+      payload
+    );
+
+    closeLocationForm();
+    showToast(result.message);
+
+    await loadLocationCatalogs();
+    await loadData();
+
+    renderLocationTable();
+
+  } catch (error) {
+    errorBox.textContent = error.message;
+    errorBox.hidden = false;
+
+  } finally {
+    button.disabled = false;
+
+    button.textContent = wasEditing
+      ? 'Guardar cambios'
+      : 'Guardar registro';
+  }
+}
+
+// ============================================================
+// MANTENIMIENTOS: ELIMINACIÓN
+// ============================================================
+
+async function removeLocationItem(index) {
+  const item = locationFilteredItems[index];
+
+  if (!item) return;
+
+  const confirmed = confirm(
+    `¿Deseas eliminar "${item.name}"?\n\n` +
+    'No se podrá eliminar si existen agentes o registros dependientes.'
+  );
+
+  if (!confirmed) return;
+
+  try {
+    const result = await callServer(
+      'deleteLocationCatalog',
+      locationType,
+      item.id
+    );
+
+    showToast(result.message);
+
+    await loadLocationCatalogs();
+    await loadData();
+
+    renderLocationTable();
+
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
+// ============================================================
+// NOTIFICACIONES
+// ============================================================
+
+function showToast(message, isError = false) {
+  const toast = $('toast');
+
+  toast.textContent = message;
+  toast.className = 'toast show' + (isError ? ' error' : '');
+
+  clearTimeout(toastTimer);
+
+  toastTimer = setTimeout(() => {
+    toast.className = 'toast';
+  }, 4000);
+}
+</script>

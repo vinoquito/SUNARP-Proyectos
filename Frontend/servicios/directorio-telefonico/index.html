@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <base href="/servicios/">
+
+    <link rel="stylesheet" href="assets/css/tailwind.css">
+
+    <link rel="stylesheet" href="assets/css/styles.css">
+
+    <script src="assets/js/vue.global.prod.js"></script>
+
+    <link
+        rel="icon"
+        type="image/x-icon"
+        href="assets/imagenes/ui/favicon-gob-pe.ico"
+    />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+    <link
+        href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;800&display=swap"
+        rel="stylesheet"
+    >
+
+    <link
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined"
+        rel="stylesheet"
+    >
+
+    <link
+        href="https://cdn.jsdelivr.net/npm/select2@4.1.0/dist/css/select2.min.css"
+        rel="stylesheet"
+    >
+
+    <title>Directorio Telefónico Sunarp</title>
+
+</head>
+
+
+<body>
+
+    <div id="app">
+
+        <!-- =====================================================
+             LOADER
+             ===================================================== -->
+
+        <div v-if="loading" class="loader-overlay">
+
+            <app-loader></app-loader>
+
+        </div>
+
+
+        <!-- =====================================================
+             APP
+             ===================================================== -->
+
+        <div v-show="!loading">
+
+
+            <!-- NAVBAR -->
+
+            <navbar-gob
+                :template="navbarData.template"
+                :items="navbarData.items"
+                title-class="navbar-title-gob"
+                separator-class="navbar-separator-gob"
+            >
+            </navbar-gob>
+
+
+            <!-- =================================================
+                 CONTENIDO PRINCIPAL
+                 ================================================= -->
+
+            <main class="pt-24">
+
+
+                <!-- HEADER -->
+
+                <page-header-gob
+                    template="page-header-split"
+                    :page="pageData"
+                >
+                </page-header-gob>
+
+
+                <!-- =================================================
+                     LISTADO DEL DIRECTORIO TELEFÓNICO
+                     ================================================= -->
+
+                <listing-block
+
+                    :items="directory"
+
+                    :filter-fields="directoryFilterFields"
+
+                    :search-fields="directorySearchFields"
+
+                    :export-columns="directoryExportColumns"
+
+                    :per-page="10"
+
+                    :show-export="true"
+
+                    item-label="contactos"
+
+                    filename="directorio-telefonico"
+
+
+                >
+
+                    <!-- RESULTADO EN FORMATO TABLA -->
+
+                    <template #results="{ items }">
+
+                        <data-table
+
+                            title=""
+
+                            :items="items"
+
+                            :columns="directoryTableColumns"
+
+                            empty-text="No se encontraron contactos."
+
+                        >
+                        </data-table>
+
+                    </template>
+
+
+                </listing-block>
+
+
+            </main>
+
+
+            <!-- =================================================
+                 FOOTER
+                 ================================================= -->
+
+            <footer-gob
+                :template="footerData.template"
+                :items="footerData.items"
+            >
+            </footer-gob>
+
+
+        </div>
+
+    </div>
+
+
+    <!-- =========================================================
+         LIBRERÍAS
+         ========================================================= -->
+
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0/dist/js/select2.min.js"></script>
+
+
+    <!-- EXCEL -->
+
+    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
+
+    <!-- PDF -->
+
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+
+
+    <!-- =========================================================
+         BOOTSTRAP
+         ========================================================= -->
+
+    <script src="assets/js/bootstrap.js"></script>
+
+
+    <!-- =========================================================
+         COMPONENTES UI
+         ========================================================= -->
+
+    <!-- TABLA -->
+
+    <script src="assets/js/components/ui/table.js"></script>
+
+    <script src="assets/js/components/ui/tables/table-default.js"></script>
+
+
+    <!-- BUSCADOR -->
+
+    <script src="assets/js/components/ui/search-input.js"></script>
+
+
+    <!-- SELECT -->
+
+    <script src="assets/js/components/ui/select.js"></script>
+
+
+    <!-- SUMMARY -->
+
+    <script src="assets/js/components/ui/summary.js"></script>
+
+
+    <!-- PAGINATION -->
+
+    <script src="assets/js/components/ui/pagination.js"></script>
+
+    <script src="assets/js/components/ui/pagination/pagination-default.js"></script>
+
+
+    <!-- LISTING -->
+
+    <script src="assets/js/components/ui/listing-block.js"></script>
+
+
+    <!-- BUTTONS -->
+
+    <script src="assets/js/components/ui/button.js"></script>
+
+    <script src="assets/js/components/ui/export-excel-button.js"></script>
+
+    <script src="assets/js/components/ui/export-pdf-button.js"></script>
+
+    <script src="assets/js/components/ui/clear-filters-button.js"></script>
+
+
+    <!-- =========================================================
+         REGISTER
+         ========================================================= -->
+
+    <script src="assets/js/register-components.js"></script>
+
+
+    <!-- =========================================================
+         PAGE
+         ========================================================= -->
+
+    <script src="assets/js/pages/directorio-telefonico.js"></script>
+
+
+    <!-- FLOWBITE -->
+
+    <script src="assets/js/flowbite.min.js"></script>
+
+
+</body>
+
+</html>

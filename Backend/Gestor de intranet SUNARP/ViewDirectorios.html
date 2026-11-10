@@ -1,0 +1,41 @@
+<section data-app-view="directorios-telefonicos" hidden>
+
+  <div class="directory-page">
+
+    <!-- Filtros -->
+    <div class="sunarp-filter-bar">
+
+      <div class="sunarp-filter">
+        <label for="directorySedeFilter">Sede</label>
+        <select id="directorySedeFilter" class="sunarp-select">
+          <option value="">Todas las sedes</option>
+        </select>
+      </div>
+
+      <div
+        id="directoryHierarchyFilters"
+        class="sunarp-filter-collection">
+      </div>
+
+      <div class="sunarp-filter">
+        <label for="directoryCargoFilter">Cargo</label>
+        <select id="directoryCargoFilter" class="sunarp-select">
+          <option value="">Todos los cargos</option>
+        </select>
+      </div>
+
+    </div>
+
+    <!-- Tabla -->
+    <article class="sunarp-card">
+
+      <div
+        id="directoryTableContainer"
+        aria-live="polite">
+      </div>
+
+    </article>
+
+  </div>
+
+</section>

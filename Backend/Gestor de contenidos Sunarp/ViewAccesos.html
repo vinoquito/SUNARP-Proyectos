@@ -1,0 +1,302 @@
+<section id="view-accesos" class="app-view" hidden>
+
+  <header class="topbar">
+    <div>
+      <span class="breadcrumb">Configuración / Seguridad</span>
+      <h1>Administración de accesos</h1>
+      <p class="subtitle">
+        Administra usuarios, roles y permisos del sistema.
+      </p>
+    </div>
+  </header>
+
+  <div class="access-tabs" role="tablist" aria-label="Administración de accesos">
+
+    <button type="button" class="access-tab"
+      data-access-tab="users" hidden>
+      Usuarios
+    </button>
+
+    <button type="button" class="access-tab"
+      data-access-tab="roles" hidden>
+      Roles
+    </button>
+
+    <button type="button" class="access-tab"
+      data-access-tab="permissions" hidden>
+      Permisos
+    </button>
+
+    <button type="button" class="access-tab"
+      data-access-tab="assignments" hidden>
+      Asignación de permisos
+    </button>
+
+    <button type="button" class="access-tab"
+      data-access-tab="audit" hidden>
+      Auditoría
+    </button>
+
+  </div>
+
+  <!-- USUARIOS -->
+
+  <section class="panel access-panel" data-access-panel="users" hidden>
+
+    <div class="panel-heading">
+      <div>
+        <h2>Usuarios</h2>
+        <p>Gestiona las cuentas institucionales autorizadas.</p>
+      </div>
+
+      <button type="button" class="btn btn-primary"
+        id="addAccessUserButton">
+        ＋ Nuevo usuario
+      </button>
+    </div>
+
+    <div id="accessUsersTable" class="table-wrap">
+      <div class="loading">Cargando usuarios...</div>
+    </div>
+  </section>
+
+  <!-- ROLES -->
+
+  <section class="panel access-panel" data-access-panel="roles" hidden>
+
+    <div class="panel-heading">
+      <div>
+        <h2>Roles</h2>
+        <p>Define perfiles de acceso según las responsabilidades.</p>
+      </div>
+
+      <button type="button" class="btn btn-primary"
+        id="addAccessRoleButton">
+        ＋ Nuevo rol
+      </button>
+    </div>
+
+    <div id="accessRolesTable" class="table-wrap">
+      <div class="loading">Cargando roles...</div>
+    </div>
+  </section>
+
+  <!-- PERMISOS -->
+
+  <section class="panel access-panel" data-access-panel="permissions" hidden>
+
+    <div class="panel-heading">
+      <div>
+        <h2>Permisos</h2>
+        <p>
+          Define las operaciones autorizables por módulo.
+          Los códigos existentes son identificadores estables.
+        </p>
+      </div>
+
+      <button type="button" class="btn btn-primary"
+        id="addAccessPermissionButton">
+        ＋ Nuevo permiso
+      </button>
+    </div>
+
+    <div id="accessPermissionsTable" class="table-wrap">
+      <div class="loading">Cargando permisos...</div>
+    </div>
+  </section>
+
+  <!-- ASIGNACIÓN ROL-PERMISO -->
+
+  <section class="panel access-panel" data-access-panel="assignments" hidden>
+
+    <div class="panel-heading">
+      <div>
+        <h2>Asignación de permisos</h2>
+        <p>
+          Selecciona un rol y marca las operaciones que podrá realizar.
+        </p>
+      </div>
+    </div>
+
+    <div class="access-assignment-controls">
+      <div class="field">
+        <label for="accessAssignmentRole">Rol</label>
+        <select id="accessAssignmentRole">
+          <option value="">Selecciona un rol</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="accessPermissionChecklist" class="access-permission-list">
+      <div class="empty-state">
+        Selecciona un rol para consultar sus permisos.
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button type="button" class="btn btn-primary"
+        id="saveRolePermissionsButton">
+        Guardar asignaciones
+      </button>
+    </div>
+
+  </section>
+
+  <!-- AUDITORÍA -->
+
+  <section class="panel access-panel" data-access-panel="audit" hidden>
+
+    <div class="panel-heading">
+      <div>
+        <h2>Auditoría</h2>
+        <p>
+          Consulta quién realizó cada operación, sobre qué registro
+          y qué información cambió.
+        </p>
+      </div>
+    </div>
+
+    <form id="auditFiltersForm" class="toolbar audit-filters">
+
+      <input type="email" id="auditFilterActor"
+      placeholder="Correo del usuario"
+      aria-label="Filtrar por usuario que realizó la acción">
+
+      <select id="auditFilterModule"
+      aria-label="Filtrar por módulo">
+      <option value="">Todos los módulos</option>
+      <option value="AGENTES">Agentes</option>
+      <option value="UBICACIONES">Ubicaciones</option>
+      <option value="USUARIOS">Usuarios</option>
+      <option value="ROLES">Roles</option>
+      <option value="PERMISOS">Permisos</option>
+      <option value="ROL_PERMISO">Asignaciones de permisos</option>
+    </select>
+
+      <select id="auditFilterAction"
+      aria-label="Filtrar por acción">
+      <option value="">Todas las acciones</option>
+      <option value="CREAR">Crear</option>
+      <option value="EDITAR">Editar</option>
+      <option value="ELIMINAR">Eliminar</option>
+      <option value="ACTUALIZAR_ASIGNACIONES">Actualizar asignaciones</option>
+      <option value="ACTUALIZAR_POR_CATALOGO">Actualizar por catálogo</option>
+      <option value="AUTORIZACION_DENEGADA">Acceso denegado</option>
+    </select>
+
+      <select id="auditFilterResult"
+      aria-label="Filtrar por resultado">
+      <option value="">Todos los resultados</option>
+      <option value="OK">Correcto</option>
+      <option value="ERROR">Error</option>
+      <option value="DENEGADO">Denegado</option>
+      <option value="EN_PROCESO">En proceso</option>
+      <option value="PARCIAL">Parcial</option>
+    </select>
+
+      <select id="auditFilterEntityType"
+      aria-label="Filtrar por tipo de registro">
+      <option value="">Todos los tipos de registro</option>
+      <option value="AGENTE">Agente</option>
+      <option value="SEDE">Sede</option>
+      <option value="DEPARTAMENTO">Departamento</option>
+      <option value="PROVINCIA">Provincia</option>
+      <option value="DISTRITO">Distrito</option>
+      <option value="USUARIO">Usuario</option>
+      <option value="ROL">Rol</option>
+      <option value="PERMISO">Permiso</option>
+      <option value="ROL_PERMISO">Asignación de permisos</option>
+    </select>
+
+      <input type="text" id="auditFilterRecordId"
+      placeholder="ID del registro"
+      aria-label="Filtrar por ID del registro">
+
+      <label class="field audit-date-field">
+      <span>Desde</span>
+      <input type="date" id="auditFilterFrom">
+    </label>
+
+      <label class="field audit-date-field">
+      <span>Hasta</span>
+      <input type="date" id="auditFilterTo">
+    </label>
+
+      <input type="search" id="auditFilterQuery"
+      placeholder="Buscar en el historial..."
+      aria-label="Buscar en el historial">
+
+      <div class="audit-filter-actions">
+        <button type="submit" class="btn btn-primary">
+        Buscar
+      </button>
+
+        <button type="button" class="btn btn-outline"
+        id="auditClearFilters">
+        Limpiar
+      </button>
+      </div>
+
+    </form>
+
+    <p id="auditContextNotice" class="subtitle audit-context-notice" hidden></p>
+
+    <div id="auditResultsTable" class="table-wrap">
+      <div class="empty-state">
+        Aplica los filtros para consultar el historial.
+      </div>
+    </div>
+
+    <div class="table-footer">
+      <span id="auditResultsCount">—</span>
+      <div id="auditPaginationHost"></div>
+    </div>
+
+  </section>
+
+  <div id="accessManagementMessage" class="form-error" hidden></div>
+
+</section>
+
+<!-- MODAL REUTILIZABLE PARA USUARIOS, ROLES Y PERMISOS -->
+
+<div class="modal" id="accessEntityModal" aria-hidden="true">
+
+  <div class="modal-backdrop" data-access-close></div>
+
+  <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="accessEntityTitle">
+
+    <header class="modal-header">
+      <div>
+        <span class="eyebrow">ADMINISTRACIÓN DE ACCESOS</span>
+        <h2 id="accessEntityTitle">Nuevo registro</h2>
+        <p id="accessEntityDescription">
+          Completa los datos solicitados.
+        </p>
+      </div>
+
+      <button type="button" class="close-btn"
+        data-access-close aria-label="Cerrar">×</button>
+    </header>
+
+    <form id="accessEntityForm">
+      <div id="accessEntityFields" class="form-grid"></div>
+
+      <div id="accessEntityError" class="form-error" hidden></div>
+
+      <footer class="modal-footer">
+        <button type="button" class="btn btn-outline"
+          data-access-close>
+          Cancelar
+        </button>
+
+        <button type="submit"
+          class="btn btn-primary"
+          id="saveAccessEntityButton">
+          Guardar
+        </button>
+      </footer>
+    </form>
+
+  </section>
+</div>

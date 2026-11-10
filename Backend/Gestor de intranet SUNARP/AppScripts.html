@@ -1,0 +1,182 @@
+<script>
+(function () {
+  'use strict';
+
+  document.addEventListener('sunarp:navigate', event => {
+    const route = String(event.detail?.route || '');
+
+    const content = document.getElementById('sunarpPageContent');
+
+    if (!content) return;
+
+    const views = Array.from(
+      content.querySelectorAll('[data-app-view]')
+    );
+
+    let found = false;
+
+    views.forEach(view => {
+      const active = view.dataset.appView === route;
+      view.hidden = !active;
+
+      if (active) found = true;
+    });
+
+    let fallback = document.getElementById('sunarpViewFallback');
+
+    if (found) {
+      if (fallback) fallback.remove();
+      return;
+    }
+
+    if (!fallback) {
+      fallback = document.createElement('section');
+      fallback.id = 'sunarpViewFallback';
+      fallback.className = 'sunarp-card sunarp-empty-state';
+
+      const heading = document.createElement('h2');
+      heading.textContent = 'Sección en preparación';
+
+      const description = document.createElement('p');
+      description.textContent =
+        'La vista seleccionada todavía no se ha incorporado a la aplicación.';
+
+      fallback.append(heading, description);
+    }
+
+    content.appendChild(fallback);
+  });
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const contents = [
+      {
+        titulo: 'Guía para acceso remoto',
+        tipo: 'Página',
+        estado: 'Publicado',
+        actualizado: '28/10/2026'
+      },
+      {
+        titulo: 'Directorio telefónico',
+        tipo: 'Página',
+        estado: 'Publicado',
+        actualizado: '27/10/2026'
+      },
+      {
+        titulo: 'Mantenimiento programado',
+        tipo: 'Noticia',
+        estado: 'Borrador',
+        actualizado: '27/10/2026'
+      },
+      {
+        titulo: 'Manual del usuario',
+        tipo: 'Documento',
+        estado: 'Publicado',
+        actualizado: '25/10/2026'
+      },
+      {
+        titulo: 'Comunicado de seguridad',
+        tipo: 'Noticia',
+        estado: 'En revisión',
+        actualizado: '24/10/2026'
+      },
+      {
+        titulo: 'Solicitud de publicación',
+        tipo: 'Página',
+        estado: 'Borrador',
+        actualizado: '23/10/2026'
+      },
+      {
+        titulo: 'Calendario institucional',
+        tipo: 'Página',
+        estado: 'Publicado',
+        actualizado: '21/10/2026'
+      },
+      {
+        titulo: 'Política de uso del correo',
+        tipo: 'Documento',
+        estado: 'Publicado',
+        actualizado: '20/10/2026'
+      },
+      {
+        titulo: 'Sección de bienestar',
+        tipo: 'Noticia',
+        estado: 'En revisión',
+        actualizado: '19/10/2026'
+      },
+      {
+        titulo: 'Preguntas frecuentes',
+        tipo: 'Página',
+        estado: 'Publicado',
+        actualizado: '17/10/2026'
+      },
+      {
+        titulo: 'Manual editorial',
+        tipo: 'Documento',
+        estado: 'Borrador',
+        actualizado: '15/10/2026'
+      },
+      {
+        titulo: 'Aviso de actualización',
+        tipo: 'Noticia',
+        estado: 'Publicado',
+        actualizado: '14/10/2026'
+      }
+    ];
+
+    SUNARPUI.createDataTable({
+      containerId: 'intranetContentsTable',
+
+      columns: [
+        {
+          key: 'titulo',
+          label: 'Título'
+        },
+        {
+          key: 'tipo',
+          label: 'Tipo'
+        },
+        {
+          key: 'estado',
+          label: 'Estado'
+        },
+        {
+          key: 'actualizado',
+          label: 'Última actualización',
+          align: 'center'
+        }
+      ],
+
+      filters: [
+        {
+          key: 'tipo',
+          label: 'Tipo',
+          options: [
+            { value: 'Página', label: 'Página' },
+            { value: 'Noticia', label: 'Noticia' },
+            { value: 'Documento', label: 'Documento' }
+          ]
+        },
+        {
+          key: 'estado',
+          label: 'Estado',
+          options: [
+            { value: 'Publicado', label: 'Publicado' },
+            { value: 'Borrador', label: 'Borrador' },
+            { value: 'En revisión', label: 'En revisión' }
+          ]
+        }
+      ],
+
+      data: contents,
+
+      mode: 'client',
+      search: true,
+      searchPlaceholder: 'Buscar por título, tipo o estado...',
+      pageSize: 10,
+      pageSizeOptions: [10, 25, 50],
+      emptyMessage: 'No se encontraron contenidos.'
+    });
+  });
+
+})();
+</script>

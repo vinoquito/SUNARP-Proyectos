@@ -1,0 +1,178 @@
+<div class="sunarp-shell" id="sunarpShell">
+
+  <!-- Loader global -->
+  <div
+    class="sunarp-loader"
+    id="sunarpLoader"
+    role="status"
+    aria-live="polite">
+
+    <div class="sunarp-loader-content">
+
+      <span
+        class="sunarp-loader-spinner"
+        aria-hidden="true">
+      </span>
+
+      <p class="sunarp-loader-message">
+        Cargando información...
+      </p>
+
+      <img
+        class="sunarp-loader-logo"
+        src="http://172.18.1.117:8080/intranet/imagenes/ui/sunarp-logo.svg"
+        alt="SUNARP"
+      >
+
+    </div>
+
+  </div>
+
+  <div
+    class="sunarp-sidebar-overlay"
+    id="sunarpSidebarOverlay"
+    hidden>
+  </div>
+
+  <!-- Menú lateral -->
+  <aside class="sunarp-sidebar" id="sunarpSidebar">
+
+    <div class="sunarp-sidebar-heading">
+      NAVEGACIÓN
+    </div>
+
+    <nav
+      class="sunarp-navigation"
+      id="sunarpNavigation"
+      aria-label="Navegación principal">
+
+      <p class="sunarp-navigation-loading">
+        Cargando menú...
+      </p>
+
+    </nav>
+
+    <footer class="sunarp-sidebar-footer">
+      SUNARP
+    </footer>
+
+  </aside>
+
+  <!-- Barra superior fija -->
+  <header class="sunarp-topbar">
+
+    <button
+      type="button"
+      class="sunarp-icon-button sunarp-mobile-menu-button"
+      id="sunarpMobileMenuButton"
+      aria-label="Abrir menú"
+      aria-controls="sunarpSidebar"
+      aria-expanded="false">
+
+      <span aria-hidden="true">☰</span>
+
+    </button>
+
+    <div class="sunarp-topbar-brand">
+      <span class="sunarp-brand-mark" aria-hidden="true">S</span>
+      <strong id="sunarpBrandName">
+        Gestor de intranet SUNARP
+      </strong>
+    </div>
+
+  </header>
+
+  <!-- Contenido principal -->
+  <main class="sunarp-main">
+
+    <div class="sunarp-page-header">
+
+      <div class="sunarp-page-heading">
+
+        <nav
+          class="sunarp-breadcrumbs"
+          id="sunarpBreadcrumbs"
+          aria-label="Ruta de navegación">
+        </nav>
+
+        <h1 id="sunarpPageTitle">Inicio</h1>
+
+        <p
+          class="sunarp-page-description"
+          id="sunarpPageDescription">
+        </p>
+
+      </div>
+
+      <div
+        class="sunarp-page-actions"
+        id="sunarpPageActions">
+      </div>
+
+    </div>
+
+    <div class="sunarp-page-content" id="sunarpPageContent">
+
+      __SUNARP_UI_APP_VIEWS__
+
+    </div>
+
+  </main>
+
+  <!-- Modal compartido -->
+  <div
+    class="sunarp-modal-layer"
+    id="sunarpModalLayer"
+    hidden>
+
+    <div
+      class="sunarp-modal-backdrop"
+      data-ui-modal-close>
+    </div>
+
+    <section
+      class="sunarp-modal sunarp-modal--md"
+      id="sunarpModal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sunarpModalTitle">
+
+      <header class="sunarp-modal-header">
+
+        <h2 id="sunarpModalTitle"></h2>
+
+        <button
+          type="button"
+          class="sunarp-icon-button"
+          data-ui-modal-close
+          aria-label="Cerrar ventana">
+
+          <span aria-hidden="true">×</span>
+
+        </button>
+
+      </header>
+
+      <div
+        class="sunarp-modal-body"
+        id="sunarpModalBody">
+      </div>
+
+      <footer
+        class="sunarp-modal-footer"
+        id="sunarpModalFooter">
+      </footer>
+
+    </section>
+
+  </div>
+
+  <!-- Notificaciones compartidas -->
+  <div
+    class="sunarp-toast-region"
+    id="sunarpToastRegion"
+    aria-live="polite"
+    aria-atomic="false">
+  </div>
+
+</div>

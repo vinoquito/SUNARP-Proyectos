@@ -1,0 +1,1037 @@
+
+<script>
+window.SUNARPUIDataTable = function (options = {}, helpers = {}) {
+
+  const escapeHtml = helpers.escapeHtml || (value =>
+    String(value ?? '').replace(/[&<>"']/g, character => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    })[character])
+  );
+
+  const notify = helpers.notify || (() => {});
+
+  const container = document.getElementById(options.containerId);
+
+  if (!container) {
+    throw new Error(
+      `No existe el contenedor DataTable "${options.containerId}".`
+    );
+  }
+
+  const columns = Array.isArray(options.columns)
+    ? options.columns.filter(column => column && column.key != null)
+    : [];
+
+  if (!columns.length) {
+    throw new Error('DataTable necesita al menos una columna.');
+  }
+
+  const rowActions = Array.isArray(options.rowActions)
+    ? options.rowActions.filter(action =>
+        action && typeof action.onClick === 'function'
+      )
+    : [];
+
+  const mode = options.mode === 'server' ? 'server' : 'client';
+
+  if (mode === 'server' && typeof options.loadData !== 'function') {
+    throw new Error(
+      'DataTable en modo servidor requiere la función loadData.'
+    );
+  }
+
+  const filters = (Array.isArray(options.filters) ? options.filters : [])
+    .filter(filter =>
+      filter && filter.key && Array.isArray(filter.options)
+    )
+    .map(filter => ({
+      key: String(filter.key),
+      label: String(filter.label || filter.key),
+      allLabel: String(filter.allLabel || 'Todos'),
+      options: filter.options.map(option => {
+        if (option !== null && typeof option === 'object') {
+          return {
+            value: String(option.value ?? ''),
+            label: String(option.label ?? option.value ?? '')
+          };
+        }
+
+        return {
+          value: String(option ?? ''),
+          label: String(option ?? '')
+        };
+      })
+    }));
+
+  const pageSizeOptions = [
+    ...new Set(
+      (options.pageSizeOptions || [10, 25, 50])
+        .map(Number)
+        .filter(size => Number.isInteger(size) && size > 0)
+    )
+  ].sort((a, b) => a - b);
+
+  if (!pageSizeOptions.length) {
+    pageSizeOptions.push(10, 25, 50);
+  }
+
+  const requestedPageSize = Number(options.pageSize || 10);
+
+  const state = {
+    page: 1,
+    pageSize: pageSizeOptions.includes(requestedPageSize)
+      ? requestedPageSize
+      : pageSizeOptions[0],
+    search: '',
+    filters: Object.fromEntries(
+      filters.map(filter => [filter.key, ''])
+    )
+  };
+
+  let data = mode === 'client' && Array.isArray(options.data)
+    ? [...options.data]
+    : [];
+
+  let serverTotal = 0;
+  let loading = false;
+  let lastError = null;
+  let requestId = 0;
+  let searchTimer = null;
+  let destroyed = false;
+
+  let currentVisibleRows = [];
+
+  const root = document.createElement('div');
+  root.className = 'sunarp-datatable';
+
+  root.innerHTML = `
+    <div class="sunarp-datatable-toolbar">
+
+      ${
+        options.search === false
+          ? ''
+          : `
+            <label class="sunarp-datatable-control sunarp-datatable-search">
+              <span>Buscar</span>
+              <input
+                type="search"
+                data-dt-search
+                placeholder="${escapeHtml(
+                  options.searchPlaceholder || 'Buscar registros...'
+                )}"
+                autocomplete="off">
+            </label>
+          `
+      }
+
+      ${filters.map(filter => `
+        <label class="sunarp-datatable-control">
+          <span>${escapeHtml(filter.label)}</span>
+
+          <select data-dt-filter="${escapeHtml(filter.key)}">
+            <option value="">${escapeHtml(filter.allLabel)}</option>
+
+            ${filter.options.map(option => `
+              <option value="${escapeHtml(option.value)}">
+                ${escapeHtml(option.label)}
+              </option>
+            `).join('')}
+
+          </select>
+        </label>
+      `).join('')}
+
+    </div>
+
+    <div class="sunarp-datatable-wrap">
+      <table class="sunarp-datatable-table">
+
+        <thead>
+          <tr>
+
+            ${columns.map(column => `
+              <th
+                scope="col"
+                class="${[
+                  'left',
+                  'center',
+                  'right'
+                ].includes(column.align)
+                  ? `sunarp-datatable-cell--${column.align}`
+                  : ''}">
+
+                ${escapeHtml(column.label || column.key)}
+
+              </th>
+            `).join('')}
+
+            ${rowActions.length
+              ? `
+                <th
+                  scope="col"
+                  class="sunarp-datatable-actions-heading">
+                  Acciones
+                </th>
+              `
+              : ''}
+
+          </tr>
+        </thead>
+
+        <tbody data-dt-body></tbody>
+
+      </table>
+    </div>
+
+    <div class="sunarp-datatable-footer">
+
+      <p
+        class="sunarp-datatable-summary"
+        data-dt-summary
+        aria-live="polite">
+      </p>
+
+      <div class="sunarp-datatable-pagination">
+
+        <label class="sunarp-datatable-page-size">
+          <span>Mostrar</span>
+
+          <select
+            data-dt-page-size
+            aria-label="Registros por página">
+
+            ${pageSizeOptions.map(size => `
+              <option
+                value="${size}"
+                ${size === state.pageSize ? 'selected' : ''}>
+                ${size}
+              </option>
+            `).join('')}
+
+          </select>
+        </label>
+
+        <span
+          data-dt-page-info
+          class="sunarp-datatable-page-info">
+        </span>
+
+        <button
+          type="button"
+          class="sunarp-btn sunarp-btn--outline"
+          data-dt-prev>
+          Anterior
+        </button>
+
+        <button
+          type="button"
+          class="sunarp-btn sunarp-btn--outline"
+          data-dt-next>
+          Siguiente
+        </button>
+
+      </div>
+
+    </div>
+  `;
+
+  container.replaceChildren(root);
+
+  const body = root.querySelector('[data-dt-body]');
+  const summary = root.querySelector('[data-dt-summary]');
+  const pageInfo = root.querySelector('[data-dt-page-info]');
+  const pageSizeSelect = root.querySelector('[data-dt-page-size]');
+  const previousButton = root.querySelector('[data-dt-prev]');
+  const nextButton = root.querySelector('[data-dt-next]');
+
+
+  /* ==========================================================
+     1. UTILIDADES
+     ========================================================== */
+
+  function getValue(row, key) {
+    return String(key).split('.').reduce(
+      (value, part) =>
+        value == null ? undefined : value[part],
+      row
+    );
+  }
+
+
+  function formatValue(column, row) {
+    const rawValue = getValue(row, column.key);
+    let value = rawValue;
+
+    if (typeof column.format === 'function') {
+      try {
+        value = column.format(rawValue, row);
+      } catch (error) {
+        value = rawValue;
+      }
+    }
+
+    return value == null ? '' : String(value);
+  }
+
+
+  /**
+   * Renderiza una celda.
+   *
+   * Permite que column.render devuelva:
+   * - Un elemento HTML.
+   * - Un DocumentFragment.
+   * - Un valor de texto.
+   *
+   * El contenido de texto se incorpora mediante textContent.
+   */
+  function renderCellContent(cell, column, row) {
+
+    const rawValue = getValue(row, column.key);
+
+    if (typeof column.render === 'function') {
+
+      try {
+
+        const content = column.render(
+          rawValue,
+          row,
+          {
+            escapeHtml,
+            formatValue
+          }
+        );
+
+        if (content instanceof Node) {
+          cell.appendChild(content);
+
+        } else if (
+          content !== null &&
+          content !== undefined
+        ) {
+          cell.textContent = String(content);
+        }
+
+        return;
+
+      } catch (error) {
+
+        console.error(
+          `Error al renderizar la columna "${column.key}":`,
+          error
+        );
+
+      }
+
+    }
+
+    cell.textContent = formatValue(column, row);
+
+  }
+
+
+  function normalizeText(value) {
+    return String(value ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+  }
+
+
+  function resolveActionValue(value, row, fallback = '') {
+    const result = typeof value === 'function'
+      ? value(row)
+      : value;
+
+    return result == null ? fallback : result;
+  }
+
+
+  /* ==========================================================
+     2. FILTROS
+     ========================================================== */
+
+  function getFilteredData() {
+
+    const query = normalizeText(state.search);
+
+    return data.filter(row => {
+
+      const matchesFilters = filters.every(filter => {
+
+        const selected = state.filters[filter.key];
+
+        if (selected === '') return true;
+
+        return String(
+          getValue(row, filter.key) ?? ''
+        ) === selected;
+
+      });
+
+      if (!matchesFilters) return false;
+      if (!query) return true;
+
+      return columns
+        .filter(column => column.searchable !== false)
+        .some(column => {
+
+          const rawValue = getValue(row, column.key);
+          const displayValue = formatValue(column, row);
+
+          return normalizeText(
+            `${rawValue ?? ''} ${displayValue}`
+          ).includes(query);
+
+        });
+
+    });
+
+  }
+
+
+  /* ==========================================================
+     3. ACCIONES POR FILA
+     ========================================================== */
+
+  function renderRowActions(row, rowIndex) {
+
+    const wrapper = document.createElement('div');
+
+    wrapper.className = 'sunarp-datatable-actions';
+
+    rowActions.forEach((action, actionIndex) => {
+
+      const visible = resolveActionValue(
+        action.visible,
+        row,
+        true
+      );
+
+      if (visible === false) return;
+
+      const label = String(
+        resolveActionValue(action.label, row, 'Acción')
+      );
+
+      const icon = String(
+        resolveActionValue(action.icon, row, '')
+      );
+
+      const requestedVariant = resolveActionValue(
+        action.variant,
+        row,
+        'outline'
+      );
+
+      const allowedVariants = [
+        'primary',
+        'outline',
+        'danger',
+        'success',
+        'warning',
+        'info'
+      ];
+
+      const variant = allowedVariants.includes(requestedVariant)
+        ? requestedVariant
+        : 'outline';
+
+      const disabled = Boolean(
+        resolveActionValue(action.disabled, row, false)
+      );
+
+      const title = String(
+        resolveActionValue(action.title, row, label)
+      );
+
+      const button = document.createElement('button');
+
+      button.type = 'button';
+
+      button.className =
+        `sunarp-datatable-action sunarp-datatable-action--${variant}`;
+
+      button.dataset.dtRowAction = actionIndex;
+      button.dataset.dtRowIndex = rowIndex;
+
+      button.title = title;
+      button.setAttribute('aria-label', label);
+      button.disabled = disabled;
+
+      if (icon) {
+
+        const iconElement = document.createElement('span');
+
+        iconElement.className = 'material-symbols-outlined';
+        iconElement.setAttribute('aria-hidden', 'true');
+        iconElement.textContent = icon;
+
+        button.appendChild(iconElement);
+
+      } else {
+
+        button.textContent = label;
+
+      }
+
+      wrapper.appendChild(button);
+
+    });
+
+    return wrapper;
+
+  }
+
+
+  /* ==========================================================
+     4. ESTADOS DE LA TABLA
+     ========================================================== */
+
+  function renderMessage(message, colspan) {
+
+    const row = document.createElement('tr');
+
+    const cell = document.createElement('td');
+
+    cell.colSpan = colspan;
+    cell.className = 'sunarp-datatable-empty';
+    cell.textContent = message;
+
+    row.appendChild(cell);
+
+    body.replaceChildren(row);
+
+  }
+
+
+  /* ==========================================================
+     5. RENDERIZADO DE TABLA
+     ========================================================== */
+
+  function render() {
+
+    if (destroyed) return;
+
+    const filteredData = mode === 'client'
+      ? getFilteredData()
+      : data;
+
+    const total = mode === 'server'
+      ? serverTotal
+      : filteredData.length;
+
+    const totalPages = Math.max(
+      1,
+      Math.ceil(total / state.pageSize)
+    );
+
+    state.page = Math.min(state.page, totalPages);
+
+    const startIndex = (state.page - 1) * state.pageSize;
+
+    const visibleRows = mode === 'server'
+      ? filteredData
+      : filteredData.slice(
+          startIndex,
+          startIndex + state.pageSize
+        );
+
+    currentVisibleRows = visibleRows;
+
+    const colspan = columns.length + (
+      rowActions.length ? 1 : 0
+    );
+
+    // Cargando.
+    if (loading) {
+
+      currentVisibleRows = [];
+
+      renderMessage('Cargando registros...', colspan);
+
+    // Error.
+    } else if (lastError) {
+
+      currentVisibleRows = [];
+
+      renderMessage(
+        'No se pudieron cargar los registros.',
+        colspan
+      );
+
+    // Sin resultados.
+    } else if (!visibleRows.length) {
+
+      currentVisibleRows = [];
+
+      renderMessage(
+        options.emptyMessage || 'No se encontraron registros.',
+        colspan
+      );
+
+    // Datos.
+    } else {
+
+      const fragment = document.createDocumentFragment();
+
+      visibleRows.forEach((row, rowIndex) => {
+
+        const tableRow = document.createElement('tr');
+
+        // Celdas de datos.
+        columns.forEach(column => {
+
+          const cell = document.createElement('td');
+
+          if (
+            ['left', 'center', 'right'].includes(column.align)
+          ) {
+            cell.classList.add(
+              `sunarp-datatable-cell--${column.align}`
+            );
+          }
+
+          if (column.className) {
+            cell.classList.add(...String(column.className).split(' '));
+          }
+
+          renderCellContent(cell, column, row);
+
+          tableRow.appendChild(cell);
+
+        });
+
+        // Celda de acciones.
+        if (rowActions.length) {
+
+          const actionsCell = document.createElement('td');
+
+          actionsCell.className =
+            'sunarp-datatable-actions-cell';
+
+          actionsCell.appendChild(
+            renderRowActions(row, rowIndex)
+          );
+
+          tableRow.appendChild(actionsCell);
+
+        }
+
+        fragment.appendChild(tableRow);
+
+      });
+
+      body.replaceChildren(fragment);
+
+    }
+
+    // Resumen.
+    if (loading) {
+
+      summary.textContent = 'Cargando registros...';
+
+    } else if (lastError) {
+
+      summary.textContent = 'Error al consultar los registros.';
+
+    } else if (!total) {
+
+      summary.textContent = '0 registros';
+
+    } else {
+
+      const first = startIndex + 1;
+      const last = startIndex + visibleRows.length;
+
+      summary.textContent =
+        `Mostrando ${first}–${last} de ${total} registros`;
+
+    }
+
+    pageInfo.textContent =
+      `Página ${state.page} de ${totalPages}`;
+
+    previousButton.disabled =
+      loading || state.page <= 1;
+
+    nextButton.disabled =
+      loading || state.page >= totalPages;
+
+    pageSizeSelect.disabled = loading;
+
+  }
+
+
+  /* ==========================================================
+     6. PAGINACIÓN Y CONSULTA AL SERVIDOR
+     ========================================================== */
+
+  async function loadServerData() {
+
+    if (destroyed || mode !== 'server') return;
+
+    if (searchTimer !== null) {
+      clearTimeout(searchTimer);
+      searchTimer = null;
+    }
+
+    const currentRequest = ++requestId;
+
+    loading = true;
+    lastError = null;
+
+    render();
+
+    try {
+
+      const result = await options.loadData({
+        search: state.search,
+        filters: { ...state.filters },
+        page: state.page,
+        pageSize: state.pageSize
+      });
+
+      if (destroyed || currentRequest !== requestId) return;
+
+      if (
+        !result ||
+        !Array.isArray(result.items) ||
+        !Number.isFinite(Number(result.total))
+      ) {
+        throw new Error(
+          'loadData debe devolver { items: [], total: número }.'
+        );
+      }
+
+      data = result.items;
+
+      serverTotal = Math.max(
+        0,
+        Number(result.total)
+      );
+
+      loading = false;
+
+      const totalPages = Math.max(
+        1,
+        Math.ceil(serverTotal / state.pageSize)
+      );
+
+      if (state.page > totalPages) {
+        state.page = totalPages;
+        return loadServerData();
+      }
+
+      render();
+
+    } catch (error) {
+
+      if (destroyed || currentRequest !== requestId) return;
+
+      loading = false;
+      lastError = error;
+
+      render();
+
+      if (typeof options.onError === 'function') {
+        options.onError(error);
+      } else {
+        notify(
+          'error',
+          'No se pudieron cargar los registros.'
+        );
+      }
+
+    }
+
+  }
+
+
+  function refresh() {
+
+    if (mode === 'server') {
+      return loadServerData();
+    }
+
+    render();
+
+  }
+
+
+  function scheduleServerSearch() {
+
+    if (searchTimer !== null) {
+      clearTimeout(searchTimer);
+    }
+
+    requestId++;
+    loading = true;
+    lastError = null;
+
+    render();
+
+    searchTimer = setTimeout(() => {
+
+      searchTimer = null;
+      loadServerData();
+
+    }, 300);
+
+  }
+
+
+  /* ==========================================================
+     7. EVENTOS DEL BUSCADOR
+     ========================================================== */
+
+  const searchInput = root.querySelector('[data-dt-search]');
+
+  if (searchInput) {
+
+    searchInput.addEventListener('input', () => {
+
+      state.search = searchInput.value;
+      state.page = 1;
+
+      if (mode === 'server') {
+        scheduleServerSearch();
+      } else {
+        render();
+      }
+
+    });
+
+  }
+
+
+  /* ==========================================================
+     8. EVENTOS DE FILTROS Y TAMAÑO DE PÁGINA
+     ========================================================== */
+
+  root.addEventListener('change', event => {
+
+    const filterSelect = event.target.closest('[data-dt-filter]');
+
+    if (filterSelect) {
+
+      state.filters[filterSelect.dataset.dtFilter] =
+        filterSelect.value;
+
+      state.page = 1;
+
+      if (mode === 'server') {
+        loadServerData();
+      } else {
+        render();
+      }
+
+      return;
+
+    }
+
+    if (event.target.matches('[data-dt-page-size]')) {
+
+      state.pageSize = Number(event.target.value);
+      state.page = 1;
+
+      if (mode === 'server') {
+        loadServerData();
+      } else {
+        render();
+      }
+
+    }
+
+  });
+
+
+  /* ==========================================================
+     9. EVENTOS DE PAGINACIÓN
+     ========================================================== */
+
+  previousButton.addEventListener('click', () => {
+
+    if (state.page <= 1 || loading) return;
+
+    state.page--;
+
+    if (mode === 'server') {
+      loadServerData();
+    } else {
+      render();
+    }
+
+  });
+
+
+  nextButton.addEventListener('click', () => {
+
+    if (loading) return;
+
+    const total = mode === 'server'
+      ? serverTotal
+      : getFilteredData().length;
+
+    const totalPages = Math.max(
+      1,
+      Math.ceil(total / state.pageSize)
+    );
+
+    if (state.page >= totalPages) return;
+
+    state.page++;
+
+    if (mode === 'server') {
+      loadServerData();
+    } else {
+      render();
+    }
+
+  });
+
+
+  /* ==========================================================
+     10. EVENTOS DE ACCIONES POR FILA
+     ========================================================== */
+
+  root.addEventListener('click', async event => {
+
+    const target = event.target instanceof Element
+      ? event.target
+      : null;
+
+    const button = target?.closest(
+      '[data-dt-row-action]'
+    );
+
+    if (!button || loading || destroyed) return;
+
+    const actionIndex = Number(
+      button.dataset.dtRowAction
+    );
+
+    const rowIndex = Number(
+      button.dataset.dtRowIndex
+    );
+
+    const action = rowActions[actionIndex];
+    const row = currentVisibleRows[rowIndex];
+
+    if (
+      !action ||
+      !row ||
+      typeof action.onClick !== 'function' ||
+      button.disabled
+    ) {
+      return;
+    }
+
+    button.disabled = true;
+
+    try {
+
+      await action.onClick(row);
+
+    } catch (error) {
+
+      if (typeof options.onError === 'function') {
+        options.onError(error);
+      } else {
+        notify(
+          'error',
+          error?.message || 'No se pudo ejecutar la acción.'
+        );
+      }
+
+    } finally {
+
+      if (button.isConnected) {
+        button.disabled = false;
+      }
+
+    }
+
+  });
+
+
+  /* ==========================================================
+     11. INICIALIZACIÓN
+     ========================================================== */
+
+  render();
+
+  if (mode === 'server') {
+    loadServerData();
+  }
+
+
+  /* ==========================================================
+     12. API PÚBLICA DEL COMPONENTE
+     ========================================================== */
+
+  return Object.freeze({
+
+    refresh,
+
+    setData(nextData) {
+
+      if (mode !== 'client') {
+        throw new Error(
+          'setData solo está disponible en modo cliente.'
+        );
+      }
+
+      data = Array.isArray(nextData)
+        ? [...nextData]
+        : [];
+
+      state.page = 1;
+      lastError = null;
+
+      render();
+
+    },
+
+    getState() {
+
+      return {
+        mode,
+        page: state.page,
+        pageSize: state.pageSize,
+        search: state.search,
+        filters: { ...state.filters },
+
+        total: mode === 'server'
+          ? serverTotal
+          : getFilteredData().length
+      };
+
+    },
+
+    destroy() {
+
+      if (destroyed) return;
+
+      destroyed = true;
+      requestId++;
+
+      if (searchTimer !== null) {
+        clearTimeout(searchTimer);
+        searchTimer = null;
+      }
+
+      currentVisibleRows = [];
+
+      root.remove();
+
+    }
+
+  });
+
+};
+</script>

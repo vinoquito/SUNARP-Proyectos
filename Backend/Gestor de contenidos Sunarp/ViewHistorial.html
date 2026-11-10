@@ -1,0 +1,106 @@
+<section class="app-view context-audit-view" id="view-historial" hidden>
+  <style>
+    .context-audit-view {
+      padding: 24px;
+    }
+
+    .context-audit-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .context-audit-header h1 {
+      margin: 0 0 8px;
+    }
+
+    .context-audit-header p {
+      margin: 0;
+      color: #64748b;
+    }
+
+    .context-audit-table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+    }
+
+    .context-audit-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .context-audit-table th,
+    .context-audit-table td {
+      padding: 12px;
+      border-bottom: 1px solid #e2e8f0;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .context-audit-table th {
+      background: #f8fafc;
+      white-space: nowrap;
+    }
+
+    .context-audit-table pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      max-width: 420px;
+    }
+
+    .context-audit-pagination {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .context-audit-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+  </style>
+
+  <header class="context-audit-header">
+    <div>
+      <h1 id="contextAuditTitle">Historial de actividad</h1>
+      <p id="contextAuditDescription"></p>
+    </div>
+
+    <button type="button" onclick="closeContextAuditHistory()">
+      Volver
+    </button>
+  </header>
+
+  <div id="contextAuditCount" aria-live="polite"></div>
+
+  <div id="contextAuditTableHost" class="context-audit-table-wrap">
+    <p style="padding: 16px;">Selecciona un historial para consultar.</p>
+  </div>
+
+  <div class="context-audit-pagination">
+    <button
+      type="button"
+      id="contextAuditPrev"
+      onclick="previousContextAuditPage()"
+      disabled>
+      Anterior
+    </button>
+
+    <span id="contextAuditPageInfo"></span>
+
+    <button
+      type="button"
+      id="contextAuditNext"
+      onclick="nextContextAuditPage()"
+      disabled>
+      Siguiente
+    </button>
+  </div>
+</section>

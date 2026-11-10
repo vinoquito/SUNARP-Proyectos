@@ -1,0 +1,81 @@
+<section id="view-dashboard" class="app-view">
+
+  <header class="topbar">
+    <div>
+      <span class="breadcrumb">Gestor de contenidos / Inicio</span>
+      <h1>Inicio</h1>
+      <p class="subtitle">
+        Resumen general de la información administrada.
+      </p>
+    </div>
+  </header>
+
+  <section class="stats dashboard-stats">
+
+    <article class="stat-card">
+      <span class="stat-label">Agentes registrados</span>
+      <strong id="dashboardTotalAgents">—</strong>
+      <span class="stat-note">Total del directorio</span>
+    </article>
+
+    <article class="stat-card">
+      <span class="stat-label">Zona registral con más agentes</span>
+      <strong id="dashboardTopZoneCount">—</strong>
+      <span class="stat-note" id="dashboardTopZoneName">—</span>
+    </article>
+
+    <article class="stat-card">
+      <span class="stat-label">Departamento con más agentes</span>
+      <strong id="dashboardTopDepartmentCount">—</strong>
+      <span class="stat-note" id="dashboardTopDepartmentName">—</span>
+    </article>
+
+  </section>
+
+  <section class="dashboard-charts">
+
+    <article class="panel">
+      <div class="panel-heading">
+        <h2>Agentes por zona registral</h2>
+        <p>Las cinco zonas con más agentes registrados.</p>
+      </div>
+      <div id="dashboardZonesChart" class="dashboard-chart"></div>
+    </article>
+
+    <article class="panel">
+      <div class="panel-heading">
+        <h2>Agentes por departamento</h2>
+        <p>Los cinco departamentos con más agentes.</p>
+      </div>
+      <div id="dashboardDepartmentsChart" class="dashboard-chart"></div>
+    </article>
+
+  </section>
+
+  <section class="panel dashboard-maintenance-summary">
+    <div class="panel-heading">
+      <h2>Catálogos institucionales</h2>
+      <p>Catálogos compartidos utilizados por los módulos del gestor.</p>
+    </div>
+
+    <div class="catalog-summary">
+      <div>
+        <strong id="dashboardSedes">—</strong>
+        <span>Sedes</span>
+      </div>
+      <div>
+        <strong id="dashboardDepartments">—</strong>
+        <span>Departamentos</span>
+      </div>
+      <div>
+        <strong id="dashboardProvinces">—</strong>
+        <span>Provincias</span>
+      </div>
+      <div>
+        <strong id="dashboardDistricts">—</strong>
+        <span>Distritos</span>
+      </div>
+    </div>
+  </section>
+
+</section>

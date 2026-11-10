@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gestor de contenidos SUNARP</title>
+  <?!= include('Styles'); ?>
+</head>
+
+<body>
+  <div class="layout">
+
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">S</div>
+        <div>
+          <strong>Gestor de contenidos</strong>
+          <small>SUNARP</small>
+        </div>
+      </div>
+
+      <nav class="sidebar-navigation" aria-label="Navegación principal">
+
+        <div class="nav-label">GENERAL</div>
+
+        <button type="button" class="nav-link active"
+          data-view-target="dashboard">
+          <span aria-hidden="true">▦</span>
+          <span>Inicio</span>
+        </button>
+
+        <div class="nav-label">GESTIÓN DE CONTENIDOS</div>
+
+        <button type="button" class="nav-link"
+          data-view-target="agentes"
+          data-any-permission="AGENTES_VER,AGENTES_CREAR,AGENTES_EDITAR,AGENTES_ELIMINAR">
+          <span aria-hidden="true">♙</span>
+          <span>Agentes SUNARP</span>
+        </button>
+
+        <div class="nav-label">CONFIGURACIÓN</div>
+
+        <button type="button" class="nav-link nav-parent"
+          data-maintenance-toggle
+          data-any-permission="UBICACIONES_VER" 
+          aria-expanded="false"
+          aria-controls="maintenanceSubmenu">
+          <span aria-hidden="true">⚙</span>
+          <span>Mantenimientos</span>
+          <span class="nav-chevron" aria-hidden="true">⌄</span>
+        </button>
+
+        <div class="nav-submenu" id="maintenanceSubmenu" hidden>
+          <button type="button" class="nav-sublink"
+            data-catalog-type="sedes">Sedes</button>
+
+          <button type="button" class="nav-sublink"
+            data-catalog-type="departamentos">Departamentos</button>
+
+          <button type="button" class="nav-sublink"
+            data-catalog-type="provincias">Provincias</button>
+
+          <button type="button" class="nav-sublink"
+            data-catalog-type="distritos">Distritos</button>
+        </div>
+
+        <button type="button" class="nav-link"
+          data-view-target="accesos"
+          data-any-permission="USUARIOS_ADMINISTRAR,ROLES_ADMINISTRAR,PERMISOS_ADMINISTRAR,AUDITORIA_VER"
+          hidden>
+          <span aria-hidden="true">♧</span>
+          <span>Administración de accesos</span>
+        </button>
+
+      </nav>
+
+      <div class="sidebar-footer">
+        Sistema de gestión<br>
+        <small>Gestor de contenidos SUNARP</small>
+      </div>
+    </aside>
+
+    <main class="main">
+
+      <?!= include('ViewDashboard'); ?>
+      <?!= include('ViewAgentes'); ?>
+      <?!= include('ViewMantenimientos'); ?>
+      <?!= include('ViewAccesos'); ?>
+      <?!= include('ViewHistorial'); ?>
+
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status"
+    aria-live="polite"></div>
+
+  <?!= include('Pagination'); ?>
+  <?!= include('Scripts'); ?>
+  <?!= include('AccessScripts'); ?>
+</body>
+</html>

@@ -1,0 +1,201 @@
+<section id="view-agentes" class="app-view" hidden>
+
+  <header class="topbar">
+    <div>
+      <span class="breadcrumb">Gestión de contenidos / Directorio</span>
+      <h1>Agentes SUNARP</h1>
+      <p class="subtitle">
+        Administra los agentes y sus ubicaciones.
+      </p>
+    </div>
+
+    <button type="button" class="btn btn-primary"
+      data-permission="AGENTES_CREAR"
+      onclick="openForm()">
+      <span>＋</span> Nuevo agente
+    </button>
+    
+  </header>
+
+  <section class="stats">
+    <article class="stat-card">
+      <span class="stat-label">Agentes registrados</span>
+      <strong id="totalAgents">—</strong>
+      <span class="stat-note">Total del directorio</span>
+    </article>
+
+    <article class="stat-card">
+      <span class="stat-label">
+        Agentes de la zona con más registros
+      </span>
+      <strong id="totalZones">—</strong>
+      <span class="stat-note" id="totalZonesNote">
+        Zona registral: —
+      </span>
+    </article>
+
+    <article class="stat-card">
+      <span class="stat-label">
+        Agentes del departamento con más registros
+      </span>
+      <strong id="totalDepartments">—</strong>
+      <span class="stat-note" id="totalDepartmentsNote">
+        Departamento: —
+      </span>
+    </article>
+  </section>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <div>
+        <h2>Listado de agentes</h2>
+        <p>Consulta y administra los registros existentes.</p>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <label class="search-box" for="searchInput">
+        <span aria-hidden="true">⌕</span>
+        <input
+          id="searchInput"
+          type="search"
+          placeholder="Buscar por nombre, zona o ubicación..."
+          autocomplete="off">
+      </label>
+
+      <select
+        id="zoneFilter"
+        aria-label="Filtrar por zona registral">
+        <option value="">Todas las zonas registrales</option>
+      </select>
+
+      <select
+        id="departmentFilter"
+        aria-label="Filtrar por departamento">
+        <option value="">Todos los departamentos</option>
+      </select>
+    </div>
+
+    <div id="tableContainer" class="table-wrap">
+      <div class="loading">Cargando directorio...</div>
+    </div>
+
+    <div class="table-footer">
+      <span id="resultsCount">0 registros</span>
+
+      <div id="agentsPaginationHost"></div>
+
+      <button type="button" class="btn btn-outline btn-sm"
+        onclick="loadData()">
+        ↻ Actualizar
+      </button>
+    </div>
+  </section>
+
+  <div id="agentModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" onclick="closeForm()"></div>
+
+    <section class="modal-card" role="dialog" aria-modal="true"
+      aria-labelledby="modalTitle">
+
+      <header class="modal-header">
+        <div>
+          <span class="eyebrow">DIRECTORIO INSTITUCIONAL</span>
+          <h2 id="modalTitle">Nuevo agente SUNARP</h2>
+          <p id="modalDescription">
+            Completa los datos del agente.
+          </p>
+        </div>
+
+        <button type="button" class="close-btn"
+          onclick="closeForm()" aria-label="Cerrar">×</button>
+      </header>
+
+      <form id="agentForm" onsubmit="submitForm(event)">
+        <input type="hidden" id="agentId">
+
+        <div class="form-grid">
+
+          <div class="field full">
+            <label for="sede">
+              Sede <span>*</span>
+            </label>
+            <select id="sede" required>
+              <option value="">Selecciona una sede</option>
+            </select>
+          </div>
+
+          <div class="field full">
+            <label for="nombre">
+              Nombre del agente <span>*</span>
+            </label>
+            <input id="nombre" required maxlength="250"
+              placeholder="Ej. Municipalidad Distrital de Paimas">
+          </div>
+
+          <div class="field">
+            <label for="departamento">
+              Departamento <span>*</span>
+            </label>
+            <select id="departamento" required>
+              <option value="">Selecciona un departamento</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="provincia">
+              Provincia <span>*</span>
+            </label>
+            <select id="provincia" required disabled>
+              <option value="">Selecciona una provincia</option>
+            </select>
+          </div>
+
+          <div class="field full">
+            <label for="distrito">
+              Distrito <span>*</span>
+            </label>
+            <select id="distrito" required disabled>
+              <option value="">Selecciona un distrito</option>
+            </select>
+          </div>
+
+          <div class="field full">
+            <label for="direccion">
+              Dirección <span>*</span>
+            </label>
+            <input id="direccion" required maxlength="500"
+              placeholder="Dirección del agente">
+          </div>
+
+          <div class="field full">
+            <label for="referencia">Referencia</label>
+            <textarea id="referencia" rows="2" maxlength="1000"
+              placeholder="Referencia para ubicar el establecimiento"></textarea>
+          </div>
+
+          <div class="field full">
+            <label for="urlDestination">Enlace de Google Maps</label>
+            <input id="urlDestination" type="url" maxlength="1000"
+              placeholder="https://maps.app.goo.gl/...">
+            <small>Debe ser un enlace de Google Maps.</small>
+          </div>
+
+        </div>
+
+        <div id="formError" class="form-error" hidden></div>
+
+        <footer class="modal-footer">
+          <button type="button" class="btn btn-outline"
+            onclick="closeForm()">Cancelar</button>
+
+          <button id="saveButton" type="submit"
+            class="btn btn-primary">
+            Guardar agente
+          </button>
+        </footer>
+      </form>
+    </section>
+  </div>
+
+</section>
