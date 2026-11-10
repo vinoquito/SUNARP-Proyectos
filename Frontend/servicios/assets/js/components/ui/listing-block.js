@@ -799,8 +799,10 @@ const ListingBlock = {
 
                     <export-excel-button
                         :data="filteredRows"
-                        :columns="resolvedExportColumns"
+                        :columns="pdfColumns.length ? pdfColumns : resolvedExportColumns"
                         :filename="filename"
+                        :grouping="pdfGrouping"
+                        :logo="pdfLogo"
                     >
                     </export-excel-button>
 
