@@ -84,9 +84,13 @@ const buildDirectoryPdfSections = data => {
 
     return [...sectionsMap.values()].map(section => ({
         title: `Directorio telefónico - ${section.sede}`,
-        subtitle: `Local: ${section.local}`,
+        subtitle: `Sede: ${section.sede}`,
         newPage: true,
-        groups: section.root.children.map(transformNode),
+        groups: [{
+            title: section.local,
+            blocks: [],
+            children: section.root.children.map(transformNode)
+        }],
         emptyMessage: 'No hay registros para exportar.'
     }));
 };
