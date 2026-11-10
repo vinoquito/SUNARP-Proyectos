@@ -366,13 +366,14 @@ const ExportPdfButton = {
             };
 
             sections.forEach((section, index) => {
+                currentSection = section;
+
                 if (index > 0 && section.newPage !== false) {
                     addPage();
+                } else {
+                    lastHeaderPage = 0;
+                    drawHeaderIfNeeded();
                 }
-
-                currentSection = section;
-                lastHeaderPage = 0;
-                drawHeaderIfNeeded();
 
                 (section.groups || []).forEach(group => {
                     drawNode(group, 0);
