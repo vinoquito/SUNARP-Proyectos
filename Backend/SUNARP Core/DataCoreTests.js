@@ -114,6 +114,16 @@ function runCoreSelfTests_() {
       'Lectura correcta de encabezados.'
     );
 
+    // 4.1. Probar caché compartida de fuentes y metadatos.
+    const cachedInitial = listRecordsFromSourcesCached([{ key: 'registros', source }], 300);
+    assert(cachedInitial.registros.length === 2, 'Lectura inicial mediante caché compartida de fuentes.');
+
+    const cachedInfo = getSourceInfoCached(source, 300);
+    assert(cachedInfo.headers.length === 5, 'Recuperación de metadatos mediante caché compartida.');
+
+    const cachedRepeated = listRecordsFromSourcesCached([{ key: 'registros', source }], 300);
+    assert(cachedRepeated.registros.length === 2, 'Reutilización de la instantánea de fuente en una lectura posterior.');
+
     // 5. Probar listado y filtros.
     const listing = listRecords(source, {
       filters: { active: true },
@@ -192,6 +202,13 @@ function runCoreSelfTests_() {
       insertion.success &&
       insertion.record.id === 'TST_003',
       'Inserción de un registro.'
+    );
+
+    const cachedAfterInsert = listRecordsFromSourcesCached([{ key: 'registros', source }], 300);
+    assert(
+      cachedAfterInsert.registros.length === 3 &&
+      cachedAfterInsert.registros.some(row => row.id === 'TST_003'),
+      'La inserción invalida automáticamente la instantánea de la fuente.'
     );
 
     // 8.1. Probar unicidad compuesta en inserción.
@@ -294,6 +311,12 @@ function runCoreSelfTests_() {
       'Actualización parcial de un registro.'
     );
 
+    const cachedAfterUpdate = listRecordsFromSourcesCached([{ key: 'registros', source }], 300);
+    assert(
+      cachedAfterUpdate.registros.some(row => row.id === 'TST_003' && row.nombre === 'María López Actualizado'),
+      'La actualización invalida automáticamente la instantánea de la fuente.'
+    );
+
     // 10.1. Probar unicidad compuesta en actualización.
     expectError(() => {
       updateRecord(
@@ -356,6 +379,12 @@ function runCoreSelfTests_() {
       deletion.success &&
       deletedRecord === null,
       'Eliminación física de un registro.'
+    );
+
+    const cachedAfterDelete = listRecordsFromSourcesCached([{ key: 'registros', source }], 300);
+    assert(
+      !cachedAfterDelete.registros.some(row => row.id === 'TST_002'),
+      'La eliminación invalida automáticamente la instantánea de la fuente.'
     );
 
     Logger.log('-----------------------------------');
