@@ -1175,6 +1175,19 @@ const DirectoryPage = (() => {
       `)
       .join('');
 
+    const selectedMode = record && key(record.local_id) && key(record.estructura_local_id)
+      ? 'both'
+      : record && key(record.local_id)
+        ? 'local'
+        : 'structure';
+
+    const directLocalOptions = state.catalogs.locales
+      .filter(local => local.active !== false && local.active !== 0 &&
+        String(local.active).toLowerCase() !== 'false')
+      .slice().sort(sortByName)
+      .map(local => `<option value="${escapeHtml(local.id)}" ${record && key(record.local_id) === key(local.id) ? 'selected' : ''}>${escapeHtml(local.name)}</option>`)
+      .join('');
+
     return {
       html: `
         <form id="directoryForm" class="sunarp-form-grid">
@@ -1335,6 +1348,34 @@ const DirectoryPage = (() => {
           </div>
 
           <div class="sunarp-form-field sunarp-form-field--full">
+            <label for="directoryFormAssignmentMode">Adscripción de la asignación *</label>
+            <select id="directoryFormAssignmentMode" class="sunarp-select" required>
+              <option value="structure" ${selectedMode === 'structure' ? 'selected' : ''}>Unidad orgánica</option>
+              <option value="local" ${selectedMode === 'local' ? 'selected' : ''}>Local directamente</option>
+              <option value="both" ${selectedMode === 'both' ? 'selected' : ''}>Unidad orgánica y local</option>
+            </select>
+          </div>
+
+          <div class="sunarp-form-field sunarp-form-field--full" id="directoryFormHierarchyField">
+            <div id="directoryFormHierarchy"></div>
+          </div>
+
+          <div class="sunarp-form-field sunarp-form-field--full" id="directoryFormRelationField">
+            <label for="directoryFormLocal">Relación con local *</label>
+            <select id="directoryFormLocal" class="sunarp-select" required disabled>
+              <option value="">Selecciona una dependencia</option>
+            </select>
+          </div>
+
+          <div class="sunarp-form-field sunarp-form-field--full" id="directoryFormDirectLocalField" style="display:none">
+            <label for="directoryFormDirectLocal">Local directamente asignado *</label>
+            <select id="directoryFormDirectLocal" class="sunarp-select">
+              <option value="">Selecciona un local</option>
+              ${directLocalOptions}
+            </select>
+          </div>
+
+          <div class="sunarp-form-field sunarp-form-field--full">
             <div class="directory-form-actions">
 
               <button
@@ -1359,9 +1400,9 @@ const DirectoryPage = (() => {
 
       selectedSede,
       selectedPath,
-      selectedRelationId: record && !assignmentOnly
-        ? key(record.estructura_local_id)
-        : ''
+      selectedRelationId: record && !assignmentOnly ? key(record.estructura_local_id) : '',
+      selectedLocalId: record && !assignmentOnly ? key(record.local_id) : '',
+      selectedMode
     };
   }
 
@@ -1400,6 +1441,39 @@ const DirectoryPage = (() => {
       'directoryFormSede'
     );
 
+    const modeSelect = document.getElementById('directoryFormAssignmentMode');
+    const relationSelect = document.getElementById('directoryFormLocal');
+    const directLocalSelect = document.getElementById('directoryFormDirectLocal');
+
+    function syncAssignmentMode() {
+      const mode = modeSelect.value;
+      const useStructure = mode === 'structure' || mode === 'both';
+      const useDirectLocal = mode === 'local' || mode === 'both';
+      document.getElementById('directoryFormHierarchyField').style.display = useStructure ? '' : 'none';
+      document.getElementById('directoryFormRelationField').style.display = useStructure ? '' : 'none';
+      document.getElementById('directoryFormDirectLocalField').style.display = useDirectLocal ? '' : 'none';
+      relationSelect.required = useStructure;
+      directLocalSelect.required = useDirectLocal;
+      if (!useStructure) {
+        relationSelect.value = '';
+        document.getElementById('directoryFormHierarchy').replaceChildren();
+      }
+      if (!useDirectLocal) directLocalSelect.value = '';
+      if (mode === 'both' && relationSelect.value) {
+        const relation = state.catalogs.estructuraLocal.find(x => key(x.id) === key(relationSelect.value));
+        if (relation) directLocalSelect.value = key(relation.local_id);
+      }
+    }
+
+    relationSelect.addEventListener('change', () => {
+      if (modeSelect.value === 'both') {
+        const relation = state.catalogs.estructuraLocal.find(x => key(x.id) === key(relationSelect.value));
+        directLocalSelect.value = relation ? key(relation.local_id) : '';
+      }
+    });
+    modeSelect.addEventListener('change', syncAssignmentMode);
+
+
     const cancelButton = document.getElementById(
       'directoryFormCancel'
     );
@@ -1423,6 +1497,9 @@ const DirectoryPage = (() => {
       formData.selectedPath,
       formData.selectedRelationId
     );
+
+    directLocalSelect.value = formData.selectedLocalId || '';
+    syncAssignmentMode();
 
     // Cambiar de sede reinicia la selección jerárquica.
     sedeSelect.addEventListener('change', () => {
@@ -1479,17 +1556,28 @@ const DirectoryPage = (() => {
       'directoryFormAnexo'
     ).value;
 
-    const estructuraLocalId = document.getElementById(
-      'directoryFormLocal'
-    ).value;
+    const assignmentMode = document.getElementById('directoryFormAssignmentMode').value;
+    const estructuraLocalId = (assignmentMode === 'structure' || assignmentMode === 'both')
+      ? document.getElementById('directoryFormLocal').value
+      : '';
+    const localId = (assignmentMode === 'local' || assignmentMode === 'both')
+      ? document.getElementById('directoryFormDirectLocal').value
+      : '';
 
-    if (!estructuraLocalId) {
-      notify(
-        'warning',
-        'Selecciona la dependencia y su local físico.'
-      );
-
+    if ((assignmentMode === 'structure' || assignmentMode === 'both') && !estructuraLocalId) {
+      notify('warning', 'Selecciona la unidad orgánica y su relación con el local.');
       return;
+    }
+    if ((assignmentMode === 'local' || assignmentMode === 'both') && !localId) {
+      notify('warning', 'Selecciona el local directamente asignado.');
+      return;
+    }
+    if (assignmentMode === 'both') {
+      const relation = state.catalogs.estructuraLocal.find(x => key(x.id) === key(estructuraLocalId));
+      if (!relation || key(relation.local_id) !== key(localId)) {
+        notify('warning', 'El local debe coincidir con el local de la relación estructura-local seleccionada.');
+        return;
+      }
     }
 
     const personaId = document.getElementById('directoryFormPersonaId').value;
@@ -1507,6 +1595,7 @@ const DirectoryPage = (() => {
       condicion_cargo: document.getElementById('directoryFormCondicionCargo').value.trim(),
       anexo: anexoInput === '' ? '' : Number(anexoInput),
       estructura_local_id: estructuraLocalId,
+      local_id: localId,
       observaciones: document.getElementById('directoryFormObservaciones')?.value.trim() || ''
     };
 
