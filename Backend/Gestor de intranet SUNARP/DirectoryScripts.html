@@ -1138,7 +1138,7 @@ const DirectoryPage = (() => {
       ? key(record.sede_id)
       : key(getElements().sedeFilter?.value);
 
-    const selectedPath = record && !assignmentOnly
+    const selectedPath = record
       ? getFormStructurePath(record.estructura_id)
       : [];
 
