@@ -742,6 +742,12 @@ function listDirectoryAssignments(options) {
     );
   }
 
+  if (options.localId) {
+    view.assignments = view.assignments.filter(item =>
+      _directoryKey_(item.local_id) === _directoryKey_(options.localId)
+    );
+  }
+
   const search = _directoryText_(options.search).toLocaleLowerCase();
   if (search) {
     const fields = [
