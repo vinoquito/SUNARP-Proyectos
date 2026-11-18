@@ -230,3 +230,38 @@ test('una asignación adicional no crea ni modifica persona o ficha personal', (
   assert.equal(assignmentPayload.persona_id, 'PER_009');
   assert.equal(result.assignment.asignacion_id, 'ASG_009');
 });
+
+
+test('la edición rechaza una asignación que pertenece a otra persona antes de escribir', () => {
+  const context = createDirectorySandbox();
+  let writes = 0;
+  context._directoryLoadContext_ = () => ({
+    personas: [{ persona_id: 'PER_001', nombres: 'Ana', apellidos: 'Pérez' }],
+    datosPersonales: [],
+    asignaciones: [{ asignacion_id: 'ASG_002', persona_id: 'PER_002' }]
+  });
+  context._directoryAssertDocumentAvailable_ = () => ({
+    tipo_documento: 'DNI',
+    numero_documento: '12345678'
+  });
+  context._saveDirectoryPerson_ = () => { writes++; };
+  context.saveDirectoryPersonalData = () => { writes++; };
+  context.saveDirectoryAssignment = () => { writes++; };
+
+  assert.throws(() => context.saveDirectoryEntry({
+    persona_id: 'PER_001',
+    asignacion_id: 'ASG_002',
+    nombres: 'Ana',
+    apellidos: 'Pérez',
+    tipo_documento: 'DNI',
+    numero_documento: '12345678'
+  }), /no pertenece a la persona indicada/i);
+  assert.equal(writes, 0);
+});
+
+test('el guardado directo de ficha personal aplica la unicidad documental normalizada', () => {
+  const start = serviceSource.indexOf('function _saveDirectoryPersonalData_(');
+  const end = serviceSource.indexOf('function saveDirectoryEntry(', start);
+  const implementation = serviceSource.slice(start, end);
+  assert.match(implementation, /_directoryAssertDocumentAvailable_\\(/);
+});
