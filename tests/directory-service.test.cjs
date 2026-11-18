@@ -263,5 +263,5 @@ test('el guardado directo de ficha personal aplica la unicidad documental normal
   const start = serviceSource.indexOf('function _saveDirectoryPersonalData_(');
   const end = serviceSource.indexOf('function saveDirectoryEntry(', start);
   const implementation = serviceSource.slice(start, end);
-  assert.match(implementation, /_directoryAssertDocumentAvailable_\\(/);
+  assert.ok(implementation.includes('_directoryAssertDocumentAvailable_('));
 });
