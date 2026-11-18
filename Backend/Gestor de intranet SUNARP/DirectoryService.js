@@ -540,8 +540,14 @@ function _directoryBuildView_(context, authorization) {
   });
 
   const visiblePersonIds = new Set(assignments.map(item => _directoryKey_(item.persona_id)));
+  const hasTotalScope = _accessRecordIsAllowed_(
+    authorization.auth,
+    'DIRECTORIOS',
+    {},
+    authorization.structures
+  );
   const people = context.personas.filter(person =>
-    visiblePersonIds.has(_directoryKey_(person.persona_id))
+    hasTotalScope || visiblePersonIds.has(_directoryKey_(person.persona_id))
   );
 
   return {
@@ -1346,6 +1352,16 @@ function deleteDirectoryPerson(personaId) {
 
   const linkedAssignments = context.asignaciones.filter(item =>
     _directoryKey_(item.persona_id) === id
+  );
+  const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
+
+  // Primero se comprueba el ámbito de todas las adscripciones para no
+  // revelar relaciones ni operar sobre identidades fuera del alcance.
+  _directoryAssertPersonMutationScope_(
+    authorization,
+    person,
+    context.asignaciones,
+    relationMap
   );
 
   if (linkedAssignments.length) {
