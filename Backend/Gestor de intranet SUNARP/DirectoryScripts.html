@@ -1284,7 +1284,7 @@ const DirectoryPage = (() => {
               min="1"
               max="99999"
               step="1"
-              value="${escapeHtml(record?.anexo ?? '')}">
+              value="${escapeHtml(assignmentOnly ? '' : (record?.anexo ?? ''))}">
           </div>
 
           <div class="sunarp-form-field sunarp-form-field--full">
