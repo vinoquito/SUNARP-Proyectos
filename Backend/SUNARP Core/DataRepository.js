@@ -799,14 +799,20 @@ function listRecordsFromSourcesCached(requests, expirationSeconds) {
     if (Array.isArray(cached)) {
       result[key] = cached;
     } else {
-      misses.push({ key, source: request.source, cacheKey });
+      misses.push({
+        key,
+        source: request.source,
+        cacheKey,
+        requiredHeaders: request.requiredHeaders || []
+      });
     }
   });
 
   if (misses.length) {
     const loaded = listRecordsFromSources(misses.map(item => ({
       key: item.key,
-      source: item.source
+      source: item.source,
+      requiredHeaders: item.requiredHeaders
     })));
 
     misses.forEach(item => {
@@ -871,6 +877,13 @@ function listRecordsFromSources(requests) {
     const config = _coreNormalizeSourceConfig_(
       request.source
     );
+    const requiredHeaders = request.requiredHeaders === undefined
+      ? []
+      : request.requiredHeaders;
+
+    if (!Array.isArray(requiredHeaders) || requiredHeaders.some(header => !String(header || '').trim())) {
+      throw new Error('SUNARP Core: requiredHeaders debe ser un arreglo de nombres de columnas válidos.');
+    }
 
     const groupKey = config.spreadsheetId;
 
@@ -880,7 +893,8 @@ function listRecordsFromSources(requests) {
 
     groups.get(groupKey).push({
       key,
-      config
+      config,
+      requiredHeaders: requiredHeaders.map(String)
     });
 
     requestedKeys.add(key);
@@ -966,6 +980,15 @@ function listRecordsFromSources(requests) {
         headerMap[header] = index;
 
       });
+
+      const missingHeaders = item.requiredHeaders.filter(header =>
+        !Object.prototype.hasOwnProperty.call(headerMap, header)
+      );
+      if (missingHeaders.length) {
+        throw new Error(
+          `SUNARP Core: la pestaña "${config.sheetName}" no contiene las columnas requeridas: ${missingHeaders.join(', ')}.`
+        );
+      }
 
       // 4. Convertir las filas en registros.
       const dataRows = values.slice(config.headerRow);
