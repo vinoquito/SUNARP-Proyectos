@@ -429,3 +429,10 @@ function runCoreSelfTests_() {
     }
   }
 }
+
+/** Ejecuta las suites de pruebas del núcleo. */
+function runCoreTests() {
+  runCoreSelfTests_();
+  runAuthorizationSelfTests_();
+  runCompositeRepositorySelfTests_();
+}
