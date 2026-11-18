@@ -109,8 +109,8 @@ test('admite anexo vacío y valida anexos enteros', () => {
 
 
 test('la creación de personas no está expuesta como operación independiente', () => {
-  assert.match(serviceSource, /function _saveDirectoryPerson_\\(/);
-  assert.doesNotMatch(serviceSource, /function saveDirectoryPerson\\(/);
+  assert.ok(serviceSource.includes('function _saveDirectoryPerson_('));
+  assert.equal(serviceSource.includes('function saveDirectoryPerson('), false);
 });
 
 test('la edición coordinada impide usar una asignación perteneciente a otra persona', () => {
