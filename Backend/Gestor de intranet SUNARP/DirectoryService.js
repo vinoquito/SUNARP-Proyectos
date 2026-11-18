@@ -172,6 +172,18 @@ function _directoryAssertPersonMutationScope_(authorization, person, assignments
     _directoryKey_(item.persona_id) === _directoryKey_(person.persona_id)
   );
 
+  if (!linked.length) {
+    // Sin asignaciones no existe una adscripción con la que comprobar
+    // un ámbito SEDE o ESTRUCTURA_ORG. Solo un ámbito TOTAL autoriza
+    // modificar una identidad que no tenga adscripción operativa.
+    _directoryAssertScope_(
+      authorization,
+      { persona_id: person.persona_id, nombres: person.nombres, apellidos: person.apellidos },
+      'La persona no tiene asignaciones para determinar su ámbito organizacional.'
+    );
+    return true;
+  }
+
   linked.forEach(assignment => {
     const relation = relationMap.get(_directoryKey_(assignment.estructura_local_id));
     if (!relation) {
@@ -348,7 +360,18 @@ function _directoryValidateSnapshot_(context) {
   const peopleIds = new Set(context.personas.map(item => _directoryKey_(item.persona_id)));
   const cargoIds = new Set(context.cargos.map(item => _directoryKey_(item.id)));
   const localIds = new Set(context.locales.map(item => _directoryKey_(item.id)));
+  const structureIds = new Set(context.estructuraOrg.map(item => _directoryKey_(item.id)));
   const relationMap = _directoryCreateMap_(context.estructuraLocal);
+  _directoryAssertUnique_(context.estructuraLocal, 'id', 'estructura_local');
+
+  context.estructuraLocal.forEach(relation => {
+    if (!structureIds.has(_directoryKey_(relation.estructura_id))) {
+      throw new Error('La relación estructura_local ' + _directoryKey_(relation.id) + ' referencia una estructura orgánica inexistente.');
+    }
+    if (!localIds.has(_directoryKey_(relation.local_id))) {
+      throw new Error('La relación estructura_local ' + _directoryKey_(relation.id) + ' referencia un local inexistente.');
+    }
+  });
 
   context.asignaciones.forEach(assignment => {
     const assignmentId = _directoryKey_(assignment.asignacion_id);
@@ -451,8 +474,20 @@ function _directoryLoadPersonalDataLinks_() {
     throw error;
   }
 
-  if (!info.headers.includes('servidor_id')) {
-    throw new Error('La pestaña "' + DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales + '" debe contener servidor_id.');
+  const expectedHeaders = [
+    'servidor_id',
+    'tipo_documento',
+    'numero_documento',
+    'fecha_nacimiento',
+    'fecha_inicio_servicios',
+    'fecha_cese'
+  ];
+  const missing = expectedHeaders.filter(header => !info.headers.includes(header));
+  if (missing.length) {
+    throw new Error(
+      'La pestaña "' + DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales +
+      '" no contiene los encabezados requeridos: ' + missing.join(', ') + '.'
+    );
   }
 
   const records = SUNARPCore.listRecords(source, {}).records;
