@@ -35,7 +35,7 @@ const DIRECTORY_SERVICE_CONFIG = Object.freeze({
   })
 });
 
-const DIRECTORY_CACHE_KEY = 'gestor-intranet:directory-context:v2';
+const DIRECTORY_CACHE_KEY = 'gestor-intranet:directory-context:v3';
 const DIRECTORY_CACHE_TTL = 300;
 
 const DIRECTORY_REQUIRED_HEADERS = Object.freeze({
@@ -362,6 +362,26 @@ function _directoryValidateSnapshot_(context) {
   const cargoIds = new Set(context.cargos.map(item => _directoryKey_(item.id)));
   const localIds = new Set(context.locales.map(item => _directoryKey_(item.id)));
   const structureIds = new Set(context.estructuraOrg.map(item => _directoryKey_(item.id)));
+  const personalIds = new Set();
+  const documentKeys = new Set();
+  (context.datosPersonales || []).forEach(record => {
+    const personId = _directoryKey_(record.servidor_id);
+    if (!personId || !peopleIds.has(personId)) {
+      throw new Error('La ficha de datos personales referencia una persona inexistente o carece de servidor_id.');
+    }
+    if (personalIds.has(personId)) {
+      throw new Error('Existe más de una ficha de datos personales para ' + personId + '.');
+    }
+    personalIds.add(personId);
+    const type = _directoryText_(record.tipo_documento).toUpperCase();
+    const number = _directoryText_(record.numero_documento).replace(/\\s+/g, '').toUpperCase();
+    if (type && number) {
+      const key = JSON.stringify([type, number]);
+      if (documentKeys.has(key)) throw new Error('Existe un documento de identidad duplicado en datos personales.');
+      documentKeys.add(key);
+    }
+  });
+
   const relationMap = _directoryCreateMap_(context.estructuraLocal);
   _directoryAssertUnique_(context.estructuraLocal, 'id', 'estructura_local');
 
@@ -1078,18 +1098,21 @@ function saveDirectoryPersonalData(payload) {
   }
   _directoryAssertAllowedFields_(payload, [
     'servidor_id', 'tipo_documento', 'numero_documento',
-    'fecha_nacimiento', 'fecha_inicio_servicios', 'fecha_cese'
+    'fecha_nacimiento', 'fecha_inicio_servicios', 'fecha_cese', 'allowUnassigned'
   ], 'datos personales');
 
   const personaId = _directoryText_(payload.servidor_id);
   if (!personaId) throw new Error('La persona vinculada es obligatoria.');
-  const authorization = _directoryAuthorizationContext_('DIRECTORIOS_EDITAR');
   const context = _directoryLoadContext_();
   const person = context.personas.find(item => _directoryKey_(item.persona_id) === personaId);
   if (!person) throw new Error('No existe la persona vinculada a los datos personales.');
 
-  const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
-  _directoryAssertPersonMutationScope_(authorization, person, context.asignaciones, relationMap);
+  const linkedAssignments = context.asignaciones.filter(item => _directoryKey_(item.persona_id) === personaId);
+  const authorization = _directoryAuthorizationContext_(payload.allowUnassigned && !linkedAssignments.length ? 'DIRECTORIOS_CREAR' : 'DIRECTORIOS_EDITAR');
+  if (!(payload.allowUnassigned && !linkedAssignments.length)) {
+    const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
+    _directoryAssertPersonMutationScope_(authorization, person, context.asignaciones, relationMap);
+  }
 
   const record = {
     servidor_id: personaId,
@@ -1172,7 +1195,8 @@ function saveDirectoryEntry(payload) {
       numero_documento: payload.numero_documento,
       fecha_nacimiento: payload.fecha_nacimiento,
       fecha_inicio_servicios: payload.fecha_inicio_servicios,
-      fecha_cese: payload.fecha_cese
+      fecha_cese: payload.fecha_cese,
+      allowUnassigned: isNewPerson
     });
     const assignment = saveDirectoryAssignment({
       asignacion_id: assignmentId,
@@ -1199,7 +1223,8 @@ function saveDirectoryEntry(payload) {
       numero_documento: payload.numero_documento,
       fecha_nacimiento: payload.fecha_nacimiento,
       fecha_inicio_servicios: payload.fecha_inicio_servicios,
-      fecha_cese: payload.fecha_cese
+      fecha_cese: payload.fecha_cese,
+      allowUnassigned: isNewPerson
     });
     personalCreated = true;
     const assignment = saveDirectoryAssignment({
