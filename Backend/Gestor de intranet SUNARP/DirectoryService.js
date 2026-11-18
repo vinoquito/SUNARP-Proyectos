@@ -422,12 +422,14 @@ function _directoryLoadContextFromSheets_() {
 
   const requests = sheetMap.map(item => ({
     key: item[0],
-    source: _directorySource_(item[1])
+    source: _directorySource_(item[1]),
+    requiredHeaders: DIRECTORY_REQUIRED_HEADERS[item[0]]
   }));
 
+  // Core valida encabezados durante la misma lectura agrupada,
+  // sin volver a abrir el archivo para consultar cada pestaña.
   const context = SUNARPCore.listRecordsFromSources(requests);
 
-  _directoryValidateHeaders_(context);
   _directoryValidateSnapshot_(context);
 
   return context;
