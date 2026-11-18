@@ -604,6 +604,31 @@ function updateRecord(source, idField, id, updates, options) {
       );
     }
 
+    // Verificar restricciones compuestas dentro del mismo bloqueo
+    // que protege la actualización.
+    const uniqueFields = Array.isArray(options.uniqueFields)
+      ? [...new Set(options.uniqueFields.map(String))]
+      : [];
+
+    uniqueFields.forEach(field => _coreGetFieldIndex_(table, field));
+
+    if (uniqueFields.length) {
+      const candidate = Object.assign({}, entry.record, updates);
+      const duplicate = table.entries.some(other =>
+        other.rowNumber !== entry.rowNumber &&
+        !_coreIsEmptyRow_(other.values) &&
+        uniqueFields.every(field =>
+          _coreValuesEqual_(other.record[field], candidate[field])
+        )
+      );
+
+      if (duplicate) {
+        throw new Error(
+          'SUNARP Core: la actualización generaría un registro duplicado para la combinación de campos únicos indicada.'
+        );
+      }
+    }
+
     fields.forEach(field => {
       const columnIndex = _coreGetFieldIndex_(table, field);
 
