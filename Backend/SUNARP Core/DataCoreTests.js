@@ -194,6 +194,25 @@ function runCoreSelfTests_() {
       'Inserción de un registro.'
     );
 
+    // 8.1. Probar unicidad compuesta en inserción.
+    expectError(() => {
+      insertRecord(
+        source,
+        {
+          id: 'TST_005',
+          nombre: 'María López',
+          area: 'Otra área',
+          anexo: 1005,
+          active: true
+        },
+        {
+          idField: 'id',
+          uniqueFields: ['nombre'],
+          schema
+        }
+      );
+    }, 'Detección de duplicados mediante uniqueFields al insertar.');
+
     // 9. Probar duplicidad de identificadores.
     expectError(() => {
       insertRecord(
@@ -230,6 +249,17 @@ function runCoreSelfTests_() {
       update.record.nombre === 'María López Actualizado',
       'Actualización parcial de un registro.'
     );
+
+    // 10.1. Probar unicidad compuesta en actualización.
+    expectError(() => {
+      updateRecord(
+        source,
+        'id',
+        'TST_003',
+        { nombre: 'Ana Torres' },
+        { uniqueFields: ['nombre'], schema }
+      );
+    }, 'Detección de duplicados mediante uniqueFields al actualizar.');
 
     // 11. Probar cambio de estado.
     const status = setRecordStatus(
