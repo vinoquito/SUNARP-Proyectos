@@ -847,7 +847,7 @@ const DirectoryPage = (() => {
 
             window.SUNARPAccessHistory.open(
               'SERVIDOR',
-              record.id,
+              record.persona_id,
               [
                 record.nombres,
                 record.apellidos
@@ -860,7 +860,7 @@ const DirectoryPage = (() => {
           label: 'Eliminar',
           icon: 'delete',
           variant: 'danger',
-          title: 'Eliminar servidor',
+          title: 'Eliminar asignación',
 
           onClick: record => deleteDirectoryEntry(record)
         }
@@ -1562,9 +1562,9 @@ async function deleteDirectoryEntry(record) {
   // Confirmación de eliminación.
   const confirmation = await Swal.fire({
 
-    title: '¿Eliminar servidor?',
+    title: '¿Eliminar asignación?',
 
-    text: `Se eliminará definitivamente el registro de ${fullName}. Esta acción no se puede deshacer.`,
+    text: `Se eliminará la asignación de ${fullName}. La persona y sus datos personales se conservarán.`,
 
     icon: 'warning',
 
@@ -1599,7 +1599,7 @@ async function deleteDirectoryEntry(record) {
 
   notify(
     'success',
-    result.message || 'Servidor eliminado correctamente.'
+    result.message || 'Asignación eliminada correctamente.'
   );
 
 }
