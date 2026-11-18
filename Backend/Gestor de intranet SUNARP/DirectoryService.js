@@ -168,42 +168,35 @@ function _directoryAssertScope_(authorization, record, actionLabel) {
   throw new Error('No tienes ámbito de acceso para operar sobre este registro.');
 }
 
-function _directoryAssertPersonMutationScope_(authorization, person, assignments, relationMap) {
-  const linked = (assignments || []).filter(item =>
-    _directoryKey_(item.persona_id) === _directoryKey_(person.persona_id)
-  );
-
+function _directoryAssertPersonMutationScope_(authorization, person, assignments, context) {
+  const linked = (assignments || []).filter(x => _directoryKey_(x.persona_id) === _directoryKey_(person.persona_id));
   if (!linked.length) {
-    // Sin asignaciones no existe una adscripción con la que comprobar
-    // un ámbito SEDE o ESTRUCTURA_ORG. Solo un ámbito TOTAL autoriza
-    // modificar una identidad que no tenga adscripción operativa.
-    _directoryAssertScope_(
-      authorization,
-      { persona_id: person.persona_id, nombres: person.nombres, apellidos: person.apellidos },
-      'La persona no tiene asignaciones para determinar su ámbito organizacional.'
-    );
+    _directoryAssertScope_(authorization, { persona_id: person.persona_id, nombres: person.nombres, apellidos: person.apellidos },
+      'La persona no tiene asignaciones para determinar su ámbito organizacional.');
     return true;
   }
-
   linked.forEach(assignment => {
-    const relation = relationMap.get(_directoryKey_(assignment.estructura_local_id));
-    if (!relation) {
-      throw new Error('Una asignación de la persona tiene una relación organizacional inexistente.');
-    }
-
-    _directoryAssertScope_(
-      authorization,
-      {
-        persona_id: person.persona_id,
-        asignacion_id: assignment.asignacion_id,
-        nombres: person.nombres,
-        apellidos: person.apellidos,
-        estructura_id: relation.estructura_id,
-        sede_id: relation.sede_id
-      },
-      'La modificación de la identidad afectaría una asignación fuera del ámbito autorizado.'
-    );
+    const location = _directoryResolveAssignmentLocation_(assignment, context, false);
+    _directoryAssertScope_(authorization, { persona_id: person.persona_id, asignacion_id: assignment.asignacion_id,
+      nombres: person.nombres, apellidos: person.apellidos, estructura_id: location.estructura_id, sede_id: location.sede_id },
+      'La modificación de la identidad afectaría una asignación fuera del ámbito autorizado.');
   });
+}
+function _directoryResolveAssignmentLocation_(assignment, context, onlyActive) {
+  const relationId = _directoryKey_(assignment && assignment.estructura_local_id);
+  const localId = _directoryKey_(assignment && assignment.local_id);
+  if (!relationId && !localId) throw new Error('La asignación debe estar vinculada a una unidad orgánica, a un local o a ambos.');
+  const relation = relationId ? _directoryCreateMap_(context.estructuraLocal).get(relationId) : null;
+  const local = localId ? _directoryCreateMap_(context.locales).get(localId) : null;
+  if (relationId && !relation) throw new Error('La relación estructura_local no existe.');
+  if (localId && !local) throw new Error('El local no existe.');
+  if (relationId && onlyActive && !_directoryIsActive_(relation)) throw new Error('La relación estructura-local no existe o está inactiva.');
+  if (localId && onlyActive && !_directoryIsActive_(local)) throw new Error('El local no existe o está inactivo.');
+  if (relation && local && _directoryKey_(relation.local_id) !== localId) throw new Error('El local seleccionado no corresponde a la relación estructura-local.');
+  const resolvedLocal = local || (relation ? _directoryCreateMap_(context.locales).get(_directoryKey_(relation.local_id)) : null);
+  const structure = relation ? _directoryCreateMap_(context.estructuraOrg).get(_directoryKey_(relation.estructura_id)) : null;
+  return { relation, local: resolvedLocal, estructura_id: relation ? _directoryKey_(relation.estructura_id) : '',
+    sede_id: relation ? (structure ? _directoryKey_(structure.sede_id) : '') : (resolvedLocal ? _directoryKey_(resolvedLocal.sede_id) : '') };
 }
 
 function _directoryGetStructurePath_(node, structureMap) {
@@ -357,66 +350,31 @@ function _directoryValidateHeaders_(context) {
 function _directoryValidateSnapshot_(context) {
   _directoryAssertUnique_(context.personas, 'persona_id', 'personas');
   _directoryAssertUnique_(context.asignaciones, 'asignacion_id', 'asignaciones');
-
-  const peopleIds = new Set(context.personas.map(item => _directoryKey_(item.persona_id)));
-  const cargoIds = new Set(context.cargos.map(item => _directoryKey_(item.id)));
-  const localIds = new Set(context.locales.map(item => _directoryKey_(item.id)));
-  const structureIds = new Set(context.estructuraOrg.map(item => _directoryKey_(item.id)));
-  const personalIds = new Set();
-  const documentKeys = new Set();
+  const peopleIds = new Set(context.personas.map(x => _directoryKey_(x.persona_id)));
+  const cargoIds = new Set(context.cargos.map(x => _directoryKey_(x.id)));
+  const localIds = new Set(context.locales.map(x => _directoryKey_(x.id)));
+  const structureIds = new Set(context.estructuraOrg.map(x => _directoryKey_(x.id)));
+  const personalIds = new Set(), documentKeys = new Set();
   (context.datosPersonales || []).forEach(record => {
-    const personId = _directoryKey_(record.servidor_id);
-    if (!personId || !peopleIds.has(personId)) {
-      throw new Error('La ficha de datos personales referencia una persona inexistente o carece de servidor_id.');
-    }
-    if (personalIds.has(personId)) {
-      throw new Error('Existe más de una ficha de datos personales para ' + personId + '.');
-    }
-    personalIds.add(personId);
-    const type = _directoryText_(record.tipo_documento).replace(/\s+/g, '').toUpperCase();
-    const number = _directoryText_(record.numero_documento).replace(/\s+/g, '').toUpperCase();
-    if (type && number) {
-      const key = JSON.stringify([type, number]);
-      if (documentKeys.has(key)) throw new Error('Existe un documento de identidad duplicado en datos personales.');
-      documentKeys.add(key);
-    }
+    const id = _directoryKey_(record.servidor_id);
+    if (!id || !peopleIds.has(id)) throw new Error('La ficha de datos personales referencia una persona inexistente o carece de servidor_id.');
+    if (personalIds.has(id)) throw new Error('Existe más de una ficha de datos personales para ' + id + '.');
+    personalIds.add(id);
+    const type = _directoryText_(record.tipo_documento).replace(/\\s+/g, '').toUpperCase();
+    const number = _directoryText_(record.numero_documento).replace(/\\s+/g, '').toUpperCase();
+    if (type && number) { const key = JSON.stringify([type, number]); if (documentKeys.has(key)) throw new Error('Existe un documento de identidad duplicado en datos personales.'); documentKeys.add(key); }
   });
-
-  const relationMap = _directoryCreateMap_(context.estructuraLocal);
   _directoryAssertUnique_(context.estructuraLocal, 'id', 'estructura_local');
-
   context.estructuraLocal.forEach(relation => {
-    if (!structureIds.has(_directoryKey_(relation.estructura_id))) {
-      throw new Error('La relación estructura_local ' + _directoryKey_(relation.id) + ' referencia una estructura orgánica inexistente.');
-    }
-    if (!localIds.has(_directoryKey_(relation.local_id))) {
-      throw new Error('La relación estructura_local ' + _directoryKey_(relation.id) + ' referencia un local inexistente.');
-    }
+    if (!structureIds.has(_directoryKey_(relation.estructura_id))) throw new Error('La relación estructura_local ' + _directoryKey_(relation.id) + ' referencia una estructura orgánica inexistente.');
+    if (!localIds.has(_directoryKey_(relation.local_id))) throw new Error('La relación estructura_local ' + _directoryKey_(relation.id) + ' referencia un local inexistente.');
   });
-
   context.asignaciones.forEach(assignment => {
-    const assignmentId = _directoryKey_(assignment.asignacion_id);
-
-    if (!peopleIds.has(_directoryKey_(assignment.persona_id))) {
-      throw new Error('La asignación ' + assignmentId + ' referencia una persona inexistente.');
-    }
-
-    if (!cargoIds.has(_directoryKey_(assignment.cargo_id))) {
-      throw new Error('La asignación ' + assignmentId + ' referencia un cargo inexistente.');
-    }
-
-    const relation = relationMap.get(_directoryKey_(assignment.estructura_local_id));
-    if (!relation) {
-      throw new Error('La asignación ' + assignmentId + ' referencia una relación estructura_local inexistente.');
-    }
-
-    if (!localIds.has(_directoryKey_(assignment.local_id))) {
-      throw new Error('La asignación ' + assignmentId + ' referencia un local inexistente.');
-    }
-
-    if (_directoryKey_(relation.local_id) !== _directoryKey_(assignment.local_id)) {
-      throw new Error('La asignación ' + assignmentId + ' tiene un local_id que no corresponde a su estructura_local_id.');
-    }
+    const id = _directoryKey_(assignment.asignacion_id);
+    if (!peopleIds.has(_directoryKey_(assignment.persona_id))) throw new Error('La asignación ' + id + ' referencia una persona inexistente.');
+    if (!cargoIds.has(_directoryKey_(assignment.cargo_id))) throw new Error('La asignación ' + id + ' referencia un cargo inexistente.');
+    try { _directoryResolveAssignmentLocation_(assignment, context, false); }
+    catch (error) { throw new Error('La asignación ' + id + ': ' + error.message); }
   });
 }
 
@@ -480,64 +438,33 @@ function _directoryInvalidateCache_() {
 }
 
 function _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap) {
-  const relation = relationMap.get(_directoryKey_(assignment.estructura_local_id));
+  const location = _directoryResolveAssignmentLocation_(assignment, context, false);
+  const relation = location.relation, local = location.local;
   const person = peopleMap.get(_directoryKey_(assignment.persona_id));
-  const cargo = context.cargos.find(item =>
-    _directoryKey_(item.id) === _directoryKey_(assignment.cargo_id)
-  );
-
+  const cargo = context.cargos.find(x => _directoryKey_(x.id) === _directoryKey_(assignment.cargo_id));
+  const sede = context.sedes.find(x => _directoryKey_(x.id) === location.sede_id);
   return Object.assign({}, assignment, {
-    nombres: person ? person.nombres : '',
-    apellidos: person ? person.apellidos : '',
-    cargo_name: cargo ? cargo.name : '',
-    estructura_id: relation ? relation.estructura_id : '',
-    estructura_name: relation ? relation.estructura_name : '',
-    estructura_path: relation ? relation.estructura_path : '',
-    sede_id: relation ? relation.sede_id : '',
-    sede_name: relation ? relation.sede_name : '',
-    local_name: relation ? relation.local_name : '',
-    referencia: relation ? relation.referencia : '',
-    display_location: relation ? relation.display_name : ''
+    nombres: person ? person.nombres : '', apellidos: person ? person.apellidos : '', cargo_name: cargo ? cargo.name : '',
+    estructura_id: location.estructura_id, estructura_name: relation ? relation.estructura_name : '',
+    estructura_path: relation ? relation.estructura_path : '', sede_id: location.sede_id,
+    sede_name: relation ? relation.sede_name : (sede ? sede.name : ''),
+    local_name: local ? local.name : '', referencia: relation ? relation.referencia : '',
+    display_location: relation ? relation.display_name : (local ? local.name : '')
   });
 }
 
 function _directoryBuildView_(context, authorization) {
-  const relations = _directoryBuildRelations_(context, false);
-  const relationMap = _directoryCreateMap_(relations);
+  const relations = _directoryBuildRelations_(context, false), relationMap = _directoryCreateMap_(relations);
   const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
-
-  const assignments = context.asignaciones.map(item =>
-    _directoryEnrichAssignment_(item, context, relationMap, peopleMap)
-  ).filter(record => {
-    const relation = relationMap.get(_directoryKey_(record.estructura_local_id));
-    return relation && _accessRecordIsAllowed_(
-      authorization.auth,
-      'DIRECTORIOS',
-      {
-        estructura_id: relation.estructura_id,
-        sede_id: relation.sede_id
-      },
-      authorization.structures
-    );
+  const assignments = context.asignaciones.map(x => _directoryEnrichAssignment_(x, context, relationMap, peopleMap)).filter(record => {
+    const location = _directoryResolveAssignmentLocation_(record, context, false);
+    return _accessRecordIsAllowed_(authorization.auth, 'DIRECTORIOS',
+      { estructura_id: location.estructura_id, sede_id: location.sede_id }, authorization.structures);
   });
-
-  const visiblePersonIds = new Set(assignments.map(item => _directoryKey_(item.persona_id)));
-  const hasTotalScope = _accessRecordIsAllowed_(
-    authorization.auth,
-    'DIRECTORIOS',
-    {},
-    authorization.structures
-  );
-  const people = context.personas.filter(person =>
-    hasTotalScope || visiblePersonIds.has(_directoryKey_(person.persona_id))
-  );
-
-  return {
-    people: people,
-    assignments: assignments,
-    relations: relations,
-    relationMap: relationMap
-  };
+  const visiblePersonIds = new Set(assignments.map(x => _directoryKey_(x.persona_id)));
+  const hasTotalScope = _accessRecordIsAllowed_(authorization.auth, 'DIRECTORIOS', {}, authorization.structures);
+  const people = context.personas.filter(x => hasTotalScope || visiblePersonIds.has(_directoryKey_(x.persona_id)));
+  return { people, assignments, relations, relationMap };
 }
 
 function _directorySortAssignments_(records, context) {
@@ -605,39 +532,18 @@ function _directoryGetAssignmentSchema_() {
     cargo_id: { label: 'Cargo', required: true, type: 'string' },
     condicion_cargo: { label: 'Condición del cargo', type: 'string', maxLength: 150 },
     anexo: { label: 'Anexo', type: 'integer', min: 1, max: 99999 },
-    estructura_local_id: { label: 'Relación estructura-local', required: true, type: 'string' },
-    local_id: { label: 'Local', required: true, type: 'string' },
+    estructura_local_id: { label: 'Relación estructura-local', type: 'string' },
+    local_id: { label: 'Local', type: 'string' },
     observaciones: { label: 'Observaciones', type: 'string', maxLength: 1000 },
     active: { label: 'Estado', required: true, type: 'boolean' },
     order: { label: 'Orden', required: true, type: 'integer', min: 1 }
   };
 }
-
 function _directoryValidateAssignmentReferences_(record, context) {
-  const person = context.personas.find(item =>
-    _directoryKey_(item.persona_id) === _directoryKey_(record.persona_id)
-  );
-  if (!person) throw new Error('La persona seleccionada no existe.');
-
-  const cargo = context.cargos.find(item =>
-    _directoryKey_(item.id) === _directoryKey_(record.cargo_id)
-  );
-  if (!cargo || !_directoryIsActive_(cargo)) {
-    throw new Error('El cargo seleccionado no existe o está inactivo.');
-  }
-
-  const relation = _directoryBuildRelations_(context, true).find(item =>
-    _directoryKey_(item.id) === _directoryKey_(record.estructura_local_id)
-  );
-  if (!relation) {
-    throw new Error('La relación estructura-local no existe o está inactiva.');
-  }
-
-  if (_directoryKey_(relation.local_id) !== _directoryKey_(record.local_id)) {
-    throw new Error('El local seleccionado no corresponde a la relación estructura-local.');
-  }
-
-  return relation;
+  if (!context.personas.some(x => _directoryKey_(x.persona_id) === _directoryKey_(record.persona_id))) throw new Error('La persona seleccionada no existe.');
+  const cargo = context.cargos.find(x => _directoryKey_(x.id) === _directoryKey_(record.cargo_id));
+  if (!cargo || !_directoryIsActive_(cargo)) throw new Error('El cargo seleccionado no existe o está inactivo.');
+  return _directoryResolveAssignmentLocation_(record, context, true);
 }
 
 function _directoryGenerateId_(records, config) {
@@ -652,15 +558,13 @@ function _directoryGenerateId_(records, config) {
   return config.prefix + String(maximum + 1).padStart(config.digits, '0');
 }
 
-function _directoryGetNextOrder_(assignments, structureLocalId) {
+function _directoryGetNextOrder_(assignments, structureLocalId, localId) {
   let maximum = 0;
-
   (assignments || []).forEach(record => {
-    if (_directoryKey_(record.estructura_local_id) !== _directoryKey_(structureLocalId)) return;
-    const order = Number(record.order);
-    if (Number.isInteger(order) && order > maximum) maximum = order;
+    if (_directoryKey_(record.estructura_local_id) !== _directoryKey_(structureLocalId) ||
+        _directoryKey_(record.local_id) !== _directoryKey_(localId)) return;
+    const order = Number(record.order); if (Number.isInteger(order) && order > maximum) maximum = order;
   });
-
   return maximum + 1;
 }
 
@@ -919,12 +823,12 @@ function getDirectoryAssignmentById(asignacionId) {
   const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
   const enriched = _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap);
 
-  const relation = relationMap.get(_directoryKey_(assignment.estructura_local_id));
+  const location = _directoryResolveAssignmentLocation_(assignment, context, false);
   _directoryAssertScope_(
     authorization,
     Object.assign({}, enriched, {
-      estructura_id: relation ? relation.estructura_id : '',
-      sede_id: relation ? relation.sede_id : ''
+      estructura_id: location.estructura_id,
+      sede_id: location.sede_id
     }),
     'Consulta de una asignación fuera del ámbito asignado.'
   );
@@ -964,13 +868,7 @@ function _saveDirectoryPerson_(payload) {
   }
 
   if (isUpdate) {
-    const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
-    _directoryAssertPersonMutationScope_(
-      authorization,
-      existing,
-      context.asignaciones,
-      relationMap
-    );
+    _directoryAssertPersonMutationScope_(authorization, existing, context.asignaciones, context);
   }
 
   const record = {
@@ -1120,8 +1018,7 @@ function _saveDirectoryPersonalData_(payload, allowUnassigned) {
   const createWithoutAssignment = allowUnassigned === true && !linkedAssignments.length;
   const authorization = _directoryAuthorizationContext_(createWithoutAssignment ? 'DIRECTORIOS_CREAR' : 'DIRECTORIOS_EDITAR');
   if (!createWithoutAssignment) {
-    const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
-    _directoryAssertPersonMutationScope_(authorization, person, context.asignaciones, relationMap);
+    _directoryAssertPersonMutationScope_(authorization, person, context.asignaciones, context);
   }
 
   const normalizedDocument = _directoryAssertDocumentAvailable_(
@@ -1183,7 +1080,7 @@ function saveDirectoryEntry(payload) {
     'tipo_documento', 'numero_documento', 'fecha_nacimiento',
     'fecha_inicio_servicios', 'fecha_cese', 'cargo_id',
     'condicion_cargo', 'anexo', 'estructura_local_id',
-    'observaciones'
+    'observaciones', 'local_id'
   ], 'registro del directorio');
 
   const personaId = _directoryText_(payload.persona_id);
@@ -1203,6 +1100,7 @@ function saveDirectoryEntry(payload) {
       condicion_cargo: payload.condicion_cargo,
       anexo: payload.anexo,
       estructura_local_id: payload.estructura_local_id,
+      local_id: payload.local_id,
       observaciones: payload.observaciones,
       active: true
     });
@@ -1253,6 +1151,7 @@ function saveDirectoryEntry(payload) {
         condicion_cargo: payload.condicion_cargo,
         anexo: payload.anexo,
         estructura_local_id: payload.estructura_local_id,
+        local_id: payload.local_id,
         observaciones: payload.observaciones
       });
       assignmentUpdated = true;
@@ -1406,41 +1305,22 @@ function saveDirectoryAssignment(payload) {
   const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
 
   if (isUpdate) {
-    const oldRelation = relationMap.get(_directoryKey_(existing.estructura_local_id));
-    if (!oldRelation) throw new Error('La asignación actual tiene una relación organizacional inexistente.');
-
-    _directoryAssertScope_(
-      authorization,
-      Object.assign(
-        _directoryEnrichAssignment_(existing, context, relationMap, peopleMap),
-        {
-          estructura_id: oldRelation.estructura_id,
-          sede_id: oldRelation.sede_id
-        }
-      ),
-      'Edición de una asignación fuera del ámbito asignado.'
-    );
+    const oldLocation = _directoryResolveAssignmentLocation_(existing, context, false);
+    _directoryAssertScope_(authorization, Object.assign(
+      _directoryEnrichAssignment_(existing, context, relationMap, peopleMap),
+      { estructura_id: oldLocation.estructura_id, sede_id: oldLocation.sede_id }
+    ), 'Edición de una asignación fuera del ámbito asignado.');
   }
 
-  const targetRelationId = _directoryText_(
-    payload.estructura_local_id !== undefined
-      ? payload.estructura_local_id
-      : existing && existing.estructura_local_id
-  );
-  const targetRelation = relationMap.get(targetRelationId);
-  if (!targetRelation || !targetRelation.active) {
-    throw new Error('La relación estructura-local seleccionada no existe o está inactiva.');
-  }
-
-  const requestedLocalId = _directoryText_(
-    payload.local_id !== undefined
-      ? payload.local_id
-      : existing && existing.local_id
+  const targetRelationId = _directoryText_(payload.estructura_local_id !== undefined
+    ? payload.estructura_local_id : (existing && existing.estructura_local_id));
+  const targetLocalId = _directoryText_(payload.local_id !== undefined
+    ? payload.local_id : (existing && existing.local_id));
+  const targetLocation = _directoryResolveAssignmentLocation_(
+    { estructura_local_id: targetRelationId, local_id: targetLocalId }, context, true
   );
 
-  if (requestedLocalId && requestedLocalId !== _directoryKey_(targetRelation.local_id)) {
-    throw new Error('El local seleccionado no corresponde a la relación estructura-local.');
-  }
+  const record = {
 
   const record = {
     asignacion_id: isUpdate
@@ -1461,7 +1341,7 @@ function saveDirectoryAssignment(payload) {
       true
     ),
     estructura_local_id: targetRelationId,
-    local_id: _directoryKey_(targetRelation.local_id),
+    local_id: targetLocalId,
     observaciones: _directoryText_(
       payload.observaciones !== undefined ? payload.observaciones : existing && existing.observaciones
     ),
@@ -1473,15 +1353,17 @@ function saveDirectoryAssignment(payload) {
     order: 1
   };
 
-  const locationChanged = isUpdate &&
-    _directoryKey_(existing.estructura_local_id) !== _directoryKey_(record.estructura_local_id);
+  const locationChanged = isUpdate && (
+    _directoryKey_(existing.estructura_local_id) !== _directoryKey_(record.estructura_local_id) ||
+    _directoryKey_(existing.local_id) !== _directoryKey_(record.local_id)
+  );
 
   if (payload.order !== undefined) {
     record.order = _directoryNormalizeInteger_(payload.order, 'Orden', false);
   } else if (isUpdate && !locationChanged) {
     record.order = _directoryNormalizeInteger_(existing.order, 'Orden', false);
   } else {
-    record.order = _directoryGetNextOrder_(context.asignaciones, record.estructura_local_id);
+    record.order = _directoryGetNextOrder_(context.asignaciones, record.estructura_local_id, record.local_id);
   }
 
   const schema = _directoryGetAssignmentSchema_();
@@ -1495,8 +1377,8 @@ function saveDirectoryAssignment(payload) {
       persona_id: record.persona_id,
       nombres: (peopleMap.get(record.persona_id) || {}).nombres,
       apellidos: (peopleMap.get(record.persona_id) || {}).apellidos,
-      estructura_id: targetRelation.estructura_id,
-      sede_id: targetRelation.sede_id
+      estructura_id: targetLocation.estructura_id,
+      sede_id: targetLocation.sede_id
     },
     'La unidad orgánica de destino se encuentra fuera de tus ámbitos de acceso.'
   );
@@ -1558,15 +1440,13 @@ function setDirectoryAssignmentActive(asignacionId, active) {
 
   const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
   const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
-  const relation = relationMap.get(_directoryKey_(existing.estructura_local_id));
-  if (!relation) throw new Error('La asignación no tiene una relación organizacional válida.');
-
+  const location = _directoryResolveAssignmentLocation_(existing, context, false);
   const enriched = _directoryEnrichAssignment_(existing, context, relationMap, peopleMap);
   _directoryAssertScope_(
     authorization,
     Object.assign({}, enriched, {
-      estructura_id: relation.estructura_id,
-      sede_id: relation.sede_id
+      estructura_id: location.estructura_id,
+      sede_id: location.sede_id
     }),
     'Cambio de estado de una asignación fuera del ámbito asignado.'
   );
@@ -1615,15 +1495,13 @@ function deleteDirectoryAssignment(asignacionId) {
 
   const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
   const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
-  const relation = relationMap.get(_directoryKey_(existing.estructura_local_id));
-  if (!relation) throw new Error('La asignación no tiene una relación organizacional válida.');
-
+  const location = _directoryResolveAssignmentLocation_(existing, context, false);
   const enriched = _directoryEnrichAssignment_(existing, context, relationMap, peopleMap);
   _directoryAssertScope_(
     authorization,
     Object.assign({}, enriched, {
-      estructura_id: relation.estructura_id,
-      sede_id: relation.sede_id
+      estructura_id: location.estructura_id,
+      sede_id: location.sede_id
     }),
     'Eliminación de una asignación fuera del ámbito asignado.'
   );
