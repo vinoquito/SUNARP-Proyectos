@@ -792,9 +792,9 @@ function getDirectoryInitialData() {
         id: item.asignacion_id,
         tipo_documento: personalData ? personalData.tipo_documento : '',
         numero_documento: personalData ? personalData.numero_documento : '',
-        fecha_nacimiento: personalData ? personalData.fecha_nacimiento : '',
-        fecha_inicio_servicios: personalData ? personalData.fecha_inicio_servicios : '',
-        fecha_cese: personalData ? personalData.fecha_cese : ''
+        fecha_nacimiento: personalData ? _directoryFormatDateInput_(personalData.fecha_nacimiento) : '',
+        fecha_inicio_servicios: personalData ? _directoryFormatDateInput_(personalData.fecha_inicio_servicios) : '',
+        fecha_cese: personalData ? _directoryFormatDateInput_(personalData.fecha_cese) : ''
       });
     }),
     summary: {
@@ -1090,6 +1090,17 @@ function _directoryGetPersonalDataRecord_(personaId, records) {
   return (records || []).find(item =>
     _directoryKey_(item.servidor_id) === _directoryKey_(personaId)
   ) || null;
+}
+
+function _directoryFormatDateInput_(value) {
+  if (value === null || value === undefined || value === '') return '';
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  }
+  const text = _directoryText_(value);
+  const iso = text.match(/^(\\d{4}-\\d{2}-\\d{2})/);
+  if (iso) return iso[1];
+  return text;
 }
 
 function saveDirectoryPersonalData(payload) {
