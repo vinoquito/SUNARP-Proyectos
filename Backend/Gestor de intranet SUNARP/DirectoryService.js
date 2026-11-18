@@ -195,8 +195,12 @@ function _directoryResolveAssignmentLocation_(assignment, context, onlyActive) {
   if (relation && local && _directoryKey_(relation.local_id) !== localId) throw new Error('El local seleccionado no corresponde a la relación estructura-local.');
   const resolvedLocal = local || (relation ? _directoryCreateMap_(context.locales).get(_directoryKey_(relation.local_id)) : null);
   const structure = relation ? _directoryCreateMap_(context.estructuraOrg).get(_directoryKey_(relation.estructura_id)) : null;
+  if (relation && (!structure || !resolvedLocal)) throw new Error('La relación estructura-local tiene referencias incompletas.');
+  if (relation && onlyActive && (!_directoryIsActive_(structure) || !_directoryIsActive_(resolvedLocal))) {
+    throw new Error('La estructura o el local de la relación no existe o está inactivo.');
+  }
   return { relation, local: resolvedLocal, estructura_id: relation ? _directoryKey_(relation.estructura_id) : '',
-    sede_id: relation ? (structure ? _directoryKey_(structure.sede_id) : '') : (resolvedLocal ? _directoryKey_(resolvedLocal.sede_id) : '') };
+    sede_id: relation ? _directoryKey_(structure.sede_id) : (resolvedLocal ? _directoryKey_(resolvedLocal.sede_id) : '') };
 }
 
 function _directoryGetStructurePath_(node, structureMap) {
