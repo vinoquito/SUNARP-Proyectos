@@ -126,7 +126,9 @@ function _directoryGetContextMaps_(context) {
   maps = {
     estructuraLocal: _directoryCreateMap_(context.estructuraLocal),
     locales: _directoryCreateMap_(context.locales),
-    estructuraOrg: _directoryCreateMap_(context.estructuraOrg)
+    estructuraOrg: _directoryCreateMap_(context.estructuraOrg),
+    cargos: _directoryCreateMap_(context.cargos),
+    sedes: _directoryCreateMap_(context.sedes)
   };
 
   DIRECTORY_CONTEXT_MAPS.set(context, maps);
@@ -573,10 +575,14 @@ function _directoryInvalidateCache_() {
 
 function _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap) {
   const location = _directoryResolveAssignmentLocation_(assignment, context, false);
-  const relation = location.relation, local = location.local;
+  const maps = _directoryGetContextMaps_(context);
+  const relation = location.relation
+    ? relationMap.get(_directoryKey_(location.relation.id))
+    : null;
+  const local = location.local;
   const person = peopleMap.get(_directoryKey_(assignment.persona_id));
-  const cargo = context.cargos.find(x => _directoryKey_(x.id) === _directoryKey_(assignment.cargo_id));
-  const sede = context.sedes.find(x => _directoryKey_(x.id) === location.sede_id);
+  const cargo = maps.cargos.get(_directoryKey_(assignment.cargo_id));
+  const sede = maps.sedes.get(_directoryKey_(location.sede_id));
   return Object.assign({}, assignment, {
     nombres: person ? person.nombres : '', apellidos: person ? person.apellidos : '', cargo_name: cargo ? cargo.name : '',
     estructura_id: location.estructura_id, estructura_name: relation ? relation.estructura_name : '',
