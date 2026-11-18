@@ -506,6 +506,30 @@ function insertRecord(source, record, options) {
       }
     }
 
+    // Restricciones compuestas opcionales. Se comprueban dentro
+    // del mismo ScriptLock que la inserción para evitar duplicados
+    // por solicitudes concurrentes.
+    const uniqueFields = Array.isArray(options.uniqueFields)
+      ? [...new Set(options.uniqueFields.map(String))]
+      : [];
+
+    uniqueFields.forEach(field => _coreGetFieldIndex_(table, field));
+
+    if (uniqueFields.length) {
+      const duplicate = table.entries.some(entry =>
+        !_coreIsEmptyRow_(entry.values) &&
+        uniqueFields.every(field =>
+          _coreValuesEqual_(entry.record[field], record[field])
+        )
+      );
+
+      if (duplicate) {
+        throw new Error(
+          'SUNARP Core: ya existe un registro con la combinación de campos únicos indicada.'
+        );
+      }
+    }
+
     const row = table.headers.map(header => {
       if (!Object.prototype.hasOwnProperty.call(record, header)) {
         return '';
