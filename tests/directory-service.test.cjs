@@ -107,6 +107,12 @@ test('admite anexo vacío y valida anexos enteros', () => {
   assert.throws(() => api.normalizeInteger('12A', 'Anexo', true), /número entero/i);
 });
 
+
+test('la creación de personas no está expuesta como operación independiente', () => {
+  assert.match(serviceSource, /function _saveDirectoryPerson_\\(/);
+  assert.doesNotMatch(serviceSource, /function saveDirectoryPerson\\(/);
+});
+
 test('la edición coordinada impide usar una asignación perteneciente a otra persona', () => {
   assert.match(serviceSource, /La asignación seleccionada no pertenece a la persona indicada/);
 });
