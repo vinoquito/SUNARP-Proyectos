@@ -1138,7 +1138,7 @@ const DirectoryPage = (() => {
       ? key(record.sede_id)
       : key(getElements().sedeFilter?.value);
 
-    const selectedPath = record
+    const selectedPath = record && !assignmentOnly
       ? getFormStructurePath(record.estructura_id)
       : [];
 
@@ -1153,7 +1153,7 @@ const DirectoryPage = (() => {
       .map(cargo => `
         <option
           value="${escapeHtml(cargo.id)}"
-          ${record && key(record.cargo_id) === key(cargo.id) ? 'selected' : ''}>
+          ${record && !assignmentOnly && key(record.cargo_id) === key(cargo.id) ? 'selected' : ''}>
           ${escapeHtml(cargo.name)}
         </option>
       `)
@@ -1338,7 +1338,7 @@ const DirectoryPage = (() => {
 
       selectedSede,
       selectedPath,
-      selectedRelationId: record
+      selectedRelationId: record && !assignmentOnly
         ? key(record.estructura_local_id)
         : ''
     };
