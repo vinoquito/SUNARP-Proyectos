@@ -331,7 +331,7 @@ function _accessOrgCatalog_() {
 
   // Catálogos organizacionales compartidos: se invalidan automáticamente
   // cuando SUNARP Core escribe en la pestaña correspondiente.
-  return SUNARPCore.listRecordsFromSourcesCached(requests, 300);
+  return SUNARPCore.listRecordsFromSourcesCached(requests, 30);
 }
 
 
