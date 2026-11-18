@@ -132,3 +132,101 @@ test('la eliminación de persona comprueba la ficha en el snapshot de datos pers
   assert.match(serviceSource, /\(context\.datosPersonales \|\| \[\]\)\.some/);
   assert.doesNotMatch(serviceSource, /_directoryLoadPersonalDataLinks_/);
 });
+
+
+function createDirectorySandbox() {
+  const context = vm.createContext({});
+  vm.runInContext(serviceSource, context, { filename: 'DirectoryService.js' });
+  context._directoryAssertAllowedFields_ = () => true;
+  context._directoryLoadContext_ = () => ({ datosPersonales: [] });
+  context._directoryAssertDocumentAvailable_ = (type, number) => ({
+    tipo_documento: String(type).toUpperCase(),
+    numero_documento: String(number)
+  });
+  context._directoryInvalidateCache_ = () => {};
+  context._directorySource_ = name => name;
+  return context;
+}
+
+test('el alta coordinada crea persona, ficha y primera asignación en ese orden', () => {
+  const context = createDirectorySandbox();
+  const calls = [];
+  context._saveDirectoryPerson_ = payload => {
+    calls.push('persona');
+    return { person: { persona_id: 'PER_001' } };
+  };
+  context._saveDirectoryPersonalData_ = payload => {
+    calls.push('ficha');
+    return { personalData: { servidor_id: payload.servidor_id } };
+  };
+  context.saveDirectoryAssignment = payload => {
+    calls.push('asignacion');
+    return { assignment: { asignacion_id: 'ASG_001' } };
+  };
+
+  const result = context.saveDirectoryEntry({
+    nombres: 'Ana',
+    apellidos: 'Pérez',
+    tipo_documento: 'DNI',
+    numero_documento: '12345678',
+    cargo_id: 'CAR_001',
+    estructura_local_id: 'REL_001'
+  });
+
+  assert.deepEqual(calls, ['persona', 'ficha', 'asignacion']);
+  assert.equal(result.person.persona_id, 'PER_001');
+  assert.equal(result.personalData.servidor_id, 'PER_001');
+  assert.equal(result.assignment.asignacion_id, 'ASG_001');
+});
+
+test('si falla la primera asignación, el alta coordinada compensa persona y ficha', () => {
+  const context = createDirectorySandbox();
+  const deleted = [];
+  context._saveDirectoryPerson_ = () => ({ person: { persona_id: 'PER_002' } });
+  context._saveDirectoryPersonalData_ = () => ({ personalData: { servidor_id: 'PER_002' } });
+  context.saveDirectoryAssignment = () => { throw new Error('fallo de asignación'); };
+  context.SUNARPCore = {
+    deleteRecord: (source, field, id) => {
+      deleted.push([source, field, id]);
+      return { success: true };
+    }
+  };
+
+  assert.throws(() => context.saveDirectoryEntry({
+    nombres: 'Luis',
+    apellidos: 'Díaz',
+    tipo_documento: 'DNI',
+    numero_documento: '87654321',
+    cargo_id: 'CAR_001',
+    estructura_local_id: 'REL_001'
+  }), /fallo de asignación/);
+
+  assert.deepEqual(deleted, [
+    ['servidores datos personales', 'servidor_id', 'PER_002'],
+    ['personas', 'persona_id', 'PER_002']
+  ]);
+});
+
+test('una asignación adicional no crea ni modifica persona o ficha personal', () => {
+  const context = createDirectorySandbox();
+  let personWrites = 0;
+  let personalWrites = 0;
+  let assignmentPayload;
+  context._saveDirectoryPerson_ = () => { personWrites++; };
+  context.saveDirectoryPersonalData = () => { personalWrites++; };
+  context.saveDirectoryAssignment = payload => {
+    assignmentPayload = payload;
+    return { assignment: { asignacion_id: 'ASG_009' } };
+  };
+
+  const result = context.saveDirectoryEntry({
+    persona_id: 'PER_009',
+    cargo_id: 'CAR_001',
+    estructura_local_id: 'REL_001'
+  });
+
+  assert.equal(personWrites, 0);
+  assert.equal(personalWrites, 0);
+  assert.equal(assignmentPayload.persona_id, 'PER_009');
+  assert.equal(result.assignment.asignacion_id, 'ASG_009');
+});
