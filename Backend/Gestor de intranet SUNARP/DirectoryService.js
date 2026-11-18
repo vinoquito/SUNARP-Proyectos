@@ -461,7 +461,7 @@ function _directoryInvalidateCache_() {
  * contiene el mismo identificador que personas.persona_id.
  * No se crea una columna persona_id adicional ni una relación paralela.
  */
-function _directoryLoadPersonalDataLinks_() {
+function _directoryLoadPersonalDataLinks_(people) {
   const source = _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales);
 
   let info;
@@ -494,7 +494,22 @@ function _directoryLoadPersonalDataLinks_() {
 
   // Se descartan expresamente los datos personales: solo se conserva
   // la clave necesaria para comprobar integridad referencial.
-  return records.map(record => _directoryKey_(record.servidor_id)).filter(Boolean);
+  const ids = records.map(record => _directoryKey_(record.servidor_id)).filter(Boolean);
+  const knownPeople = new Set((people || []).map(person => _directoryKey_(person.persona_id)));
+  const seen = new Set();
+
+  ids.forEach(id => {
+    if (seen.has(id)) {
+      throw new Error('La ficha de datos personales contiene más de una fila para servidor_id ' + id + '.');
+    }
+    seen.add(id);
+
+    if (people && !knownPeople.has(id)) {
+      throw new Error('La ficha de datos personales referencia una persona inexistente: ' + id + '.');
+    }
+  });
+
+  return ids;
 }
 
 function _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap) {
@@ -1373,7 +1388,7 @@ function deleteDirectoryPerson(personaId) {
     );
   }
 
-  const personalDataLinks = _directoryLoadPersonalDataLinks_();
+  const personalDataLinks = _directoryLoadPersonalDataLinks_(context.personas);
   if (personalDataLinks.includes(id)) {
     throw new Error(
       'No se puede eliminar la persona porque tiene una ficha de datos personales vinculada.'
