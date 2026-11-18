@@ -1027,6 +1027,36 @@ function _directoryNormalizeDocument_(value, label) {
   return normalized;
 }
 
+function _directoryNormalizeDateInput_(value, label) {
+  if (value === null || value === undefined || value === '') return '';
+
+  let normalized = '';
+  if (value instanceof Date) {
+    if (isNaN(value.getTime())) throw new Error(label + ' no es una fecha válida.');
+    normalized = Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  } else {
+    normalized = _directoryText_(value);
+  }
+
+  const match = normalized.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);
+  if (!match) throw new Error(label + ' debe tener el formato AAAA-MM-DD.');
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    throw new Error(label + ' no corresponde a una fecha del calendario.');
+  }
+
+  return normalized;
+}
+
 function _directoryGetPersonalDataRecord_(personaId, records) {
   return (records || []).find(item =>
     _directoryKey_(item.servidor_id) === _directoryKey_(personaId)
@@ -1093,9 +1123,9 @@ function _saveDirectoryPersonalData_(payload, allowUnassigned) {
     servidor_id: personaId,
     tipo_documento: _directoryNormalizeDocument_(payload.tipo_documento, 'Tipo de documento'),
     numero_documento: _directoryNormalizeDocument_(payload.numero_documento, 'Número de documento'),
-    fecha_nacimiento: _directoryText_(payload.fecha_nacimiento),
-    fecha_inicio_servicios: _directoryText_(payload.fecha_inicio_servicios),
-    fecha_cese: _directoryText_(payload.fecha_cese)
+    fecha_nacimiento: _directoryNormalizeDateInput_(payload.fecha_nacimiento, 'Fecha de nacimiento'),
+    fecha_inicio_servicios: _directoryNormalizeDateInput_(payload.fecha_inicio_servicios, 'Fecha de inicio de servicios'),
+    fecha_cese: _directoryNormalizeDateInput_(payload.fecha_cese, 'Fecha de cese')
   };
   const source = _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales);
   const existing = _directoryGetPersonalDataRecord_(personaId, context.datosPersonales);
