@@ -1028,6 +1028,7 @@ function _saveDirectoryPerson_(payload) {
 function _directoryNormalizeDocument_(value, label) {
   const normalized = _directoryText_(value).replace(/\s+/g, '').toUpperCase();
   if (!normalized) throw new Error(label + ' es obligatorio.');
+  if (normalized.length > 30) throw new Error(label + ' no puede superar 30 caracteres.');
   return normalized;
 }
 
