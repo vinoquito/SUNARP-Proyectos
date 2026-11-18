@@ -265,3 +265,9 @@ test('el guardado directo de ficha personal aplica la unicidad documental normal
   const implementation = serviceSource.slice(start, end);
   assert.ok(implementation.includes('_directoryAssertDocumentAvailable_('));
 });
+
+
+test('el formulario permite registrar y actualizar observaciones de cada asignación', () => {
+  assert.ok(frontendSource.includes('directoryFormObservaciones'));
+  assert.ok(frontendSource.includes("observaciones: document.getElementById('directoryFormObservaciones')"));
+});
