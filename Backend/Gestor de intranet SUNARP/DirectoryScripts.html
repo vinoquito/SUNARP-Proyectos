@@ -1261,6 +1261,18 @@ const DirectoryPage = (() => {
           </div>
 
           <div class="sunarp-form-field">
+            <label for="directoryFormCondicionCargo">
+              Condición del cargo
+            </label>
+            <input
+              type="text"
+              class="sunarp-input"
+              id="directoryFormCondicionCargo"
+              maxlength="150"
+              value="${escapeHtml(assignmentOnly ? '' : (record?.condicion_cargo || ''))}">
+          </div>
+
+          <div class="sunarp-form-field">
             <label for="directoryFormAnexo">
               Anexo
             </label>
@@ -1483,6 +1495,7 @@ const DirectoryPage = (() => {
       fecha_inicio_servicios: document.getElementById('directoryFormFechaInicio')?.value || '',
       fecha_cese: document.getElementById('directoryFormFechaCese')?.value || '',
       cargo_id: cargoId,
+      condicion_cargo: document.getElementById('directoryFormCondicionCargo').value.trim(),
       anexo: anexoInput === '' ? '' : Number(anexoInput),
       estructura_local_id: estructuraLocalId
     };
