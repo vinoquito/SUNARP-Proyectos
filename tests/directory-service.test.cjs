@@ -404,3 +404,55 @@ test('el orden se calcula por la combinación exacta de relación y local', () =
   assert.equal(api.getNextOrder(records, '', 'LOC_1'), 6);
   assert.equal(api.getNextOrder(records, 'REL_1', 'LOC_1'), 8);
 });
+
+
+test('las asignaciones local-only aparecen en la vista autorizada', () => {
+  const context = assignmentContext();
+  context.asignaciones = [{
+    asignacion_id: 'ASG_020', persona_id: 'PER_001', cargo_id: 'CAR_001',
+    estructura_local_id: '', local_id: 'LOC_1', active: true, order: 1
+  }];
+  sandbox._accessRecordIsAllowed_ = () => true;
+  const view = api.buildView(context, { auth: {}, structures: [] });
+  assert.equal(view.assignments.length, 1);
+  assert.equal(view.assignments[0].local_name, 'Local Lima');
+  assert.equal(view.assignments[0].estructura_id, '');
+});
+
+test('el cambio de estado funciona para una asignación vinculada directamente a un local', () => {
+  const context = assignmentContext();
+  context.asignaciones = [{
+    asignacion_id: 'ASG_021', persona_id: 'PER_001', cargo_id: 'CAR_001',
+    estructura_local_id: '', local_id: 'LOC_1', active: true, order: 1
+  }];
+  let statusCall;
+  sandbox._directoryAuthorizationContext_ = () => ({ auth: {}, structures: [] });
+  sandbox._directoryLoadContext_ = () => context;
+  sandbox._directorySource_ = name => name;
+  sandbox._directoryInvalidateCache_ = () => {};
+  sandbox._accessRecordIsAllowed_ = () => true;
+  sandbox._accessRunAudited_ = (auth, event, callback) => callback().value;
+  sandbox.SUNARPCore = { setRecordStatus: (...args) => { statusCall = args; return { success: true }; } };
+  const result = sandbox.setDirectoryAssignmentActive('ASG_021', false);
+  assert.deepEqual(statusCall.slice(1), ['asignacion_id', 'ASG_021', 'active', false]);
+  assert.equal(result.assignment.active, false);
+});
+
+test('la eliminación funciona para una asignación vinculada directamente a un local', () => {
+  const context = assignmentContext();
+  context.asignaciones = [{
+    asignacion_id: 'ASG_022', persona_id: 'PER_001', cargo_id: 'CAR_001',
+    estructura_local_id: '', local_id: 'LOC_1', active: true, order: 1
+  }];
+  let deleteCall;
+  sandbox._directoryAuthorizationContext_ = () => ({ auth: {}, structures: [] });
+  sandbox._directoryLoadContext_ = () => context;
+  sandbox._directorySource_ = name => name;
+  sandbox._directoryInvalidateCache_ = () => {};
+  sandbox._accessRecordIsAllowed_ = () => true;
+  sandbox._accessRunAudited_ = (auth, event, callback) => callback().value;
+  sandbox.SUNARPCore = { deleteRecord: (...args) => { deleteCall = args; return { success: true }; } };
+  const result = sandbox.deleteDirectoryAssignment('ASG_022');
+  assert.deepEqual(deleteCall.slice(1), ['asignacion_id', 'ASG_022']);
+  assert.equal(result.asignacion_id, 'ASG_022');
+});
