@@ -1171,10 +1171,8 @@ const DirectoryPage = (() => {
       html: `
         <form id="directoryForm" class="sunarp-form-grid">
 
-          <input
-            type="hidden"
-            id="directoryFormId"
-            value="${escapeHtml(record?.id || '')}">
+          <input type="hidden" id="directoryFormId" value="${escapeHtml(record?.id || '')}">
+          <input type="hidden" id="directoryFormPersonaId" value="${escapeHtml(record?.persona_id || '')}">
 
           <div class="sunarp-form-field">
             <label for="directoryFormNombres">
@@ -1202,6 +1200,36 @@ const DirectoryPage = (() => {
               maxlength="150"
               value="${escapeHtml(record?.apellidos || '')}"
               required>
+          </div>
+
+          <div class="sunarp-form-field">
+            <label for="directoryFormTipoDocumento">Tipo de documento *</label>
+            <input type="text" class="sunarp-input" id="directoryFormTipoDocumento"
+              maxlength="30" value="${escapeHtml(record?.tipo_documento || '')}" required>
+          </div>
+
+          <div class="sunarp-form-field">
+            <label for="directoryFormNumeroDocumento">Número de documento *</label>
+            <input type="text" class="sunarp-input" id="directoryFormNumeroDocumento"
+              maxlength="30" value="${escapeHtml(record?.numero_documento || '')}" required>
+          </div>
+
+          <div class="sunarp-form-field">
+            <label for="directoryFormFechaNacimiento">Fecha de nacimiento</label>
+            <input type="date" class="sunarp-input" id="directoryFormFechaNacimiento"
+              value="${escapeHtml(record?.fecha_nacimiento || '')}">
+          </div>
+
+          <div class="sunarp-form-field">
+            <label for="directoryFormFechaInicio">Fecha de inicio de servicios</label>
+            <input type="date" class="sunarp-input" id="directoryFormFechaInicio"
+              value="${escapeHtml(record?.fecha_inicio_servicios || '')}">
+          </div>
+
+          <div class="sunarp-form-field">
+            <label for="directoryFormFechaCese">Fecha de cese</label>
+            <input type="date" class="sunarp-input" id="directoryFormFechaCese"
+              value="${escapeHtml(record?.fecha_cese || '')}">
           </div>
 
           <div class="sunarp-form-field">
@@ -1431,19 +1459,21 @@ const DirectoryPage = (() => {
       return;
     }
 
+    const personaId = document.getElementById('directoryFormPersonaId').value;
     const payload = {
+      persona_id: personaId,
+      asignacion_id: id,
       nombres,
       apellidos,
+      tipo_documento: document.getElementById('directoryFormTipoDocumento').value.trim(),
+      numero_documento: document.getElementById('directoryFormNumeroDocumento').value.trim(),
+      fecha_nacimiento: document.getElementById('directoryFormFechaNacimiento').value,
+      fecha_inicio_servicios: document.getElementById('directoryFormFechaInicio').value,
+      fecha_cese: document.getElementById('directoryFormFechaCese').value,
       cargo_id: cargoId,
-      anexo: anexoInput === ''
-        ? ''
-        : Number(anexoInput),
+      anexo: anexoInput === '' ? '' : Number(anexoInput),
       estructura_local_id: estructuraLocalId
     };
-
-    if (id) {
-      payload.id = id;
-    }
 
     const saveButton = document.getElementById(
       'directoryFormSave'
@@ -1496,8 +1526,8 @@ const DirectoryPage = (() => {
 async function changeDirectoryStatus(record, active) {
 
   const result = await callServer(
-    'setDirectoryEntryActive',
-    record.id,
+    'setDirectoryAssignmentActive',
+    record.asignacion_id || record.id,
     active
   );
 
@@ -1560,8 +1590,8 @@ async function deleteDirectoryEntry(record) {
 
   // Ejecutar eliminación en el servidor.
   const result = await callServer(
-    'deleteDirectoryEntry',
-    record.id
+    'deleteDirectoryAssignment',
+    record.asignacion_id || record.id
   );
 
   // Recargar la información actualizada.
