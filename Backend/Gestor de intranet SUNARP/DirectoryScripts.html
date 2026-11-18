@@ -1379,8 +1379,8 @@ const DirectoryPage = (() => {
 
       selectedSede,
       selectedPath,
-      selectedRelationId: record && !assignmentOnly ? key(record.estructura_local_id) : '',
-      selectedLocalId: record && !assignmentOnly ? key(record.local_id) : '',
+      selectedRelationId: record ? key(record.estructura_local_id) : '',
+      selectedLocalId: record ? key(record.local_id) : '',
       selectedMode
     };
   }
