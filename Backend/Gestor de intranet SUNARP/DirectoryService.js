@@ -40,6 +40,7 @@ const DIRECTORY_CACHE_TTL = 300;
 
 const DIRECTORY_REQUIRED_HEADERS = Object.freeze({
   personas: ['persona_id', 'nombres', 'apellidos'],
+  datosPersonales: ['servidor_id', 'tipo_documento', 'numero_documento', 'fecha_nacimiento', 'fecha_inicio_servicios', 'fecha_cese'],
   asignaciones: [
     'asignacion_id',
     'persona_id',
@@ -402,6 +403,7 @@ function _directoryValidateSnapshot_(context) {
 function _directoryLoadContextFromSheets_() {
   const sheetMap = [
     ['personas', 'personas'],
+    ['datosPersonales', 'servidores datos personales'],
     ['asignaciones', 'asignaciones'],
     ['sedes', 'sede'],
     ['tiposLocal', 'tipos_local'],
@@ -628,21 +630,8 @@ function _directoryGetPersonSchema_() {
  * corresponden a asignaciones distintas de una misma persona.
  * No fusiona registros automáticamente.
  */
-function _directoryAssertNoDuplicatePerson_(record, people) {
-  const duplicate = (people || []).find(person =>
-    _directoryKey_(person.persona_id) !== _directoryKey_(record.persona_id) &&
-    _directoryText_(person.nombres) === _directoryText_(record.nombres) &&
-    _directoryText_(person.apellidos) === _directoryText_(record.apellidos)
-  );
-
-  if (duplicate) {
-    throw new Error(
-      'Ya existe una persona con exactamente los mismos nombres y apellidos ' +
-      '( ' + _directoryKey_(duplicate.persona_id) + ' ). ' +
-      'No se creó ni fusionó ningún registro. Revisa la identidad antes de continuar.'
-    );
-  }
-}
+/** Los nombres no son una clave de identidad: se permiten homónimos. */
+function _directoryAssertNoDuplicatePerson_() { return true; }
 
 function _directoryGetAssignmentSchema_() {
   return {
@@ -777,6 +766,17 @@ function getDirectoryInitialData() {
     },
     people: view.people,
     assignments: assignments,
+    records: assignments.map(item => {
+      const personalData = _directoryGetPersonalDataRecord_(item.persona_id, context.datosPersonales);
+      return Object.assign({}, item, {
+        id: item.asignacion_id,
+        tipo_documento: personalData ? personalData.tipo_documento : '',
+        numero_documento: personalData ? personalData.numero_documento : '',
+        fecha_nacimiento: personalData ? personalData.fecha_nacimiento : '',
+        fecha_inicio_servicios: personalData ? personalData.fecha_inicio_servicios : '',
+        fecha_cese: personalData ? personalData.fecha_cese : ''
+      });
+    }),
     summary: {
       people: view.people.length,
       assignments: assignments.length
@@ -1022,7 +1022,7 @@ function saveDirectoryPerson(payload) {
 
   const schema = _directoryGetPersonSchema_();
   SUNARPCore.assertValidRecord(record, schema);
-  _directoryAssertNoDuplicatePerson_(record, context.personas);
+  // La identidad se valida por documento en la ficha personal, no por nombres.
 
   const source = _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas);
   const event = {
@@ -1040,10 +1040,9 @@ function saveDirectoryPerson(payload) {
       ? SUNARPCore.updateRecord(source, 'persona_id', record.persona_id, {
           nombres: record.nombres,
           apellidos: record.apellidos
-        }, { schema: schema, uniqueFields: ['nombres', 'apellidos'] })
+        }, { schema: schema })
       : SUNARPCore.insertRecord(source, record, {
           idField: 'persona_id',
-          uniqueFields: ['nombres', 'apellidos'],
           schema: schema
         });
 
@@ -1060,6 +1059,191 @@ function saveDirectoryPerson(payload) {
  * Crea o actualiza una asignación. La identidad nunca se actualiza aquí.
  * local_id se obtiene de estructura_local y se valida contra el valor recibido.
  */
+
+function _directoryNormalizeDocument_(value, label) {
+  const normalized = _directoryText_(value).replace(/\\s+/g, '').toUpperCase();
+  if (!normalized) throw new Error(label + ' es obligatorio.');
+  return normalized;
+}
+
+function _directoryGetPersonalDataRecord_(personaId, records) {
+  return (records || []).find(item =>
+    _directoryKey_(item.servidor_id) === _directoryKey_(personaId)
+  ) || null;
+}
+
+function saveDirectoryPersonalData(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('Debes proporcionar los datos personales.');
+  }
+  _directoryAssertAllowedFields_(payload, [
+    'servidor_id', 'tipo_documento', 'numero_documento',
+    'fecha_nacimiento', 'fecha_inicio_servicios', 'fecha_cese'
+  ], 'datos personales');
+
+  const personaId = _directoryText_(payload.servidor_id);
+  if (!personaId) throw new Error('La persona vinculada es obligatoria.');
+  const authorization = _directoryAuthorizationContext_('DIRECTORIOS_EDITAR');
+  const context = _directoryLoadContext_();
+  const person = context.personas.find(item => _directoryKey_(item.persona_id) === personaId);
+  if (!person) throw new Error('No existe la persona vinculada a los datos personales.');
+
+  const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
+  _directoryAssertPersonMutationScope_(authorization, person, context.asignaciones, relationMap);
+
+  const record = {
+    servidor_id: personaId,
+    tipo_documento: _directoryNormalizeDocument_(payload.tipo_documento, 'Tipo de documento'),
+    numero_documento: _directoryNormalizeDocument_(payload.numero_documento, 'Número de documento'),
+    fecha_nacimiento: _directoryText_(payload.fecha_nacimiento),
+    fecha_inicio_servicios: _directoryText_(payload.fecha_inicio_servicios),
+    fecha_cese: _directoryText_(payload.fecha_cese)
+  };
+  const source = _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales);
+  const existing = _directoryGetPersonalDataRecord_(personaId, context.datosPersonales);
+  const before = existing || null;
+  const event = {
+    accion: existing ? 'EDITAR_DATOS_PERSONALES_DIRECTORIO' : 'CREAR_DATOS_PERSONALES_DIRECTORIO',
+    modulo: 'DIRECTORIOS',
+    tipo_entidad: 'DATOS_PERSONALES',
+    registro_id: personaId,
+    registro_nombre: [person.nombres, person.apellidos].filter(Boolean).join(' '),
+    detalle: 'Registro de datos personales y validación única del documento de identidad.',
+    datos_antes: before
+  };
+
+  return _accessRunAudited_(authorization.auth, event, () => {
+    const result = existing
+      ? SUNARPCore.updateRecord(source, 'servidor_id', personaId, {
+          tipo_documento: record.tipo_documento,
+          numero_documento: record.numero_documento,
+          fecha_nacimiento: record.fecha_nacimiento,
+          fecha_inicio_servicios: record.fecha_inicio_servicios,
+          fecha_cese: record.fecha_cese
+        }, { uniqueFields: ['tipo_documento', 'numero_documento'] })
+      : SUNARPCore.insertRecord(source, record, {
+          idField: 'servidor_id',
+          uniqueFields: ['tipo_documento', 'numero_documento']
+        });
+    _directoryInvalidateCache_();
+    return { value: Object.assign({}, result, { personalData: record }), auditAfter: record };
+  });
+}
+
+/**
+ * Operación de alta coordinada: persona + ficha personal + primera asignación.
+ * Si una fase falla, se compensan las inserciones ya realizadas para no dejar
+ * registros huérfanos. Las asignaciones adicionales usan saveDirectoryAssignment.
+ */
+function saveDirectoryEntry(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('Debes proporcionar los datos del registro.');
+  }
+  const personaId = _directoryText_(payload.persona_id);
+  const assignmentId = _directoryText_(payload.asignacion_id);
+  const isNewPerson = !personaId;
+  const isNewAssignment = !assignmentId;
+
+  if (!isNewPerson && isNewAssignment) {
+    // Una asignación adicional nunca crea ni modifica identidad o ficha personal.
+    const assignment = saveDirectoryAssignment({
+      persona_id: personaId,
+      cargo_id: payload.cargo_id,
+      condicion_cargo: payload.condicion_cargo,
+      anexo: payload.anexo,
+      estructura_local_id: payload.estructura_local_id,
+      observaciones: payload.observaciones,
+      active: true
+    });
+    return Object.assign({}, assignment, { message: 'La asignación se registró correctamente.' });
+  }
+
+  const personPayload = {
+    nombres: payload.nombres,
+    apellidos: payload.apellidos
+  };
+  if (personaId) personPayload.persona_id = personaId;
+
+  if (!isNewPerson && !isNewAssignment) {
+    const person = saveDirectoryPerson(personPayload);
+    const personalData = saveDirectoryPersonalData({
+      servidor_id: personaId,
+      tipo_documento: payload.tipo_documento,
+      numero_documento: payload.numero_documento,
+      fecha_nacimiento: payload.fecha_nacimiento,
+      fecha_inicio_servicios: payload.fecha_inicio_servicios,
+      fecha_cese: payload.fecha_cese
+    });
+    const assignment = saveDirectoryAssignment({
+      asignacion_id: assignmentId,
+      persona_id: personaId,
+      cargo_id: payload.cargo_id,
+      condicion_cargo: payload.condicion_cargo,
+      anexo: payload.anexo,
+      estructura_local_id: payload.estructura_local_id,
+      observaciones: payload.observaciones
+    });
+    return { success: true, message: 'Persona, datos personales y asignación actualizados.', person, personalData, assignment };
+  }
+
+  let createdPersonId = '';
+  let personalCreated = false;
+  let assignmentCreated = false;
+  let createdAssignmentId = '';
+  try {
+    const person = saveDirectoryPerson(personPayload);
+    createdPersonId = person.person.persona_id;
+    const personalData = saveDirectoryPersonalData({
+      servidor_id: createdPersonId,
+      tipo_documento: payload.tipo_documento,
+      numero_documento: payload.numero_documento,
+      fecha_nacimiento: payload.fecha_nacimiento,
+      fecha_inicio_servicios: payload.fecha_inicio_servicios,
+      fecha_cese: payload.fecha_cese
+    });
+    personalCreated = true;
+    const assignment = saveDirectoryAssignment({
+      persona_id: createdPersonId,
+      cargo_id: payload.cargo_id,
+      condicion_cargo: payload.condicion_cargo,
+      anexo: payload.anexo,
+      estructura_local_id: payload.estructura_local_id,
+      observaciones: payload.observaciones
+    });
+    createdAssignmentId = assignment.assignment.assignment_id;
+    assignmentCreated = true;
+    return {
+      success: true,
+      message: 'La persona, sus datos personales y su primera asignación se registraron correctamente.',
+      person: person.person,
+      personalData: personalData.personalData,
+      assignment: assignment.assignment
+    };
+  } catch (error) {
+    const rollbackErrors = [];
+    try {
+      if (assignmentCreated && createdAssignmentId) {
+        SUNARPCore.deleteRecord(_directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones), 'asignacion_id', createdAssignmentId);
+      }
+    } catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
+    try {
+      if (personalCreated && createdPersonId) {
+        SUNARPCore.deleteRecord(_directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales), 'servidor_id', createdPersonId);
+      }
+    } catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
+    try {
+      if (createdPersonId) {
+        SUNARPCore.deleteRecord(_directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas), 'persona_id', createdPersonId);
+      }
+    } catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
+    _directoryInvalidateCache_();
+    if (rollbackErrors.length) {
+      throw new Error(error.message + ' Además, la compensación requiere revisión: ' + rollbackErrors.join(' | '));
+    }
+    throw error;
+  }
+}
+
 function saveDirectoryAssignment(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('Debes proporcionar los datos de la asignación.');
