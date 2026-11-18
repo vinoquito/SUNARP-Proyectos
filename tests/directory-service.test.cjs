@@ -21,6 +21,7 @@ const sandbox = vm.createContext({});
 vm.runInContext(
   serviceSource + String.fromCharCode(10) + 'this.directoryTestApi = {' +
     'normalizeDocument: _directoryNormalizeDocument_,' +
+    'normalizeDate: _directoryNormalizeDateInput_,' +
     'assertDocumentAvailable: _directoryAssertDocumentAvailable_,' +
     'generateId: _directoryGenerateId_,' +
     'getNextOrder: _directoryGetNextOrder_,' +
@@ -37,6 +38,16 @@ test('el servicio, el frontend y las pruebas Core tienen sintaxis válida', () =
   assert.doesNotThrow(() => new vm.Script(serviceSource));
   assert.doesNotThrow(() => new vm.Script(frontendScript));
   assert.doesNotThrow(() => new vm.Script(coreTestsSource));
+});
+
+test('acepta fechas ISO válidas y campos de fecha vacíos', () => {
+  assert.equal(api.normalizeDate('2026-02-28', 'Fecha'), '2026-02-28');
+  assert.equal(api.normalizeDate('', 'Fecha'), '');
+});
+
+test('rechaza fechas inexistentes y formatos ambiguos', () => {
+  assert.throws(() => api.normalizeDate('2026-02-30', 'Fecha'), /calendario/i);
+  assert.throws(() => api.normalizeDate('28/02/2026', 'Fecha'), /AAAA-MM-DD/i);
 });
 
 test('normaliza tipo y número documental eliminando espacios y convirtiendo a mayúsculas', () => {
