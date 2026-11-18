@@ -687,8 +687,8 @@ function getDirectoryInitialData() {
   const context = _directoryLoadContext_();
   const view = _directoryBuildView_(context, authorization);
 
+  const structureMap = _directoryCreateMap_(context.estructuraOrg);
   const activeStructure = context.estructuraOrg.filter(_directoryIsActive_).map(node => {
-    const structureMap = _directoryCreateMap_(context.estructuraOrg);
     const type = context.tiposEstructura.find(item =>
       _directoryKey_(item.id) === _directoryKey_(node.tipo_estructura_id)
     );
