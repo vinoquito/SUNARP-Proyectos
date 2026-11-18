@@ -55,6 +55,10 @@ test('normaliza tipo y número documental eliminando espacios y convirtiendo a m
   assert.equal(api.normalizeDocument(' 12 345 678 ', 'Número'), '12345678');
 });
 
+test('rechaza valores documentales que exceden el máximo de 30 caracteres', () => {
+  assert.throws(() => api.normalizeDocument('D'.repeat(31), 'Tipo'), /30 caracteres/);
+});
+
 test('rechaza un documento duplicado aunque el registro existente tenga espacios', () => {
   assert.throws(
     () => api.assertDocumentAvailable(
