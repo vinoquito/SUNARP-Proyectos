@@ -213,6 +213,50 @@ function runCoreSelfTests_() {
       );
     }, 'Detección de duplicados mediante uniqueFields al insertar.');
 
+    // 8.2. Unicidad compuesta: el mismo número puede existir bajo otro tipo.
+    insertRecord(source, {
+      id: 'TST_005',
+      nombre: '12345678',
+      area: 'DNI',
+      anexo: 1005,
+      active: true
+    }, {
+      idField: 'id',
+      uniqueFields: ['area', 'nombre'],
+      schema
+    });
+
+    const otherDocumentType = insertRecord(source, {
+      id: 'TST_006',
+      nombre: '12345678',
+      area: 'CE',
+      anexo: 1006,
+      active: true
+    }, {
+      idField: 'id',
+      uniqueFields: ['area', 'nombre'],
+      schema
+    });
+
+    assert(
+      otherDocumentType.success,
+      'La unicidad compuesta permite el mismo número en tipos documentales distintos.'
+    );
+
+    expectError(() => {
+      insertRecord(source, {
+        id: 'TST_007',
+        nombre: '12345678',
+        area: 'DNI',
+        anexo: 1007,
+        active: true
+      }, {
+        idField: 'id',
+        uniqueFields: ['area', 'nombre'],
+        schema
+      });
+    }, 'La unicidad compuesta impide repetir tipo y número de documento.');
+
     // 9. Probar duplicidad de identificadores.
     expectError(() => {
       insertRecord(
@@ -260,6 +304,16 @@ function runCoreSelfTests_() {
         { uniqueFields: ['nombre'], schema }
       );
     }, 'Detección de duplicados mediante uniqueFields al actualizar.');
+
+    expectError(() => {
+      updateRecord(
+        source,
+        'id',
+        'TST_006',
+        { area: 'DNI' },
+        { uniqueFields: ['area', 'nombre'], schema }
+      );
+    }, 'La actualización impide duplicar la combinación de tipo y número documental.');
 
     // 11. Probar cambio de estado.
     const status = setRecordStatus(
