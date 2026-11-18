@@ -115,6 +115,24 @@ function _directoryCreateMap_(records, keyField) {
   return map;
 }
 
+// Los mapas derivados se construyen una sola vez por contexto de datos.
+// Evita reconstruir mapas de cientos de elementos por cada asignación.
+const DIRECTORY_CONTEXT_MAPS = new WeakMap();
+
+function _directoryGetContextMaps_(context) {
+  let maps = DIRECTORY_CONTEXT_MAPS.get(context);
+  if (maps) return maps;
+
+  maps = {
+    estructuraLocal: _directoryCreateMap_(context.estructuraLocal),
+    locales: _directoryCreateMap_(context.locales),
+    estructuraOrg: _directoryCreateMap_(context.estructuraOrg)
+  };
+
+  DIRECTORY_CONTEXT_MAPS.set(context, maps);
+  return maps;
+}
+
 function _directoryAssertUnique_(records, field, label) {
   const seen = new Set();
   (records || []).forEach(record => {
@@ -189,15 +207,16 @@ function _directoryResolveAssignmentLocation_(assignment, context, onlyActive) {
   const relationId = _directoryKey_(assignment && assignment.estructura_local_id);
   const localId = _directoryKey_(assignment && assignment.local_id);
   if (!relationId && !localId) throw new Error('La asignación debe estar vinculada a una unidad orgánica, a un local o a ambos.');
-  const relation = relationId ? _directoryCreateMap_(context.estructuraLocal).get(relationId) : null;
-  const local = localId ? _directoryCreateMap_(context.locales).get(localId) : null;
+  const maps = _directoryGetContextMaps_(context);
+  const relation = relationId ? maps.estructuraLocal.get(relationId) : null;
+  const local = localId ? maps.locales.get(localId) : null;
   if (relationId && !relation) throw new Error('La relación estructura_local no existe.');
   if (localId && !local) throw new Error('El local no existe.');
   if (relationId && onlyActive && !_directoryIsActive_(relation)) throw new Error('La relación estructura-local no existe o está inactiva.');
   if (localId && onlyActive && !_directoryIsActive_(local)) throw new Error('El local no existe o está inactivo.');
   if (relation && local && _directoryKey_(relation.local_id) !== localId) throw new Error('El local seleccionado no corresponde a la relación estructura-local.');
-  const resolvedLocal = local || (relation ? _directoryCreateMap_(context.locales).get(_directoryKey_(relation.local_id)) : null);
-  const structure = relation ? _directoryCreateMap_(context.estructuraOrg).get(_directoryKey_(relation.estructura_id)) : null;
+  const resolvedLocal = local || (relation ? maps.locales.get(_directoryKey_(relation.local_id)) : null);
+  const structure = relation ? maps.estructuraOrg.get(_directoryKey_(relation.estructura_id)) : null;
   if (relation && (!structure || !resolvedLocal)) throw new Error('La relación estructura-local tiene referencias incompletas.');
   if (relation && onlyActive && (!_directoryIsActive_(structure) || !_directoryIsActive_(resolvedLocal))) {
     throw new Error('La estructura o el local de la relación no existe o está inactivo.');
