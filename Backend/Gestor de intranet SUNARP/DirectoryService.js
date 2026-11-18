@@ -1652,8 +1652,10 @@ function deleteDirectoryPerson(personaId) {
     );
   }
 
-  const personalDataLinks = _directoryLoadPersonalDataLinks_(context.personas);
-  if (personalDataLinks.includes(id)) {
+  const hasPersonalData = (context.datosPersonales || []).some(record =>
+    _directoryKey_(record.servidor_id) === id
+  );
+  if (hasPersonalData) {
     throw new Error(
       'No se puede eliminar la persona porque tiene una ficha de datos personales vinculada.'
     );
