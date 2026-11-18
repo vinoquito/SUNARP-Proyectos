@@ -933,7 +933,7 @@ function getDirectoryAssignmentById(asignacionId) {
  * No se fusionan personas por coincidencia de nombres o apellidos:
  * esos campos no permiten distinguir homónimos.
  */
-function saveDirectoryPerson(payload) {
+function _saveDirectoryPerson_(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('Debes proporcionar los datos de la persona.');
   }
@@ -1194,7 +1194,7 @@ function saveDirectoryEntry(payload) {
     let personalDataUpdated = false;
     let assignmentUpdated = false;
     try {
-      const person = saveDirectoryPerson(personPayload);
+      const person = _saveDirectoryPerson_(personPayload);
       personUpdated = true;
       const personalData = saveDirectoryPersonalData({
         servidor_id: personaId,
@@ -1251,7 +1251,7 @@ function saveDirectoryEntry(payload) {
         } catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
       }
       if (personUpdated) {
-        try { saveDirectoryPerson({ persona_id: personaId, nombres: previousPerson.nombres, apellidos: previousPerson.apellidos }); }
+        try { _saveDirectoryPerson_({ persona_id: personaId, nombres: previousPerson.nombres, apellidos: previousPerson.apellidos }); }
         catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
       }
       _directoryInvalidateCache_();
@@ -1274,7 +1274,7 @@ function saveDirectoryEntry(payload) {
   let assignmentCreated = false;
   let createdAssignmentId = '';
   try {
-    const person = saveDirectoryPerson(personPayload);
+    const person = _saveDirectoryPerson_(personPayload);
     createdPersonId = person.person.persona_id;
     const personalData = _saveDirectoryPersonalData_({
       servidor_id: createdPersonId,
