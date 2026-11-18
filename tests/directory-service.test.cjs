@@ -29,7 +29,9 @@ vm.runInContext(
     'normalizeBoolean: _directoryNormalizeBoolean_,' +
     'resolveAssignmentLocation: _directoryResolveAssignmentLocation_,' +
     'validateSnapshot: _directoryValidateSnapshot_,' +
-    'assignmentSchema: _directoryGetAssignmentSchema_' +
+    'assignmentSchema: _directoryGetAssignmentSchema_,' +
+    'enrichAssignment: _directoryEnrichAssignment_,' +
+    'buildView: _directoryBuildView_' +
   '};',
   sandbox,
   { filename: 'DirectoryService.js' }
@@ -372,4 +374,33 @@ test('el esquema no exige individualmente estructura_local_id ni local_id', () =
   const schema = api.assignmentSchema();
   assert.equal(schema.estructura_local_id.required, undefined);
   assert.equal(schema.local_id.required, undefined);
+});
+
+
+test('el enriquecimiento conserva la modalidad local-only y expone su sede y local', () => {
+  const context = assignmentContext();
+  const assignment = {
+    asignacion_id: 'ASG_010', persona_id: 'PER_001', cargo_id: 'CAR_001',
+    estructura_local_id: '', local_id: 'LOC_1', active: true, order: 1
+  };
+  const enriched = api.enrichAssignment(
+    assignment, context, new Map(), new Map([['PER_001', context.personas[0]]])
+  );
+  assert.equal(enriched.estructura_id, '');
+  assert.equal(enriched.sede_id, 'SEDE_1');
+  assert.equal(enriched.local_name, 'Local Lima');
+  assert.equal(enriched.display_location, 'Local Lima');
+  assert.equal(enriched.local_id, 'LOC_1');
+});
+
+test('el orden se calcula por la combinación exacta de relación y local', () => {
+  const records = [
+    { estructura_local_id: 'REL_1', local_id: '', order: 3 },
+    { estructura_local_id: '', local_id: 'LOC_1', order: 5 },
+    { estructura_local_id: 'REL_1', local_id: 'LOC_1', order: 7 },
+    { estructura_local_id: '', local_id: 'LOC_2', order: 20 }
+  ];
+  assert.equal(api.getNextOrder(records, 'REL_1', ''), 4);
+  assert.equal(api.getNextOrder(records, '', 'LOC_1'), 6);
+  assert.equal(api.getNextOrder(records, 'REL_1', 'LOC_1'), 8);
 });
