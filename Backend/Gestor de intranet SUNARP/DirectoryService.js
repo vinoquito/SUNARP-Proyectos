@@ -599,6 +599,30 @@ function _directoryGetPersonSchema_() {
   };
 }
 
+/**
+ * Aplica el mismo criterio de identidad utilizado en la migración:
+ * coincidencia exacta de nombres + apellidos.
+ *
+ * No compara cargo, anexo, estructura ni local, porque esas diferencias
+ * corresponden a asignaciones distintas de una misma persona.
+ * No fusiona registros automáticamente.
+ */
+function _directoryAssertNoDuplicatePerson_(record, people) {
+  const duplicate = (people || []).find(person =>
+    _directoryKey_(person.persona_id) !== _directoryKey_(record.persona_id) &&
+    _directoryText_(person.nombres) === _directoryText_(record.nombres) &&
+    _directoryText_(person.apellidos) === _directoryText_(record.apellidos)
+  );
+
+  if (duplicate) {
+    throw new Error(
+      'Ya existe una persona con exactamente los mismos nombres y apellidos ' +
+      '( ' + _directoryKey_(duplicate.persona_id) + ' ). ' +
+      'No se creó ni fusionó ningún registro. Revisa la identidad antes de continuar.'
+    );
+  }
+}
+
 function _directoryGetAssignmentSchema_() {
   return {
     asignacion_id: { label: 'Identificador de asignación', required: true, type: 'string', maxLength: 30 },
@@ -977,6 +1001,7 @@ function saveDirectoryPerson(payload) {
 
   const schema = _directoryGetPersonSchema_();
   SUNARPCore.assertValidRecord(record, schema);
+  _directoryAssertNoDuplicatePerson_(record, context.personas);
 
   const source = _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas);
   const event = {
