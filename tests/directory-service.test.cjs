@@ -26,7 +26,10 @@ vm.runInContext(
     'generateId: _directoryGenerateId_,' +
     'getNextOrder: _directoryGetNextOrder_,' +
     'normalizeInteger: _directoryNormalizeInteger_,' +
-    'normalizeBoolean: _directoryNormalizeBoolean_' +
+    'normalizeBoolean: _directoryNormalizeBoolean_,' +
+    'resolveAssignmentLocation: _directoryResolveAssignmentLocation_,' +
+    'validateSnapshot: _directoryValidateSnapshot_,' +
+    'assignmentSchema: _directoryGetAssignmentSchema_' +
   '};',
   sandbox,
   { filename: 'DirectoryService.js' }
@@ -284,4 +287,89 @@ test('un fallo al invalidar caché no convierte una escritura exitosa en error',
   };
   context.console = { warn: () => {} };
   assert.doesNotThrow(() => context._directoryInvalidateCache_());
+});
+
+
+function assignmentContext() {
+  return {
+    personas: [{ persona_id: 'PER_001', nombres: 'Ana', apellidos: 'Pérez' }],
+    datosPersonales: [],
+    asignaciones: [],
+    cargos: [{ id: 'CAR_001', name: 'Analista' }],
+    sedes: [{ id: 'SEDE_1', name: 'Lima' }],
+    locales: [{ id: 'LOC_1', name: 'Local Lima', sede_id: 'SEDE_1', tipo_local_id: 'TL_1' }],
+    estructuraOrg: [{ id: 'EST_1', name: 'Oficina', parent_id: '', sede_id: 'SEDE_1', tipo_estructura_id: 'TE_1' }],
+    estructuraLocal: [{ id: 'REL_1', estructura_id: 'EST_1', local_id: 'LOC_1' }],
+    tiposLocal: [{ id: 'TL_1', name: 'Sede' }],
+    tiposEstructura: [{ id: 'TE_1', name: 'Oficina' }]
+  };
+}
+
+test('acepta una asignación vinculada únicamente a estructura_local_id y no completa local_id', () => {
+  const context = assignmentContext();
+  const assignment = { estructura_local_id: 'REL_1', local_id: '' };
+  const resolved = api.resolveAssignmentLocation(assignment, context, true);
+  assert.equal(resolved.estructura_id, 'EST_1');
+  assert.equal(resolved.sede_id, 'SEDE_1');
+  assert.equal(resolved.local.name, 'Local Lima');
+  assert.equal(assignment.local_id, '');
+});
+
+test('acepta una asignación vinculada únicamente a local_id', () => {
+  const context = assignmentContext();
+  const resolved = api.resolveAssignmentLocation(
+    { estructura_local_id: '', local_id: 'LOC_1' }, context, true
+  );
+  assert.equal(resolved.estructura_id, '');
+  assert.equal(resolved.sede_id, 'SEDE_1');
+  assert.equal(resolved.local.name, 'Local Lima');
+});
+
+test('acepta ambos identificadores cuando corresponden a la misma relación', () => {
+  const context = assignmentContext();
+  const resolved = api.resolveAssignmentLocation(
+    { estructura_local_id: 'REL_1', local_id: 'LOC_1' }, context, true
+  );
+  assert.equal(resolved.estructura_id, 'EST_1');
+  assert.equal(resolved.sede_id, 'SEDE_1');
+});
+
+test('rechaza ambos identificadores vacíos', () => {
+  assert.throws(() => api.resolveAssignmentLocation(
+    { estructura_local_id: '', local_id: '' }, assignmentContext(), true
+  ), /debe estar vinculada/i);
+});
+
+test('rechaza local y relación incoherentes', () => {
+  const context = assignmentContext();
+  context.locales.push({ id: 'LOC_2', name: 'Otro local', sede_id: 'SEDE_1' });
+  assert.throws(() => api.resolveAssignmentLocation(
+    { estructura_local_id: 'REL_1', local_id: 'LOC_2' }, context, true
+  ), /no corresponde/i);
+});
+
+test('rechaza referencias de relación o local inexistentes', () => {
+  const context = assignmentContext();
+  assert.throws(() => api.resolveAssignmentLocation(
+    { estructura_local_id: 'REL_X', local_id: '' }, context, true
+  ), /relación estructura_local no existe/i);
+  assert.throws(() => api.resolveAssignmentLocation(
+    { estructura_local_id: '', local_id: 'LOC_X' }, context, true
+  ), /local no existe/i);
+});
+
+test('la validación integral del snapshot admite los tres tipos de adscripción', () => {
+  const context = assignmentContext();
+  context.asignaciones = [
+    { asignacion_id: 'ASG_001', persona_id: 'PER_001', cargo_id: 'CAR_001', estructura_local_id: 'REL_1', local_id: '' },
+    { asignacion_id: 'ASG_002', persona_id: 'PER_001', cargo_id: 'CAR_001', estructura_local_id: '', local_id: 'LOC_1' },
+    { asignacion_id: 'ASG_003', persona_id: 'PER_001', cargo_id: 'CAR_001', estructura_local_id: 'REL_1', local_id: 'LOC_1' }
+  ];
+  assert.doesNotThrow(() => api.validateSnapshot(context));
+});
+
+test('el esquema no exige individualmente estructura_local_id ni local_id', () => {
+  const schema = api.assignmentSchema();
+  assert.equal(schema.estructura_local_id.required, undefined);
+  assert.equal(schema.local_id.required, undefined);
 });
