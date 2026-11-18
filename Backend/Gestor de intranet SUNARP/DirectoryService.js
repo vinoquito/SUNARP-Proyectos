@@ -1114,10 +1114,22 @@ function saveDirectoryEntry(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('Debes proporcionar los datos del registro.');
   }
+  _directoryAssertAllowedFields_(payload, [
+    'persona_id', 'asignacion_id', 'nombres', 'apellidos',
+    'tipo_documento', 'numero_documento', 'fecha_nacimiento',
+    'fecha_inicio_servicios', 'fecha_cese', 'cargo_id',
+    'condicion_cargo', 'anexo', 'estructura_local_id',
+    'observaciones'
+  ], 'registro del directorio');
+
   const personaId = _directoryText_(payload.persona_id);
   const assignmentId = _directoryText_(payload.asignacion_id);
   const isNewPerson = !personaId;
   const isNewAssignment = !assignmentId;
+
+  if (isNewPerson && !isNewAssignment) {
+    throw new Error('No se puede actualizar una asignación sin identificar a su persona.');
+  }
 
   if (!isNewPerson && isNewAssignment) {
     // Una asignación adicional nunca crea ni modifica identidad o ficha personal.
