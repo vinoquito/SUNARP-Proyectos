@@ -1452,10 +1452,8 @@ const DirectoryPage = (() => {
       document.getElementById('directoryFormDirectLocalField').style.display = useDirectLocal ? '' : 'none';
       relationSelect.required = useStructure;
       directLocalSelect.required = useDirectLocal;
-      if (!useStructure) {
-        relationSelect.value = '';
-        document.getElementById('directoryFormHierarchy').replaceChildren();
-      }
+      // Ocultar conserva la selección anterior: el usuario puede cambiar
+      // de modalidad y volver sin perder la estructura ya elegida.
       if (!useDirectLocal) directLocalSelect.value = '';
       if (mode === 'both' && relationSelect.value) {
         const relation = state.catalogs.estructuraLocal.find(x => key(x.id) === key(relationSelect.value));
