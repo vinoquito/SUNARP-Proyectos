@@ -827,6 +827,14 @@ const DirectoryPage = (() => {
         },
 
         {
+          label: 'Nueva asignación',
+          icon: 'plus',
+          variant: 'primary',
+          title: 'Registrar otra asignación para esta persona',
+          onClick: record => openDirectoryForm(record, { assignmentOnly: true })
+        },
+
+        {
           label: 'Historial',
           icon: 'history',
           variant: 'primary',
@@ -1122,9 +1130,9 @@ const DirectoryPage = (() => {
      8. FORMULARIO: CONTENIDO
      ===================================================== */
 
-  function buildDirectoryForm(record) {
+  function buildDirectoryForm(record, assignmentOnly = false) {
 
-    const isEditing = Boolean(record);
+    const isEditing = Boolean(record) && !assignmentOnly;
 
     const selectedSede = record
       ? key(record.sede_id)
@@ -1171,7 +1179,8 @@ const DirectoryPage = (() => {
       html: `
         <form id="directoryForm" class="sunarp-form-grid">
 
-          <input type="hidden" id="directoryFormId" value="${escapeHtml(record?.id || '')}">
+          <input type="hidden" id="directoryFormId" value="${escapeHtml(assignmentOnly ? '' : (record?.id || ''))}">
+          <input type="hidden" id="directoryFormMode" value="${assignmentOnly ? 'assignment' : 'person'}">
           <input type="hidden" id="directoryFormPersonaId" value="${escapeHtml(record?.persona_id || '')}">
 
           <div class="sunarp-form-field">
@@ -1185,7 +1194,7 @@ const DirectoryPage = (() => {
               id="directoryFormNombres"
               maxlength="100"
               value="${escapeHtml(record?.nombres || '')}"
-              required>
+              ${assignmentOnly ? 'readonly' : 'required'}>
           </div>
 
           <div class="sunarp-form-field">
@@ -1199,9 +1208,10 @@ const DirectoryPage = (() => {
               id="directoryFormApellidos"
               maxlength="150"
               value="${escapeHtml(record?.apellidos || '')}"
-              required>
+              ${assignmentOnly ? 'readonly' : 'required'}>
           </div>
 
+          ${assignmentOnly ? '' : `
           <div class="sunarp-form-field">
             <label for="directoryFormTipoDocumento">Tipo de documento *</label>
             <input type="text" class="sunarp-input" id="directoryFormTipoDocumento"
@@ -1232,6 +1242,7 @@ const DirectoryPage = (() => {
               value="${escapeHtml(record?.fecha_cese || '')}">
           </div>
 
+          `}
           <div class="sunarp-form-field">
             <label for="directoryFormCargo">
               Cargo *
@@ -1316,7 +1327,7 @@ const DirectoryPage = (() => {
                 type="submit"
                 class="sunarp-btn sunarp-btn-primary"
                 id="directoryFormSave">
-                ${isEditing ? 'Guardar cambios' : 'Registrar servidor'}
+                ${assignmentOnly ? 'Registrar asignación' : (isEditing ? 'Guardar cambios' : 'Registrar servidor')}
               </button>
 
             </div>
@@ -1339,11 +1350,12 @@ const DirectoryPage = (() => {
      ===================================================== */
 
 
-  function openDirectoryForm(record) {
+  function openDirectoryForm(record, options = {}) {
 
-    const isEditing = Boolean(record);
+    const assignmentOnly = options.assignmentOnly === true;
+    const isEditing = Boolean(record) && !assignmentOnly;
 
-    const formData = buildDirectoryForm(record);
+    const formData = buildDirectoryForm(record, assignmentOnly);
 
     // Convertir la cadena HTML del formulario en un fragmento DOM.
     const template = document.createElement('template');
@@ -1352,9 +1364,9 @@ const DirectoryPage = (() => {
 
     // SUNARP UI recibe un elemento DOM mediante la propiedad content.
     SUNARPUI.openModal({
-      title: isEditing
-        ? 'Editar servidor'
-        : 'Registrar servidor',
+      title: assignmentOnly
+        ? 'Nueva asignación'
+        : (isEditing ? 'Editar servidor' : 'Registrar servidor'),
 
       content: template.content,
       size: 'lg'
@@ -1465,11 +1477,11 @@ const DirectoryPage = (() => {
       asignacion_id: id,
       nombres,
       apellidos,
-      tipo_documento: document.getElementById('directoryFormTipoDocumento').value.trim(),
-      numero_documento: document.getElementById('directoryFormNumeroDocumento').value.trim(),
-      fecha_nacimiento: document.getElementById('directoryFormFechaNacimiento').value,
-      fecha_inicio_servicios: document.getElementById('directoryFormFechaInicio').value,
-      fecha_cese: document.getElementById('directoryFormFechaCese').value,
+      tipo_documento: document.getElementById('directoryFormTipoDocumento')?.value.trim() || '',
+      numero_documento: document.getElementById('directoryFormNumeroDocumento')?.value.trim() || '',
+      fecha_nacimiento: document.getElementById('directoryFormFechaNacimiento')?.value || '',
+      fecha_inicio_servicios: document.getElementById('directoryFormFechaInicio')?.value || '',
+      fecha_cese: document.getElementById('directoryFormFechaCese')?.value || '',
       cargo_id: cargoId,
       anexo: anexoInput === '' ? '' : Number(anexoInput),
       estructura_local_id: estructuraLocalId
@@ -1508,7 +1520,7 @@ const DirectoryPage = (() => {
       saveButton.disabled = false;
       saveButton.textContent = id
         ? 'Guardar cambios'
-        : 'Registrar servidor';
+        : (personaId ? 'Registrar asignación' : 'Registrar servidor');
 
     }
 
