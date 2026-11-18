@@ -1199,26 +1199,82 @@ function saveDirectoryEntry(payload) {
   if (personaId) personPayload.persona_id = personaId;
 
   if (!isNewPerson && !isNewAssignment) {
-    const person = saveDirectoryPerson(personPayload);
-    const personalData = saveDirectoryPersonalData({
-      servidor_id: personaId,
-      tipo_documento: payload.tipo_documento,
-      numero_documento: payload.numero_documento,
-      fecha_nacimiento: payload.fecha_nacimiento,
-      fecha_inicio_servicios: payload.fecha_inicio_servicios,
-      fecha_cese: payload.fecha_cese,
-      allowUnassigned: isNewPerson
-    });
-    const assignment = saveDirectoryAssignment({
-      asignacion_id: assignmentId,
-      persona_id: personaId,
-      cargo_id: payload.cargo_id,
-      condicion_cargo: payload.condicion_cargo,
-      anexo: payload.anexo,
-      estructura_local_id: payload.estructura_local_id,
-      observaciones: payload.observaciones
-    });
-    return { success: true, message: 'Persona, datos personales y asignación actualizados.', person, personalData, assignment };
+    const snapshot = _directoryLoadContext_();
+    const previousPerson = snapshot.personas.find(item => _directoryKey_(item.persona_id) === personaId);
+    const previousPersonalData = _directoryGetPersonalDataRecord_(personaId, snapshot.datosPersonales);
+    const previousAssignment = snapshot.asignaciones.find(item => _directoryKey_(item.asignacion_id) === assignmentId);
+    if (!previousPerson || !previousAssignment) throw new Error('No se encontró la persona o asignación que se intenta editar.');
+
+    let personUpdated = false;
+    let personalDataUpdated = false;
+    let assignmentUpdated = false;
+    try {
+      const person = saveDirectoryPerson(personPayload);
+      personUpdated = true;
+      const personalData = saveDirectoryPersonalData({
+        servidor_id: personaId,
+        tipo_documento: payload.tipo_documento,
+        numero_documento: payload.numero_documento,
+        fecha_nacimiento: payload.fecha_nacimiento,
+        fecha_inicio_servicios: payload.fecha_inicio_servicios,
+        fecha_cese: payload.fecha_cese
+      });
+      personalDataUpdated = true;
+      const assignment = saveDirectoryAssignment({
+        asignacion_id: assignmentId,
+        persona_id: personaId,
+        cargo_id: payload.cargo_id,
+        condicion_cargo: payload.condicion_cargo,
+        anexo: payload.anexo,
+        estructura_local_id: payload.estructura_local_id,
+        observaciones: payload.observaciones
+      });
+      assignmentUpdated = true;
+      return { success: true, message: 'Persona, datos personales y asignación actualizados.', person, personalData, assignment };
+    } catch (error) {
+      const rollbackErrors = [];
+      if (assignmentUpdated) {
+        try {
+          saveDirectoryAssignment({
+            asignacion_id: assignmentId,
+            persona_id: previousAssignment.persona_id,
+            cargo_id: previousAssignment.cargo_id,
+            condicion_cargo: previousAssignment.condicion_cargo,
+            anexo: previousAssignment.anexo,
+            estructura_local_id: previousAssignment.estructura_local_id,
+            local_id: previousAssignment.local_id,
+            observaciones: previousAssignment.observaciones,
+            active: _directoryNormalizeBoolean_(previousAssignment.active),
+            order: previousAssignment.order
+          });
+        } catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
+      }
+      if (personalDataUpdated) {
+        try {
+          if (previousPersonalData) {
+            saveDirectoryPersonalData({
+              servidor_id: personaId,
+              tipo_documento: previousPersonalData.tipo_documento,
+              numero_documento: previousPersonalData.numero_documento,
+              fecha_nacimiento: _directoryFormatDateInput_(previousPersonalData.fecha_nacimiento),
+              fecha_inicio_servicios: _directoryFormatDateInput_(previousPersonalData.fecha_inicio_servicios),
+              fecha_cese: _directoryFormatDateInput_(previousPersonalData.fecha_cese)
+            });
+          } else {
+            SUNARPCore.deleteRecord(_directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales), 'servidor_id', personaId);
+          }
+        } catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
+      }
+      if (personUpdated) {
+        try { saveDirectoryPerson({ persona_id: personaId, nombres: previousPerson.nombres, apellidos: previousPerson.apellidos }); }
+        catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
+      }
+      _directoryInvalidateCache_();
+      if (rollbackErrors.length) {
+        throw new Error(error.message + ' La reversión requiere revisión: ' + rollbackErrors.join(' | '));
+      }
+      throw error;
+    }
   }
 
   let createdPersonId = '';
