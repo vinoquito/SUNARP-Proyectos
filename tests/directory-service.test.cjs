@@ -456,3 +456,84 @@ test('la eliminación funciona para una asignación vinculada directamente a un 
   assert.deepEqual(deleteCall.slice(1), ['asignacion_id', 'ASG_022']);
   assert.equal(result.asignacion_id, 'ASG_022');
 });
+
+
+function createAssignmentWriteSandbox(context) {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  const writes = [];
+  vmContext._directoryAuthorizationContext_ = () => ({ auth: {}, structures: [] });
+  vmContext._directoryLoadContext_ = () => context;
+  vmContext._directorySource_ = name => name;
+  vmContext._directoryInvalidateCache_ = () => {};
+  vmContext._accessRecordIsAllowed_ = () => true;
+  vmContext._accessRunAudited_ = (auth, event, callback) => callback().value;
+  vmContext.SUNARPCore = {
+    assertValidRecord: () => true,
+    insertRecord: (source, record) => {
+      writes.push({ operation: 'insert', source, record: Object.assign({}, record) });
+      return { success: true, record };
+    },
+    updateRecord: (source, field, id, patch) => {
+      writes.push({ operation: 'update', source, field, id, patch: Object.assign({}, patch) });
+      return { success: true, record: Object.assign({}, patch, { [field]: id }) };
+    }
+  };
+  return { context: vmContext, writes };
+}
+
+test('el guardado persiste exactamente los tres modelos de adscripción', () => {
+  const cases = [
+    { estructura_local_id: 'REL_1', local_id: '' },
+    { estructura_local_id: '', local_id: 'LOC_1' },
+    { estructura_local_id: 'REL_1', local_id: 'LOC_1' }
+  ];
+  cases.forEach((location, index) => {
+    const fixture = createAssignmentWriteSandbox(assignmentContext());
+    fixture.context.saveDirectoryAssignment(Object.assign({
+      persona_id: 'PER_001', cargo_id: 'CAR_001', active: true
+    }, location));
+    const saved = fixture.writes[0].record;
+    assert.equal(saved.estructura_local_id, location.estructura_local_id);
+    assert.equal(saved.local_id, location.local_id);
+  });
+});
+
+test('el guardado rechaza una asignación sin adscripción antes de escribir', () => {
+  const fixture = createAssignmentWriteSandbox(assignmentContext());
+  assert.throws(() => fixture.context.saveDirectoryAssignment({
+    persona_id: 'PER_001', cargo_id: 'CAR_001',
+    estructura_local_id: '', local_id: ''
+  }), /debe estar vinculada/i);
+  assert.equal(fixture.writes.length, 0);
+});
+
+test('la edición parcial conserva la adscripción local-only existente', () => {
+  const context = assignmentContext();
+  context.asignaciones = [{
+    asignacion_id: 'ASG_030', persona_id: 'PER_001', cargo_id: 'CAR_001',
+    estructura_local_id: '', local_id: 'LOC_1', active: true, order: 4
+  }];
+  const fixture = createAssignmentWriteSandbox(context);
+  fixture.context.saveDirectoryAssignment({
+    asignacion_id: 'ASG_030', observaciones: 'Actualizada'
+  });
+  const patch = fixture.writes[0].patch;
+  assert.equal(patch.estructura_local_id, '');
+  assert.equal(patch.local_id, 'LOC_1');
+  assert.equal(patch.observaciones, 'Actualizada');
+});
+
+test('la edición permite pasar de ambos identificadores a local-only vaciando la relación', () => {
+  const context = assignmentContext();
+  context.asignaciones = [{
+    asignacion_id: 'ASG_031', persona_id: 'PER_001', cargo_id: 'CAR_001',
+    estructura_local_id: 'REL_1', local_id: 'LOC_1', active: true, order: 4
+  }];
+  const fixture = createAssignmentWriteSandbox(context);
+  fixture.context.saveDirectoryAssignment({
+    asignacion_id: 'ASG_031', estructura_local_id: ''
+  });
+  assert.equal(fixture.writes[0].patch.estructura_local_id, '');
+  assert.equal(fixture.writes[0].patch.local_id, 'LOC_1');
+});
