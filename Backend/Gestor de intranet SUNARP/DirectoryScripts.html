@@ -1424,6 +1424,25 @@ const DirectoryPage = (() => {
     const relationSelect = document.getElementById('directoryFormLocal');
     const directLocalSelect = document.getElementById('directoryFormDirectLocal');
 
+    function refreshDirectLocalOptions(sedeId, selectedId) {
+      const current = selectedId !== undefined ? key(selectedId) : key(directLocalSelect.value);
+      directLocalSelect.replaceChildren();
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = 'Selecciona un local';
+      directLocalSelect.appendChild(placeholder);
+      state.catalogs.locales
+        .filter(local => !sedeId || key(local.sede_id) === key(sedeId))
+        .slice().sort(sortByName).forEach(local => {
+          const option = document.createElement('option');
+          option.value = key(local.id);
+          option.textContent = local.name;
+          directLocalSelect.appendChild(option);
+        });
+      directLocalSelect.value = Array.from(directLocalSelect.options).some(option => option.value === current)
+        ? current : '';
+    }
+
     function syncAssignmentMode() {
       const mode = modeSelect.value;
       const useStructure = mode === 'structure' || mode === 'both';
@@ -1477,7 +1496,7 @@ const DirectoryPage = (() => {
       formData.selectedRelationId
     );
 
-    directLocalSelect.value = formData.selectedLocalId || '';
+    refreshDirectLocalOptions(formData.selectedSede, formData.selectedLocalId);
     syncAssignmentMode();
 
     // Cambiar de sede reinicia la selección jerárquica.
@@ -1488,6 +1507,7 @@ const DirectoryPage = (() => {
         [],
         ''
       );
+      refreshDirectLocalOptions(sedeSelect.value, '');
 
     });
 
