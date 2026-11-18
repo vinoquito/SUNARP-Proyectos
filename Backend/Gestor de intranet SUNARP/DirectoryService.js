@@ -360,8 +360,8 @@ function _directoryValidateSnapshot_(context) {
     if (!id || !peopleIds.has(id)) throw new Error('La ficha de datos personales referencia una persona inexistente o carece de servidor_id.');
     if (personalIds.has(id)) throw new Error('Existe más de una ficha de datos personales para ' + id + '.');
     personalIds.add(id);
-    const type = _directoryText_(record.tipo_documento).replace(/\\s+/g, '').toUpperCase();
-    const number = _directoryText_(record.numero_documento).replace(/\\s+/g, '').toUpperCase();
+    const type = _directoryText_(record.tipo_documento).replace(/\s+/g, '').toUpperCase();
+    const number = _directoryText_(record.numero_documento).replace(/\s+/g, '').toUpperCase();
     if (type && number) { const key = JSON.stringify([type, number]); if (documentKeys.has(key)) throw new Error('Existe un documento de identidad duplicado en datos personales.'); documentKeys.add(key); }
   });
   _directoryAssertUnique_(context.estructuraLocal, 'id', 'estructura_local');
@@ -610,12 +610,17 @@ function getDirectoryInitialData() {
   const scopedRelations = view.relations.filter(item =>
     item.active && allowedStructureIds.has(_directoryKey_(item.estructura_id))
   );
-
-  const allowedLocalIds = new Set(scopedRelations.map(item => _directoryKey_(item.local_id)));
   const allowedSedeIds = new Set(scopedStructures.map(item => _directoryKey_(item.sede_id)));
+  // Los locales directos se autorizan por su sede; no requieren una
+  // relación estructura_local ni se inventa una estructura orgánica.
+  const scopedLocals = context.locales.filter(local =>
+    _directoryIsActive_(local) &&
+    _accessRecordIsAllowed_(authorization.auth, 'DIRECTORIOS',
+      { sede_id: _directoryKey_(local.sede_id) }, authorization.structures)
+  );
+  const allowedLocalIds = new Set(scopedLocals.map(item => _directoryKey_(item.id)));
   const allowedLocalTypes = new Set(
-    context.locales.filter(item => allowedLocalIds.has(_directoryKey_(item.id)))
-      .map(item => _directoryKey_(item.tipo_local_id))
+    scopedLocals.map(item => _directoryKey_(item.tipo_local_id))
   );
   const allowedStructureTypes = new Set(
     scopedStructures.map(item => _directoryKey_(item.tipo_estructura_id))
@@ -627,7 +632,7 @@ function getDirectoryInitialData() {
     catalogs: {
       sedes: context.sedes.filter(item => _directoryIsActive_(item) && allowedSedeIds.has(_directoryKey_(item.id))),
       tiposLocal: context.tiposLocal.filter(item => _directoryIsActive_(item) && allowedLocalTypes.has(_directoryKey_(item.id))),
-      locales: context.locales.filter(item => _directoryIsActive_(item) && allowedLocalIds.has(_directoryKey_(item.id))),
+      locales: scopedLocals,
       tiposEstructura: context.tiposEstructura.filter(item => _directoryIsActive_(item) && allowedStructureTypes.has(_directoryKey_(item.id))),
       estructuraOrg: scopedStructures,
       estructuraLocal: scopedRelations,
@@ -1321,8 +1326,6 @@ function saveDirectoryAssignment(payload) {
   );
 
   const record = {
-
-  const record = {
     asignacion_id: isUpdate
       ? assignmentId
       : _directoryGenerateId_(context.asignaciones, DIRECTORY_SERVICE_CONFIG.ids.asignacion),
@@ -1563,7 +1566,7 @@ function deleteDirectoryPerson(personaId) {
     authorization,
     person,
     context.asignaciones,
-    relationMap
+    context
   );
 
   if (linkedAssignments.length) {
