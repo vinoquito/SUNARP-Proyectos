@@ -550,6 +550,7 @@ function insertRecord(source, record, options) {
       .setValues([row]);
 
     SpreadsheetApp.flush();
+    _coreInvalidateSourceCache_(source);
 
     const insertedRecord = _coreRowToRecord_(
       table.headers,
@@ -642,6 +643,7 @@ function updateRecord(source, idField, id, updates, options) {
     });
 
     SpreadsheetApp.flush();
+    _coreInvalidateSourceCache_(source);
 
     const updatedRecord = table.headers.reduce((record, header, index) => {
       record[header] = entry.values[index];
@@ -717,6 +719,7 @@ function deleteRecord(source, idField, id) {
     table.sheet.deleteRow(entry.rowNumber);
 
     SpreadsheetApp.flush();
+    _coreInvalidateSourceCache_(source);
 
     return {
       success: true,
@@ -755,6 +758,79 @@ function deleteRecord(source, idField, id) {
  *   cargos: []
  * }
  */
+/**
+ * Lectura agrupada con caché reutilizable por fuente.
+ *
+ * Cada pestaña mantiene una instantánea independiente. Así, varios
+ * módulos pueden compartir los mismos datos y una escritura invalida
+ * automáticamente la instantánea de la pestaña afectada.
+ *
+ * expirationSeconds: 1..21600 (por defecto 300).
+ */
+function listRecordsFromSourcesCached(requests, expirationSeconds) {
+  if (!Array.isArray(requests) || requests.length === 0) {
+    throw new Error('SUNARP Core: debes proporcionar una lista de fuentes de datos.');
+  }
+
+  const ttl = expirationSeconds === undefined ? 300 : Number(expirationSeconds);
+  if (!Number.isInteger(ttl) || ttl < 1 || ttl > 21600) {
+    throw new Error('SUNARP Core: el TTL de caché debe estar entre 1 y 21600 segundos.');
+  }
+
+  const started = Date.now();
+  const result = {};
+  const misses = [];
+  const seen = new Set();
+
+  requests.forEach(request => {
+    if (!request || typeof request !== 'object') {
+      throw new Error('SUNARP Core: una solicitud de lectura no es válida.');
+    }
+
+    const key = String(request.key || '').trim();
+    if (!key || seen.has(key)) {
+      throw new Error('SUNARP Core: cada solicitud necesita una clave única de resultado.');
+    }
+    seen.add(key);
+
+    const cacheKey = _coreBuildSourceCacheKey_(request.source, 'records');
+    const cached = getCachedValue(cacheKey);
+
+    if (Array.isArray(cached)) {
+      result[key] = cached;
+    } else {
+      misses.push({ key, source: request.source, cacheKey });
+    }
+  });
+
+  if (misses.length) {
+    const loaded = listRecordsFromSources(misses.map(item => ({
+      key: item.key,
+      source: item.source
+    })));
+
+    misses.forEach(item => {
+      const records = loaded[item.key] || [];
+      result[item.key] = records;
+      try {
+        putCachedValue(item.cacheKey, records, ttl);
+      } catch (error) {
+        console.warn('[SUNARP Core] No se pudo almacenar la fuente en caché:', item.key, error.message);
+      }
+    });
+  }
+
+  console.log(
+    '[SUNARP Core] Lectura con caché:',
+    requests.length - misses.length, 'aciertos,',
+    misses.length, 'lecturas de fuente,',
+    Date.now() - started, 'ms'
+  );
+
+  return result;
+}
+
+
 function listRecordsFromSources(requests) {
 
   if (!Array.isArray(requests) || requests.length === 0) {
