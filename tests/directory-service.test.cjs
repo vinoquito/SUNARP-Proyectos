@@ -13,12 +13,13 @@ const serviceSource = fs.readFileSync(servicePath, 'utf8');
 const frontendSource = fs.readFileSync(frontendPath, 'utf8');
 const coreTestsSource = fs.readFileSync(coreTestsPath, 'utf8');
 
-const scriptMatch = frontendSource.match(/<script>([\\s\\S]*?)<\\/script>/i);
-assert.ok(scriptMatch, 'DirectoryScripts.html debe contener el bloque JavaScript principal');
+const scriptStart = frontendSource.split('<script>')[1];
+assert.ok(scriptStart, 'DirectoryScripts.html debe contener el bloque JavaScript principal');
+const frontendScript = scriptStart.split('</script>')[0];
 
 const sandbox = vm.createContext({});
 vm.runInContext(
-  serviceSource + '\\nthis.directoryTestApi = {' +
+  serviceSource + String.fromCharCode(10) + 'this.directoryTestApi = {' +
     'normalizeDocument: _directoryNormalizeDocument_,' +
     'assertDocumentAvailable: _directoryAssertDocumentAvailable_,' +
     'generateId: _directoryGenerateId_,' +
@@ -34,7 +35,7 @@ const api = sandbox.directoryTestApi;
 
 test('el servicio, el frontend y las pruebas Core tienen sintaxis válida', () => {
   assert.doesNotThrow(() => new vm.Script(serviceSource));
-  assert.doesNotThrow(() => new vm.Script(scriptMatch[1]));
+  assert.doesNotThrow(() => new vm.Script(frontendScript));
   assert.doesNotThrow(() => new vm.Script(coreTestsSource));
 });
 
