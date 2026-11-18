@@ -144,23 +144,28 @@ function _accessLoadSecurityData_() {
   const requests = [
     {
       key: 'usuarios',
-      source: _accessSecuritySource_(s.users)
+      source: _accessSecuritySource_(s.users),
+      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.users
     },
     {
       key: 'roles',
-      source: _accessSecuritySource_(s.roles)
+      source: _accessSecuritySource_(s.roles),
+      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.roles
     },
     {
       key: 'permisos',
-      source: _accessSecuritySource_(s.permissions)
+      source: _accessSecuritySource_(s.permissions),
+      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.permissions
     },
     {
       key: 'rolPermiso',
-      source: _accessSecuritySource_(s.rolePermissions)
+      source: _accessSecuritySource_(s.rolePermissions),
+      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.rolePermissions
     },
     {
       key: 'ambitosAcceso',
-      source: _accessSecuritySource_(s.scopes)
+      source: _accessSecuritySource_(s.scopes),
+      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.scopes
     }
   ];
 
@@ -168,7 +173,7 @@ function _accessLoadSecurityData_() {
   // Las escrituras realizadas mediante SUNARP Core invalidan la fuente afectada.
   const data = SUNARPCore.listRecordsFromSourcesCached(requests, 15);
 
-  _accessValidateHeaders_();
+  // Los encabezados se validan en la misma lectura agrupada de SUNARP Core.
   _accessValidateSnapshot_(data);
 
   return data;
