@@ -472,7 +472,11 @@ function _directoryLoadContext_() {
 }
 
 function _directoryInvalidateCache_() {
-  SUNARPCore.removeCachedValue(DIRECTORY_CACHE_KEY);
+  try {
+    SUNARPCore.removeCachedValue(DIRECTORY_CACHE_KEY);
+  } catch (error) {
+    console.warn('[DirectoryService] No se pudo invalidar la caché:', error.message);
+  }
 }
 
 function _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap) {
