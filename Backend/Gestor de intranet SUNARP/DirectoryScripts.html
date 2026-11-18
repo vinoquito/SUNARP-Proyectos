@@ -1288,6 +1288,15 @@ const DirectoryPage = (() => {
           </div>
 
           <div class="sunarp-form-field sunarp-form-field--full">
+            <label for="directoryFormObservaciones">Observaciones</label>
+            <textarea
+              id="directoryFormObservaciones"
+              class="sunarp-textarea"
+              maxlength="1000"
+              rows="3">${escapeHtml(assignmentOnly ? '' : (record?.observaciones || ''))}</textarea>
+          </div>
+
+          <div class="sunarp-form-field sunarp-form-field--full">
             <label for="directoryFormSede">
               Sede *
             </label>
@@ -1497,7 +1506,8 @@ const DirectoryPage = (() => {
       cargo_id: cargoId,
       condicion_cargo: document.getElementById('directoryFormCondicionCargo').value.trim(),
       anexo: anexoInput === '' ? '' : Number(anexoInput),
-      estructura_local_id: estructuraLocalId
+      estructura_local_id: estructuraLocalId,
+      observaciones: document.getElementById('directoryFormObservaciones')?.value.trim() || ''
     };
 
     const saveButton = document.getElementById(
