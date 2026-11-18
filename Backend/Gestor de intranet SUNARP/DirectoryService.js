@@ -749,8 +749,9 @@ function getDirectoryInitialData() {
       estructuraLocal: scopedRelations,
       cargos: context.cargos.filter(_directoryIsActive_)
     },
-    people: view.people,
-    assignments: assignments,
+    // El frontend consume la colección consolidada records.
+    // No se envían people y assignments por separado: duplicaban casi
+    // íntegramente la información y aumentaban innecesariamente la respuesta.
     records: assignments.map(item => {
       const personalData = _directoryGetPersonalDataRecord_(item.persona_id, context.datosPersonales);
       return Object.assign({}, item, {
