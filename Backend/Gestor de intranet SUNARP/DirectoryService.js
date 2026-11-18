@@ -1119,10 +1119,16 @@ function _saveDirectoryPersonalData_(payload, allowUnassigned) {
     _directoryAssertPersonMutationScope_(authorization, person, context.asignaciones, relationMap);
   }
 
+  const normalizedDocument = _directoryAssertDocumentAvailable_(
+    payload.tipo_documento,
+    payload.numero_documento,
+    context.datosPersonales,
+    personaId
+  );
   const record = {
     servidor_id: personaId,
-    tipo_documento: _directoryNormalizeDocument_(payload.tipo_documento, 'Tipo de documento'),
-    numero_documento: _directoryNormalizeDocument_(payload.numero_documento, 'Número de documento'),
+    tipo_documento: normalizedDocument.tipo_documento,
+    numero_documento: normalizedDocument.numero_documento,
     fecha_nacimiento: _directoryNormalizeDateInput_(payload.fecha_nacimiento, 'Fecha de nacimiento'),
     fecha_inicio_servicios: _directoryNormalizeDateInput_(payload.fecha_inicio_servicios, 'Fecha de inicio de servicios'),
     fecha_cese: _directoryNormalizeDateInput_(payload.fecha_cese, 'Fecha de cese')
