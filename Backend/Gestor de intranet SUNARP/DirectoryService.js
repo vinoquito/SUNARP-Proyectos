@@ -487,9 +487,18 @@ function _directoryWriteCachedContext_(context) {
 }
 
 function _directoryLoadContext_() {
+  const started = Date.now();
+
   try {
     const cached = _directoryReadCachedContext_();
-    if (cached !== null) return cached;
+    if (cached !== null) {
+      console.log(
+        '[DirectoryService] Contexto recuperado de caché:',
+        Date.now() - started,
+        'ms.'
+      );
+      return cached;
+    }
   } catch (error) {
     console.warn('[DirectoryService] Error al consultar caché:', error.message);
     try {
@@ -498,6 +507,8 @@ function _directoryLoadContext_() {
       console.warn('[DirectoryService] No se pudo descartar el manifiesto de caché:', removeError.message);
     }
   }
+
+  console.log('[DirectoryService] Caché no disponible; se inicia la carga completa desde las hojas.');
 
   const context = _directoryLoadContextFromSheets_();
 
@@ -513,6 +524,12 @@ function _directoryLoadContext_() {
   } catch (error) {
     console.warn('[DirectoryService] No se pudo almacenar caché:', error.message);
   }
+
+  console.log(
+    '[DirectoryService] Contexto reconstruido desde hojas:',
+    Date.now() - started,
+    'ms.'
+  );
 
   return context;
 }
