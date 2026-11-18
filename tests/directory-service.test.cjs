@@ -558,7 +558,7 @@ test('el contexto del directorio se almacena comprimido en fragmentos y se recon
   };
   context.Utilities = {
     newBlob: data => {
-      const bytes = Buffer.isBuffer(data) || data instanceof Uint8Array
+      const bytes = Buffer.isBuffer(data) || data instanceof Uint8Array || Array.isArray(data)
         ? Buffer.from(data)
         : Buffer.from(String(data), 'utf8');
       return {
