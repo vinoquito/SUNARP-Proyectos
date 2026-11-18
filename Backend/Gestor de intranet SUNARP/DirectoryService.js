@@ -1180,6 +1180,9 @@ function saveDirectoryEntry(payload) {
     const previousPersonalData = _directoryGetPersonalDataRecord_(personaId, snapshot.datosPersonales);
     const previousAssignment = snapshot.asignaciones.find(item => _directoryKey_(item.asignacion_id) === assignmentId);
     if (!previousPerson || !previousAssignment) throw new Error('No se encontró la persona o asignación que se intenta editar.');
+    if (_directoryKey_(previousAssignment.persona_id) !== personaId) {
+      throw new Error('La asignación seleccionada no pertenece a la persona indicada.');
+    }
     const normalizedDocument = _directoryAssertDocumentAvailable_(
       payload.tipo_documento,
       payload.numero_documento,
