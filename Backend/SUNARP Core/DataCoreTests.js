@@ -124,6 +124,12 @@ function runCoreSelfTests_() {
     const cachedRepeated = listRecordsFromSourcesCached([{ key: 'registros', source }], 300);
     assert(cachedRepeated.registros.length === 2, 'Reutilización de la instantánea de fuente en una lectura posterior.');
 
+    expectError(() => listRecordsFromSources([{
+      key: 'registros',
+      source,
+      requiredHeaders: ['columna_inexistente']
+    }]), 'La lectura agrupada valida encabezados requeridos sin una consulta adicional de metadatos.');
+
     // 5. Probar listado y filtros.
     const listing = listRecords(source, {
       filters: { active: true },
