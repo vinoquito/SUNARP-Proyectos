@@ -158,6 +158,32 @@ function _coreReadRange_(sheet, startRow, startColumn, numRows, numColumns) {
  * Función pública para comprobar la conexión
  * desde una aplicación que utilice SUNARP Core.
  */
+/**
+ * Consulta metadatos de una fuente utilizando la caché compartida.
+ * La instantánea se invalida automáticamente al escribir mediante Core.
+ */
+function getSourceInfoCached(source, expirationSeconds) {
+  const ttl = expirationSeconds === undefined ? 300 : Number(expirationSeconds);
+  if (!Number.isInteger(ttl) || ttl < 1 || ttl > 21600) {
+    throw new Error('SUNARP Core: el TTL de metadatos debe estar entre 1 y 21600 segundos.');
+  }
+
+  const key = _coreBuildSourceCacheKey_(source, 'info');
+  const cached = getCachedValue(key);
+  if (cached && typeof cached === 'object' && Array.isArray(cached.headers)) {
+    return cached;
+  }
+
+  const info = getSourceInfo(source);
+  try {
+    putCachedValue(key, info, ttl);
+  } catch (error) {
+    console.warn('[SUNARP Core] No se pudieron almacenar metadatos en caché:', error.message);
+  }
+  return info;
+}
+
+
 function getSourceInfo(source) {
   const context = _coreOpenSource_(source);
 
