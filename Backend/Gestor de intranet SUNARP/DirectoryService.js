@@ -1038,8 +1038,8 @@ function _directoryAssertDocumentAvailable_(type, number, records, excludedPerso
   const normalizedNumber = _directoryNormalizeDocument_(number, 'Número de documento');
   const duplicate = (records || []).find(item =>
     _directoryKey_(item.servidor_id) !== _directoryKey_(excludedPersonaId) &&
-    _directoryText_(item.tipo_documento).replace(/\\s+/g, '').toUpperCase() === normalizedType &&
-    _directoryText_(item.numero_documento).replace(/\\s+/g, '').toUpperCase() === normalizedNumber
+    _directoryText_(item.tipo_documento).replace(/\s+/g, '').toUpperCase() === normalizedType &&
+    _directoryText_(item.numero_documento).replace(/\s+/g, '').toUpperCase() === normalizedNumber
   );
   if (duplicate) {
     throw new Error('El documento ya está registrado para otra persona.');
