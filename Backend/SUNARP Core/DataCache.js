@@ -36,6 +36,38 @@ const _CORE_CACHE_MAX_BYTES_ = 95 * 1024;
  * Las aplicaciones deben utilizar espacios de nombres
  * para evitar colisiones entre proyectos consumidores.
  */
+/**
+ * Genera claves estables para caché de datos de una fuente.
+ * La identidad depende del archivo, pestaña y fila de encabezados.
+ */
+function _coreBuildSourceCacheKey_(source, kind) {
+  const config = _coreNormalizeSourceConfig_(source);
+  const identity = [
+    config.spreadsheetId,
+    config.sheetName,
+    config.headerRow,
+    kind || 'records'
+  ].join('|');
+  const digest = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    identity
+  );
+  const hash = Utilities.base64EncodeWebSafe(digest).replace(/=+$/g, '');
+  return 'source-data:v1:' + hash;
+}
+
+
+/**
+ * Invalida las instantáneas de una fuente después de una escritura.
+ * También invalida metadatos porque pueden haber cambiado sus dimensiones.
+ */
+function _coreInvalidateSourceCache_(source) {
+  const recordsKey = _coreBuildSourceCacheKey_(source, 'records');
+  const infoKey = _coreBuildSourceCacheKey_(source, 'info');
+  return removeCachedValues([recordsKey, infoKey]);
+}
+
+
 function _coreBuildCacheKey_(key) {
 
   const normalizedKey = String(key || '').trim();
