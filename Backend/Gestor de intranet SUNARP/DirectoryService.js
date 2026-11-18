@@ -1290,7 +1290,7 @@ function saveDirectoryEntry(payload) {
       estructura_local_id: payload.estructura_local_id,
       observaciones: payload.observaciones
     });
-    createdAssignmentId = assignment.assignment.assignment_id;
+    createdAssignmentId = assignment.assignment.asignacion_id;
     assignmentCreated = true;
     return {
       success: true,
