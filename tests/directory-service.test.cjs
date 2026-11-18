@@ -271,3 +271,13 @@ test('el formulario permite registrar y actualizar observaciones de cada asignac
   assert.ok(frontendSource.includes('directoryFormObservaciones'));
   assert.ok(frontendSource.includes("observaciones: document.getElementById('directoryFormObservaciones')"));
 });
+
+
+test('un fallo al invalidar caché no convierte una escritura exitosa en error', () => {
+  const context = createDirectorySandbox();
+  context.SUNARPCore = {
+    removeCachedValue: () => { throw new Error('caché no disponible'); }
+  };
+  context.console = { warn: () => {} };
+  assert.doesNotThrow(() => context._directoryInvalidateCache_());
+});
