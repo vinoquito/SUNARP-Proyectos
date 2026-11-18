@@ -374,7 +374,7 @@ function _directoryValidateSnapshot_(context) {
     }
     personalIds.add(personId);
     const type = _directoryText_(record.tipo_documento).toUpperCase();
-    const number = _directoryText_(record.numero_documento).replace(/\\s+/g, '').toUpperCase();
+    const number = _directoryText_(record.numero_documento).replace(/\s+/g, '').toUpperCase();
     if (type && number) {
       const key = JSON.stringify([type, number]);
       if (documentKeys.has(key)) throw new Error('Existe un documento de identidad duplicado en datos personales.');
@@ -473,65 +473,6 @@ function _directoryLoadContext_() {
 
 function _directoryInvalidateCache_() {
   SUNARPCore.removeCachedValue(DIRECTORY_CACHE_KEY);
-}
-
-/**
- * La hoja de datos personales es complementaria y no participa
- * en la carga ni en la caché ordinaria del directorio.
- *
- * Su relación es 1:1: servidores datos personales.servidor_id
- * contiene el mismo identificador que personas.persona_id.
- * No se crea una columna persona_id adicional ni una relación paralela.
- */
-function _directoryLoadPersonalDataLinks_(people) {
-  const source = _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales);
-
-  let info;
-  try {
-    info = SUNARPCore.getSourceInfo(source);
-  } catch (error) {
-    if (String(error.message || error).toLowerCase().includes('no existe la pestaña')) {
-      return [];
-    }
-    throw error;
-  }
-
-  const expectedHeaders = [
-    'servidor_id',
-    'tipo_documento',
-    'numero_documento',
-    'fecha_nacimiento',
-    'fecha_inicio_servicios',
-    'fecha_cese'
-  ];
-  const missing = expectedHeaders.filter(header => !info.headers.includes(header));
-  if (missing.length) {
-    throw new Error(
-      'La pestaña "' + DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales +
-      '" no contiene los encabezados requeridos: ' + missing.join(', ') + '.'
-    );
-  }
-
-  const records = SUNARPCore.listRecords(source, {}).records;
-
-  // Se descartan expresamente los datos personales: solo se conserva
-  // la clave necesaria para comprobar integridad referencial.
-  const ids = records.map(record => _directoryKey_(record.servidor_id)).filter(Boolean);
-  const knownPeople = new Set((people || []).map(person => _directoryKey_(person.persona_id)));
-  const seen = new Set();
-
-  ids.forEach(id => {
-    if (seen.has(id)) {
-      throw new Error('La ficha de datos personales contiene más de una fila para servidor_id ' + id + '.');
-    }
-    seen.add(id);
-
-    if (people && !knownPeople.has(id)) {
-      throw new Error('La ficha de datos personales referencia una persona inexistente: ' + id + '.');
-    }
-  });
-
-  return ids;
 }
 
 function _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap) {
@@ -1081,7 +1022,7 @@ function saveDirectoryPerson(payload) {
  */
 
 function _directoryNormalizeDocument_(value, label) {
-  const normalized = _directoryText_(value).replace(/\\s+/g, '').toUpperCase();
+  const normalized = _directoryText_(value).replace(/\s+/g, '').toUpperCase();
   if (!normalized) throw new Error(label + ' es obligatorio.');
   return normalized;
 }
