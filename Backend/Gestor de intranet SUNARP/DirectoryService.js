@@ -608,13 +608,19 @@ function getDirectoryInitialData() {
     _accessRecordIsAllowed_(authorization.auth, 'DIRECTORIOS',
       { sede_id: _directoryKey_(local.sede_id) }, authorization.structures)
   );
+  const relationLocalIds = new Set(scopedRelations.map(item => _directoryKey_(item.local_id)));
+  const catalogLocals = context.locales.filter(local =>
+    _directoryIsActive_(local) &&
+    (relationLocalIds.has(_directoryKey_(local.id)) ||
+      scopedLocals.some(item => _directoryKey_(item.id) === _directoryKey_(local.id)))
+  );
   const allowedSedeIds = new Set([
     ...scopedStructures.map(item => _directoryKey_(item.sede_id)),
-    ...scopedLocals.map(item => _directoryKey_(item.sede_id))
+    ...catalogLocals.map(item => _directoryKey_(item.sede_id))
   ]);
-  const allowedLocalIds = new Set(scopedLocals.map(item => _directoryKey_(item.id)));
+  const allowedLocalIds = new Set(catalogLocals.map(item => _directoryKey_(item.id)));
   const allowedLocalTypes = new Set(
-    scopedLocals.map(item => _directoryKey_(item.tipo_local_id))
+    catalogLocals.map(item => _directoryKey_(item.tipo_local_id))
   );
   const allowedStructureTypes = new Set(
     scopedStructures.map(item => _directoryKey_(item.tipo_estructura_id))
@@ -626,7 +632,7 @@ function getDirectoryInitialData() {
     catalogs: {
       sedes: context.sedes.filter(item => _directoryIsActive_(item) && allowedSedeIds.has(_directoryKey_(item.id))),
       tiposLocal: context.tiposLocal.filter(item => _directoryIsActive_(item) && allowedLocalTypes.has(_directoryKey_(item.id))),
-      locales: scopedLocals,
+      locales: catalogLocals,
       tiposEstructura: context.tiposEstructura.filter(item => _directoryIsActive_(item) && allowedStructureTypes.has(_directoryKey_(item.id))),
       estructuraOrg: scopedStructures,
       estructuraLocal: scopedRelations,
