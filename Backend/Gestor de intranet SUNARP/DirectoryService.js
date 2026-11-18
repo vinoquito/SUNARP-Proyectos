@@ -1033,6 +1033,20 @@ function _directoryGetPersonalDataRecord_(personaId, records) {
   ) || null;
 }
 
+function _directoryAssertDocumentAvailable_(type, number, records, excludedPersonaId) {
+  const normalizedType = _directoryNormalizeDocument_(type, 'Tipo de documento');
+  const normalizedNumber = _directoryNormalizeDocument_(number, 'Número de documento');
+  const duplicate = (records || []).find(item =>
+    _directoryKey_(item.servidor_id) !== _directoryKey_(excludedPersonaId) &&
+    _directoryText_(item.tipo_documento).replace(/\\s+/g, '').toUpperCase() === normalizedType &&
+    _directoryText_(item.numero_documento).replace(/\\s+/g, '').toUpperCase() === normalizedNumber
+  );
+  if (duplicate) {
+    throw new Error('El documento ya está registrado para otra persona.');
+  }
+  return { tipo_documento: normalizedType, numero_documento: normalizedNumber };
+}
+
 function _directoryFormatDateInput_(value) {
   if (value === null || value === undefined || value === '') return '';
   if (value instanceof Date && !isNaN(value.getTime())) {
@@ -1166,6 +1180,12 @@ function saveDirectoryEntry(payload) {
     const previousPersonalData = _directoryGetPersonalDataRecord_(personaId, snapshot.datosPersonales);
     const previousAssignment = snapshot.asignaciones.find(item => _directoryKey_(item.asignacion_id) === assignmentId);
     if (!previousPerson || !previousAssignment) throw new Error('No se encontró la persona o asignación que se intenta editar.');
+    const normalizedDocument = _directoryAssertDocumentAvailable_(
+      payload.tipo_documento,
+      payload.numero_documento,
+      snapshot.datosPersonales,
+      personaId
+    );
 
     let personUpdated = false;
     let personalDataUpdated = false;
@@ -1175,8 +1195,8 @@ function saveDirectoryEntry(payload) {
       personUpdated = true;
       const personalData = saveDirectoryPersonalData({
         servidor_id: personaId,
-        tipo_documento: payload.tipo_documento,
-        numero_documento: payload.numero_documento,
+        tipo_documento: normalizedDocument.tipo_documento,
+        numero_documento: normalizedDocument.numero_documento,
         fecha_nacimiento: payload.fecha_nacimiento,
         fecha_inicio_servicios: payload.fecha_inicio_servicios,
         fecha_cese: payload.fecha_cese
@@ -1239,6 +1259,13 @@ function saveDirectoryEntry(payload) {
     }
   }
 
+  const normalizedNewDocument = _directoryAssertDocumentAvailable_(
+    payload.tipo_documento,
+    payload.numero_documento,
+    _directoryLoadContext_().datosPersonales,
+    ''
+  );
+
   let createdPersonId = '';
   let personalCreated = false;
   let assignmentCreated = false;
@@ -1248,8 +1275,8 @@ function saveDirectoryEntry(payload) {
     createdPersonId = person.person.persona_id;
     const personalData = _saveDirectoryPersonalData_({
       servidor_id: createdPersonId,
-      tipo_documento: payload.tipo_documento,
-      numero_documento: payload.numero_documento,
+      tipo_documento: normalizedNewDocument.tipo_documento,
+      numero_documento: normalizedNewDocument.numero_documento,
       fecha_nacimiento: payload.fecha_nacimiento,
       fecha_inicio_servicios: payload.fecha_inicio_servicios,
       fecha_cese: payload.fecha_cese
