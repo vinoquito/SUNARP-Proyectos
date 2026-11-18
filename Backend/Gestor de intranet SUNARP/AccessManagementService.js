@@ -164,7 +164,9 @@ function _accessLoadSecurityData_() {
     }
   ];
 
-  const data = SUNARPCore.listRecordsFromSources(requests);
+  // Los datos de autorización se comparten entre módulos durante 15 s.
+  // Las escrituras realizadas mediante SUNARP Core invalidan la fuente afectada.
+  const data = SUNARPCore.listRecordsFromSourcesCached(requests, 15);
 
   _accessValidateHeaders_();
   _accessValidateSnapshot_(data);
@@ -190,7 +192,7 @@ function _accessValidateHeaders_() {
 
   keys.forEach(key => {
     const source = _accessSecuritySource_(s[key]);
-    const info = SUNARPCore.getSourceInfo(source);
+    const info = SUNARPCore.getSourceInfoCached(source, 300);
 
     const missing = required[key].filter(header =>
       !info.headers.includes(header)
@@ -327,7 +329,9 @@ function _accessOrgCatalog_() {
     }
   ];
 
-  return SUNARPCore.listRecordsFromSources(requests);
+  // Catálogos organizacionales compartidos: se invalidan automáticamente
+  // cuando SUNARP Core escribe en la pestaña correspondiente.
+  return SUNARPCore.listRecordsFromSourcesCached(requests, 300);
 }
 
 
