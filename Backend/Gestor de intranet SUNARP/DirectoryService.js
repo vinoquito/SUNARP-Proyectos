@@ -1038,7 +1038,7 @@ function _directoryNormalizeDateInput_(value, label) {
     normalized = _directoryText_(value);
   }
 
-  const match = normalized.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);
+  const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) throw new Error(label + ' debe tener el formato AAAA-MM-DD.');
 
   const year = Number(match[1]);
