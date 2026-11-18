@@ -1045,12 +1045,20 @@ function _directoryFormatDateInput_(value) {
 }
 
 function saveDirectoryPersonalData(payload) {
+  return _saveDirectoryPersonalData_(payload, false);
+}
+
+/**
+ * Rutina interna. allowUnassigned solo puede activarse desde el flujo
+ * coordinado de alta; nunca se acepta como dato enviado por el navegador.
+ */
+function _saveDirectoryPersonalData_(payload, allowUnassigned) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('Debes proporcionar los datos personales.');
   }
   _directoryAssertAllowedFields_(payload, [
     'servidor_id', 'tipo_documento', 'numero_documento',
-    'fecha_nacimiento', 'fecha_inicio_servicios', 'fecha_cese', 'allowUnassigned'
+    'fecha_nacimiento', 'fecha_inicio_servicios', 'fecha_cese'
   ], 'datos personales');
 
   const personaId = _directoryText_(payload.servidor_id);
@@ -1060,8 +1068,9 @@ function saveDirectoryPersonalData(payload) {
   if (!person) throw new Error('No existe la persona vinculada a los datos personales.');
 
   const linkedAssignments = context.asignaciones.filter(item => _directoryKey_(item.persona_id) === personaId);
-  const authorization = _directoryAuthorizationContext_(payload.allowUnassigned && !linkedAssignments.length ? 'DIRECTORIOS_CREAR' : 'DIRECTORIOS_EDITAR');
-  if (!(payload.allowUnassigned && !linkedAssignments.length)) {
+  const createWithoutAssignment = allowUnassigned === true && !linkedAssignments.length;
+  const authorization = _directoryAuthorizationContext_(createWithoutAssignment ? 'DIRECTORIOS_CREAR' : 'DIRECTORIOS_EDITAR');
+  if (!createWithoutAssignment) {
     const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
     _directoryAssertPersonMutationScope_(authorization, person, context.asignaciones, relationMap);
   }
@@ -1237,15 +1246,14 @@ function saveDirectoryEntry(payload) {
   try {
     const person = saveDirectoryPerson(personPayload);
     createdPersonId = person.person.persona_id;
-    const personalData = saveDirectoryPersonalData({
+    const personalData = _saveDirectoryPersonalData_({
       servidor_id: createdPersonId,
       tipo_documento: payload.tipo_documento,
       numero_documento: payload.numero_documento,
       fecha_nacimiento: payload.fecha_nacimiento,
       fecha_inicio_servicios: payload.fecha_inicio_servicios,
-      fecha_cese: payload.fecha_cese,
-      allowUnassigned: isNewPerson
-    });
+      fecha_cese: payload.fecha_cese
+    }, true);
     personalCreated = true;
     const assignment = saveDirectoryAssignment({
       persona_id: createdPersonId,
