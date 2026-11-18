@@ -1028,6 +1028,7 @@ function saveDirectoryPerson(payload) {
         }, { schema: schema })
       : SUNARPCore.insertRecord(source, record, {
           idField: 'persona_id',
+          uniqueFields: ['nombres', 'apellidos'],
           schema: schema
         });
 
