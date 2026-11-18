@@ -373,7 +373,7 @@ function _directoryValidateSnapshot_(context) {
       throw new Error('Existe más de una ficha de datos personales para ' + personId + '.');
     }
     personalIds.add(personId);
-    const type = _directoryText_(record.tipo_documento).toUpperCase();
+    const type = _directoryText_(record.tipo_documento).replace(/\s+/g, '').toUpperCase();
     const number = _directoryText_(record.numero_documento).replace(/\s+/g, '').toUpperCase();
     if (type && number) {
       const key = JSON.stringify([type, number]);
@@ -1039,7 +1039,7 @@ function _directoryFormatDateInput_(value) {
     return Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
   }
   const text = _directoryText_(value);
-  const iso = text.match(/^(\\d{4}-\\d{2}-\\d{2})/);
+  const iso = text.match(/^(\d{4}-\d{2}-\d{2})/);
   if (iso) return iso[1];
   return text;
 }
