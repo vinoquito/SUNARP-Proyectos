@@ -469,40 +469,27 @@ function _directoryBuildView_(context, authorization) {
 
 function _directorySortAssignments_(records, context) {
   const structureMap = _directoryCreateMap_(context.estructuraOrg);
-  const relations = _directoryBuildRelations_(context, false);
-  const relationMap = _directoryCreateMap_(relations);
   const sedeOrder = new Map();
-
   context.sedes.forEach((sede, index) => sedeOrder.set(_directoryKey_(sede.id), index));
-
   const pathMap = new Map();
-  context.estructuraOrg.forEach(node => {
-    pathMap.set(
-      _directoryKey_(node.id),
-      _directoryGetStructureOrderPath_(node.id, structureMap)
-    );
-  });
-
+  context.estructuraOrg.forEach(node => pathMap.set(
+    _directoryKey_(node.id), _directoryGetStructureOrderPath_(node.id, structureMap)
+  ));
   records.sort((a, b) => {
-    const relationA = relationMap.get(_directoryKey_(a.estructura_local_id));
-    const relationB = relationMap.get(_directoryKey_(b.estructura_local_id));
-
-    const sedeA = relationA ? (sedeOrder.get(_directoryKey_(relationA.sede_id)) ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER;
-    const sedeB = relationB ? (sedeOrder.get(_directoryKey_(relationB.sede_id)) ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER;
+    const locA = _directoryResolveAssignmentLocation_(a, context, false);
+    const locB = _directoryResolveAssignmentLocation_(b, context, false);
+    const sedeA = sedeOrder.get(locA.sede_id) ?? Number.MAX_SAFE_INTEGER;
+    const sedeB = sedeOrder.get(locB.sede_id) ?? Number.MAX_SAFE_INTEGER;
     if (sedeA !== sedeB) return sedeA - sedeB;
-
-    const pathA = relationA ? pathMap.get(_directoryKey_(relationA.estructura_id)) || [] : [];
-    const pathB = relationB ? pathMap.get(_directoryKey_(relationB.estructura_id)) || [] : [];
-    const pathDifference = _directoryCompareStructurePaths_(pathA, pathB);
-    if (pathDifference !== 0) return pathDifference;
-
-    const orderDifference = _directoryCompare_(Number(a.order), Number(b.order));
-    if (orderDifference !== 0) return orderDifference;
-
-    return _directoryCompare_(a.apellidos, b.apellidos) ||
-      _directoryCompare_(a.nombres, b.nombres);
+    const pathA = locA.estructura_id ? pathMap.get(locA.estructura_id) || [] : [];
+    const pathB = locB.estructura_id ? pathMap.get(locB.estructura_id) || [] : [];
+    const pathDiff = _directoryCompareStructurePaths_(pathA, pathB);
+    if (pathDiff) return pathDiff;
+    const localDiff = _directoryCompare_(locA.local ? locA.local.name : '', locB.local ? locB.local.name : '');
+    if (localDiff) return localDiff;
+    return _directoryCompare_(Number(a.order), Number(b.order)) ||
+      _directoryCompare_(a.apellidos, b.apellidos) || _directoryCompare_(a.nombres, b.nombres);
   });
-
   return records;
 }
 
@@ -610,7 +597,6 @@ function getDirectoryInitialData() {
   const scopedRelations = view.relations.filter(item =>
     item.active && allowedStructureIds.has(_directoryKey_(item.estructura_id))
   );
-  const allowedSedeIds = new Set(scopedStructures.map(item => _directoryKey_(item.sede_id)));
   // Los locales directos se autorizan por su sede; no requieren una
   // relación estructura_local ni se inventa una estructura orgánica.
   const scopedLocals = context.locales.filter(local =>
@@ -618,6 +604,10 @@ function getDirectoryInitialData() {
     _accessRecordIsAllowed_(authorization.auth, 'DIRECTORIOS',
       { sede_id: _directoryKey_(local.sede_id) }, authorization.structures)
   );
+  const allowedSedeIds = new Set([
+    ...scopedStructures.map(item => _directoryKey_(item.sede_id)),
+    ...scopedLocals.map(item => _directoryKey_(item.sede_id))
+  ]);
   const allowedLocalIds = new Set(scopedLocals.map(item => _directoryKey_(item.id)));
   const allowedLocalTypes = new Set(
     scopedLocals.map(item => _directoryKey_(item.tipo_local_id))
@@ -1236,6 +1226,7 @@ function saveDirectoryEntry(payload) {
       condicion_cargo: payload.condicion_cargo,
       anexo: payload.anexo,
       estructura_local_id: payload.estructura_local_id,
+      local_id: payload.local_id,
       observaciones: payload.observaciones
     });
     createdAssignmentId = assignment.assignment.asignacion_id;
