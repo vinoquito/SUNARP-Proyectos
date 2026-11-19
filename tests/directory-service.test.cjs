@@ -139,7 +139,7 @@ test('la edición coordinada impide usar una asignación perteneciente a otra pe
 });
 
 test('la eliminación de persona comprueba la ficha en el snapshot de datos personales', () => {
-  assert.match(serviceSource, /\(context\.datosPersonales \|\| \[\]\)\.some/);
+  assert.match(serviceSource, /const personalData = _directoryFindPersonalDataById_\(id\)/);
   assert.doesNotMatch(serviceSource, /_directoryLoadPersonalDataLinks_/);
 });
 
@@ -155,6 +155,30 @@ function createDirectorySandbox() {
   });
   context._directoryInvalidateCache_ = () => {};
   context._directorySource_ = name => name;
+  context.SUNARPCore = {
+    findRecordsByFields: (source, filters) => {
+      const snapshot = context._directoryLoadContext_() || {};
+      const field = Object.keys(filters)[0];
+      const rows = field === 'persona_id'
+        ? (snapshot.personas || [])
+        : field === 'servidor_id'
+          ? (snapshot.datosPersonales || [])
+          : [];
+      const records = rows.filter(item => String(item[field] || '') === String(filters[field] || ''));
+      return { records, total: records.length };
+    },
+    searchRecordsByFields: (source, query, fields) => {
+      const snapshot = context._directoryLoadContext_() || {};
+      const expected = String(query || '').toLowerCase();
+      const records = (snapshot.personas || []).filter(item =>
+        fields.some(field => String(item[field] || '').toLowerCase().includes(expected))
+      );
+      return { records, total: records.length };
+    },
+    listRecordsFromSourcesCached: () => ({
+      people: (context._directoryLoadContext_().personas || [])
+    })
+  };
   return context;
 }
 
@@ -442,7 +466,10 @@ test('el cambio de estado funciona para una asignación vinculada directamente a
   sandbox._directoryInvalidateCache_ = () => {};
   sandbox._accessRecordIsAllowed_ = () => true;
   sandbox._accessRunAudited_ = (auth, event, callback) => callback().value;
-  sandbox.SUNARPCore = { setRecordStatus: (...args) => { statusCall = args; return { success: true }; } };
+  sandbox.SUNARPCore = {
+    findRecordsByFields: () => ({ records: context.personas, total: context.personas.length }),
+    setRecordStatus: (...args) => { statusCall = args; return { success: true }; }
+  };
   const result = sandbox.setDirectoryAssignmentActive('ASG_021', false);
   assert.deepEqual(statusCall.slice(1), ['asignacion_id', 'ASG_021', 'active', false]);
   assert.equal(result.assignment.active, false);
@@ -461,7 +488,10 @@ test('la eliminación funciona para una asignación vinculada directamente a un 
   sandbox._directoryInvalidateCache_ = () => {};
   sandbox._accessRecordIsAllowed_ = () => true;
   sandbox._accessRunAudited_ = (auth, event, callback) => callback().value;
-  sandbox.SUNARPCore = { deleteRecord: (...args) => { deleteCall = args; return { success: true }; } };
+  sandbox.SUNARPCore = {
+    findRecordsByFields: () => ({ records: context.personas, total: context.personas.length }),
+    deleteRecord: (...args) => { deleteCall = args; return { success: true }; }
+  };
   const result = sandbox.deleteDirectoryAssignment('ASG_022');
   assert.deepEqual(deleteCall.slice(1), ['asignacion_id', 'ASG_022']);
   assert.equal(result.asignacion_id, 'ASG_022');
@@ -479,6 +509,10 @@ function createAssignmentWriteSandbox(context) {
   vmContext._accessRecordIsAllowed_ = () => true;
   vmContext._accessRunAudited_ = (auth, event, callback) => callback().value;
   vmContext.SUNARPCore = {
+    findRecordsByFields: () => ({
+      records: (context.personas || []).slice(),
+      total: (context.personas || []).length
+    }),
     assertValidRecord: () => true,
     insertRecord: (source, record) => {
       writes.push({ operation: 'insert', source, record: Object.assign({}, record) });
