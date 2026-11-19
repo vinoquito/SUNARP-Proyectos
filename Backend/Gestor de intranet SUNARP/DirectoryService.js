@@ -20,6 +20,7 @@ const DIRECTORY_SERVICE_CONFIG = Object.freeze({
     personas: 'personas',
     asignaciones: 'asignaciones',
     datosPersonales: 'servidores datos personales',
+    documentTypes: 'tipo_documento_identidad',
     sedes: 'sede',
     tiposLocal: 'tipos_local',
     locales: 'locales',
@@ -35,7 +36,7 @@ const DIRECTORY_SERVICE_CONFIG = Object.freeze({
   })
 });
 
-const DIRECTORY_CACHE_KEY = 'gestor-intranet:directory-context:v4';
+const DIRECTORY_CACHE_KEY = 'gestor-intranet:directory-context:v5';
 const DIRECTORY_CACHE_TTL = 300;
 const DIRECTORY_CACHE_CHUNK_CHARS = 80 * 1024;
 const DIRECTORY_CACHE_MANIFEST_SUFFIX = ':manifest';
@@ -44,6 +45,7 @@ const DIRECTORY_CACHE_PART_SUFFIX = ':part:';
 const DIRECTORY_REQUIRED_HEADERS = Object.freeze({
   personas: ['persona_id', 'nombres', 'apellidos', 'correo_institucional'],
   datosPersonales: ['servidor_id', 'tipo_documento', 'numero_documento', 'fecha_nacimiento', 'fecha_inicio_servicios', 'fecha_cese'],
+  documentTypes: ['id', 'name'],
   asignaciones: [
     'asignacion_id',
     'persona_id',
@@ -386,6 +388,7 @@ function _directoryValidateHeaders_(context) {
 function _directoryValidateSnapshot_(context) {
   _directoryAssertUnique_(context.personas, 'persona_id', 'personas');
   _directoryAssertUnique_(context.asignaciones, 'asignacion_id', 'asignaciones');
+  _directoryAssertUnique_(context.documentTypes || [], 'id', 'tipo_documento_identidad');
   const peopleIds = new Set(context.personas.map(x => _directoryKey_(x.persona_id)));
   const cargoIds = new Set(context.cargos.map(x => _directoryKey_(x.id)));
   const localIds = new Set(context.locales.map(x => _directoryKey_(x.id)));
@@ -418,6 +421,7 @@ function _directoryLoadContextFromSheets_() {
   const sheetMap = [
     ['personas', 'personas'],
     ['datosPersonales', 'servidores datos personales'],
+    ['documentTypes', 'tipo_documento_identidad'],
     ['asignaciones', 'asignaciones'],
     ['sedes', 'sede'],
     ['tiposLocal', 'tipos_local'],
@@ -781,6 +785,10 @@ function getDirectoryInitialData() {
       tiposLocal: context.tiposLocal.filter(item => _directoryIsActive_(item) && allowedLocalTypes.has(_directoryKey_(item.id))),
       locales: catalogLocals,
       tiposEstructura: context.tiposEstructura.filter(item => _directoryIsActive_(item) && allowedStructureTypes.has(_directoryKey_(item.id))),
+      tiposDocumento: (context.documentTypes || []).filter(_directoryIsActive_).map(item => ({
+        id: _directoryKey_(item.id),
+        name: _directoryText_(item.name)
+      })),
       estructuraOrg: scopedStructures,
       estructuraLocal: scopedRelations,
       cargos: context.cargos.filter(_directoryIsActive_)
