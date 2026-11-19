@@ -2374,7 +2374,8 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           checkbox.id = 'access-permission-' + moduleId + '-' + index;
           checkbox.addEventListener('change', syncGroupToggle);
           const text = document.createElement('span');
-          text.textContent = permission.descripcion + ' (' + permission.codigo + ')';
+          const operationLabel = permission.operacion_nombre || permission.operacion_id || permission.codigo;
+          text.textContent = permission.descripcion + ' — ' + operationLabel + ' (' + permission.codigo + ')';
           label.append(checkbox, text);
           group.appendChild(label);
         });
