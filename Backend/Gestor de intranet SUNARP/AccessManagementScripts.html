@@ -533,27 +533,13 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     const modulePicker = createSelect(
       [],
       '',
-      'Selecciona un módulo'
-    );
-
-    const addModuleButton = createButton(
-      'Configurar módulo',
-      'primary',
-      () => {
-        if (!modulePicker.value) {
-          SUNARPUI.notify('warning', 'Selecciona el módulo que deseas agregar.');
-          return;
-        }
-        openModuleEditor(modulePicker.value, null);
-      },
-      'add'
+      'Selecciona el módulo que deseas agregar'
     );
 
     const pickerGrid = createFormGrid();
     pickerGrid.classList.add('access-user-module-picker');
     pickerGrid.append(
-      createField('Módulo', modulePicker),
-      addModuleButton
+      createField('Agregar módulo', modulePicker)
     );
     host.appendChild(pickerGrid);
 
@@ -620,7 +606,6 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
       modulePicker.replaceChildren(...Array.from(next.childNodes));
       modulePicker.disabled = Boolean(disabled) || !options.length;
-      addModuleButton.disabled = Boolean(disabled) || !options.length;
     }
 
     function renderTable() {
@@ -756,7 +741,6 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       }
 
       modulePicker.disabled = true;
-      addModuleButton.disabled = true;
 
       const editing = Boolean(existingAssignment);
       const original = existingAssignment || {
@@ -1076,9 +1060,14 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       editorHost.appendChild(panel);
     }
 
+    modulePicker.addEventListener('change', () => {
+      if (modulePicker.value) {
+        openModuleEditor(modulePicker.value, null);
+      }
+    });
+
     if (disabled) {
       modulePicker.disabled = true;
-      addModuleButton.disabled = true;
 
       const note = document.createElement('p');
       note.className = 'access-muted';
