@@ -902,6 +902,14 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         incluir_descendientes: item.incluir_descendientes || 'NO'
       }));
 
+      // El botón de confirmación está fuera del bloque canManageScopes.
+      // Se expone un recolector de ámbitos en el ámbito léxico del editor para
+      // que el manejador del botón no acceda a controles locales inaccesibles.
+      let collectScopes = () => ({
+        valid: true,
+        scopes: (original.ambitos || []).map(item => Object.assign({}, item))
+      });
+
       if (canManageScopes) {
         const scopesPanel = document.createElement('div');
         scopesPanel.className = 'access-user-scope-editor';
@@ -1216,6 +1224,76 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           });
         }
 
+        // Captura y valida el ámbito en el mismo momento en que se confirma
+        // Agregar acceso / Actualizar acceso.
+        collectScopes = function () {
+          const nextScopes = scopeDraft.map(item => Object.assign({}, item));
+          const type = scopeType.value;
+
+          // No seleccionar un tipo es válido: el acceso puede no tener ámbito.
+          if (!type) {
+            return { valid: true, scopes: nextScopes };
+          }
+
+          const referenceId = type === 'TOTAL' ? '' : selectedReferenceId;
+
+          if (type !== 'TOTAL' && !referenceId) {
+            const requiredControl = Array.from(
+              scopeContextHost.querySelectorAll('select[required]')
+            ).find(control => !control.value);
+
+            if (requiredControl) {
+              requiredControl.reportValidity();
+            } else {
+              SUNARPUI.notify(
+                'warning',
+                'Selecciona la referencia correspondiente para el ámbito.'
+              );
+            }
+            return { valid: false, scopes: nextScopes };
+          }
+
+          if (type === 'TOTAL' && nextScopes.length) {
+            SUNARPUI.notify(
+              'warning',
+              'TOTAL es exclusivo dentro del mismo módulo. Quita los ámbitos existentes antes de seleccionar Total.'
+            );
+            return { valid: false, scopes: nextScopes };
+          }
+
+          if (type !== 'TOTAL' && nextScopes.some(item =>
+            item.tipo_ambito === 'TOTAL'
+          )) {
+            SUNARPUI.notify(
+              'warning',
+              'Quita el ámbito Total antes de agregar un ámbito específico.'
+            );
+            return { valid: false, scopes: nextScopes };
+          }
+
+          if (nextScopes.some(item =>
+            item.tipo_ambito === type &&
+            String(item.referencia_id || '') === String(referenceId || '')
+          )) {
+            SUNARPUI.notify(
+              'warning',
+              'Ese ámbito ya está asignado a este módulo.'
+            );
+            return { valid: false, scopes: nextScopes };
+          }
+
+          nextScopes.push({
+            tipo_ambito: type,
+            referencia_id: referenceId,
+            incluir_descendientes:
+              type === 'ESTRUCTURA_ORG' && descendants.checked
+                ? 'SI'
+                : 'NO'
+          });
+
+          return { valid: true, scopes: nextScopes };
+        };
+
         roleSelect.addEventListener('change', () => {
           const enabled = Boolean(roleSelect.value);
           scopeType.disabled = !enabled;
@@ -1284,51 +1362,8 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             return;
           }
 
-          let nextScopes = (canManageScopes ? scopeDraft : (original.ambitos || []))
-            .map(item => Object.assign({}, item));
-
-          if (canManageScopes && scopeType.value) {
-            const type = scopeType.value;
-            const referenceId = type === 'TOTAL' ? '' : selectedReferenceId;
-
-            if (type !== 'TOTAL' && !referenceId) {
-              const requiredControl = Array.from(
-                scopeContextHost.querySelectorAll('select[required]')
-              ).find(control => !control.value);
-              if (requiredControl) requiredControl.reportValidity();
-              else SUNARPUI.notify('warning', 'Selecciona un local y la unidad orgánica correspondiente para el ámbito.');
-              return;
-            }
-
-            if (type === 'TOTAL' && nextScopes.length) {
-              SUNARPUI.notify('warning', 'TOTAL es exclusivo dentro del mismo módulo. Quita los ámbitos existentes antes de seleccionar Total.');
-              return;
-            }
-
-            if (type !== 'TOTAL' && nextScopes.some(item =>
-              item.tipo_ambito === 'TOTAL'
-            )) {
-              SUNARPUI.notify('warning', 'Quita el ámbito Total antes de agregar un ámbito específico.');
-              return;
-            }
-
-            if (nextScopes.some(item =>
-              item.tipo_ambito === type &&
-              String(item.referencia_id || '') === String(referenceId || '')
-            )) {
-              SUNARPUI.notify('warning', 'Ese ámbito ya está asignado a este módulo.');
-              return;
-            }
-
-            nextScopes.push({
-              tipo_ambito: type,
-              referencia_id: referenceId,
-              incluir_descendientes:
-                type === 'ESTRUCTURA_ORG' && descendants.checked
-                  ? 'SI'
-                  : 'NO'
-            });
-          }
+          const scopeResult = collectScopes();
+          if (!scopeResult.valid) return;
 
           draft.set(moduleId, {
             modulo_id: moduleId,
@@ -1336,7 +1371,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             has_scopes: existingAssignment
               ? existingAssignment.has_scopes === true
               : false,
-            ambitos: nextScopes
+            ambitos: scopeResult.scopes
           });
 
           editorHost.replaceChildren();
