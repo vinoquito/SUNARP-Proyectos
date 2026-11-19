@@ -1,5 +1,72 @@
 <style>
   /* Estilos propios de Administración de accesos. */
+  /* Actualización contextual y estado de carga de Administración de accesos. */
+  .sunarp-loader.is-translucent {
+    background: rgba(255, 255, 255, 0.46);
+    backdrop-filter: blur(1.5px);
+  }
+
+  .access-section-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .access-users-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(180px, 1fr)) auto;
+    align-items: end;
+    gap: 12px;
+    margin: 12px 0 16px;
+    padding: 12px;
+    border: 1px solid var(--ui-border);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.55);
+  }
+
+  .access-users-filters > .sunarp-btn {
+    min-height: 38px;
+    margin-bottom: 1px;
+  }
+
+  .access-permission-group-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--ui-border);
+    background: var(--ui-background);
+  }
+
+  .access-permission-group-heading h4 {
+    margin: 0;
+  }
+
+  .access-check-row--group {
+    margin: 0;
+    font-weight: 600;
+  }
+
+  .access-check-row--group input {
+    width: 16px;
+    height: 16px;
+  }
+
+  @media (max-width: 720px) {
+    .access-users-filters {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .access-section-heading {
+      align-items: flex-start;
+    }
+  }
+
+
   .access-form {
     position: relative;
   }
@@ -187,17 +254,7 @@
         </p>
       </div>
 
-      <button
-        type="button"
-        class="sunarp-btn sunarp-btn--outline"
-        id="accessRefreshButton">
 
-        <span
-          class="material-symbols-outlined"
-          aria-hidden="true">refresh</span>
-
-        <span>Actualizar</span>
-      </button>
     </div>
 
     <div
