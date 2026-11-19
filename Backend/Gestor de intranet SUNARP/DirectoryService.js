@@ -1543,7 +1543,8 @@ function saveDirectoryAssignment(payload) {
       nombres: (peopleMap.get(record.persona_id) || {}).nombres,
       apellidos: (peopleMap.get(record.persona_id) || {}).apellidos,
       estructura_id: targetLocation.estructura_id,
-      sede_id: targetLocation.sede_id
+      sede_id: targetLocation.sede_id,
+      local_id: record.local_id
     },
     'La unidad orgánica de destino se encuentra fuera de tus ámbitos de acceso.'
   );
