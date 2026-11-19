@@ -819,7 +819,7 @@ function getDirectoryInitialData() {
 function listDirectoryPeople(options) {
   options = options || {};
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_();
+  const context = _directoryLoadContext_({ includePersonalData: false, includeDocumentTypes: false });
   const view = _directoryBuildView_(context, authorization);
 
   const activeFilter = options.active === undefined ? true : options.active;
