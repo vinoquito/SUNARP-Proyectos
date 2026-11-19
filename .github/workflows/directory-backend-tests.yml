@@ -1,4 +1,4 @@
-name: Directory backend checks
+name: Backend regression checks
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   pull_request:
 
 jobs:
-  directory-tests:
+  backend-tests:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -18,5 +18,5 @@ jobs:
         with:
           node-version: 22
 
-      - name: Run directory regression tests
-        run: node --test tests/directory-service.test.cjs
+      - name: Run backend regression tests
+        run: node --test tests/*.test.cjs
