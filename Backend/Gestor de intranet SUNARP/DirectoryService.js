@@ -164,7 +164,8 @@ function _directoryAuthorizationContext_(permissionCode) {
   return {
     auth: auth,
     moduleId: moduleId,
-    structures: catalog.estructuraOrg || []
+    structures: catalog.estructuraOrg || [],
+    locals: catalog.locales || []
   };
 }
 
@@ -174,7 +175,8 @@ function _directoryAssertScope_(authorization, record, actionLabel) {
     authorization.auth,
     'MOD_INFO_PERSONAL',
     record,
-    authorization.structures
+    authorization.structures,
+    authorization.locals
   );
 
   if (allowed) return true;
@@ -615,7 +617,7 @@ function _directoryBuildView_(context, authorization) {
   const assignments = context.asignaciones.map(x => _directoryEnrichAssignment_(x, context, relationMap, peopleMap)).filter(record => {
     const location = _directoryResolveAssignmentLocation_(record, context, false);
     return _accessRecordIsAllowed_(authorization.auth, 'MOD_INFO_PERSONAL',
-      { estructura_id: location.estructura_id, sede_id: location.sede_id, local_id: record.local_id }, authorization.structures);
+      { estructura_id: location.estructura_id, sede_id: location.sede_id, local_id: record.local_id }, authorization.structures, authorization.locals);
   });
   const visiblePersonIds = new Set(assignments.map(x => _directoryKey_(x.persona_id)));
   const hasTotalScope = _accessRecordIsAllowed_(authorization.auth, 'MOD_INFO_PERSONAL', {}, authorization.structures);
@@ -751,7 +753,7 @@ function getDirectoryInitialData() {
   const scopedLocals = context.locales.filter(local =>
     _directoryIsActive_(local) &&
     _accessRecordIsAllowed_(authorization.auth, 'MOD_INFO_PERSONAL',
-      { sede_id: _directoryKey_(local.sede_id), local_id: _directoryKey_(local.id) }, authorization.structures)
+      { sede_id: _directoryKey_(local.sede_id), local_id: _directoryKey_(local.id) }, authorization.structures, authorization.locals)
   );
   const relationLocalIds = new Set(scopedRelations.map(item => _directoryKey_(item.local_id)));
   const catalogLocals = context.locales.filter(local =>
