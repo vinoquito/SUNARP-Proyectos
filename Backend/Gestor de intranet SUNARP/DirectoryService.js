@@ -702,7 +702,7 @@ function getDirectoryInitialData() {
       });
     });
 
-  const scopedStructures = activeStructure.filter(node =>
+  const permittedStructures = activeStructure.filter(node =>
     _accessRecordIsAllowed_(
       authorization.auth,
       'MOD_INFO_PERSONAL',
@@ -711,8 +711,25 @@ function getDirectoryInitialData() {
     )
   );
 
+  // Se incluyen los antecesores únicamente para contextualizar la cascada.
+  // La autorización de registros continúa aplicándose sobre el ámbito real.
   const allowedStructureIds = new Set(
-    scopedStructures.map(item => _directoryKey_(item.id))
+    permittedStructures.map(item => _directoryKey_(item.id))
+  );
+  const hierarchyDisplayIds = new Set(allowedStructureIds);
+  permittedStructures.forEach(node => {
+    let current = structureMap.get(_directoryKey_(node.parent_id));
+    const visited = new Set();
+    while (current) {
+      const id = _directoryKey_(current.id);
+      if (!id || visited.has(id)) break;
+      hierarchyDisplayIds.add(id);
+      visited.add(id);
+      current = structureMap.get(_directoryKey_(current.parent_id));
+    }
+  });
+  const scopedStructures = activeStructure.filter(node =>
+    hierarchyDisplayIds.has(_directoryKey_(node.id))
   );
   const scopedRelations = view.relations.filter(item =>
     item.active && allowedStructureIds.has(_directoryKey_(item.estructura_id))
@@ -779,7 +796,12 @@ function getDirectoryInitialData() {
       cargos: context.cargos.filter(item =>
         _directoryIsActive_(item) &&
         assignments.some(record => _directoryKey_(record.cargo_id) === _directoryKey_(item.id))
-      )
+      ),
+      filterVisibility: {
+        sede: allowedSedeIds.size > 1,
+        cargo: new Set(assignments.map(item => _directoryKey_(item.cargo_id))).size > 1,
+        hierarchy: scopedStructures.length > 1
+      }
     },
     // La tabla consulta sus filas bajo demanda mediante listDirectoryAssignments.
     // No se entrega la colección completa al navegador durante el bootstrap.
