@@ -16,9 +16,7 @@ const ACCESS_MANAGEMENT_CONFIG = Object.freeze({
     rolePermissions: 'RolPermiso',
     scopes: 'AmbitosAcceso',
     audit: 'Auditoria',
-    people: 'personas',
-    personalData: 'servidores datos personales',
-    documentTypes: 'tipo_documento_identidad'
+    people: 'personas'
   }),
   moduleCodes: Object.freeze({
     accesses: 'ACCESOS',
@@ -183,7 +181,7 @@ function _accessValidateHeaders_() {
   const sheets = ACCESS_MANAGEMENT_CONFIG.sheets;
   Object.keys(ACCESS_MANAGEMENT_FIELDS).forEach(key => {
     if (key === 'audit') return;
-    const source = key === 'people' || key === 'personalData' || key === 'documentTypes'
+    const source = key === 'people'
       ? _accessDirectorySource_(sheets[key])
       : _accessSecuritySource_(sheets[key]);
     const info = SUNARPCore.getSourceInfoCached(source, 300);
