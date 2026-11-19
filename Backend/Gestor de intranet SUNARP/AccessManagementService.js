@@ -29,13 +29,6 @@ const ACCESS_MANAGEMENT_CONFIG = Object.freeze({
     'PERMISOS_ADMINISTRAR',
     'AMBITOS_ACCESO_ADMINISTRAR'
   ]),
-  privilegedRolePermissionCodes: Object.freeze([
-    'USUARIOS_ADMINISTRAR',
-    'ROLES_ADMINISTRAR',
-    'PERMISOS_ADMINISTRAR',
-    'AMBITOS_ACCESO_ADMINISTRAR',
-    'AUDITORIA_VER'
-  ])
 });
 
 const ACCESS_MANAGEMENT_FIELDS = Object.freeze({
@@ -604,28 +597,6 @@ function _accessRecordIsAllowed_(auth, moduleId, record, structures) {
 }
 
 
-function _accessRoleHasPrivilegedPermissions_(data, roleId) {
-  const accessModule = data.modulos.find(module =>
-    _accessUpper_(module.codigo) === ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses &&
-    _accessIsActive_(module.active)
-  );
-  if (!accessModule) return false;
-  const permissionCodesById = new Map(data.permisos
-    .filter(permission =>
-      _accessIsActive_(permission.active) &&
-      _accessText_(permission.modulo_id) === _accessText_(accessModule.modulo_id)
-    )
-    .map(permission => [_accessText_(permission.permiso_id), _accessUpper_(permission.codigo)]));
-  return data.rolPermiso.some(assignment =>
-    _accessIsActive_(assignment.active) &&
-    _accessText_(assignment.rol_id) === _accessText_(roleId) &&
-    ACCESS_MANAGEMENT_CONFIG.privilegedRolePermissionCodes.includes(
-      permissionCodesById.get(_accessText_(assignment.permiso_id))
-    )
-  );
-}
-
-
 function _accessCountAdministrators_(data) {
   const accessModule = data.modulos.find(module =>
     _accessUpper_(module.codigo) === ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses &&
@@ -876,13 +847,6 @@ function saveAccessUserRole(payload) {
   if (active) {
     const role = data.roles.find(row => _accessText_(row.rol_id) === roleId && _accessIsActive_(row.active));
     if (!role) throw new Error('El rol seleccionado no existe o está inactivo.');
-    if (_accessRoleHasPrivilegedPermissions_(data, roleId)) {
-      const accessModule = data.modulos.find(row => _accessUpper_(row.codigo) === ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses);
-      if (_accessText_(module.modulo_id) !== _accessText_(accessModule && accessModule.modulo_id) ||
-          roleId !== ACCESS_MANAGEMENT_CONFIG.adminRoleId) {
-        throw new Error('Los permisos administrativos solo pueden asignarse mediante ROL_ADMIN dentro del módulo ACCESOS.');
-      }
-    }
   }
 
   const after = _accessCopyData_(data);
