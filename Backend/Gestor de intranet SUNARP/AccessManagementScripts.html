@@ -1106,7 +1106,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
    * El backend valida y sincroniza roles y ámbitos en bloque.
    */
   async function saveUserModuleAccess(personaId, editor) {
-    if (!editor) return;
+    if (!editor || !state.data.capabilities.userRoles) return;
 
     return rpc('saveAccessUserConfiguration', {
       persona_id: personaId,
