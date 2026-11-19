@@ -249,6 +249,14 @@ function runAuthorizationSelfTests_() {
         referencia_id: '',
         incluir_descendientes: false,
         active: false
+      },
+      {
+        persona_id: 'PER_OTRA',
+        modulo_id: 'MOD_INFO_PERSONAL',
+        tipo_ambito: 'TOTAL',
+        referencia_id: '',
+        incluir_descendientes: false,
+        active: true
       }
     ]
   };
@@ -316,6 +324,20 @@ function runAuthorizationSelfTests_() {
       'MOD_INFO_PERSONAL'
     ),
     'Ignora un permiso inactivo aunque su relación rol-permiso esté activa.'
+  );
+
+  assert(
+    authorizationHasPermission(
+      context,
+      'MODULO_LOCAL_VER',
+      'MOD_LOCAL'
+    ) &&
+    !authorizationHasPermission(
+      context,
+      'MODULO_LOCAL_VER',
+      'MOD_INFO_PERSONAL'
+    ),
+    'Aplica los permisos de un mismo rol por separado en cada módulo asignado.'
   );
 
   assert(
@@ -389,6 +411,16 @@ function runAuthorizationSelfTests_() {
       structures
     ),
     'Rechaza estructuras fuera del ámbito orgánico asignado.'
+  );
+
+  assert(
+    !authorizationIsRecordInScope(
+      context,
+      'MOD_INFO_PERSONAL',
+      { sede_id: 'ZR_I' },
+      structures
+    ),
+    'No hereda los ámbitos de otra persona.'
   );
 
   assert(
@@ -566,6 +598,34 @@ function runAuthorizationSelfTests_() {
     'No interpreta estado ACTIVO como sustituto de active TRUE.'
   );
 
+  const stringTrueContext = resolveAuthorizationContext({
+    personaId: 'PER_STRING_TRUE',
+    users: [{ persona_id: 'PER_STRING_TRUE', active: 'TRUE' }],
+    modules: [],
+    roles: [],
+    userRoles: [],
+    permissions: [],
+    rolePermissions: [],
+    scopes: []
+  });
+
+  const numericActiveContext = resolveAuthorizationContext({
+    personaId: 'PER_NUMERIC',
+    users: [{ persona_id: 'PER_NUMERIC', active: 1 }],
+    modules: [],
+    roles: [],
+    userRoles: [],
+    permissions: [],
+    rolePermissions: [],
+    scopes: []
+  });
+
+  assert(
+    stringTrueContext.authenticated &&
+    !numericActiveContext.authenticated,
+    'Interpreta TRUE/FALSE como booleano y rechaza valores numéricos.'
+  );
+
   const inactiveRoleContext = resolveAuthorizationContext({
     personaId: 'PER_117',
     users: [{ persona_id: 'PER_117', active: true }],
@@ -673,6 +733,108 @@ function runAuthorizationSelfTests_() {
     },
     'duplicado en Modulos.modulo_id',
     'Detecta identificadores de módulo duplicados activos.'
+  );
+
+  assertThrows(
+    function () {
+      resolveAuthorizationContext({
+        personaId: 'PER_117',
+        users: [{ persona_id: 'PER_117', active: true }],
+        modules,
+        roles,
+        userRoles: [{
+          persona_id: 'PER_117',
+          modulo_id: 'MOD_INFO_PERSONAL',
+          rol_id: 'ROL_EDITOR',
+          active: true
+        }],
+        permissions: [
+          {
+            permiso_id: 'PERM_A',
+            codigo: 'DUPLICADO',
+            modulo_id: 'MOD_INFO_PERSONAL',
+            active: true
+          },
+          {
+            permiso_id: 'PERM_B',
+            codigo: 'DUPLICADO',
+            modulo_id: 'MOD_ACCESOS',
+            active: true
+          }
+        ],
+        rolePermissions: [],
+        scopes: []
+      });
+    },
+    'código activo duplicado',
+    'Detecta códigos de permiso duplicados activos.'
+  );
+
+  assertThrows(
+    function () {
+      resolveAuthorizationContext({
+        personaId: 'PER_117',
+        users: [{ persona_id: 'PER_117', active: true }],
+        modules,
+        roles,
+        userRoles: [],
+        permissions,
+        rolePermissions: [
+          {
+            rol_id: 'ROL_EDITOR',
+            permiso_id: 'PERM_001',
+            active: true
+          },
+          {
+            rol_id: 'ROL_EDITOR',
+            permiso_id: 'PERM_001',
+            active: true
+          }
+        ],
+        scopes: []
+      });
+    },
+    'relación activa duplicada en RolPermiso',
+    'Detecta relaciones RolPermiso activas duplicadas.'
+  );
+
+  const noDescendantContext = resolveAuthorizationContext({
+    personaId: 'PER_NO_DESC',
+    users: [{ persona_id: 'PER_NO_DESC', active: true }],
+    modules: [modules[0]],
+    roles: [roles[0]],
+    userRoles: [{
+      persona_id: 'PER_NO_DESC',
+      modulo_id: 'MOD_INFO_PERSONAL',
+      rol_id: 'ROL_EDITOR',
+      active: true
+    }],
+    permissions: [],
+    rolePermissions: [],
+    scopes: [{
+      persona_id: 'PER_NO_DESC',
+      modulo_id: 'MOD_INFO_PERSONAL',
+      tipo_ambito: 'ESTRUCTURA_ORG',
+      referencia_id: 'SC_OFICINA_ADMINISTRACION',
+      incluir_descendientes: false,
+      active: true
+    }]
+  });
+
+  assert(
+    authorizationIsRecordInScope(
+      noDescendantContext,
+      'MOD_INFO_PERSONAL',
+      { estructura_id: 'SC_OFICINA_ADMINISTRACION' },
+      structures
+    ) &&
+    !authorizationIsRecordInScope(
+      noDescendantContext,
+      'MOD_INFO_PERSONAL',
+      { estructura_id: 'SC_UNIDAD_TESORERIA' },
+      structures
+    ),
+    'Respeta incluir_descendientes FALSE y permite solo la estructura exacta.'
   );
 
   const customFieldContext = resolveAuthorizationContext({
