@@ -344,9 +344,7 @@
 
 
   function activeRoles() {
-    return (state.data.roles || []).filter(
-      role => role.estado === 'ACTIVO'
-    );
+    return (state.data.roles || []).filter(role => role.active === true);
   }
 
 
@@ -375,106 +373,51 @@
  * Cambia el estado y actualiza la tabla.
  */
 async function changeAccessStatus(method, id, row, entityLabel) {
-  const isActive = _accessUiIsActive(row.estado);
-
-  const nextStatus = isActive
-    ? 'INACTIVO'
-    : 'ACTIVO';
-
-  const action = isActive
-    ? 'desactivar'
-    : 'activar';
-
-  const confirmed = window.confirm(
-    `¿Deseas ${action} ${entityLabel}?\n\n${id}`
-  );
-
+  const isActive = _accessUiIsActive(row.active);
+  const nextActive = !isActive;
+  const action = isActive ? 'desactivar' : 'activar';
+  const confirmed = window.confirm('¿Deseas ' + action + ' ' + entityLabel + '?\n\n' + id);
   if (!confirmed) return;
-
-  const result = await rpc(
-    method,
-    id,
-    nextStatus
-  );
-
+  const result = await rpc(method, id, nextActive);
   await refreshData(false);
-
-  SUNARPUI.notify(
-    'success',
-    result.message || 'Estado actualizado correctamente.'
-  );
+  SUNARPUI.notify('success', result.message || 'Estado actualizado correctamente.');
 }
 
 
-/**
- * Comprueba el estado sin depender de la presentación.
- */
 function _accessUiIsActive(value) {
-  return String(value || '').trim().toUpperCase() === 'ACTIVO';
+  return value === true || String(value || '').trim().toUpperCase() === 'TRUE';
 }
 
 
-/**
- * Construye la celda Estado:
- * badge con icono + texto y enlace debajo.
- */
 function createAccessStatusCell(row, method, id, entityLabel) {
-  const active = _accessUiIsActive(row.estado);
-
+  const active = _accessUiIsActive(row.active);
   const wrapper = document.createElement('div');
-
   wrapper.className = 'access-status-cell';
-
-  // Badge: icono y estado dentro del mismo elemento.
-  const badge = SUNARPUI.createBadge({
+  wrapper.appendChild(SUNARPUI.createBadge({
     label: active ? 'Activo' : 'Inactivo',
     variant: active ? 'success' : 'danger',
     icon: active ? 'check_circle' : 'cancel'
-  });
-
-  wrapper.appendChild(badge);
-
-  // Enlace de activación/desactivación debajo del badge.
+  }));
   const link = document.createElement('button');
-
   link.type = 'button';
-
   link.className = active
     ? 'access-status-link access-status-link--deactivate'
     : 'access-status-link access-status-link--activate';
-
-  link.textContent = active
-    ? 'Desactivar'
-    : 'Activar';
-
+  link.textContent = active ? 'Desactivar' : 'Activar';
   link.addEventListener('click', async () => {
     link.disabled = true;
-
     try {
-      await changeAccessStatus(
-        method,
-        id,
-        row,
-        entityLabel
-      );
-
+      await changeAccessStatus(method, id, row, entityLabel);
     } catch (error) {
-      SUNARPUI.notify(
-        'error',
-        error.message || 'No se pudo cambiar el estado.'
-      );
-
+      SUNARPUI.notify('error', error.message || 'No se pudo cambiar el estado.');
     } finally {
-      if (link.isConnected) {
-        link.disabled = false;
-      }
+      if (link.isConnected) link.disabled = false;
     }
   });
-
   wrapper.appendChild(link);
-
   return wrapper;
 }
+
 
   function renderUsers(host) {
     const canManage = state.data.capabilities.users;
