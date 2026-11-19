@@ -1786,9 +1786,14 @@ function saveAccessUserConfiguration(payload) {
     // Solo se vuelven a validar las referencias cuando los ámbitos realmente cambian.
     // Una edición de roles no debe quedar bloqueada por referencias antiguas sin cambios.
     if (scopesChanged) {
+      const scopesToValidate = normalizedScopes.filter(scope => {
+        const module = modulesById.get(scope.modulo_id);
+        return module && _accessIsActive_(module.active);
+      });
+
       const scopeTypesByModule = new Map();
 
-      normalizedScopes.forEach(scope => {
+      scopesToValidate.forEach(scope => {
         if (!scopeTypesByModule.has(scope.modulo_id)) {
           scopeTypesByModule.set(scope.modulo_id, new Set());
         }
@@ -1807,7 +1812,7 @@ function saveAccessUserConfiguration(payload) {
 
       const seenScopes = new Set();
 
-      normalizedScopes.forEach(scope => {
+      scopesToValidate.forEach(scope => {
         const key = [
           scope.modulo_id,
           scope.tipo_ambito,
