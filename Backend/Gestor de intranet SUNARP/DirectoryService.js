@@ -1650,16 +1650,9 @@ function saveDirectoryAssignment(payload) {
   }
 
   const allowedFields = [
-    'asignacion_id',
-    'persona_id',
-    'cargo_id',
-    'condicion_cargo',
-    'anexo',
-    'estructura_local_id',
-    'local_id',
-    'observaciones',
-    'active',
-    'order'
+    'asignacion_id', 'persona_id', 'cargo_id', 'condicion_cargo',
+    'anexo', 'estructura_local_id', 'local_id', 'observaciones',
+    'active', 'order'
   ];
   _directoryAssertAllowedFields_(payload, allowedFields, 'asignaciones');
 
@@ -1668,25 +1661,30 @@ function saveDirectoryAssignment(payload) {
   const authorization = _directoryAuthorizationContext_(
     isUpdate ? 'INFORMACION_PERSONAL_EDITAR' : 'INFORMACION_PERSONAL_CREAR'
   );
-  const context = _directoryLoadContext_();
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeDocumentTypes: false
+  });
 
   const existing = isUpdate
     ? context.asignaciones.find(item => _directoryKey_(item.asignacion_id) === assignmentId)
     : null;
-
   if (isUpdate && !existing) {
     throw new Error('No se encontró la asignación "' + assignmentId + '".');
   }
 
   const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
-  const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
-
   if (isUpdate) {
     const oldLocation = _directoryResolveAssignmentLocation_(existing, context, false);
-    _directoryAssertScope_(authorization, Object.assign(
-      _directoryEnrichAssignment_(existing, context, relationMap, peopleMap),
-      { estructura_id: oldLocation.estructura_id, sede_id: oldLocation.sede_id }
-    ), 'Edición de una asignación fuera del ámbito asignado.');
+    _directoryAssertScope_(
+      authorization,
+      Object.assign({}, existing, {
+        estructura_id: oldLocation.estructura_id,
+        sede_id: oldLocation.sede_id
+      }),
+      'Edición de una asignación fuera del ámbito asignado.'
+    );
   }
 
   const targetRelationId = _directoryText_(payload.estructura_local_id !== undefined
@@ -1732,26 +1730,23 @@ function saveDirectoryAssignment(payload) {
     _directoryKey_(existing.estructura_local_id) !== _directoryKey_(record.estructura_local_id) ||
     _directoryKey_(existing.local_id) !== _directoryKey_(record.local_id)
   );
-
   if (payload.order !== undefined) {
     record.order = _directoryNormalizeInteger_(payload.order, 'Orden', false);
   } else if (isUpdate && !locationChanged) {
     record.order = _directoryNormalizeInteger_(existing.order, 'Orden', false);
   } else {
-    record.order = _directoryGetNextOrder_(context.asignaciones, record.estructura_local_id, record.local_id);
+    record.order = _directoryGetNextOrder_(
+      context.asignaciones,
+      record.estructura_local_id,
+      record.local_id
+    );
   }
-
-  const schema = _directoryGetAssignmentSchema_();
-  SUNARPCore.assertValidRecord(record, schema);
-  _directoryValidateAssignmentReferences_(record, context);
 
   _directoryAssertScope_(
     authorization,
     {
       asignacion_id: record.asignacion_id,
       persona_id: record.persona_id,
-      nombres: (peopleMap.get(record.persona_id) || {}).nombres,
-      apellidos: (peopleMap.get(record.persona_id) || {}).apellidos,
       estructura_id: targetLocation.estructura_id,
       sede_id: targetLocation.sede_id,
       local_id: record.local_id
@@ -1759,14 +1754,23 @@ function saveDirectoryAssignment(payload) {
     'La unidad orgánica de destino se encuentra fuera de tus ámbitos de acceso.'
   );
 
+  // La identidad solo se recupera después de autorizar el destino.
+  const person = _directoryFindPersonById_(record.persona_id);
+  if (!person) throw new Error('La persona seleccionada no existe.');
+  context.personas = [person];
+  const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
+
+  const schema = _directoryGetAssignmentSchema_();
+  SUNARPCore.assertValidRecord(record, schema);
+  _directoryValidateAssignmentReferences_(record, context);
+
   const source = _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones);
-  const person = peopleMap.get(record.persona_id);
   const event = {
     accion: isUpdate ? 'EDITAR_ASIGNACION_DIRECTORIO' : 'CREAR_ASIGNACION_DIRECTORIO',
     modulo: 'INFORMACION_PERSONAL',
     tipo_entidad: 'ASIGNACION',
     registro_id: record.asignacion_id,
-    registro_nombre: [person && person.nombres, person && person.apellidos].filter(Boolean).join(' '),
+    registro_nombre: [person.nombres, person.apellidos].filter(Boolean).join(' '),
     detalle: isUpdate ? 'Actualización de una asignación.' : 'Alta de una asignación.',
     datos_antes: existing || null
   };
