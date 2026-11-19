@@ -124,6 +124,18 @@ function runCoreSelfTests_() {
     const cachedRepeated = listRecordsFromSourcesCached([{ key: 'registros', source, requiredHeaders: ['id', 'nombre'] }], 300);
     assert(cachedRepeated.registros.length === 2, 'Reutilización de la instantánea de fuente en una lectura posterior.');
 
+    const exactLookup = findRecordsByFields(
+      source,
+      { nombre: 'ana torres', active: true },
+      { searchField: 'nombre', matchCase: false, requiredHeaders: ['id'] }
+    );
+    assert(
+      exactLookup.total === 1 &&
+      exactLookup.records[0].id === 'TST_001',
+      'La búsqueda exacta recupera únicamente las filas coincidentes sin cargar la tabla completa.'
+    );
+
+
     // 4.2. Probar almacenamiento centralizado de valores que superan 95 KiB.
     let largeValue = '';
     let seed = 123456789;

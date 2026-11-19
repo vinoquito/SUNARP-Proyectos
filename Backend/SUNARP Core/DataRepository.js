@@ -458,6 +458,131 @@ function getRecordById(source, idField, id) {
 
 
 /**
+ * Busca registros mediante coincidencias exactas en una o más columnas.
+ *
+ * La columna indicada por options.searchField (o el primer filtro) se
+ * consulta mediante TextFinder de Sheets. Core no descarga toda la tabla:
+ * solo recupera las filas coincidentes y aplica los filtros restantes.
+ *
+ * options:
+ * {
+ *   searchField: 'correo_institucional',
+ *   matchCase: false,
+ *   requiredHeaders: ['persona_id', 'correo_institucional']
+ * }
+ */
+function findRecordsByFields(source, filters, options) {
+  options = options || {};
+
+  if (
+    !filters ||
+    typeof filters !== 'object' ||
+    Array.isArray(filters) ||
+    !Object.keys(filters).length
+  ) {
+    throw new Error('SUNARP Core: debes indicar al menos un filtro exacto.');
+  }
+
+  const context = _coreOpenSource_(source);
+  const config = context.config;
+  const sheet = context.sheet;
+  const lastRow = sheet.getLastRow();
+  const lastColumn = sheet.getLastColumn();
+
+  if (!lastColumn || lastRow < config.headerRow) {
+    throw new Error('SUNARP Core: la fuente no contiene encabezados.');
+  }
+
+  const headers = sheet.getRange(
+    config.headerRow, 1, 1, lastColumn
+  ).getDisplayValues()[0].map(value => String(value).trim());
+
+  const headerMap = {};
+  headers.forEach((header, index) => {
+    if (!header || Object.prototype.hasOwnProperty.call(headerMap, header)) {
+      throw new Error(
+        'SUNARP Core: existen encabezados vacíos o duplicados en "' +
+        config.sheetName + '".'
+      );
+    }
+    headerMap[header] = index;
+  });
+
+  const filterFields = Object.keys(filters);
+  const requiredHeaders = Array.isArray(options.requiredHeaders)
+    ? options.requiredHeaders
+    : [];
+  const missing = [...new Set(filterFields.concat(requiredHeaders))]
+    .filter(field => !Object.prototype.hasOwnProperty.call(headerMap, field));
+
+  if (missing.length) {
+    throw new Error(
+      'SUNARP Core: la fuente "' + config.sheetName +
+      '" no contiene las columnas requeridas: ' + missing.join(', ') + '.'
+    );
+  }
+
+  const searchField = String(options.searchField || filterFields[0]);
+  if (!Object.prototype.hasOwnProperty.call(filters, searchField)) {
+    throw new Error('SUNARP Core: searchField debe formar parte de los filtros.');
+  }
+
+  const expectedValues = Array.isArray(filters[searchField])
+    ? filters[searchField]
+    : [filters[searchField]];
+  const candidateRows = new Set();
+  const dataStartRow = config.headerRow + 1;
+  const dataRows = Math.max(0, lastRow - config.headerRow);
+
+  if (!dataRows) return { records: [], total: 0 };
+
+  expectedValues.forEach(expected => {
+    if (expected === null || expected === undefined || String(expected) === '') {
+      throw new Error(
+        'SUNARP Core: los filtros de búsqueda exacta no admiten valores vacíos.'
+      );
+    }
+
+    const range = sheet.getRange(
+      dataStartRow,
+      headerMap[searchField] + 1,
+      dataRows,
+      1
+    );
+    const finder = range.createTextFinder(String(expected))
+      .matchEntireCell(true)
+      .matchCase(options.matchCase !== false);
+
+    finder.findAll().forEach(cell => candidateRows.add(cell.getRow()));
+  });
+
+  const records = [];
+  [...candidateRows].sort((a, b) => a - b).forEach(rowNumber => {
+    const values = sheet.getRange(
+      rowNumber, 1, 1, lastColumn
+    ).getValues()[0];
+    const record = _coreRowToRecord_(headers, values);
+
+    const matches = filterFields.every(field => {
+      if (field === searchField) return true;
+      const expected = filters[field];
+      if (Array.isArray(expected)) {
+        return expected.some(value => _coreValuesEqual_(record[field], value));
+      }
+      return _coreValuesEqual_(record[field], expected);
+    });
+
+    if (matches && !_coreIsEmptyRow_(values)) records.push(record);
+  });
+
+  return {
+    records,
+    total: records.length
+  };
+}
+
+
+/**
  * Inserta un nuevo registro.
  *
  * options:
