@@ -1225,6 +1225,18 @@ const DirectoryPage = (() => {
           </div>
 
           ${assignmentOnly ? '' : `
+          <div class="sunarp-form-field sunarp-form-field--full">
+            <label for="directoryFormCorreoInstitucional">Correo institucional</label>
+            <input
+              type="email"
+              class="sunarp-input"
+              id="directoryFormCorreoInstitucional"
+              maxlength="150"
+              placeholder="usuario@sunarp.gob.pe"
+              value="${escapeHtml(record?.correo_institucional || '')}">
+            <small>Se utiliza para vincular la identidad con la cuenta institucional de acceso.</small>
+          </div>
+
           <div class="sunarp-form-field">
             <label for="directoryFormTipoDocumento">Tipo de documento *</label>
             <input type="text" class="sunarp-input" id="directoryFormTipoDocumento"
@@ -1583,6 +1595,7 @@ const DirectoryPage = (() => {
       asignacion_id: id,
       nombres,
       apellidos,
+      correo_institucional: document.getElementById('directoryFormCorreoInstitucional')?.value.trim().toLowerCase() || '',
       tipo_documento: document.getElementById('directoryFormTipoDocumento')?.value.trim() || '',
       numero_documento: document.getElementById('directoryFormNumeroDocumento')?.value.trim() || '',
       fecha_nacimiento: document.getElementById('directoryFormFechaNacimiento')?.value || '',
