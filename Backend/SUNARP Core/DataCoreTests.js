@@ -188,6 +188,17 @@ function runCoreSelfTests_() {
       largeCachedValue.payload === largeValue,
       'Reconstruye íntegramente un valor grande desde la caché.'
     );
+    const largeCacheFullKey = _coreBuildCacheKey_('core-test:large-value');
+    const largeCacheManifest = JSON.parse(
+      CacheService.getScriptCache().get(largeCacheFullKey)
+    );
+    if (largeCacheManifest.storage === 'gzip-chunks') {
+      CacheService.getScriptCache().remove(largeCacheManifest.chunkKeys[0]);
+      assert(
+        getCachedValue('core-test:large-value') === null,
+        'Una generación con un fragmento ausente se descarta íntegramente.'
+      );
+    }
     removeCachedValue('core-test:large-value');
     assert(
       getCachedValue('core-test:large-value') === null,

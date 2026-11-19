@@ -1117,7 +1117,14 @@ function listRecordsFromSourcesCached(requests, expirationSeconds) {
         const records = loaded[item.key] || [];
         result[item.key] = records;
         try {
-          putCachedValue(item.cacheKey, records, ttl);
+          const cacheResult = putCachedValue(item.cacheKey, records, ttl);
+          if (!cacheResult || cacheResult.success !== true) {
+            console.warn(
+              '[SUNARP Core] La fuente se leyó, pero no pudo conservarse en caché:',
+              item.key,
+              cacheResult && cacheResult.reason || 'storage-unavailable'
+            );
+          }
         } catch (error) {
           console.warn('[SUNARP Core] No se pudo almacenar la fuente en caché:', item.key, error.message);
         }
