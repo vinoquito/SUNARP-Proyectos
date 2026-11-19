@@ -172,7 +172,7 @@ function _directoryAuthorizationContext_(permissionCode) {
 function _directoryAssertScope_(authorization, record, actionLabel) {
   const allowed = _accessRecordIsAllowed_(
     authorization.auth,
-    'DIRECTORIOS',
+    'MOD_INFO_PERSONAL',
     record,
     authorization.structures
   );
@@ -614,11 +614,11 @@ function _directoryBuildView_(context, authorization) {
   const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
   const assignments = context.asignaciones.map(x => _directoryEnrichAssignment_(x, context, relationMap, peopleMap)).filter(record => {
     const location = _directoryResolveAssignmentLocation_(record, context, false);
-    return _accessRecordIsAllowed_(authorization.auth, 'DIRECTORIOS',
+    return _accessRecordIsAllowed_(authorization.auth, 'MOD_INFO_PERSONAL',
       { estructura_id: location.estructura_id, sede_id: location.sede_id }, authorization.structures);
   });
   const visiblePersonIds = new Set(assignments.map(x => _directoryKey_(x.persona_id)));
-  const hasTotalScope = _accessRecordIsAllowed_(authorization.auth, 'DIRECTORIOS', {}, authorization.structures);
+  const hasTotalScope = _accessRecordIsAllowed_(authorization.auth, 'MOD_INFO_PERSONAL', {}, authorization.structures);
   const people = context.personas.filter(x => hasTotalScope || visiblePersonIds.has(_directoryKey_(x.persona_id)));
   return { people, assignments, relations, relationMap };
 }
@@ -736,7 +736,7 @@ function getDirectoryInitialData() {
   const scopedStructures = activeStructure.filter(node =>
     _accessRecordIsAllowed_(
       authorization.auth,
-      'DIRECTORIOS',
+      'MOD_INFO_PERSONAL',
       { estructura_id: node.id, sede_id: node.sede_id },
       authorization.structures
     )
@@ -750,7 +750,7 @@ function getDirectoryInitialData() {
   // relación estructura_local ni se inventa una estructura orgánica.
   const scopedLocals = context.locales.filter(local =>
     _directoryIsActive_(local) &&
-    _accessRecordIsAllowed_(authorization.auth, 'DIRECTORIOS',
+    _accessRecordIsAllowed_(authorization.auth, 'MOD_INFO_PERSONAL',
       { sede_id: _directoryKey_(local.sede_id) }, authorization.structures)
   );
   const relationLocalIds = new Set(scopedRelations.map(item => _directoryKey_(item.local_id)));
@@ -1771,7 +1771,7 @@ function deleteDirectoryPerson(personaId) {
  * Invalida manualmente la caché del directorio.
  */
 function clearDirectoryCache() {
-  requirePermission_('INFORMACION_PERSONAL_VER');
+  requirePermission_('INFORMACION_PERSONAL_VER', 'MOD_INFO_PERSONAL');
   _directoryInvalidateCache_();
 
   return {
