@@ -10,6 +10,9 @@ const testsPath = path.join(root, 'Backend/SUNARP Core/CoreAuthorizationTests.js
 
 const coreSource = fs.readFileSync(corePath, 'utf8');
 const testsSource = fs.readFileSync(testsPath, 'utf8');
+const appManifestPath = path.join(root, 'Backend/Gestor de intranet SUNARP/appsscript.json');
+const appManifest = JSON.parse(fs.readFileSync(appManifestPath, 'utf8'));
+
 
 test('SUNARP Core y su suite de autorización tienen sintaxis válida', () => {
   assert.doesNotThrow(() => new vm.Script(coreSource));
@@ -63,4 +66,12 @@ test('CoreAuthorization consume tipo_ambito_id y mantiene compatibilidad con dat
   assert.equal(sandbox._coreAuthScopeType_({ tipo_ambito_id: 'SEDE' }), 'SEDE');
   assert.equal(sandbox._coreAuthScopeType_({ tipo_ambito_id: 'ESTRUCTURA_ORG' }), 'ESTRUCTURA_ORG');
   assert.equal(sandbox._coreAuthScopeType_({ tipo_ambito: 'TOTAL' }), 'TOTAL');
+});
+
+
+test('el Gestor consume SUNARP Core versión 8 para el contrato tipo_ambito_id', () => {
+  const coreLibrary = appManifest.dependencies.libraries.find(item => item.userSymbol === 'SUNARPCore');
+  assert.ok(coreLibrary, 'el manifiesto debe declarar SUNARPCore');
+  assert.equal(String(coreLibrary.version), '8');
+  assert.equal(coreLibrary.libraryId, '1mDzO7uTarQCKYpS5U7pMv5go0Wh76k3JoIh5GvxWPfU0zoUG7Jfp17tD');
 });
