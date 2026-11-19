@@ -1286,12 +1286,6 @@ function _directoryFindPersonalDataById_(personaId) {
 }
 
 
-function _directoryGetPersonalDataRecord_(personaId, records) {
-  return (records || []).find(item =>
-    _directoryKey_(item.servidor_id) === _directoryKey_(personaId)
-  ) || null;
-}
-
 function _directoryCreatePersonalDataMap_(records) {
   const byPerson = new Map();
   (records || []).forEach(record => {
