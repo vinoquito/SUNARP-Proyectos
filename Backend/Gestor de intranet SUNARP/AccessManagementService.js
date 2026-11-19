@@ -1826,6 +1826,11 @@ function saveAccessUserConfiguration(payload) {
       const siteIds = new Set();
 
       desiredScopes.forEach(scope => {
+        const ownerModule = modulesById.get(scope.modulo_id);
+
+        // Las asignaciones conservadas de módulos inactivos no participan
+        // en la validación de los nuevos ámbitos.
+        if (!ownerModule || !_accessIsActive_(ownerModule.active)) return;
         if (scope.tipo_ambito === 'TOTAL') return;
 
         const referenceId = _accessText_(scope.referencia_id);
