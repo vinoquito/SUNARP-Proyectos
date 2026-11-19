@@ -92,6 +92,7 @@
 
       first.value = '';
       first.textContent = placeholder;
+      first.selected = true;
 
       select.appendChild(first);
     }
@@ -118,6 +119,10 @@
 
       select.appendChild(option);
     });
+
+    if (selectedValue === null || selectedValue === undefined || String(selectedValue) === '') {
+      select.selectedIndex = 0;
+    }
 
     return select;
   }
@@ -564,19 +569,69 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         : match.nombre + ' (inactivo)';
     }
 
+    function sedeName(sedeId) {
+      const sede = (catalogs.sedes || []).find(item =>
+        String(item.id) === String(sedeId)
+      );
+      return sede ? sede.name : 'Sede no disponible';
+    }
+
+    function structurePathName(structureId) {
+      const byId = new Map((catalogs.estructuraOrg || []).map(item => [
+        String(item.id),
+        item
+      ]));
+      const parts = [];
+      const visited = new Set();
+      let current = byId.get(String(structureId));
+
+      while (current) {
+        const id = String(current.id);
+        if (!id || visited.has(id)) break;
+        visited.add(id);
+        parts.unshift(current.name);
+        current = current.parent_id
+          ? byId.get(String(current.parent_id)) || null
+          : null;
+      }
+
+      return parts.join(' / ');
+    }
+
+    function localStructurePaths(localId) {
+      return (catalogs.estructuraLocal || [])
+        .filter(item => String(item.local_id) === String(localId))
+        .map(item => structurePathName(item.estructura_id))
+        .filter(Boolean)
+        .filter((path, index, all) => all.indexOf(path) === index);
+    }
+
     function scopeReferenceName(scope) {
       if (scope.tipo_ambito === 'TOTAL') {
         return 'Todos los registros del módulo';
       }
 
-      const items = scope.tipo_ambito === 'SEDE'
-        ? (catalogs.sedes || [])
-        : scope.tipo_ambito === 'ESTRUCTURA_ORG'
-          ? (catalogs.estructuraOrg || [])
-          : (catalogs.locales || []);
+      if (scope.tipo_ambito === 'SEDE') {
+        return sedeName(scope.referencia_id);
+      }
 
-      const match = items.find(item => item.id === scope.referencia_id);
-      return match ? match.name : 'Referencia no disponible';
+      if (scope.tipo_ambito === 'ESTRUCTURA_ORG') {
+        const structure = (catalogs.estructuraOrg || []).find(item =>
+          String(item.id) === String(scope.referencia_id)
+        );
+        return structure
+          ? [sedeName(structure.sede_id), structurePathName(structure.id)].filter(Boolean).join(' / ')
+          : 'Unidad orgánica no disponible';
+      }
+
+      const local = (catalogs.locales || []).find(item =>
+        String(item.id) === String(scope.referencia_id)
+      );
+      if (!local) return 'Local no disponible';
+
+      const paths = localStructurePaths(local.id);
+      return [sedeName(local.sede_id), local.name].filter(Boolean).join(' / ') +
+        (paths.length ? ' · Vinculado a: ' + paths.join(' | ') : ' · Sin unidad orgánica vinculada');
     }
 
     function scopeLabel(scope) {
@@ -601,10 +656,12 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       const next = createSelect(
         options,
         '',
-        options.length ? 'Selecciona el módulo que deseas agregar' : 'No hay más módulos disponibles'
+        options.length ? 'Seleccionar el módulo que deseas agregar' : 'No hay más módulos disponibles'
       );
 
       modulePicker.replaceChildren(...Array.from(next.childNodes));
+      modulePicker.value = '';
+      modulePicker.selectedIndex = 0;
       modulePicker.disabled = Boolean(disabled) || !options.length;
     }
 
@@ -818,12 +875,6 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           { value: 'LOCAL', label: 'Local directamente asignado' }
         ], 'TOTAL');
 
-        const referenceSelect = createSelect(
-          [],
-          '',
-          'No requiere referencia'
-        );
-
         const descendants = createInput('checkbox', '', {});
         descendants.className = 'access-checkbox';
 
@@ -836,10 +887,11 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
         const scopeFields = createFormGrid();
         scopeFields.classList.add('access-user-scope-grid');
-        scopeFields.append(
-          createField('Tipo de ámbito', scopeType),
-          createField('Referencia', referenceSelect)
-        );
+        scopeFields.appendChild(createField('Tipo de ámbito', scopeType));
+
+        const scopeContextHost = document.createElement('div');
+        scopeContextHost.className = 'access-user-scope-context';
+        scopeFields.appendChild(scopeContextHost);
 
         const scopeActions = document.createElement('div');
         scopeActions.className = 'access-scope-actions';
@@ -856,33 +908,190 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         const scopeList = document.createElement('div');
         scopeList.className = 'access-user-scope-list';
 
+        let selectedReferenceId = '';
+
+        function structuresForSede(sedeId) {
+          return (catalogs.estructuraOrg || []).filter(item =>
+            String(item.sede_id) === String(sedeId)
+          );
+        }
+
+        function renderStructureLevels(sedeId, levelsHost, selectedChain) {
+          levelsHost.replaceChildren();
+
+          const structures = structuresForSede(sedeId);
+          const byId = new Map(structures.map(item => [String(item.id), item]));
+          let parentId = '';
+          let level = 1;
+
+          while (level <= 20) {
+            const options = structures
+              .filter(item => {
+                const itemParentId = String(item.parent_id || '');
+                if (parentId) return itemParentId === parentId;
+                if (!itemParentId) return true;
+                const parent = byId.get(itemParentId);
+                return !parent;
+              })
+              .sort((a, b) =>
+                (Number(a.order) || 0) - (Number(b.order) || 0) ||
+                String(a.name || '').localeCompare(String(b.name || ''), 'es')
+              );
+
+            if (!options.length) {
+              if (level === 1) {
+                const note = document.createElement('p');
+                note.className = 'access-muted';
+                note.textContent = 'La sede seleccionada no tiene unidades orgánicas disponibles.';
+                levelsHost.appendChild(note);
+              }
+              break;
+            }
+
+            const selectedId = selectedChain[level - 1] || '';
+            const levelSelect = createSelect(
+              options.map(item => ({ value: item.id, label: item.name })),
+              selectedId,
+              'Selecciona una unidad orgánica'
+            );
+            levelSelect.required = true;
+            levelSelect.disabled = !roleSelect.value;
+
+            levelsHost.appendChild(createField('Nivel ' + level, levelSelect));
+
+            levelSelect.addEventListener('change', () => {
+              selectedChain.splice(level - 1);
+              if (levelSelect.value) selectedChain.push(levelSelect.value);
+              selectedReferenceId = selectedChain.length
+                ? selectedChain[selectedChain.length - 1]
+                : '';
+              renderStructureLevels(sedeId, levelsHost, selectedChain);
+            });
+
+            if (!selectedId || !options.some(item => String(item.id) === String(selectedId))) {
+              break;
+            }
+
+            parentId = String(selectedId);
+            level += 1;
+
+            const hasChildren = structures.some(item =>
+              String(item.parent_id || '') === parentId
+            );
+            if (!hasChildren) break;
+          }
+
+          selectedReferenceId = selectedChain.length
+            ? selectedChain[selectedChain.length - 1]
+            : '';
+        }
+
         function updateReferenceOptions() {
           const type = scopeType.value;
-          const items = type === 'SEDE'
-            ? (catalogs.sedes || [])
-            : type === 'ESTRUCTURA_ORG'
-              ? (catalogs.estructuraOrg || [])
-              : type === 'LOCAL'
-                ? (catalogs.locales || [])
-                : [];
+          const canSelect = Boolean(roleSelect.value);
 
-          const options = items.map(item => ({
-            value: item.id,
-            label: item.name
-          }));
-
-          const next = createSelect(
-            options,
-            '',
-            type === 'TOTAL'
-              ? 'No requiere referencia'
-              : 'Selecciona una referencia'
-          );
-
-          referenceSelect.replaceChildren(...Array.from(next.childNodes));
-          referenceSelect.disabled = !roleSelect.value || type === 'TOTAL';
+          selectedReferenceId = '';
+          scopeContextHost.replaceChildren();
           descendantsLabel.hidden = type !== 'ESTRUCTURA_ORG';
           descendants.checked = false;
+
+          if (type === 'TOTAL') {
+            const note = document.createElement('p');
+            note.className = 'access-muted';
+            note.textContent = 'Incluye todos los registros del módulo. No requiere sede ni referencia.';
+            scopeContextHost.appendChild(note);
+            return;
+          }
+
+          const siteSelect = createSelect(
+            (catalogs.sedes || []).map(item => ({
+              value: item.id,
+              label: item.name
+            })),
+            '',
+            'Selecciona una sede'
+          );
+          siteSelect.required = true;
+          siteSelect.disabled = !canSelect;
+          scopeContextHost.appendChild(createField('Sede', siteSelect));
+
+          if (type === 'SEDE') {
+            siteSelect.addEventListener('change', () => {
+              selectedReferenceId = siteSelect.value;
+            });
+            return;
+          }
+
+          if (type === 'ESTRUCTURA_ORG') {
+            const levelsHost = document.createElement('div');
+            levelsHost.className = 'access-user-scope-levels';
+            scopeContextHost.appendChild(levelsHost);
+
+            let selectedChain = [];
+
+            siteSelect.addEventListener('change', () => {
+              selectedChain = [];
+              selectedReferenceId = '';
+              if (siteSelect.value) {
+                renderStructureLevels(siteSelect.value, levelsHost, selectedChain);
+              } else {
+                levelsHost.replaceChildren();
+              }
+            });
+            return;
+          }
+
+          if (type === 'LOCAL') {
+            const localSelect = createSelect(
+              [],
+              '',
+              'Primero selecciona una sede'
+            );
+            localSelect.required = true;
+            localSelect.disabled = true;
+            scopeContextHost.appendChild(createField('Local', localSelect));
+
+            const hierarchyNote = document.createElement('p');
+            hierarchyNote.className = 'access-muted access-user-scope-context-note';
+            hierarchyNote.hidden = true;
+            scopeContextHost.appendChild(hierarchyNote);
+
+            siteSelect.addEventListener('change', () => {
+              selectedReferenceId = '';
+              const availableLocals = (catalogs.locales || [])
+                .filter(item => String(item.sede_id) === String(siteSelect.value))
+                .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es'));
+
+              const next = createSelect(
+                availableLocals.map(item => ({ value: item.id, label: item.name })),
+                '',
+                availableLocals.length ? 'Selecciona un local' : 'No hay locales disponibles en esta sede'
+              );
+              localSelect.replaceChildren(...Array.from(next.childNodes));
+              localSelect.value = '';
+              localSelect.selectedIndex = 0;
+              localSelect.disabled = !canSelect || !siteSelect.value || !availableLocals.length;
+              hierarchyNote.hidden = true;
+              hierarchyNote.textContent = '';
+            });
+
+            localSelect.addEventListener('change', () => {
+              selectedReferenceId = localSelect.value;
+              const local = (catalogs.locales || []).find(item =>
+                String(item.id) === String(localSelect.value)
+              );
+              if (!local) {
+                hierarchyNote.hidden = true;
+                return;
+              }
+
+              const paths = localStructurePaths(local.id);
+              hierarchyNote.textContent = paths.length
+                ? 'Ubicación en la jerarquía orgánica: ' + paths.join(' | ')
+                : 'Este local no tiene una vinculación estructura-local registrada. El ámbito se aplicará directamente al local dentro de la sede seleccionada.';
+              hierarchyNote.hidden = false;
+            });
+          }
         }
 
         function paintScopes() {
@@ -926,10 +1135,14 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           }
 
           const type = scopeType.value;
-          const referenceId = type === 'TOTAL' ? '' : referenceSelect.value;
+          const referenceId = type === 'TOTAL' ? '' : selectedReferenceId;
 
           if (type !== 'TOTAL' && !referenceId) {
-            referenceSelect.reportValidity();
+            const requiredControl = Array.from(
+              scopeContextHost.querySelectorAll('select[required]')
+            ).find(control => !control.value);
+            if (requiredControl) requiredControl.reportValidity();
+            else SUNARPUI.notify('warning', 'Selecciona una referencia para el ámbito.');
             return;
           }
 
@@ -963,14 +1176,15 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           });
 
           paintScopes();
+          updateReferenceOptions();
         }
 
         roleSelect.addEventListener('change', () => {
           const enabled = Boolean(roleSelect.value);
           scopeType.disabled = !enabled;
-          referenceSelect.disabled = !enabled || scopeType.value === 'TOTAL';
           descendants.disabled = !enabled;
           addScopeButton.disabled = !enabled;
+          updateReferenceOptions();
         });
 
         scopeType.addEventListener('change', updateReferenceOptions);
@@ -989,7 +1203,6 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         updateReferenceOptions();
         paintScopes();
         scopeType.disabled = !roleSelect.value;
-        referenceSelect.disabled = !roleSelect.value || scopeType.value === 'TOTAL';
         descendants.disabled = !roleSelect.value;
         addScopeButton.disabled = !roleSelect.value;
 
