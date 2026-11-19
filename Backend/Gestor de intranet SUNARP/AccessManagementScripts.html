@@ -590,6 +590,13 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             searchButton.lastElementChild.textContent = 'Buscando...';
           }
 
+          const searchCriteria = {
+            tipo_documento: documentType.value,
+            numero_documento: documentNumber.value.trim()
+          };
+          documentType.disabled = true;
+          documentNumber.disabled = true;
+
           const finishLoading = SUNARPUI.beginLoading();
           showSearchAlert(
             'info',
@@ -598,10 +605,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           );
 
           try {
-            const result = await rpc('searchAccessPersonByDocument', {
-              tipo_documento: documentType.value,
-              numero_documento: documentNumber.value.trim()
-            });
+            const result = await rpc('searchAccessPersonByDocument', searchCriteria);
 
             resultHost.replaceChildren();
 
@@ -683,6 +687,8 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             updateSaveState();
           } finally {
             finishLoading();
+            documentType.disabled = false;
+            documentNumber.disabled = false;
             searchButton.disabled = false;
             if (searchButton.lastElementChild) {
               searchButton.lastElementChild.textContent = originalLabel;
