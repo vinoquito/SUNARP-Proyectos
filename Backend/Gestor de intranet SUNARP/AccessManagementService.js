@@ -2263,9 +2263,9 @@ function getAccessManagementTabData(tabId) {
     const result = auth.securityData;
     return {
       roles: (result.roles || []).map(item => ({ rol_id: _accessText_(item.rol_id), nombre: _accessText_(item.nombre), descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active) })),
-      modules: (result.modules || []).map(item => ({ modulo_id: _accessText_(item.modulo_id), codigo: _accessUpper_(item.codigo), nombre: _accessText_(item.nombre), active: _accessIsActive_(item.active) })),
+      modules: (result.modulos || []).map(item => ({ modulo_id: _accessText_(item.modulo_id), codigo: _accessUpper_(item.codigo), nombre: _accessText_(item.nombre), active: _accessIsActive_(item.active) })),
       permissions: (result.permisos || []).map(item => ({ permiso_id: _accessText_(item.permiso_id), codigo: _accessUpper_(item.codigo), modulo_id: _accessText_(item.modulo_id), operacion_id: _accessUpper_(item.operacion_id), operacion_nombre: _accessText_((result.operaciones.find(op => _accessUpper_(op.operacion_id) === _accessUpper_(item.operacion_id)) || {}).nombre), descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active) })),
-      rolePermissions: (result.rolePermissions || []).map(item => ({ rol_id: _accessText_(item.rol_id), permiso_id: _accessText_(item.permiso_id), active: _accessIsActive_(item.active) }))
+      rolePermissions: (result.rolPermiso || []).map(item => ({ rol_id: _accessText_(item.rol_id), permiso_id: _accessText_(item.permiso_id), active: _accessIsActive_(item.active) }))
     };
   }
   if (tab === 'operations') {
