@@ -680,7 +680,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             ? scopes.length
               ? scopes.map(scopeLabel).join(' · ')
               : 'Sin ámbitos asignados'
-            : 'No disponibles para esta cuenta';
+            : 'Sin permiso para consultar ámbitos';
 
           const actionsCell = document.createElement('td');
           actionsCell.className = 'access-user-assignment-actions';
@@ -702,17 +702,6 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             'Eliminar',
             'outline',
             () => {
-              if (
-                !canManageScopes &&
-                persistedModuleIds.has(assignment.modulo_id)
-              ) {
-                SUNARPUI.notify(
-                  'warning',
-                  'No puedes retirar este acceso porque tiene ámbitos asignados y tu cuenta no tiene permiso para administrarlos.'
-                );
-                return;
-              }
-
               if (editorHost.childElementCount) {
                 SUNARPUI.notify(
                   'warning',
