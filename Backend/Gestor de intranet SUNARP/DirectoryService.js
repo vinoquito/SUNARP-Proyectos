@@ -493,6 +493,7 @@ function _directoryLoadContextFromSheets_(options) {
   // Core agrupa la lectura por libro aunque el catálogo documental
   // se encuentre en Global parameters o en Directorios telefónicos.
   const context = SUNARPCore.listRecordsFromSourcesCached(requests, DIRECTORY_DATA_CACHE_TTL);
+  if (!Array.isArray(context.personas)) context.personas = [];
   if (!Array.isArray(context.datosPersonales)) context.datosPersonales = [];
 
   _directoryValidateSnapshot_(context);
