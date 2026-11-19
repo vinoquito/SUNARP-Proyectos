@@ -1676,11 +1676,11 @@ function getAccessEntityHistory(payload) {
     const eventId = _accessText_(event.registro_id);
     const eventModule = _accessUpper_(event.modulo);
 
-    // El historial del directorio solamente incluye
-    // eventos del módulo DIRECTORIOS.
+    // Conserva la consulta de eventos históricos DIRECTORIOS y admite
+    // los nuevos eventos del módulo INFORMACION_PERSONAL.
     if (
       entityType === 'SERVIDOR' &&
-      eventModule !== 'DIRECTORIOS'
+      !['DIRECTORIOS', 'INFORMACION_PERSONAL'].includes(eventModule)
     ) {
       return false;
     }
