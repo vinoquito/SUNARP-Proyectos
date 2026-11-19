@@ -196,7 +196,8 @@
   }
 
 
-  function openFormModal(title, form, onSave, saveLabel) {
+  function openFormModal(title, form, onSave, saveLabel, options) {
+    options = options || {};
     const footer = document.createElement('div');
 
     footer.className = 'access-modal-actions';
@@ -209,13 +210,18 @@
       )
     );
 
+    const canSave = () => typeof options.canSave === 'function'
+      ? options.canSave()
+      : true;
+
     const save = createButton(
       saveLabel || 'Guardar',
       'primary',
       async () => {
-        if (!form.reportValidity()) return;
+        if (save.disabled || !form.reportValidity() || !canSave()) return;
 
         save.disabled = true;
+        const finishLoading = SUNARPUI.beginLoading();
 
         try {
           await onSave();
@@ -237,14 +243,16 @@
           );
 
         } finally {
+          finishLoading();
           if (save.isConnected) {
-            save.disabled = false;
+            save.disabled = !canSave();
           }
         }
       },
       'save'
     );
 
+    save.disabled = !canSave();
     footer.appendChild(save);
 
     SUNARPUI.openModal({
@@ -253,6 +261,8 @@
       footer,
       size: 'lg'
     });
+
+    return save;
   }
 
 
@@ -470,18 +480,10 @@ function createAccessStatusCell(row, method, id, entityLabel) {
   }
 
 
-  async function openUserModal(row) {
+  function openUserModal(row) {
     const editing = Boolean(row);
-    let documentTypes = [];
-
-    if (!editing) {
-      try {
-        documentTypes = await rpc('getAccessDocumentTypes');
-      } catch (error) {
-        SUNARPUI.notify('error', error.message || 'No se pudo cargar el catálogo de tipos de documento.');
-        return;
-      }
-    }
+    const documentTypes = (state.data.documentTypes || [])
+      .filter(item => item && item.id && item.name);
 
     const form = document.createElement('form');
     form.className = 'access-form';
@@ -498,8 +500,36 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
     let selectedPerson = null;
     let selectedPersonCanEnable = false;
-    let documentType = null;
-    let documentNumber = null;
+    let saveButton = null;
+
+    const resultHost = document.createElement('div');
+    resultHost.id = 'accessUserDocumentSearchResult';
+    resultHost.className = 'access-person-search-result';
+    resultHost.setAttribute('aria-live', 'polite');
+
+    function showSearchAlert(type, title, message) {
+      SUNARPUI.showAlert({
+        containerId: resultHost.id,
+        type,
+        title,
+        message,
+        dismissible: false,
+        replace: true
+      });
+    }
+
+    function updateSaveState() {
+      if (saveButton && !editing) {
+        saveButton.disabled = !selectedPersonCanEnable;
+      }
+    }
+
+    function resetSearchResult() {
+      selectedPerson = null;
+      selectedPersonCanEnable = false;
+      resultHost.replaceChildren();
+      updateSaveState();
+    }
 
     if (editing) {
       const identity = document.createElement('div');
@@ -520,15 +550,19 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         createField('Persona vinculada', identity),
         createField('Estado de la cuenta', active)
       );
+      form.appendChild(grid);
     } else {
-      documentType = createSelect(
-        documentTypes.map(value => ({ value, label: value })),
+      const documentType = createSelect(
+        documentTypes.map(item => ({
+          value: item.id,
+          label: item.name
+        })),
         '',
         'Selecciona un tipo de documento'
       );
       documentType.required = true;
 
-      documentNumber = createInput('text', '', {
+      const documentNumber = createInput('text', '', {
         required: true,
         maxlength: 30,
         autocomplete: 'off',
@@ -549,15 +583,19 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             return;
           }
 
-          selectedPerson = null;
-          selectedPersonCanEnable = false;
+          resetSearchResult();
           searchButton.disabled = true;
-          resultHost.replaceChildren();
+          const originalLabel = 'Buscar persona';
+          if (searchButton.lastElementChild) {
+            searchButton.lastElementChild.textContent = 'Buscando...';
+          }
 
-          const loading = document.createElement('p');
-          loading.className = 'access-muted';
-          loading.textContent = 'Buscando coincidencia documental...';
-          resultHost.appendChild(loading);
+          const finishLoading = SUNARPUI.beginLoading();
+          showSearchAlert(
+            'info',
+            'Buscando persona',
+            'Consultando el documento en el directorio institucional.'
+          );
 
           try {
             const result = await rpc('searchAccessPersonByDocument', {
@@ -568,23 +606,22 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             resultHost.replaceChildren();
 
             if (!result || result.found !== true || !result.person) {
-              const message = document.createElement('p');
-              message.className = 'access-muted';
-              message.textContent = result && result.message
-                ? result.message
-                : 'No se encontró una persona con esos datos.';
-              resultHost.appendChild(message);
+              showSearchAlert(
+                'info',
+                'Sin coincidencias',
+                result && result.message
+                  ? result.message
+                  : 'No se encontró una persona con esos datos.'
+              );
               return;
             }
 
             selectedPerson = result.person;
-
-            const existingAccount = (state.data.users || []).find(user =>
-              user.persona_id === selectedPerson.persona_id
-            );
+            const existingAccount = result.existingAccount || { exists: false, active: false };
+            const accountExists = existingAccount.exists === true;
 
             selectedPersonCanEnable = Boolean(
-              result.canEnableAccount && !existingAccount
+              result.canEnableAccount && !accountExists
             );
 
             const identity = document.createElement('div');
@@ -596,33 +633,60 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             const details = document.createElement('p');
             details.className = 'access-muted';
             details.textContent = [
-              'Documento: ' + selectedPerson.tipo_documento + ' ' + selectedPerson.numero_documento,
-              'Correo: ' + (selectedPerson.correo_institucional || 'No registrado'),
-              'ID: ' + selectedPerson.persona_id
+              (selectedPerson.tipo_documento_name || 'Documento') +
+                ': ' + selectedPerson.numero_documento,
+              'Correo institucional: ' +
+                (selectedPerson.correo_institucional || 'No registrado')
             ].join(' · ');
 
-            const status = document.createElement('p');
-            status.className = selectedPersonCanEnable
-              ? 'access-muted'
-              : 'access-warning';
-            status.textContent = existingAccount
-              ? (existingAccount.active
-                  ? 'Esta persona ya tiene una cuenta activa. No es posible crear otra.'
-                  : 'Esta persona ya tiene una cuenta inactiva. Utiliza «Editar cuenta» en la tabla para reactivarla.')
-              : (result.canEnableAccount
-                  ? 'Persona localizada. Puedes habilitar su cuenta.'
-                  : (result.reason || 'La persona no cumple las condiciones para habilitar una cuenta.'));
+            const personId = document.createElement('small');
+            personId.textContent = 'Identificador: ' + selectedPerson.persona_id;
 
-            identity.append(name, details, status);
+            identity.append(name, details, personId);
             resultHost.appendChild(identity);
+
+            if (accountExists && existingAccount.active) {
+              showSearchAlert(
+                'warning',
+                'La cuenta ya está habilitada',
+                'Esta persona ya tiene una cuenta activa. No se puede crear otra cuenta.'
+              );
+            } else if (accountExists) {
+              showSearchAlert(
+                'warning',
+                'La cuenta ya está registrada',
+                'La cuenta de esta persona está inactiva. Para habilitarla nuevamente, utiliza «Editar cuenta» en la lista de usuarios.'
+              );
+            } else if (!result.canEnableAccount) {
+              showSearchAlert(
+                'warning',
+                'No es posible habilitar la cuenta',
+                result.reason || 'La persona no cumple las condiciones para habilitar una cuenta.'
+              );
+            } else {
+              showSearchAlert(
+                'success',
+                'Persona localizada',
+                'Verifica los datos. La cuenta podrá habilitarse para esta persona.'
+              );
+            }
+
+            updateSaveState();
           } catch (error) {
-            resultHost.replaceChildren();
-            const message = document.createElement('p');
-            message.className = 'access-warning';
-            message.textContent = error.message || 'No se pudo realizar la búsqueda documental.';
-            resultHost.appendChild(message);
+            selectedPerson = null;
+            selectedPersonCanEnable = false;
+            showSearchAlert(
+              'error',
+              'No se pudo completar la búsqueda',
+              error.message || 'Ocurrió un error al consultar el directorio.'
+            );
+            updateSaveState();
           } finally {
+            finishLoading();
             searchButton.disabled = false;
+            if (searchButton.lastElementChild) {
+              searchButton.lastElementChild.textContent = originalLabel;
+            }
           }
         },
         'search'
@@ -632,22 +696,12 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       searchActions.className = 'access-modal-actions';
       searchActions.appendChild(searchButton);
 
-      const resultHost = document.createElement('div');
-      resultHost.className = 'access-person-search-result';
-      resultHost.setAttribute('aria-live', 'polite');
-
       grid.append(
         createField('Tipo de documento', documentType),
         createField('Número de documento', documentNumber)
       );
 
       form.append(grid, searchActions, resultHost);
-
-      function resetSearchResult() {
-        selectedPerson = null;
-        selectedPersonCanEnable = false;
-        resultHost.replaceChildren();
-      }
 
       documentType.addEventListener('change', resetSearchResult);
       documentNumber.addEventListener('input', resetSearchResult);
@@ -657,18 +711,15 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         documentNumber.disabled = true;
         searchButton.disabled = true;
 
-        const message = document.createElement('p');
-        message.className = 'access-warning';
-        message.textContent = 'No hay tipos de documento registrados. Primero debe completarse el catálogo de datos personales.';
-        resultHost.appendChild(message);
+        showSearchAlert(
+          'error',
+          'Catálogo no disponible',
+          'No se encontraron tipos de documento en la pestaña tipo_documento_identidad.'
+        );
       }
     }
 
-    if (editing) {
-      form.appendChild(grid);
-    }
-
-    openFormModal(
+    saveButton = openFormModal(
       editing ? 'Editar cuenta' : 'Habilitar cuenta',
       form,
       async () => {
@@ -681,7 +732,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         }
 
         if (!selectedPerson || !selectedPersonCanEnable) {
-          throw new Error('Busca una persona válida por documento antes de habilitar su cuenta.');
+          throw new Error('Primero busca una persona que no tenga una cuenta registrada.');
         }
 
         return rpc('saveAccessUser', {
@@ -689,10 +740,13 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           persona_id: selectedPerson.persona_id,
           tipo_documento: selectedPerson.tipo_documento,
           numero_documento: selectedPerson.numero_documento,
-          active: active.value === 'true'
+          active: true
         });
       },
-      editing ? 'Guardar cambios' : 'Habilitar cuenta'
+      editing ? 'Guardar cambios' : 'Habilitar cuenta',
+      {
+        canSave: () => editing || selectedPersonCanEnable
+      }
     );
   }
 
