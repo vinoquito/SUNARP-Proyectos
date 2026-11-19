@@ -31,6 +31,65 @@ const ACCESS_MANAGEMENT_CONFIG = Object.freeze({
   ]),
 });
 
+const ACCESS_PERMISSION_OPERATIONS = Object.freeze([
+  Object.freeze({ codigo: 'VER', nombre: 'Ver' }),
+  Object.freeze({ codigo: 'CONSULTAR', nombre: 'Consultar' }),
+  Object.freeze({ codigo: 'CREAR', nombre: 'Crear' }),
+  Object.freeze({ codigo: 'EDITAR', nombre: 'Editar' }),
+  Object.freeze({ codigo: 'ELIMINAR', nombre: 'Eliminar' }),
+  Object.freeze({ codigo: 'ACTIVAR', nombre: 'Activar' }),
+  Object.freeze({ codigo: 'DESACTIVAR', nombre: 'Desactivar' }),
+  Object.freeze({ codigo: 'ADMINISTRAR', nombre: 'Administrar' }),
+  Object.freeze({ codigo: 'EXPORTAR', nombre: 'Exportar' }),
+  Object.freeze({ codigo: 'DESCARGAR', nombre: 'Descargar' }),
+  Object.freeze({ codigo: 'IMPRIMIR', nombre: 'Imprimir' }),
+  Object.freeze({ codigo: 'APROBAR', nombre: 'Aprobar' }),
+  Object.freeze({ codigo: 'RECHAZAR', nombre: 'Rechazar' }),
+  Object.freeze({ codigo: 'ANULAR', nombre: 'Anular' }),
+  Object.freeze({ codigo: 'ASIGNAR', nombre: 'Asignar' })
+]);
+
+function _accessIdentifierToken_(value) {
+  return _accessText_(value)
+    .normalize('NFD')
+    .replace(/[\\u0300-\\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function _accessGenerateUniqueIdentifier_(prefix, value, records, field, maxLength) {
+  const token = _accessIdentifierToken_(value) || 'REGISTRO';
+  const limit = Math.max(2, Number(maxLength) || 50);
+  const base = (String(prefix || '') + token).slice(0, limit);
+  const used = new Set((records || []).map(item => _accessUpper_(item && item[field])));
+  if (!used.has(base)) return base;
+  for (let suffixNumber = 2; suffixNumber < 10000; suffixNumber++) {
+    const suffix = '_' + suffixNumber;
+    const candidate = base.slice(0, limit - suffix.length) + suffix;
+    if (!used.has(candidate)) return candidate;
+  }
+  throw new Error('No se pudo generar un identificador único.');
+}
+
+function _accessBuildPermissionCode_(moduleCode, operation) {
+  const moduleToken = _accessIdentifierToken_(moduleCode);
+  const operationToken = _accessIdentifierToken_(operation);
+  if (!moduleToken || !operationToken) throw new Error('No se pudo generar el código del permiso.');
+  return (moduleToken + '_' + operationToken).slice(0, 80);
+}
+
+function _accessGetOperationCatalog_(existingPermissions) {
+  const byCode = new Map(ACCESS_PERMISSION_OPERATIONS.map(item => [item.codigo, item.nombre]));
+  (existingPermissions || []).forEach(permission => {
+    const code = _accessUpper_(permission.operacion);
+    if (code && !byCode.has(code)) byCode.set(code, code.replace(/_/g, ' '));
+  });
+  return Array.from(byCode.entries())
+    .map(([codigo, nombre]) => ({ codigo, nombre }))
+    .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+}
+
 const ACCESS_MANAGEMENT_FIELDS = Object.freeze({
   users: Object.freeze(['persona_id', 'active']),
   modules: Object.freeze(['modulo_id', 'codigo', 'nombre', 'descripcion', 'active']),
