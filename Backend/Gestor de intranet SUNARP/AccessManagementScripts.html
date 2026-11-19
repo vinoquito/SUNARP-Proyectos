@@ -11,7 +11,6 @@
     activeTab: '',
     tabs: null,
     table: null,
-    draftScopes: []
   };
 
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -444,6 +443,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
    * Editor unificado de roles por módulo y ámbitos de acceso.
    * Reutiliza los catálogos y asignaciones que ya entrega getAccessManagementData().
    */
+
   function createUserModuleAccessEditor(personaId, disabled) {
     const capabilities = state.data.capabilities || {};
     const canManageRoles = capabilities.userRoles === true;
@@ -460,7 +460,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
     const description = document.createElement('p');
     description.className = 'access-muted';
-    description.textContent = 'Configura el rol y los ámbitos que tendrá esta persona en cada módulo.';
+    description.textContent = 'Agrega únicamente los módulos que esta persona necesita utilizar y define sus ámbitos de acceso.';
 
     heading.append(title, description);
     host.appendChild(heading);
@@ -476,12 +476,25 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       };
     }
 
-    const user = (state.data.users || []).find(item =>
-      item.persona_id === personaId
-    );
+    const modules = (state.data.modules || [])
+      .filter(item => item.active === true)
+      .slice()
+      .sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es'));
+
+    const catalogs = state.data.catalogs || {};
+    const typeLabels = {
+      TOTAL: 'Total',
+      SEDE: 'Sede',
+      ESTRUCTURA_ORG: 'Unidad orgánica',
+      LOCAL: 'Local'
+    };
 
     const roleAssignments = (state.data.userRoles || []).filter(item =>
       item.persona_id === personaId && item.active === true
+    );
+
+    const user = (state.data.users || []).find(item =>
+      item.persona_id === personaId
     );
 
     const fallbackRoles = user && Array.isArray(user.roles)
@@ -492,21 +505,94 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       item.persona_id === personaId && item.active === true
     );
 
-    const activeModulesList = (state.data.modules || []).filter(item =>
-      item.active === true
+    const draft = new Map();
+
+    roleAssignments.forEach(item => {
+      const module = modules.find(candidate =>
+        candidate.modulo_id === item.modulo_id
+      );
+      if (!module) return;
+
+      draft.set(item.modulo_id, {
+        modulo_id: item.modulo_id,
+        rol_id: item.rol_id,
+        ambitos: scopeAssignments
+          .filter(scope => scope.modulo_id === item.modulo_id)
+          .map(scope => ({
+            tipo_ambito: scope.tipo_ambito,
+            referencia_id: scope.referencia_id,
+            incluir_descendientes: scope.incluir_descendientes || 'NO'
+          }))
+      });
+    });
+
+    fallbackRoles.forEach(item => {
+      if (draft.has(item.modulo_id)) return;
+
+      const module = modules.find(candidate =>
+        candidate.modulo_id === item.modulo_id
+      );
+      if (!module) return;
+
+      draft.set(item.modulo_id, {
+        modulo_id: item.modulo_id,
+        rol_id: item.rol_id,
+        ambitos: scopeAssignments
+          .filter(scope => scope.modulo_id === item.modulo_id)
+          .map(scope => ({
+            tipo_ambito: scope.tipo_ambito,
+            referencia_id: scope.referencia_id,
+            incluir_descendientes: scope.incluir_descendientes || 'NO'
+          }))
+      });
+    });
+
+    const modulePicker = createSelect(
+      [],
+      '',
+      'Selecciona un módulo'
     );
 
-    const catalogs = state.data.catalogs || {};
-    const scopeTypeLabels = {
-      TOTAL: 'Total',
-      SEDE: 'Sede',
-      ESTRUCTURA_ORG: 'Unidad orgánica',
-      LOCAL: 'Local'
-    };
+    const addModuleButton = createButton(
+      'Agregar módulo',
+      'primary',
+      () => {
+        if (!modulePicker.value) {
+          modulePicker.reportValidity();
+          return;
+        }
+        openModuleEditor(modulePicker.value, null);
+      },
+      'add'
+    );
 
-    const editors = [];
+    const pickerGrid = createFormGrid();
+    pickerGrid.classList.add('access-user-module-picker');
+    pickerGrid.append(
+      createField('Módulo', modulePicker),
+      addModuleButton
+    );
+    host.appendChild(pickerGrid);
 
-    function getScopeReferenceName(scope) {
+    const editorHost = document.createElement('div');
+    editorHost.className = 'access-user-module-editor';
+    host.appendChild(editorHost);
+
+    const tableHeading = document.createElement('h4');
+    tableHeading.className = 'access-user-assignment-heading';
+    tableHeading.textContent = 'Accesos asignados';
+    host.appendChild(tableHeading);
+
+    const tableHost = document.createElement('div');
+    tableHost.className = 'access-user-assignment-table-host';
+    host.appendChild(tableHost);
+
+    function moduleName(moduleId) {
+      const match = modules.find(item => item.modulo_id === moduleId);
+      return match ? match.nombre : 'Módulo no disponible';
+    }
+
+    function scopeReferenceName(scope) {
       if (scope.tipo_ambito === 'TOTAL') {
         return 'Todos los registros del módulo';
       }
@@ -521,72 +607,198 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       return match ? match.name : 'Referencia no disponible';
     }
 
-    activeModulesList.forEach(module => {
-      const section = document.createElement('section');
-      section.className = 'access-user-module-card';
+    function scopeLabel(scope) {
+      const label = typeLabels[scope.tipo_ambito] || 'Ámbito';
+      const reference = scopeReferenceName(scope);
 
-      const moduleHeading = document.createElement('h4');
-      moduleHeading.className = 'access-user-module-title';
-      moduleHeading.textContent = module.nombre || 'Módulo';
+      return label + ': ' + reference +
+        (scope.tipo_ambito === 'ESTRUCTURA_ORG' &&
+          scope.incluir_descendientes === 'SI'
+          ? ' (incluye descendientes)'
+          : '');
+    }
 
-      const moduleDescription = document.createElement('p');
-      moduleDescription.className = 'access-muted';
-      moduleDescription.textContent = module.descripcion || '';
+    function refreshModulePicker() {
+      const options = modules
+        .filter(module => !draft.has(module.modulo_id))
+        .map(module => ({
+          value: module.modulo_id,
+          label: module.nombre
+        }));
 
-      section.append(moduleHeading);
-      if (moduleDescription.textContent) {
-        section.appendChild(moduleDescription);
+      const next = createSelect(
+        options,
+        '',
+        options.length ? 'Selecciona un módulo' : 'No hay más módulos disponibles'
+      );
+
+      modulePicker.replaceChildren(...Array.from(next.childNodes));
+      modulePicker.disabled = Boolean(disabled) || !options.length;
+      addModuleButton.disabled = Boolean(disabled) || !options.length;
+    }
+
+    function renderTable() {
+      tableHost.replaceChildren();
+
+      if (!draft.size) {
+        const empty = document.createElement('p');
+        empty.className = 'access-muted access-user-assignment-empty';
+        empty.textContent = 'Todavía no se ha agregado ningún módulo.';
+        tableHost.appendChild(empty);
+        return;
       }
 
-      const currentRoleAssignment = roleAssignments.find(item =>
-        item.modulo_id === module.modulo_id
-      );
+      const table = document.createElement('table');
+      table.className = 'access-user-assignment-table';
 
-      const fallbackRoleAssignment = fallbackRoles.find(item =>
-        item.modulo_id === module.modulo_id
-      );
+      const thead = document.createElement('thead');
+      const headerRow = document.createElement('tr');
 
-      const originalRoleId = currentRoleAssignment
-        ? currentRoleAssignment.rol_id
-        : fallbackRoleAssignment
-          ? fallbackRoleAssignment.rol_id
-          : '';
+      [
+        'Módulo',
+        'Rol',
+        'Ámbitos de acceso',
+        'Acciones'
+      ].forEach(label => {
+        const th = document.createElement('th');
+        th.scope = 'col';
+        th.textContent = label;
+        headerRow.appendChild(th);
+      });
+
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement('tbody');
+
+      Array.from(draft.values())
+        .sort((a, b) => moduleName(a.modulo_id).localeCompare(moduleName(b.modulo_id), 'es'))
+        .forEach(assignment => {
+          const row = document.createElement('tr');
+
+          const moduleCell = document.createElement('td');
+          moduleCell.textContent = moduleName(assignment.modulo_id);
+
+          const roleCell = document.createElement('td');
+          const role = (state.data.roles || []).find(item =>
+            item.rol_id === assignment.rol_id
+          );
+          roleCell.textContent = role ? role.nombre : 'Rol no disponible';
+
+          const scopesCell = document.createElement('td');
+          const scopes = assignment.ambitos || [];
+          scopesCell.textContent = scopes.length
+            ? scopes.map(scopeLabel).join(' · ')
+            : 'Sin ámbitos asignados';
+
+          const actionsCell = document.createElement('td');
+          actionsCell.className = 'access-user-assignment-actions';
+
+          const editButton = createButton(
+            'Editar',
+            'outline',
+            () => openModuleEditor(assignment.modulo_id, assignment),
+            'edit'
+          );
+          editButton.classList.add('access-small-button');
+          editButton.disabled = Boolean(disabled);
+
+          const removeButton = createButton(
+            'Eliminar',
+            'outline',
+            () => {
+              if (
+                !canManageScopes &&
+                (scopeAssignments.some(scope =>
+                  scope.modulo_id === assignment.modulo_id
+                ))
+              ) {
+                SUNARPUI.notify(
+                  'warning',
+                  'No puedes retirar este acceso porque tiene ámbitos asignados y tu cuenta no tiene permiso para administrarlos.'
+                );
+                return;
+              }
+
+              draft.delete(assignment.modulo_id);
+              refreshModulePicker();
+              renderTable();
+            },
+            'delete'
+          );
+          removeButton.classList.add('access-small-button');
+          removeButton.disabled = Boolean(disabled);
+
+          actionsCell.append(editButton, removeButton);
+          row.append(moduleCell, roleCell, scopesCell, actionsCell);
+          tbody.appendChild(row);
+        });
+
+      table.appendChild(tbody);
+      tableHost.appendChild(table);
+    }
+
+    function openModuleEditor(moduleId, existingAssignment) {
+      if (disabled) return;
+
+      const module = modules.find(item =>
+        item.modulo_id === moduleId
+      );
+      if (!module) return;
+
+      const editing = Boolean(existingAssignment);
+      const original = existingAssignment || {
+        modulo_id: moduleId,
+        rol_id: '',
+        ambitos: []
+      };
+
+      editorHost.replaceChildren();
+
+      const panel = document.createElement('section');
+      panel.className = 'access-user-module-editor-panel';
+
+      const panelHeading = document.createElement('div');
+      panelHeading.className = 'access-user-module-editor-heading';
+
+      const panelTitle = document.createElement('h4');
+      panelTitle.textContent = module.nombre;
+
+      const panelDescription = document.createElement('p');
+      panelDescription.className = 'access-muted';
+      panelDescription.textContent = editing
+        ? 'Modifica el rol o los ámbitos y actualiza esta asignación.'
+        : 'Define el rol y los ámbitos antes de agregar este acceso.';
+
+      panelHeading.append(panelTitle, panelDescription);
 
       const roleSelect = createSelect(
-        [{ value: '', label: 'Sin rol asignado' }].concat(
+        [{ value: '', label: 'Selecciona un rol' }].concat(
           activeRoles().map(role => ({
             value: role.rol_id,
             label: role.nombre
           }))
         ),
-        originalRoleId
+        original.rol_id
       );
+      roleSelect.required = true;
 
-      roleSelect.disabled = Boolean(disabled);
+      const fields = createFormGrid();
+      fields.appendChild(createField('Rol para este módulo', roleSelect));
+      panel.append(panelHeading, fields);
 
-      section.appendChild(
-        createField('Rol', roleSelect)
-      );
-
-      const originalScopes = scopeAssignments
-        .filter(item => item.modulo_id === module.modulo_id)
-        .map(item => ({
-          tipo_ambito: item.tipo_ambito,
-          referencia_id: item.referencia_id,
-          incluir_descendientes: item.incluir_descendientes || 'NO'
-        }));
-
-      let scopeDraft = originalScopes.map(item => Object.assign({}, item));
+      let scopeDraft = (original.ambitos || []).map(item => ({
+        tipo_ambito: item.tipo_ambito,
+        referencia_id: item.referencia_id,
+        incluir_descendientes: item.incluir_descendientes || 'NO'
+      }));
 
       if (canManageScopes) {
-        const scopePanel = document.createElement('div');
-        scopePanel.className = 'access-user-module-scopes';
+        const scopesPanel = document.createElement('div');
+        scopesPanel.className = 'access-user-scope-editor';
 
-        const scopeHeading = document.createElement('h5');
-        scopeHeading.textContent = 'Ámbitos de acceso';
-
-        const scopeHint = document.createElement('p');
-        scopeHint.className = 'access-muted';
+        const scopesTitle = document.createElement('h5');
+        scopesTitle.textContent = 'Ámbitos de acceso';
 
         const scopeType = createSelect([
           { value: 'TOTAL', label: 'Total — todos los registros del módulo' },
@@ -601,21 +813,19 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           'No requiere referencia'
         );
 
-        const includeDescendants = createInput('checkbox', '', {});
-        includeDescendants.className = 'access-checkbox';
-        includeDescendants.checked = false;
+        const descendants = createInput('checkbox', '', {});
+        descendants.className = 'access-checkbox';
 
         const descendantsLabel = document.createElement('label');
         descendantsLabel.className = 'access-inline-check';
         descendantsLabel.append(
-          includeDescendants,
+          descendants,
           document.createTextNode('Incluir unidades orgánicas descendientes')
         );
 
-        const scopeGrid = createFormGrid();
-        scopeGrid.classList.add('access-user-scope-grid');
-
-        scopeGrid.append(
+        const scopeFields = createFormGrid();
+        scopeFields.classList.add('access-user-scope-grid');
+        scopeFields.append(
           createField('Tipo de ámbito', scopeType),
           createField('Referencia', referenceSelect)
         );
@@ -659,47 +869,18 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           );
 
           referenceSelect.replaceChildren(...Array.from(next.childNodes));
-          referenceSelect.disabled =
-            Boolean(disabled) || !roleSelect.value || type === 'TOTAL';
-
+          referenceSelect.disabled = !roleSelect.value || type === 'TOTAL';
           descendantsLabel.hidden = type !== 'ESTRUCTURA_ORG';
-          includeDescendants.checked = false;
+          descendants.checked = false;
         }
 
-        function updateScopeControls() {
-          const canEdit = !disabled && Boolean(roleSelect.value);
-
-          scopeType.disabled = !canEdit;
-          referenceSelect.disabled = !canEdit || scopeType.value === 'TOTAL';
-          includeDescendants.disabled = !canEdit;
-          addScopeButton.disabled = !canEdit;
-
-          scopeHint.textContent = roleSelect.value
-            ? 'Puedes asignar uno o varios ámbitos. TOTAL es exclusivo dentro del módulo.'
-            : 'Asigna primero un rol para habilitar la configuración de ámbitos.';
-
-          if (!roleSelect.value) {
-            scopeDraft = [];
-          }
-
-          paintScopeList();
-        }
-
-        function paintScopeList() {
+        function paintScopes() {
           scopeList.replaceChildren();
-
-          if (!roleSelect.value) {
-            const note = document.createElement('p');
-            note.className = 'access-muted';
-            note.textContent = 'Sin rol asignado no hay ámbitos configurables.';
-            scopeList.appendChild(note);
-            return;
-          }
 
           if (!scopeDraft.length) {
             const note = document.createElement('p');
             note.className = 'access-muted';
-            note.textContent = 'No hay ámbitos asignados. La persona no tendrá acceso a registros de este módulo.';
+            note.textContent = 'No se han agregado ámbitos para este módulo.';
             scopeList.appendChild(note);
             return;
           }
@@ -708,48 +889,36 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             const item = document.createElement('div');
             item.className = 'access-user-scope-item';
 
-            const copy = document.createElement('div');
-            copy.className = 'access-user-scope-copy';
-
-            const type = document.createElement('strong');
-            type.textContent = scopeTypeLabels[scope.tipo_ambito] || 'Ámbito';
-
-            const reference = document.createElement('span');
-            reference.textContent =
-              getScopeReferenceName(scope) +
-              (scope.tipo_ambito === 'ESTRUCTURA_ORG' &&
-                scope.incluir_descendientes === 'SI'
-                ? ' (incluye descendientes)'
-                : '');
-
-            copy.append(type, reference);
+            const label = document.createElement('span');
+            label.textContent = scopeLabel(scope);
 
             const remove = createButton(
               'Quitar',
               'outline',
               () => {
                 scopeDraft.splice(index, 1);
-                paintScopeList();
+                paintScopes();
               },
               'close'
             );
-
             remove.classList.add('access-small-button');
-            remove.disabled = Boolean(disabled);
 
-            item.append(copy, remove);
+            item.append(label, remove);
             scopeList.appendChild(item);
           });
         }
 
         function addScope() {
-          if (disabled || !roleSelect.value) return;
+          if (!roleSelect.value) {
+            roleSelect.reportValidity();
+            return;
+          }
 
           const type = scopeType.value;
           const referenceId = type === 'TOTAL' ? '' : referenceSelect.value;
 
           if (type !== 'TOTAL' && !referenceId) {
-            SUNARPUI.notify('warning', 'Selecciona una referencia para el ámbito.');
+            referenceSelect.reportValidity();
             return;
           }
 
@@ -761,7 +930,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           if (type !== 'TOTAL' && scopeDraft.some(item =>
             item.tipo_ambito === 'TOTAL'
           )) {
-            SUNARPUI.notify('warning', 'Quita TOTAL antes de agregar otros ámbitos en este módulo.');
+            SUNARPUI.notify('warning', 'Quita el ámbito Total antes de agregar otros ámbitos.');
             return;
           }
 
@@ -777,72 +946,140 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             tipo_ambito: type,
             referencia_id: referenceId,
             incluir_descendientes:
-              type === 'ESTRUCTURA_ORG' && includeDescendants.checked
+              type === 'ESTRUCTURA_ORG' && descendants.checked
                 ? 'SI'
                 : 'NO'
           });
 
-          paintScopeList();
+          paintScopes();
         }
 
-        scopeType.addEventListener('change', updateReferenceOptions);
         roleSelect.addEventListener('change', () => {
-          updateReferenceOptions();
-          updateScopeControls();
+          const enabled = Boolean(roleSelect.value);
+          scopeType.disabled = !enabled;
+          referenceSelect.disabled = !enabled || scopeType.value === 'TOTAL';
+          descendants.disabled = !enabled;
+          addScopeButton.disabled = !enabled;
         });
 
-        scopePanel.append(
-          scopeHeading,
-          scopeHint,
-          scopeGrid,
+        scopeType.addEventListener('change', updateReferenceOptions);
+
+        panel.append(
+          scopesPanel
+        );
+        scopesPanel.append(
+          scopesTitle,
+          scopeFields,
           descendantsLabel,
           scopeActions,
           scopeList
         );
 
-        section.appendChild(scopePanel);
-
         updateReferenceOptions();
-        updateScopeControls();
+        paintScopes();
+        scopeType.disabled = !roleSelect.value;
+        referenceSelect.disabled = !roleSelect.value || scopeType.value === 'TOTAL';
+        descendants.disabled = !roleSelect.value;
+        addScopeButton.disabled = !roleSelect.value;
+
+      } else {
+        const note = document.createElement('p');
+        note.className = 'access-muted';
+        note.textContent = (original.ambitos || []).length
+          ? 'Ámbitos existentes: ' + original.ambitos.map(scopeLabel).join(' · ') +
+            '. No tienes permiso para modificarlos.'
+          : 'No tienes permiso para administrar los ámbitos de acceso.';
+        panel.appendChild(note);
       }
 
-      host.appendChild(section);
+      const actions = document.createElement('div');
+      actions.className = 'access-modal-actions';
 
-      editors.push({
-        modulo_id: module.modulo_id,
-        roleSelect,
-        originalRoleId: String(originalRoleId || ''),
-        originalScopes,
-        getScopes: () => roleSelect.value
-          ? scopeDraft.map(item => Object.assign({}, item))
-          : []
-      });
-    });
+      const cancelButton = createButton(
+        'Cancelar',
+        'outline',
+        () => editorHost.replaceChildren()
+      );
 
-    if (!activeModulesList.length) {
+      const confirmButton = createButton(
+        editing ? 'Actualizar acceso' : 'Agregar acceso',
+        'primary',
+        () => {
+          if (!roleSelect.value) {
+            roleSelect.reportValidity();
+            return;
+          }
+
+          if (
+            !canManageScopes &&
+            existingAssignment &&
+            String(existingAssignment.rol_id || '') !== String(roleSelect.value || '') &&
+            (existingAssignment.ambitos || []).length
+          ) {
+            SUNARPUI.notify(
+              'warning',
+              'No puedes cambiar el rol de esta asignación porque tiene ámbitos que no puedes administrar.'
+            );
+            return;
+          }
+
+          draft.set(moduleId, {
+            modulo_id: moduleId,
+            rol_id: roleSelect.value,
+            ambitos: canManageScopes
+              ? scopeDraft.map(item => Object.assign({}, item))
+              : (original.ambitos || []).map(item => Object.assign({}, item))
+          });
+
+          editorHost.replaceChildren();
+          refreshModulePicker();
+          renderTable();
+        },
+        editing ? 'save' : 'add'
+      );
+
+      actions.append(cancelButton, confirmButton);
+      panel.appendChild(actions);
+      editorHost.appendChild(panel);
+    }
+
+    if (disabled) {
       const note = document.createElement('p');
       note.className = 'access-muted';
-      note.textContent = 'No hay módulos activos para configurar.';
+      note.textContent = 'La cuenta está inactiva. Actívala desde el listado para modificar sus accesos.';
       host.appendChild(note);
+    } else {
+      refreshModulePicker();
     }
+
+    renderTable();
 
     return {
       element: host,
-      getAssignments: () => editors.map(editor => ({
-        modulo_id: editor.modulo_id,
-        rol_id: editor.roleSelect.value,
-        previous_rol_id: editor.originalRoleId,
-        ambitos: editor.getScopes(),
-        previous_ambitos: editor.originalScopes.map(item => Object.assign({}, item))
+      getAssignments: () => Array.from(draft.values()).map(item => ({
+        modulo_id: item.modulo_id,
+        rol_id: item.rol_id,
+        ambitos: (item.ambitos || []).map(scope => Object.assign({}, scope))
       }))
     };
   }
 
 
+  function _accessScopeSignature(scopes) {
+    return (scopes || [])
+      .map(scope => [
+        String(scope.tipo_ambito || ''),
+        String(scope.referencia_id || ''),
+        String(scope.incluir_descendientes || 'NO')
+      ].join('\u0000'))
+      .sort()
+      .join('\u0001');
+  }
+
+
   /**
-   * Guarda coordinadamente los cambios de roles por módulo y ámbitos.
-   * Los ámbitos se limpian primero cuando hay cambios para evitar conflictos
-   * al trasladar a una persona entre sedes en varios módulos.
+   * Persiste el borrador de accesos por módulo.
+   * Se conservan las reglas de validación y auditoría de los servicios existentes.
    */
   async function saveUserModuleAccess(personaId, editor) {
     if (!editor) return;
@@ -850,20 +1087,88 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     const capabilities = state.data.capabilities || {};
     const canManageRoles = capabilities.userRoles === true;
     const canManageScopes = canManageRoles && capabilities.scopes === true;
-    const assignments = editor.getAssignments();
 
-    if (!canManageRoles || !assignments.length) return;
+    if (!canManageRoles) return;
 
-    const roleChanges = assignments.some(item =>
+    const desiredAssignments = new Map(
+      editor.getAssignments().map(item => [item.modulo_id, item])
+    );
+
+    const previousRoles = (state.data.userRoles || []).filter(item =>
+      item.persona_id === personaId && item.active === true
+    );
+
+    const previousScopes = (state.data.scopes || []).filter(item =>
+      item.persona_id === personaId && item.active === true
+    );
+
+    const previousRoleByModule = new Map(
+      previousRoles.map(item => [item.modulo_id, item.rol_id])
+    );
+
+    const previousScopesByModule = new Map();
+    previousScopes.forEach(item => {
+      if (!previousScopesByModule.has(item.modulo_id)) {
+        previousScopesByModule.set(item.modulo_id, []);
+      }
+      previousScopesByModule.get(item.modulo_id).push({
+        tipo_ambito: item.tipo_ambito,
+        referencia_id: item.referencia_id,
+        incluir_descendientes: item.incluir_descendientes || 'NO'
+      });
+    });
+
+    const moduleIds = new Set([
+      ...previousRoleByModule.keys(),
+      ...previousScopesByModule.keys(),
+      ...desiredAssignments.keys()
+    ]);
+
+    const changes = Array.from(moduleIds).map(moduleId => {
+      const desired = desiredAssignments.get(moduleId);
+      const previousRoleId = previousRoleByModule.get(moduleId) || '';
+      const desiredRoleId = desired ? desired.rol_id : '';
+
+      const oldScopes = previousScopesByModule.get(moduleId) || [];
+      const newScopes = desired
+        ? desired.ambitos || []
+        : [];
+
+      return {
+        modulo_id: moduleId,
+        previous_rol_id: previousRoleId,
+        rol_id: desiredRoleId,
+        previous_ambitos: oldScopes,
+        ambitos: canManageScopes
+          ? newScopes
+          : oldScopes
+      };
+    });
+
+    const roleChanges = changes.filter(item =>
       String(item.previous_rol_id || '') !== String(item.rol_id || '')
     );
 
-    const scopeChanges = canManageScopes && assignments.some(item =>
-      _accessScopeSignature(item.previous_ambitos) !==
-      _accessScopeSignature(item.ambitos)
-    );
+    const scopeChanges = canManageScopes
+      ? changes.filter(item =>
+          _accessScopeSignature(item.previous_ambitos) !==
+          _accessScopeSignature(item.ambitos)
+        )
+      : [];
 
-    if (!roleChanges && !scopeChanges) return;
+    if (!roleChanges.length && !scopeChanges.length) return;
+
+    if (!canManageScopes) {
+      const removingRoleWithScopes = roleChanges.some(item =>
+        !item.rol_id && item.previous_ambitos.length
+      );
+
+      if (removingRoleWithScopes) {
+        throw new Error(
+          'No puedes retirar un acceso que tiene ámbitos asignados porque no tienes permiso para administrarlos.'
+        );
+      }
+    }
 
     let completedOperations = 0;
 
@@ -873,42 +1178,34 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     }
 
     try {
-      if (scopeChanges) {
-        for (const item of assignments) {
-          if (item.previous_ambitos.length) {
-            await run('saveAccessScopes', {
-              persona_id: personaId,
-              modulo_id: item.modulo_id,
-              ambitos: []
-            });
-          }
-        }
-      }
-
-      if (roleChanges) {
-        for (const item of assignments) {
-          if (String(item.previous_rol_id || '') === String(item.rol_id || '')) {
-            continue;
-          }
-
-          await run('saveAccessUserRole', {
+      // Primero se limpian los ámbitos modificados. Esto permite cambiar
+      // referencias de sede sin chocar con ámbitos antiguos en otros módulos.
+      for (const item of scopeChanges) {
+        if (item.previous_ambitos.length) {
+          await run('saveAccessScopes', {
             persona_id: personaId,
             modulo_id: item.modulo_id,
-            rol_id: item.rol_id,
-            active: Boolean(item.rol_id)
+            ambitos: []
           });
         }
       }
 
-      if (scopeChanges) {
-        for (const item of assignments) {
-          if (item.rol_id && item.ambitos.length) {
-            await run('saveAccessScopes', {
-              persona_id: personaId,
-              modulo_id: item.modulo_id,
-              ambitos: item.ambitos
-            });
-          }
+      for (const item of roleChanges) {
+        await run('saveAccessUserRole', {
+          persona_id: personaId,
+          modulo_id: item.modulo_id,
+          rol_id: item.rol_id,
+          active: Boolean(item.rol_id)
+        });
+      }
+
+      for (const item of scopeChanges) {
+        if (item.rol_id && item.ambitos.length) {
+          await run('saveAccessScopes', {
+            persona_id: personaId,
+            modulo_id: item.modulo_id,
+            ambitos: item.ambitos
+          });
         }
       }
 
@@ -1024,29 +1321,6 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       });
     }
 
-    function beginDocumentSearchLoading() {
-      const overlay = document.createElement('div');
-      overlay.className = 'access-search-loading-overlay';
-      overlay.setAttribute('role', 'status');
-      overlay.setAttribute('aria-live', 'polite');
-
-      const content = document.createElement('div');
-      content.className = 'access-search-loading-content';
-
-      const spinner = document.createElement('span');
-      spinner.className = 'access-search-loading-spinner';
-      spinner.setAttribute('aria-hidden', 'true');
-
-      const message = document.createElement('p');
-      message.textContent = 'Buscando en el directorio institucional...';
-
-      content.append(spinner, message);
-      overlay.appendChild(content);
-      form.appendChild(overlay);
-
-      return () => overlay.remove();
-    }
-
     function updateSaveState() {
       if (saveButton && !editing) {
         saveButton.disabled = !selectedPersonCanEnable;
@@ -1148,7 +1422,9 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           documentNumber.disabled = true;
 
           resultHost.appendChild(alertHost);
-          const finishLoading = beginDocumentSearchLoading();
+          const finishLoading = SUNARPUI.beginLoading({
+            backdrop: 'translucent'
+          });
 
           showSearchAlert(
             'info',
@@ -1651,228 +1927,6 @@ function createAccessStatusCell(row, method, id, entityLabel) {
   }
 
 
-  function renderScopes(host) {
-    const section = makeTabPanel(
-      'Ámbitos de acceso',
-      'Asigna ámbitos por persona y módulo. Los ámbitos específicos de una persona deben corresponder a una sola sede.'
-    );
-    host.appendChild(section);
-    const panel = document.createElement('div');
-    panel.className = 'access-scopes-editor';
-
-    const userSelect = createSelect(
-      (state.data.users || []).filter(user => user.active === true).map(user => ({
-        value: user.persona_id,
-        label: user.nombre_completo + ' — ' + user.correo_institucional
-      })),
-      '',
-      'Selecciona una persona'
-    );
-    const moduleSelect = createSelect(
-      (state.data.modules || []).filter(item => item.active === true).map(item => ({
-        value: item.modulo_id,
-        label: item.nombre + ' (' + item.codigo + ')'
-      })),
-      '',
-      'Selecciona un módulo'
-    );
-    const typeSelect = createSelect([
-      { value: 'TOTAL', label: 'Total — todos los registros del módulo' },
-      { value: 'SEDE', label: 'Sede' },
-      { value: 'ESTRUCTURA_ORG', label: 'Unidad orgánica' },
-      { value: 'LOCAL', label: 'Local directamente asignado' }
-    ], 'TOTAL');
-    const referenceSelect = createSelect([], '', 'No requiere referencia');
-    const descendants = createInput('checkbox', '', {});
-    descendants.className = 'access-checkbox';
-    const descendantsLabel = document.createElement('label');
-    descendantsLabel.className = 'access-inline-check';
-    descendantsLabel.append(
-      descendants,
-      document.createTextNode('Incluir unidades orgánicas descendientes')
-    );
-
-    const grid = createFormGrid();
-    grid.append(
-      createField('Persona', userSelect),
-      createField('Módulo', moduleSelect),
-      createField('Tipo de ámbito', typeSelect),
-      createField('Referencia', referenceSelect)
-    );
-    panel.appendChild(grid);
-    panel.appendChild(descendantsLabel);
-
-    const add = createButton('Agregar ámbito', 'outline', addScope, 'add');
-    const actionBar = document.createElement('div');
-    actionBar.className = 'access-scope-actions';
-    actionBar.appendChild(add);
-    panel.appendChild(actionBar);
-
-    const listHeading = document.createElement('h4');
-    listHeading.className = 'access-subheading';
-    listHeading.textContent = 'Ámbitos seleccionados';
-    panel.appendChild(listHeading);
-    const list = document.createElement('div');
-    list.id = 'accessScopeDraftList';
-    list.className = 'access-scope-list';
-    panel.appendChild(list);
-
-    const save = createButton('Guardar ámbitos', 'primary', saveScopes, 'save');
-    save.classList.add('access-scope-save');
-    panel.appendChild(save);
-    host.appendChild(panel);
-
-    function currentScopeName(scope) {
-      if (scope.tipo_ambito === 'TOTAL') return 'Todos los registros del módulo';
-      const catalogs = state.data.catalogs || {};
-      const items = scope.tipo_ambito === 'SEDE'
-        ? (catalogs.sedes || [])
-        : scope.tipo_ambito === 'ESTRUCTURA_ORG'
-          ? (catalogs.estructuraOrg || [])
-          : (catalogs.locales || []);
-      const match = items.find(item => item.id === scope.referencia_id);
-      return match ? match.name : scope.referencia_id;
-    }
-
-    function updateReferenceOptions() {
-      const type = typeSelect.value;
-      const catalogs = state.data.catalogs || {};
-      const options = type === 'SEDE'
-        ? (catalogs.sedes || []).map(item => ({ value: item.id, label: item.name }))
-        : type === 'ESTRUCTURA_ORG'
-          ? (catalogs.estructuraOrg || []).map(item => ({ value: item.id, label: item.name }))
-          : type === 'LOCAL'
-            ? (catalogs.locales || []).map(item => ({ value: item.id, label: item.name }))
-            : [];
-      const useReference = type !== 'TOTAL';
-      const next = createSelect(
-        options,
-        '',
-        useReference ? 'Selecciona una referencia' : 'No requiere referencia'
-      );
-      referenceSelect.replaceChildren(...Array.from(next.childNodes));
-      referenceSelect.disabled = !useReference;
-      descendantsLabel.hidden = type !== 'ESTRUCTURA_ORG';
-      descendants.checked = false;
-    }
-
-    function loadDraft() {
-      const personaId = userSelect.value;
-      const moduleId = moduleSelect.value;
-      state.draftScopes = (state.data.scopes || [])
-        .filter(item =>
-          item.persona_id === personaId &&
-          item.modulo_id === moduleId &&
-          item.active === true
-        )
-        .map(item => ({
-          tipo_ambito: item.tipo_ambito,
-          referencia_id: item.referencia_id,
-          incluir_descendientes: item.incluir_descendientes || 'NO'
-        }));
-      paintDraft();
-    }
-
-    function paintDraft() {
-      list.replaceChildren();
-      if (!userSelect.value || !moduleSelect.value) {
-        const note = document.createElement('p');
-        note.className = 'access-muted';
-        note.textContent = 'Selecciona una persona y un módulo para administrar sus ámbitos.';
-        list.appendChild(note);
-        return;
-      }
-      if (!state.draftScopes.length) {
-        const note = document.createElement('p');
-        note.className = 'access-muted';
-        note.textContent = 'No hay ámbitos asignados. La persona no tendrá acceso a registros de este módulo.';
-        list.appendChild(note);
-        return;
-      }
-      state.draftScopes.forEach((scope, index) => {
-        const row = document.createElement('div');
-        row.className = 'access-scope-item';
-        const text = document.createElement('div');
-        const strong = document.createElement('strong');
-        strong.textContent = scope.tipo_ambito;
-        const detail = document.createElement('span');
-        detail.textContent = currentScopeName(scope) +
-          (scope.tipo_ambito === 'ESTRUCTURA_ORG' && scope.incluir_descendientes === 'SI'
-            ? ' (incluye descendientes)' : '');
-        text.append(strong, detail);
-        const remove = createButton('Quitar', 'outline', () => {
-          state.draftScopes.splice(index, 1);
-          paintDraft();
-        }, 'close');
-        remove.classList.add('access-small-button');
-        row.append(text, remove);
-        list.appendChild(row);
-      });
-    }
-
-    function addScope() {
-      if (!userSelect.value || !moduleSelect.value) {
-        SUNARPUI.notify('warning', 'Selecciona una persona y un módulo.');
-        return;
-      }
-      const type = typeSelect.value;
-      const referenceId = type === 'TOTAL' ? '' : referenceSelect.value;
-      if (type !== 'TOTAL' && !referenceId) {
-        SUNARPUI.notify('warning', 'Selecciona una referencia para el ámbito.');
-        return;
-      }
-      if (type === 'TOTAL' && state.draftScopes.length) {
-        SUNARPUI.notify('warning', 'TOTAL es exclusivo dentro del mismo módulo.');
-        return;
-      }
-      if (type !== 'TOTAL' && state.draftScopes.some(item => item.tipo_ambito === 'TOTAL')) {
-        SUNARPUI.notify('warning', 'Quita TOTAL antes de agregar otros ámbitos en este módulo.');
-        return;
-      }
-      if (state.draftScopes.some(item =>
-        item.tipo_ambito === type && item.referencia_id === referenceId
-      )) {
-        SUNARPUI.notify('warning', 'Ese ámbito ya está agregado.');
-        return;
-      }
-      state.draftScopes.push({
-        tipo_ambito: type,
-        referencia_id: referenceId,
-        incluir_descendientes: type === 'ESTRUCTURA_ORG' && descendants.checked ? 'SI' : 'NO'
-      });
-      paintDraft();
-    }
-
-    async function saveScopes() {
-      if (!userSelect.value || !moduleSelect.value) {
-        SUNARPUI.notify('warning', 'Selecciona una persona y un módulo.');
-        return;
-      }
-      save.disabled = true;
-      try {
-        await rpc('saveAccessScopes', {
-          persona_id: userSelect.value,
-          modulo_id: moduleSelect.value,
-          ambitos: state.draftScopes
-        });
-        await refreshData(false);
-        renderActiveTab('scopes');
-        SUNARPUI.notify('success', 'Ámbitos de acceso actualizados correctamente.');
-      } catch (error) {
-        SUNARPUI.notify('error', error.message);
-      } finally {
-        save.disabled = false;
-      }
-    }
-
-    userSelect.addEventListener('change', loadDraft);
-    moduleSelect.addEventListener('change', loadDraft);
-    typeSelect.addEventListener('change', updateReferenceOptions);
-    updateReferenceOptions();
-    paintDraft();
-  }
-
-
   function formatDate(value) {
     if (!value) return '—';
 
@@ -2296,97 +2350,6 @@ window.SUNARPAccessHistory = Object.freeze({
   }
 
 
-  function renderUserRoles(host) {
-    const section = makeTabPanel(
-      'Roles por módulo',
-      'Cada persona puede tener un rol distinto en cada módulo. Solo puede existir una asignación activa por persona y módulo.'
-    );
-    host.appendChild(section);
-
-    const panel = document.createElement('div');
-    panel.className = 'access-assignment';
-
-    const personSelect = createSelect(
-      (state.data.users || []).filter(user => user.active === true).map(user => ({
-        value: user.persona_id,
-        label: user.nombre_completo + ' — ' + user.correo_institucional
-      })),
-      '',
-      'Selecciona una persona'
-    );
-    const moduleSelect = createSelect(
-      (state.data.modules || []).filter(item => item.active === true).map(item => ({
-        value: item.modulo_id,
-        label: item.nombre + ' (' + item.codigo + ')'
-      })),
-      '',
-      'Selecciona un módulo'
-    );
-    const roleSelect = createSelect(
-      [{ value: '', label: 'Sin rol asignado' }].concat(
-        activeRoles().map(item => ({
-          value: item.rol_id,
-          label: item.nombre + ' (' + item.rol_id + ')'
-        }))
-      ),
-      '',
-      'Selecciona un rol'
-    );
-
-    const fields = createFormGrid();
-    fields.append(
-      createField('Persona', personSelect),
-      createField('Módulo', moduleSelect),
-      createField('Rol', roleSelect)
-    );
-    panel.appendChild(fields);
-
-    const hint = document.createElement('p');
-    hint.className = 'access-muted';
-    panel.appendChild(hint);
-
-    const save = createButton('Guardar asignación', 'primary', async () => {
-      if (!personSelect.value || !moduleSelect.value) {
-        SUNARPUI.notify('warning', 'Selecciona una persona y un módulo.');
-        return;
-      }
-      save.disabled = true;
-      try {
-        await rpc('saveAccessUserRole', {
-          persona_id: personSelect.value,
-          modulo_id: moduleSelect.value,
-          rol_id: roleSelect.value,
-          active: Boolean(roleSelect.value)
-        });
-        await refreshData(false);
-        renderActiveTab('userRoles');
-        SUNARPUI.notify('success', 'Asignación de rol actualizada.');
-      } catch (error) {
-        SUNARPUI.notify('error', error.message);
-      } finally {
-        save.disabled = false;
-      }
-    }, 'save');
-    panel.appendChild(save);
-    host.appendChild(panel);
-
-    function loadAssignment() {
-      const current = (state.data.userRoles || []).find(item =>
-        item.persona_id === personSelect.value &&
-        item.modulo_id === moduleSelect.value &&
-        item.active === true
-      );
-      roleSelect.value = current ? current.rol_id : '';
-      hint.textContent = current
-        ? 'Rol activo actual: ' + roleName(current.rol_id)
-        : 'No hay un rol activo asignado a esta persona en este módulo.';
-    }
-    personSelect.addEventListener('change', loadAssignment);
-    moduleSelect.addEventListener('change', loadAssignment);
-    loadAssignment();
-  }
-
-
   function getAvailableTabs() {
     const caps = state.data.capabilities || {};
 
@@ -2420,20 +2383,6 @@ window.SUNARPAccessHistory = Object.freeze({
       });
     }
 
-    if (caps.userRoles && !caps.users) {
-      tabs.push({
-        id: 'userRoles',
-        label: 'Roles por módulo'
-      });
-    }
-
-    if (caps.scopes && !(caps.users && caps.userRoles)) {
-      tabs.push({
-        id: 'scopes',
-        label: 'Ámbitos de acceso'
-      });
-    }
-
     if (caps.audit) {
       tabs.push({
         id: 'audit',
@@ -2459,8 +2408,6 @@ window.SUNARPAccessHistory = Object.freeze({
       roles: renderRoles,
       permissions: renderPermissions,
       assignments: renderAssignments,
-      userRoles: renderUserRoles,
-      scopes: renderScopes,
       audit: renderAudit
     };
 
