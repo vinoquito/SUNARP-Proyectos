@@ -2146,7 +2146,12 @@ function getAccessManagementData() {
           persona_id: _accessText_(item.persona_id),
           modulo_id: _accessText_(item.modulo_id),
           rol_id: _accessText_(item.rol_id),
-          active: _accessIsActive_(item.active)
+          active: _accessIsActive_(item.active),
+          has_scopes: data.ambitosAcceso.some(scope =>
+            _accessText_(scope.persona_id) === _accessText_(item.persona_id) &&
+            _accessText_(scope.modulo_id) === _accessText_(item.modulo_id) &&
+            _accessIsActive_(scope.active)
+          )
         }))
       : [],
 
