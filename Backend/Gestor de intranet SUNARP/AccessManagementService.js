@@ -300,7 +300,8 @@ function _accessOrgCatalog_() {
   const requests = [
     { key: 'sedes', source: getIntranetDataSource('SECURITY', 'Sedes', 1) },
     { key: 'estructuraOrg', source: getIntranetDataSource('SECURITY', 'EstructuraOrg', 1) },
-    { key: 'locales', source: getIntranetDataSource('DIRECTORY', 'locales', 1) }
+    { key: 'locales', source: getIntranetDataSource('DIRECTORY', 'locales', 1) },
+    { key: 'estructuraLocal', source: getIntranetDataSource('DIRECTORY', 'estructura_local', 1) }
   ];
 
   const catalogs = SUNARPCore.listRecordsFromSourcesCached(requests, 30);
@@ -308,7 +309,8 @@ function _accessOrgCatalog_() {
   return {
     sedes: (catalogs.sedes || []).filter(_accessCatalogIsActive_),
     estructuraOrg: (catalogs.estructuraOrg || []).filter(_accessCatalogIsActive_),
-    locales: (catalogs.locales || []).filter(_accessCatalogIsActive_)
+    locales: (catalogs.locales || []).filter(_accessCatalogIsActive_),
+    estructuraLocal: (catalogs.estructuraLocal || []).filter(_accessCatalogIsActive_)
   };
 }
 
@@ -2195,6 +2197,13 @@ function getAccessManagementData() {
           id: _accessText_(row.id),
           name: _accessText_(row.name),
           sede_id: _accessText_(row.sede_id)
+        })),
+      estructuraLocal: (catalogs.estructuraLocal || []).filter(_accessCatalogIsActive_)
+        .map(row => ({
+          id: _accessText_(row.id),
+          estructura_id: _accessText_(row.estructura_id),
+          local_id: _accessText_(row.local_id),
+          referencia: _accessText_(row.referencia)
         }))
     }
   };
