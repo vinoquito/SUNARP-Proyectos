@@ -2676,15 +2676,22 @@ window.SUNARPAccessHistory = Object.freeze({
     renderTable(host, {
       mode: 'server',
 
-      loadData: params => rpc(
-        'getAccessAuditHistory',
-        {
-          search: params.search,
-          ...params.filters,
-          page: params.page,
-          pageSize: params.pageSize
+      loadData: async params => {
+        const finishLoading = SUNARPUI.beginLoading({ backdrop: 'translucent' });
+        try {
+          return await rpc(
+            'getAccessAuditHistory',
+            {
+              search: params.search,
+              ...params.filters,
+              page: params.page,
+              pageSize: params.pageSize
+            }
+          );
+        } finally {
+          finishLoading();
         }
-      ),
+      },
 
       columns: [
         {
