@@ -563,6 +563,28 @@
       content.appendChild(title);
     }
 
+    if (Array.isArray(options.details) && options.details.length) {
+      const details = document.createElement('div');
+      details.className = 'sunarp-alert-details';
+
+      options.details
+        .map(value => String(value ?? '').trim())
+        .filter(Boolean)
+        .forEach((value, index) => {
+          const line = document.createElement(
+            index === 0 ? 'strong' : 'span'
+          );
+
+          line.className = 'sunarp-alert-detail';
+          line.textContent = value;
+          details.appendChild(line);
+        });
+
+      if (details.childNodes.length) {
+        content.appendChild(details);
+      }
+    }
+
     if (options.message) {
       const message = document.createElement('p');
 
