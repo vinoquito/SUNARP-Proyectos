@@ -211,7 +211,7 @@ function runAuthorizationSelfTests_() {
       {
         persona_id: 'PER_117',
         modulo_id: 'MOD_INFO_PERSONAL',
-        tipo_ambito: 'ESTRUCTURA_ORG',
+        tipo_ambito_id: 'ESTRUCTURA_ORG',
         referencia_id: 'SC_OFICINA_ADMINISTRACION',
         incluir_descendientes: true,
         active: true
@@ -219,7 +219,7 @@ function runAuthorizationSelfTests_() {
       {
         persona_id: 'PER_117',
         modulo_id: 'MOD_ACCESOS',
-        tipo_ambito: 'TOTAL',
+        tipo_ambito_id: 'TOTAL',
         referencia_id: '',
         incluir_descendientes: false,
         active: true
@@ -227,7 +227,7 @@ function runAuthorizationSelfTests_() {
       {
         persona_id: 'PER_117',
         modulo_id: 'MOD_DOCUMENTOS',
-        tipo_ambito: 'SEDE',
+        tipo_ambito_id: 'SEDE',
         referencia_id: 'SEDE_CENTRAL',
         incluir_descendientes: false,
         active: true
@@ -235,7 +235,7 @@ function runAuthorizationSelfTests_() {
       {
         persona_id: 'PER_117',
         modulo_id: 'MOD_LOCAL',
-        tipo_ambito: 'LOCAL',
+        tipo_ambito_id: 'LOCAL',
         referencia_id: 'LOCAL_001',
         incluir_descendientes: false,
         active: true
@@ -243,7 +243,7 @@ function runAuthorizationSelfTests_() {
       {
         persona_id: 'PER_117',
         modulo_id: 'MOD_INACTIVO',
-        tipo_ambito: 'TOTAL',
+        tipo_ambito_id: 'TOTAL',
         referencia_id: '',
         incluir_descendientes: false,
         active: true
@@ -251,7 +251,7 @@ function runAuthorizationSelfTests_() {
       {
         persona_id: 'PER_117',
         modulo_id: 'MOD_INFO_PERSONAL',
-        tipo_ambito: 'TOTAL',
+        tipo_ambito_id: 'TOTAL',
         referencia_id: '',
         incluir_descendientes: false,
         active: false
@@ -259,7 +259,7 @@ function runAuthorizationSelfTests_() {
       {
         persona_id: 'PER_OTRA',
         modulo_id: 'MOD_INFO_PERSONAL',
-        tipo_ambito: 'TOTAL',
+        tipo_ambito_id: 'TOTAL',
         referencia_id: '',
         incluir_descendientes: false,
         active: true
@@ -734,7 +734,7 @@ function runAuthorizationSelfTests_() {
     scopes: [{
       persona_id: 'PER_117',
       modulo_id: 'MOD_INFO_PERSONAL',
-      tipo_ambito: 'TOTAL',
+      tipo_ambito_id: 'TOTAL',
       active: true
     }]
   });
@@ -902,7 +902,7 @@ function runAuthorizationSelfTests_() {
     scopes: [{
       persona_id: 'PER_NO_DESC',
       modulo_id: 'MOD_INFO_PERSONAL',
-      tipo_ambito: 'ESTRUCTURA_ORG',
+      tipo_ambito_id: 'ESTRUCTURA_ORG',
       referencia_id: 'SC_OFICINA_ADMINISTRACION',
       incluir_descendientes: false,
       active: true
@@ -945,7 +945,7 @@ function runAuthorizationSelfTests_() {
     scopes: [{
       persona_id: 'PER_117',
       modulo_id: 'MOD_CUSTOM',
-      tipo_ambito: 'ESTRUCTURA_ORG',
+      tipo_ambito_id: 'ESTRUCTURA_ORG',
       referencia_id: 'ORG_ROOT',
       incluir_descendientes: true,
       active: true
