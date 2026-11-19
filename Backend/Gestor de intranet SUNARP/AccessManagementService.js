@@ -2295,11 +2295,21 @@ function getAccessUsers(filters) {
   });
   let accounts = security.usuarios || [];
   if (roleId) accounts = accounts.filter(user => (rolesByPerson.get(_accessText_(user.persona_id)) || []).some(role => role.rol_id === roleId));
+  const accountPersonaIds = [...new Set(accounts.map(user => _accessText_(user.persona_id)).filter(Boolean))];
   const sitesByPerson = new Map();
   let siteNames = new Map();
   if (sedeId) {
+    const assignmentResult = accountPersonaIds.length
+      ? SUNARPCore.findRecordsByFields(
+          _directorySource_('asignaciones'),
+          { persona_id: accountPersonaIds },
+          {
+            searchField: 'persona_id',
+            requiredHeaders: ['asignacion_id', 'persona_id', 'estructura_local_id', 'local_id', 'active']
+          }
+        )
+      : { records: [] };
     const locationData = SUNARPCore.listRecordsFromSourcesCached([
-      { key: 'assignments', source: _directorySource_('asignaciones'), requiredHeaders: ['asignacion_id', 'persona_id', 'estructura_local_id', 'local_id', 'active'] },
       { key: 'relations', source: _directorySource_('estructura_local'), requiredHeaders: ['id', 'estructura_id', 'local_id'] },
       { key: 'structures', source: _directorySource_('estructura_org'), requiredHeaders: ['id', 'sede_id'] },
       { key: 'locals', source: _directorySource_('locales'), requiredHeaders: ['id', 'sede_id'] },
@@ -2309,7 +2319,7 @@ function getAccessUsers(filters) {
     const structures = new Map((locationData.structures || []).map(x => [_accessText_(x.id), x]));
     const locals = new Map((locationData.locals || []).map(x => [_accessText_(x.id), x]));
     siteNames = new Map((locationData.sites || []).map(x => [_accessText_(x.id), _accessText_(x.name)]));
-    (locationData.assignments || []).filter(x => _accessIsActive_(x.active)).forEach(assignment => {
+    (assignmentResult.records || []).filter(x => _accessIsActive_(x.active)).forEach(assignment => {
       const personaId = _accessText_(assignment.persona_id);
       const relationId = _accessText_(assignment.estructura_local_id);
       const localId = _accessText_(assignment.local_id);
@@ -2328,7 +2338,6 @@ function getAccessUsers(filters) {
       sitesByPerson.get(personaId).add(assignedSiteId);
     });
   }
-  const accountPersonaIds = [...new Set(accounts.map(user => _accessText_(user.persona_id)).filter(Boolean))];
   const peopleResult = accountPersonaIds.length
     ? SUNARPCore.findRecordsByFields(
         _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
