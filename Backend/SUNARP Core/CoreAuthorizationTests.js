@@ -238,6 +238,11 @@ function runAuthorizationSelfTests_() {
       sede_id: 'SEDE_CENTRAL'
     },
     {
+      id: 'SC_OTRA_UNIDAD',
+      parent_id: '',
+      sede_id: 'SEDE_CENTRAL'
+    },
+    {
       id: 'ZR_I_UNIDAD',
       parent_id: '',
       sede_id: 'ZR_I'
@@ -291,6 +296,11 @@ function runAuthorizationSelfTests_() {
   );
 
   assert(
+    !authorizationHasPermission(context, 'USUARIOS_ADMINISTRAR'),
+    'Exige indicar el módulo al comprobar permisos en el nuevo modelo.'
+  );
+
+  assert(
     !authorizationHasPermission(
       context,
       'ACCESOS_ROLES_ADMINISTRAR',
@@ -326,6 +336,16 @@ function runAuthorizationSelfTests_() {
       structures
     ),
     'Rechaza estructuras ajenas al ámbito orgánico.'
+  );
+
+  assert(
+    !authorizationIsRecordInScope(
+      context,
+      'MOD_DOCUMENTOS',
+      { sede_id: 'SEDE_DISTINTA' },
+      structures
+    ),
+    'El ámbito TOTAL de otro módulo no amplía el ámbito del módulo actual.'
   );
 
   assert(
@@ -369,6 +389,26 @@ function runAuthorizationSelfTests_() {
       structures
     ),
     'Deriva la sede desde el catálogo orgánico y no desde la sede enviada en el registro.'
+  );
+
+  assert(
+    authorizationIsRecordInScope(
+      context,
+      'MOD_DOCUMENTOS',
+      { estructura_id: 'SC_OTRA_UNIDAD', sede_id: 'SEDE_CENTRAL' },
+      structures
+    ),
+    'El ámbito SEDE incluye distintas estructuras orgánicas de la misma sede.'
+  );
+
+  assert(
+    !authorizationIsRecordInScope(
+      context,
+      'MOD_DOCUMENTOS',
+      { estructura_id: 'ZR_I_UNIDAD', sede_id: 'ZR_I' },
+      structures
+    ),
+    'El ámbito SEDE rechaza estructuras pertenecientes a otra sede.'
   );
 
   assert(
