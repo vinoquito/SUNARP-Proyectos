@@ -147,11 +147,50 @@ function _directoryAssertUnique_(records, field, label) {
   });
 }
 
-function _directorySource_(sheetName) {
+function _directorySource_(sheetName, sourceKey) {
   return getIntranetDataSource(
-    DIRECTORY_SERVICE_CONFIG.sourceKey,
+    sourceKey || DIRECTORY_SERVICE_CONFIG.sourceKey,
     sheetName,
     1
+  );
+}
+
+
+/**
+ * Localiza el catálogo oficial de tipos de documento.
+ * Se busca primero en Global parameters y después en el libro del directorio.
+ */
+function _directoryResolveDocumentTypesSource_() {
+  const sourceKeys = ['MASTER_DATA', DIRECTORY_SERVICE_CONFIG.sourceKey];
+  const failures = [];
+
+  for (const sourceKey of sourceKeys) {
+    const source = _directorySource_(
+      DIRECTORY_SERVICE_CONFIG.sheets.documentTypes,
+      sourceKey
+    );
+
+    try {
+      const info = SUNARPCore.getSourceInfoCached(source, 300);
+      const missing = DIRECTORY_REQUIRED_HEADERS.documentTypes.filter(header =>
+        !info.headers.includes(header)
+      );
+
+      if (missing.length) {
+        throw new Error(
+          'Faltan encabezados requeridos: ' + missing.join(', ') + '.'
+        );
+      }
+
+      return source;
+    } catch (error) {
+      failures.push(sourceKey + ': ' + error.message);
+    }
+  }
+
+  throw new Error(
+    'No se pudo localizar la pestaña "tipo_documento_identidad" en Global parameters ni en Directorios telefónicos. ' +
+    failures.join(' | ')
   );
 }
 
@@ -421,7 +460,6 @@ function _directoryLoadContextFromSheets_() {
   const sheetMap = [
     ['personas', 'personas'],
     ['datosPersonales', 'servidores datos personales'],
-    ['documentTypes', 'tipo_documento_identidad'],
     ['asignaciones', 'asignaciones'],
     ['sedes', 'sede'],
     ['tiposLocal', 'tipos_local'],
@@ -438,8 +476,14 @@ function _directoryLoadContextFromSheets_() {
     requiredHeaders: DIRECTORY_REQUIRED_HEADERS[item[0]]
   }));
 
-  // Core valida encabezados durante la misma lectura agrupada,
-  // sin volver a abrir el archivo para consultar cada pestaña.
+  requests.push({
+    key: 'documentTypes',
+    source: _directoryResolveDocumentTypesSource_(),
+    requiredHeaders: DIRECTORY_REQUIRED_HEADERS.documentTypes
+  });
+
+  // Core agrupa la lectura por libro aunque el catálogo documental
+  // se encuentre en Global parameters o en Directorios telefónicos.
   const context = SUNARPCore.listRecordsFromSources(requests);
 
   _directoryValidateSnapshot_(context);
