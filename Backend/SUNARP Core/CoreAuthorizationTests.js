@@ -392,12 +392,12 @@ function runAuthorizationSelfTests_() {
   );
 
   assert(
-    !authorizationIsRecordInScope(
+    authorizationIsRecordInScope(
       context,
       'MOD_INFO_PERSONAL',
       { estructura_id: 'SC_UNIDAD_TESORERIA' },
       structures
-    ) === false,
+    ),
     'Acepta el ámbito de la estructura de referencia y sus descendientes.'
   );
 
@@ -422,12 +422,12 @@ function runAuthorizationSelfTests_() {
   );
 
   assert(
-    !authorizationIsRecordInScope(
+    authorizationIsRecordInScope(
       context,
       'MOD_DOCUMENTOS',
       { estructura_id: 'SC_UNIDAD_TESORERIA', sede_id: 'ZR_I' },
       structures
-    ) === false,
+    ),
     'Deriva la sede desde la estructura del catálogo y no desde el registro.'
   );
 
