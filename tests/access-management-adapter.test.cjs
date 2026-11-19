@@ -242,7 +242,7 @@ test('AUDITORIA_VER es independiente y no concede administración de accesos', (
       rol_id: 'ROL_EDITOR',
       active: true
     }],
-    rolePermissions: base.rolPermiso.concat([
+    rolPermiso: base.rolPermiso.concat([
       ...base.rolPermiso
         .filter(item => item.rol_id === 'ROL_ADMIN')
         .map(item => ({ rol_id: 'ROL_EDITOR', permiso_id: item.permiso_id, active: true })),
