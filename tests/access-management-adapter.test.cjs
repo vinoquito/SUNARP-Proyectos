@@ -350,7 +350,7 @@ test('Agregar acceso incorpora directamente el ámbito seleccionado sin acción 
   assert.ok(confirmStart >= 0 && confirmEnd > confirmStart);
   assert.doesNotMatch(
     confirmHandler,
-    /\\b(?:scopeType|selectedReferenceId|descendants|scopeContextHost)\\b/,
+    /(?:scopeType|selectedReferenceId|descendants|scopeContextHost)/,
     'el manejador no debe acceder a variables locales del bloque canManageScopes'
   );
 });
