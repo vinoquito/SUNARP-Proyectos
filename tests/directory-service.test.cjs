@@ -658,3 +658,14 @@ test('el ordenamiento resuelve una sola vez la adscripción de cada registro', (
   assert.ok(implementation.includes('return sortable.map'));
   assert.equal(implementation.split('_directoryResolveAssignmentLocation_(').length - 1, 1);
 });
+
+
+test('la interfaz conserva la instantánea anterior cuando falla una actualización', () => {
+  const loadStart = frontendSource.indexOf('async function load(force = false)');
+  const loadEnd = frontendSource.indexOf('/* =====================================================\n     15. NAVEGACIÓN', loadStart);
+  const loadSource = frontendSource.slice(loadStart, loadEnd);
+  assert.ok(loadSource.includes('const hadLoadedSnapshot = state.loaded'));
+  assert.ok(loadSource.includes('state.loaded = hadLoadedSnapshot'));
+  assert.ok(loadSource.includes('if (!hadLoadedSnapshot && container)'));
+  assert.ok(loadSource.includes('Se conserva la última información cargada.'));
+});
