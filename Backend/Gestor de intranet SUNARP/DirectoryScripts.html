@@ -1823,6 +1823,12 @@ async function deleteDirectoryEntry(record) {
 
     if (state.loading) return;
 
+    // Conservar una instantánea funcional si una actualización posterior
+    // falla por tiempo de espera o por un error transitorio del servidor.
+    const hadLoadedSnapshot = state.loaded &&
+      Boolean(state.catalogs) &&
+      Array.isArray(state.records);
+
     // Evitar volver a consultar los archivos si ya se cargaron.
     if (state.loaded && !force) {
       setPageActions();
@@ -1925,7 +1931,7 @@ async function deleteDirectoryEntry(record) {
 
     } catch (error) {
 
-      state.loaded = false;
+      state.loaded = hadLoadedSnapshot;
 
       console.error(
         'Error al cargar Información de personal:',
@@ -1933,13 +1939,17 @@ async function deleteDirectoryEntry(record) {
       );
 
       notify(
-        'error',
-        error.message || 'No se pudo cargar la información de personal.'
+        hadLoadedSnapshot ? 'warning' : 'error',
+        hadLoadedSnapshot
+          ? 'No se pudo actualizar el directorio. Se conserva la última información cargada.'
+          : (error.message || 'No se pudo cargar la información de personal.')
       );
 
+      // No destruir una tabla válida por un fallo de actualización.
+      // En la primera carga no hay instantánea que conservar.
       const container = getElements().table;
 
-      if (container) {
+      if (!hadLoadedSnapshot && container) {
         container.textContent =
           'No se pudo cargar la información de personal.';
       }
