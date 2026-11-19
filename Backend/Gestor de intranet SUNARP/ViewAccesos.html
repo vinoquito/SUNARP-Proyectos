@@ -1,50 +1,7 @@
 <style>
-  /* Estilos propios del formulario de usuarios y su búsqueda documental. */
+  /* Estilos propios de Administración de accesos. */
   .access-form {
     position: relative;
-  }
-
-  .access-search-loading-overlay {
-    position: absolute;
-    inset: 0;
-    z-index: 20;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.58);
-    backdrop-filter: blur(1.5px);
-  }
-
-  .access-search-loading-content {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-    padding: 16px 20px;
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.82);
-    color: var(--ui-ink);
-    text-align: center;
-  }
-
-  .access-search-loading-content p {
-    margin: 0;
-    font-size: 13px;
-  }
-
-  .access-search-loading-spinner {
-    width: 30px;
-    height: 30px;
-    border: 3px solid #E5E9E3;
-    border-top-color: var(--sunarp-green);
-    border-radius: 50%;
-    animation: access-search-spin .8s linear infinite;
-  }
-
-  @keyframes access-search-spin {
-    to { transform: rotate(360deg); }
   }
 
   .access-person-search-result .sunarp-alert-message {
@@ -84,44 +41,49 @@
     margin: 0;
   }
 
-  .access-user-module-card {
+  .access-user-module-picker {
+    align-items: end;
+  }
+
+  .access-user-module-picker > .sunarp-btn {
+    justify-self: start;
+    min-height: 40px;
+  }
+
+  .access-user-module-editor-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid var(--ui-border);
+    border-radius: 8px;
+    background: var(--ui-background);
+  }
+
+  .access-user-module-editor-heading h4 {
+    margin: 0 0 3px;
+    color: var(--ui-ink);
+    font-size: 14px;
+  }
+
+  .access-user-module-editor-heading p {
+    margin: 0;
+  }
+
+  .access-user-scope-editor {
     display: flex;
     flex-direction: column;
     gap: 10px;
-    padding: 13px;
-    border: 1px solid var(--ui-border);
-    border-radius: 8px;
-    background: #fff;
-  }
-
-  .access-user-module-title {
-    margin: 0;
-    color: var(--ui-ink);
-    font-size: 14px;
-    font-weight: 700;
-  }
-
-  .access-user-module-card > .access-muted {
-    margin: -6px 0 0;
-  }
-
-  .access-user-module-scopes {
-    display: flex;
-    flex-direction: column;
-    gap: 9px;
-    padding-top: 10px;
+    padding-top: 12px;
     border-top: 1px solid var(--ui-border);
   }
 
-  .access-user-module-scopes h5 {
+  .access-user-scope-editor h5,
+  .access-user-assignment-heading {
     margin: 0;
     color: var(--ui-ink);
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 700;
-  }
-
-  .access-user-module-scopes > .access-muted {
-    margin: -5px 0 0;
   }
 
   .access-user-scope-grid {
@@ -142,27 +104,70 @@
     padding: 8px 10px;
     border: 1px solid var(--ui-border);
     border-radius: 6px;
-    background: var(--ui-background);
-  }
-
-  .access-user-scope-copy {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
+    background: #fff;
+    color: var(--ui-ink);
     font-size: 12px;
   }
 
-  .access-user-scope-copy strong {
-    color: var(--ui-ink);
+  .access-user-assignment-table-host {
+    width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--ui-border);
+    border-radius: 7px;
   }
 
-  .access-user-scope-copy span {
-    color: var(--ui-muted);
+  .access-user-assignment-table {
+    width: 100%;
+    min-width: 680px;
+    border-collapse: collapse;
+    background: #fff;
+    color: var(--ui-ink);
+    font-size: 12px;
+  }
+
+  .access-user-assignment-table th,
+  .access-user-assignment-table td {
+    padding: 10px 11px;
+    border-bottom: 1px solid var(--ui-border);
+    text-align: left;
+    vertical-align: middle;
+    line-height: 1.45;
+  }
+
+  .access-user-assignment-table th {
+    background: var(--ui-background);
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .access-user-assignment-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .access-user-assignment-actions {
+    display: flex;
+    gap: 6px;
+    white-space: nowrap;
+  }
+
+  .access-user-assignment-empty {
+    margin: 0;
+    padding: 14px;
   }
 
   .access-search-actions {
     justify-content: flex-start;
+  }
+
+  @media (max-width: 720px) {
+    .access-user-module-picker {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .access-user-module-picker > .sunarp-btn {
+      justify-self: start;
+    }
   }
 </style>
 
