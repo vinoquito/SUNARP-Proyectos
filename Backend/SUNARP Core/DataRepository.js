@@ -585,7 +585,7 @@ function findRecordsByFields(source, filters, options) {
 
   const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, character => '\\' + character);
   const buildPattern = value => {
-    const escaped = escapeRegex(value);
+    const escaped = escapeRegex(options.ignoreWhitespace ? String(value).replace(/\s+/g, '') : value);
     return options.ignoreWhitespace
       ? '^\\s*' + escaped.split('').join('\\s*') + '\\s*$'
       : '^(?:' + escaped + ')$';
@@ -634,8 +634,8 @@ function findRecordsByFields(source, filters, options) {
       return values.some(value => {
         if (field === searchField && options.ignoreWhitespace) {
           const actualNormalized = String(record[field] === null || record[field] === undefined ? '' : record[field])
-            .replace(/\\s+/g, '');
-          const expectedNormalized = String(value).replace(/\\s+/g, '');
+            .replace(/\s+/g, '');
+          const expectedNormalized = String(value).replace(/\s+/g, '');
           return options.matchCase === false
             ? actualNormalized.toLocaleLowerCase() === expectedNormalized.toLocaleLowerCase()
             : actualNormalized === expectedNormalized;
