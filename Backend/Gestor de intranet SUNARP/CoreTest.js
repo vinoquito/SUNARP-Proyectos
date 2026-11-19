@@ -130,3 +130,36 @@ function testDirectoryService() {
 }
 
 
+/**
+ * Diagnóstico de integración entre el Gestor y el motor de autorización
+ * de SUNARP Core. Solo lee el contexto de autorización y registra un resumen.
+ */
+function testAccessManagementIntegration() {
+  const auth = getAuthContext_();
+
+  const summary = {
+    authenticated: auth.authenticated === true,
+    institutionalPersonResolved: Boolean(auth.person && auth.person.persona_id),
+    activeAccountResolved: Boolean(
+      auth.user &&
+      (auth.user.active === true || String(auth.user.active).toUpperCase() === 'TRUE')
+    ),
+    moduleAccess: (auth.moduleAccess || []).map(item => ({
+      modulo_id: item.modulo_id,
+      moduleCode: item.module && item.module.codigo || '',
+      moduleName: item.module && item.module.nombre || '',
+      rol_id: item.rol_id,
+      roleName: item.role && item.role.nombre || '',
+      permissions: item.permissionCodes || [],
+      scopes: (item.scopes || []).map(scope => ({
+        tipo_ambito: scope.tipo_ambito,
+        incluir_descendientes: scope.incluir_descendientes
+      }))
+    }))
+  };
+
+  Logger.log('INTEGRACIÓN GESTOR - SUNARP CORE');
+  Logger.log(JSON.stringify(summary, null, 2));
+
+  return summary;
+}
