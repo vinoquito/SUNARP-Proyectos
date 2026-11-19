@@ -1647,6 +1647,7 @@ function saveAccessUserConfiguration(payload) {
   }
 
   let desiredScopes = previousScopes.map(scope => Object.assign({}, scope));
+  let scopesChanged = false;
 
   if (canManageScopes) {
     const catalogs = _accessOrgCatalog_();
@@ -1767,81 +1768,104 @@ function saveAccessUserConfiguration(payload) {
       }
     });
 
-    const totalModules = new Set();
-
-    normalizedScopes.forEach(scope => {
-      if (scope.tipo_ambito === 'TOTAL') {
-        if (totalModules.has(scope.modulo_id)) {
-          throw new Error('Un ámbito Total es exclusivo dentro de cada módulo.');
-        }
-        totalModules.add(scope.modulo_id);
-      } else if (totalModules.has(scope.modulo_id)) {
-        throw new Error('No puedes combinar Total con otros ámbitos del mismo módulo.');
-      }
-    });
-
-    const seenScopes = new Set();
-
-    normalizedScopes.forEach(scope => {
-      const key = [
-        scope.modulo_id,
-        scope.tipo_ambito,
-        scope.referencia_id
-      ].join('\u0000');
-
-      if (seenScopes.has(key)) {
-        throw new Error('Has agregado un ámbito duplicado.');
-      }
-
-      seenScopes.add(key);
-    });
-
     desiredScopes = normalizedScopes;
 
-    // Los ámbitos específicos de una persona deben corresponder a una sola sede
-    // en todos sus módulos.
-    const siteIds = new Set();
+    const scopeSignature = records => records
+      .map(item => [
+        item.modulo_id,
+        item.tipo_ambito,
+        item.referencia_id,
+        item.incluir_descendientes || 'NO'
+      ].join('\u0000'))
+      .sort()
+      .join('\u0001');
 
-    desiredScopes.forEach(scope => {
-      if (scope.tipo_ambito === 'TOTAL') return;
+    scopesChanged =
+      scopeSignature(previousScopes) !== scopeSignature(desiredScopes);
 
-      const referenceId = _accessText_(scope.referencia_id);
-      let siteId = '';
+    // Solo se vuelven a validar las referencias cuando los ámbitos realmente cambian.
+    // Una edición de roles no debe quedar bloqueada por referencias antiguas sin cambios.
+    if (scopesChanged) {
+      const scopeTypesByModule = new Map();
 
-      if (scope.tipo_ambito === 'SEDE') {
-        const site = _accessFindBy_(sites, 'id', referenceId);
-        siteId = _accessCatalogIsActive_(site)
-          ? _accessText_(site.id)
-          : '';
-      }
+      normalizedScopes.forEach(scope => {
+        if (!scopeTypesByModule.has(scope.modulo_id)) {
+          scopeTypesByModule.set(scope.modulo_id, new Set());
+        }
 
-      if (scope.tipo_ambito === 'ESTRUCTURA_ORG') {
-        const structure = _accessFindBy_(structures, 'id', referenceId);
-        siteId = _accessCatalogIsActive_(structure)
-          ? _accessText_(structure.sede_id)
-          : '';
-      }
+        const types = scopeTypesByModule.get(scope.modulo_id);
 
-      if (scope.tipo_ambito === 'LOCAL') {
-        const local = _accessFindBy_(locals, 'id', referenceId);
-        siteId = _accessCatalogIsActive_(local)
-          ? _accessText_(local.sede_id)
-          : '';
-      }
+        if (
+          (scope.tipo_ambito === 'TOTAL' && types.size > 0) ||
+          (scope.tipo_ambito !== 'TOTAL' && types.has('TOTAL'))
+        ) {
+          throw new Error('El ámbito Total es exclusivo dentro de cada módulo.');
+        }
 
-      if (!siteId) {
+        types.add(scope.tipo_ambito);
+      });
+
+      const seenScopes = new Set();
+
+      normalizedScopes.forEach(scope => {
+        const key = [
+          scope.modulo_id,
+          scope.tipo_ambito,
+          scope.referencia_id
+        ].join('\u0000');
+
+        if (seenScopes.has(key)) {
+          throw new Error('Has agregado un ámbito duplicado.');
+        }
+
+        seenScopes.add(key);
+      });
+
+      // Los ámbitos específicos de una persona deben corresponder a una sola sede
+      // en todos sus módulos.
+      const siteIds = new Set();
+
+      desiredScopes.forEach(scope => {
+        if (scope.tipo_ambito === 'TOTAL') return;
+
+        const referenceId = _accessText_(scope.referencia_id);
+        let siteId = '';
+
+        if (scope.tipo_ambito === 'SEDE') {
+          const site = _accessFindBy_(sites, 'id', referenceId);
+          siteId = _accessCatalogIsActive_(site)
+            ? _accessText_(site.id)
+            : '';
+        }
+
+        if (scope.tipo_ambito === 'ESTRUCTURA_ORG') {
+          const structure = _accessFindBy_(structures, 'id', referenceId);
+          siteId = _accessCatalogIsActive_(structure)
+            ? _accessText_(structure.sede_id)
+            : '';
+        }
+
+        if (scope.tipo_ambito === 'LOCAL') {
+          const local = _accessFindBy_(locals, 'id', referenceId);
+          siteId = _accessCatalogIsActive_(local)
+            ? _accessText_(local.sede_id)
+            : '';
+        }
+
+        if (!siteId) {
+          throw new Error(
+            'Existe un ámbito específico con una referencia inválida. Corrige esa asignación antes de continuar.'
+          );
+        }
+
+        siteIds.add(siteId);
+      });
+
+      if (siteIds.size > 1) {
         throw new Error(
-          'Existe un ámbito específico con una referencia inválida. Corrige esa asignación antes de continuar.'
+          'Los ámbitos específicos de una persona deben pertenecer a una sola sede, aunque correspondan a módulos distintos.'
         );
       }
-
-      siteIds.add(siteId);
-    });
-
-    if (siteIds.size > 1) {
-      throw new Error(
-        'Los ámbitos específicos de una persona deben pertenecer a una sola sede, aunque correspondan a módulos distintos.'
-      );
     }
   }
 
@@ -1850,21 +1874,8 @@ function saveAccessUserConfiguration(payload) {
     .sort()
     .join('\u0001');
 
-  const scopeSignature = records => records
-    .map(item => [
-      item.modulo_id,
-      item.tipo_ambito,
-      item.referencia_id,
-      item.incluir_descendientes || 'NO'
-    ].join('\u0000'))
-    .sort()
-    .join('\u0001');
-
   const rolesChanged =
     roleSignature(previousRoles) !== roleSignature(desiredRoles);
-
-  const scopesChanged = canManageScopes &&
-    scopeSignature(previousScopes) !== scopeSignature(desiredScopes);
 
   if (!rolesChanged && !scopesChanged) {
     return {
