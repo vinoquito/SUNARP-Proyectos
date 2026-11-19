@@ -143,6 +143,39 @@ function _coreIsEmptyRow_(row) {
 /**
  * Compara dos valores de una columna.
  */
+
+/**
+ * Lee filas candidatas agrupándolas en ventanas pequeñas. Evita ejecutar
+ * un getRange por cada coincidencia cuando una consulta devuelve muchos IDs.
+ */
+function _coreReadCandidateRows_(sheet, rowNumbers, lastColumn, dataStartRow, windowSize) {
+  const size = Number(windowSize) || 25;
+  const windows = new Map();
+  rowNumbers.forEach(rowNumber => {
+    const startRow = dataStartRow +
+      Math.floor((rowNumber - dataStartRow) / size) * size;
+    if (!windows.has(startRow)) windows.set(startRow, []);
+    windows.get(startRow).push(rowNumber);
+  });
+
+  const result = new Map();
+  windows.forEach((candidates, startRow) => {
+    const endRow = Math.min(
+      startRow + size - 1,
+      Math.max(...candidates)
+    );
+    const values = sheet.getRange(
+      startRow, 1, endRow - startRow + 1, lastColumn
+    ).getValues();
+    candidates.forEach(rowNumber => {
+      result.set(rowNumber, values[rowNumber - startRow]);
+    });
+  });
+  return result;
+}
+
+
+
 function _coreValuesEqual_(actual, expected) {
   if (
     actual === '' ||
@@ -573,10 +606,12 @@ function findRecordsByFields(source, filters, options) {
   }
 
   const records = [];
-  [...candidateRows].sort((a, b) => a - b).forEach(rowNumber => {
-    const values = sheet.getRange(
-      rowNumber, 1, 1, lastColumn
-    ).getValues()[0];
+  const orderedRows = [...candidateRows].sort((a, b) => a - b);
+  const candidateValues = _coreReadCandidateRows_(
+    sheet, orderedRows, lastColumn, dataStartRow, 25
+  );
+  orderedRows.forEach(rowNumber => {
+    const values = candidateValues.get(rowNumber);
     const record = _coreRowToRecord_(headers, values);
 
     const matches = filterFields.every(field => {
@@ -660,10 +695,12 @@ function searchRecordsByFields(source, query, fields, options) {
 
   const expected = matchCase ? search : search.toLocaleLowerCase();
   const records = [];
-  [...candidateRows].sort((a, b) => a - b).forEach(rowNumber => {
-    const values = sheet.getRange(
-      rowNumber, 1, 1, lastColumn
-    ).getValues()[0];
+  const orderedRows = [...candidateRows].sort((a, b) => a - b);
+  const candidateValues = _coreReadCandidateRows_(
+    sheet, orderedRows, lastColumn, dataStartRow, 25
+  );
+  orderedRows.forEach(rowNumber => {
+    const values = candidateValues.get(rowNumber);
     if (_coreIsEmptyRow_(values)) return;
     const record = _coreRowToRecord_(headers, values);
     const matches = fields.some(field => {
