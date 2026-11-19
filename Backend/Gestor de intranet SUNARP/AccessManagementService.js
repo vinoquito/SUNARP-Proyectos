@@ -919,37 +919,11 @@ function _accessNormalizeDocumentValue_(value, label) {
 }
 
 
-function _accessLoadPersonalDocumentRecords_() {
-  const result = SUNARPCore.listRecordsFromSourcesCached([{
-    key: 'datosPersonales',
-    source: _accessDirectorySource_('servidores datos personales'),
-    requiredHeaders: ['servidor_id', 'tipo_documento', 'numero_documento']
-  }], 300);
-  return result.datosPersonales || [];
-}
-
-
 function _accessLoadDocumentTypeRecords_() {
   return _accessLoadDocumentTypes_().filter(_accessCatalogIsActive_);
 }
 
 
-function _accessFindDocumentMatches_(documentType, documentNumber, records) {
-  const expectedType = _accessNormalizeDocumentValue_(documentType, 'Tipo de documento');
-  const expectedNumber = _accessNormalizeDocumentValue_(documentNumber, 'Número de documento');
-
-  return (records || []).filter(record =>
-    _accessText_(record.tipo_documento).replace(/\s+/g, '').toUpperCase() === expectedType &&
-    _accessText_(record.numero_documento).replace(/\s+/g, '').toUpperCase() === expectedNumber
-  );
-}
-
-
-/**
- * Devuelve el catálogo oficial de tipos de documento de identidad.
- * El navegador recibe id y nombre; el identificador se conserva en los
- * registros de datos personales y se utiliza para las búsquedas.
- */
 function getAccessDocumentTypes() {
   _accessRequirePermission_('USUARIOS_ADMINISTRAR');
 
