@@ -75,6 +75,84 @@ function _coreAuthScopeType_(scope) {
   return _coreAuthUpper_(scope && (scope.tipo_ambito_id || scope.tipo_ambito));
 }
 
+
+// Reutiliza los índices de catálogos durante una misma ejecución.
+// Las referencias de arrays son nuevas por solicitud; por eso el índice
+// nunca se comparte entre snapshots distintos ni entre usuarios.
+const _CORE_AUTH_SCOPE_CATALOG_CACHE_ = new WeakMap();
+const _CORE_AUTH_EMPTY_SCOPE_CATALOG_ = Object.freeze([]);
+
+function _coreAuthGetScopeCatalogMaps_(structures, locals, fields) {
+  const nodes = Array.isArray(structures)
+    ? structures
+    : _CORE_AUTH_EMPTY_SCOPE_CATALOG_;
+  const localNodes = Array.isArray(locals)
+    ? locals
+    : _CORE_AUTH_EMPTY_SCOPE_CATALOG_;
+  const f = Object.assign({
+    structureId: 'id',
+    structureParentId: 'parent_id',
+    structureSiteId: 'sede_id',
+    localId: 'id',
+    localSiteId: 'sede_id'
+  }, fields || {});
+
+  const fieldsKey = [
+    f.structureId,
+    f.structureParentId,
+    f.structureSiteId,
+    f.localId,
+    f.localSiteId
+  ].map(value => String(value || '')).join('\\u001f');
+
+  let byLocalCatalog = _CORE_AUTH_SCOPE_CATALOG_CACHE_.get(nodes);
+  if (!byLocalCatalog) {
+    byLocalCatalog = new Map();
+    _CORE_AUTH_SCOPE_CATALOG_CACHE_.set(nodes, byLocalCatalog);
+  }
+
+  let byFields = byLocalCatalog.get(localNodes);
+  if (!byFields) {
+    byFields = new Map();
+    byLocalCatalog.set(localNodes, byFields);
+  }
+
+  if (byFields.has(fieldsKey)) return byFields.get(fieldsKey);
+
+  const structureMap = new Map();
+  const localMap = new Map();
+
+  nodes.forEach(node => {
+    if (!_coreAuthCatalogIsActive_(node)) return;
+    const id = _coreAuthText_(node[f.structureId]);
+    if (!id) return;
+    if (structureMap.has(id)) {
+      throw new Error(
+        'SUNARP Core: identificador duplicado en el catálogo organizacional: ' +
+        id + '.'
+      );
+    }
+    structureMap.set(id, node);
+  });
+
+  localNodes.forEach(local => {
+    if (!_coreAuthCatalogIsActive_(local)) return;
+    const id = _coreAuthText_(local[f.localId]);
+    if (!id) return;
+    if (localMap.has(id)) {
+      throw new Error(
+        'SUNARP Core: identificador duplicado en el catálogo de locales: ' +
+        id + '.'
+      );
+    }
+    localMap.set(id, local);
+  });
+
+  const index = { structureMap, localMap };
+  byFields.set(fieldsKey, index);
+  return index;
+}
+
 function _coreAuthIsTruthy_(value) {
   if (value === true) return true;
   if (value === false || value === null || value === undefined) return false;
@@ -490,44 +568,13 @@ function authorizationIsRecordInScope(
     localSiteId: 'sede_id'
   }, fields);
 
-  const nodes = Array.isArray(structures) ? structures : [];
-  const localNodes = Array.isArray(locals) ? locals : [];
-  const structureMap = new Map();
-  const localMap = new Map();
-
-  nodes.forEach(node => {
-    if (!_coreAuthCatalogIsActive_(node)) return;
-
-    const id = _coreAuthText_(node[f.structureId]);
-
-    if (!id) return;
-
-    if (structureMap.has(id)) {
-      throw new Error(
-        'SUNARP Core: identificador duplicado en el catálogo organizacional: ' +
-        id + '.'
-      );
-    }
-
-    structureMap.set(id, node);
-  });
-
-  localNodes.forEach(local => {
-    if (!_coreAuthCatalogIsActive_(local)) return;
-
-    const id = _coreAuthText_(local[f.localId]);
-
-    if (!id) return;
-
-    if (localMap.has(id)) {
-      throw new Error(
-        'SUNARP Core: identificador duplicado en el catálogo de locales: ' +
-        id + '.'
-      );
-    }
-
-    localMap.set(id, local);
-  });
+  const catalogMaps = _coreAuthGetScopeCatalogMaps_(
+    structures,
+    locals,
+    f
+  );
+  const structureMap = catalogMaps.structureMap;
+  const localMap = catalogMaps.localMap;
 
   const structureId = _coreAuthText_(
     record[f.recordOrganizationStructureId] ||
