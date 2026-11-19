@@ -55,3 +55,12 @@ test('las comprobaciones de permisos y ámbitos exigen modulo_id', () => {
     /function authorizationIsRecordInScope\(\s*context,\s*moduloId/
   );
 });
+
+
+test('CoreAuthorization consume tipo_ambito_id y mantiene compatibilidad con datos históricos', () => {
+  const sandbox = vm.createContext({ console: { log: () => {} } });
+  vm.runInContext(coreSource, sandbox);
+  assert.equal(sandbox._coreAuthScopeType_({ tipo_ambito_id: 'SEDE' }), 'SEDE');
+  assert.equal(sandbox._coreAuthScopeType_({ tipo_ambito_id: 'ESTRUCTURA_ORG' }), 'ESTRUCTURA_ORG');
+  assert.equal(sandbox._coreAuthScopeType_({ tipo_ambito: 'TOTAL' }), 'TOTAL');
+});
