@@ -301,7 +301,14 @@ function _accessOrgCatalog_() {
     { key: 'estructuraOrg', source: getIntranetDataSource('SECURITY', 'EstructuraOrg', 1) },
     { key: 'locales', source: getIntranetDataSource('DIRECTORY', 'locales', 1) }
   ];
-  return SUNARPCore.listRecordsFromSourcesCached(requests, 30);
+
+  const catalogs = SUNARPCore.listRecordsFromSourcesCached(requests, 30);
+
+  return {
+    sedes: (catalogs.sedes || []).filter(_accessCatalogIsActive_),
+    estructuraOrg: (catalogs.estructuraOrg || []).filter(_accessCatalogIsActive_),
+    locales: (catalogs.locales || []).filter(_accessCatalogIsActive_)
+  };
 }
 
 
@@ -1155,6 +1162,21 @@ function saveAccessScopes(payload) {
   // Los ámbitos específicos se restringen a una sola sede en todos los módulos.
   // TOTAL solo es exclusivo dentro del módulo al que pertenece.
   const siteIds = new Set();
+  data.ambitosAcceso.forEach(scope => {
+    if (!_accessIsActive_(scope.active)) return;
+    const type = _accessUpper_(scope.tipo_ambito);
+    const referenceId = _accessText_(scope.referencia_id);
+    if (!['TOTAL', 'SEDE', 'ESTRUCTURA_ORG', 'LOCAL'].includes(type)) {
+      throw new Error('AmbitosAcceso contiene un tipo de ámbito no reconocido: ' + type + '.');
+    }
+    if (type === 'TOTAL' && referenceId) {
+      throw new Error('Un ámbito TOTAL debe tener referencia_id vacío.');
+    }
+    if (type !== 'TOTAL' && !referenceId) {
+      throw new Error('Un ámbito ' + type + ' requiere referencia_id.');
+    }
+  });
+
   const existingSpecific = data.ambitosAcceso.filter(scope =>
     _accessText_(scope.persona_id) === personaId &&
     _accessText_(scope.modulo_id) !== moduleId &&
