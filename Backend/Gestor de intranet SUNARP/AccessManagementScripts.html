@@ -2883,12 +2883,68 @@ window.SUNARPAccessHistory = Object.freeze({
   }
 
 
+  async function refreshCurrentTabData(showNotification) {
+    if (!state.data || state.tabRefreshing) return;
+
+    state.tabRefreshing = true;
+    const finishLoading = SUNARPUI.beginLoading({ backdrop: 'translucent' });
+
+    try {
+      const tab = state.activeTab;
+
+      if (tab === 'users') {
+        if (state.userListController) {
+          await state.userListController.refresh();
+        }
+      } else if (tab === 'roles') {
+        const result = await rpc('getAccessManagementTabData', 'roles');
+        state.data.roles = result.roles || [];
+        renderActiveTab('roles');
+      } else if (tab === 'permissions') {
+        const result = await rpc('getAccessManagementTabData', 'permissions');
+        state.data.modules = result.modules || [];
+        state.data.permissions = result.permissions || [];
+        renderActiveTab('permissions');
+      } else if (tab === 'operations') {
+        const result = await rpc('getAccessManagementTabData', 'operations');
+        state.data.operations = result.operations || [];
+        renderActiveTab('operations');
+      } else if (tab === 'assignments') {
+        const result = await rpc('getAccessManagementTabData', 'assignments');
+        state.data.roles = result.roles || [];
+        state.data.modules = result.modules || [];
+        state.data.permissions = result.permissions || [];
+        state.data.rolePermissions = result.rolePermissions || [];
+        renderActiveTab('assignments');
+      } else if (tab === 'audit') {
+        if (state.table && typeof state.table.refresh === 'function') {
+          await state.table.refresh();
+        } else {
+          renderActiveTab('audit');
+        }
+      }
+
+      if (showNotification) {
+        SUNARPUI.notify('success', 'Pestaña actualizada.');
+      }
+    } catch (error) {
+      SUNARPUI.notify(
+        'error',
+        error.message || 'No se pudo actualizar la pestaña.'
+      );
+    } finally {
+      state.tabRefreshing = false;
+      finishLoading();
+    }
+  }
+
+
   async function refreshData(showNotification) {
     if (state.loading) return;
 
     state.loading = true;
 
-    const finish = SUNARPUI.beginLoading();
+    const finish = SUNARPUI.beginLoading({ backdrop: 'translucent' });
 
     setMessage('Consultando información de seguridad...');
 
