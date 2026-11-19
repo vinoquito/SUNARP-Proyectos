@@ -317,8 +317,22 @@ function _accessValidateSnapshot_(data) {
     const id = _accessUpper_(item.tipo_ambito_id);
     if (!allowedScopeTypeIds.has(id)) throw new Error('TiposAmbito contiene un tipo no admitido por el modelo: ' + id + '.');
   });
+  const scopeTypeRules = {
+    TOTAL: { entity: 'NINGUNA', reference: false, descendants: false },
+    SEDE: { entity: 'SEDE', reference: true, descendants: false },
+    ESTRUCTURA_ORG: { entity: 'ESTRUCTURA_ORG', reference: true, descendants: true },
+    LOCAL: { entity: 'LOCAL', reference: true, descendants: false }
+  };
   ACCESS_SCOPE_TYPE_IDS.forEach(id => {
     if (!scopeTypeIds.has(id)) throw new Error('TiposAmbito no contiene el tipo obligatorio ' + id + '.');
+    const row = data.tiposAmbito.find(item => _accessUpper_(item.tipo_ambito_id) === id);
+    const expected = scopeTypeRules[id];
+    if (!_accessCatalogIsActive_(row) ||
+        _accessUpper_(row.entidad_referencia) !== expected.entity ||
+        _accessFlag_(row.requiere_referencia) !== expected.reference ||
+        _accessFlag_(row.permite_descendientes) !== expected.descendants) {
+      throw new Error('La configuración de TiposAmbito para ' + id + ' no coincide con el modelo admitido.');
+    }
   });
 
   data.usuarios.forEach(user => {
@@ -447,7 +461,11 @@ function _accessGetAuthContext_() {
     userRoles: data.usuarioRol,
     permissions: data.permisos,
     rolePermissions: data.rolPermiso,
-    scopes: data.ambitosAcceso
+    // El contrato compartido de autorización aún utiliza tipo_ambito.
+    // El almacenamiento de la aplicación sigue normalizado en tipo_ambito_id.
+    scopes: data.ambitosAcceso.map(scope => Object.assign({}, scope, {
+      tipo_ambito: _accessUpper_(scope.tipo_ambito_id)
+    }))
   });
 
   if (!context.authenticated) {
@@ -892,18 +910,17 @@ function _accessNormalizeDocumentValue_(value, label) {
 
 
 function _accessLoadPersonalDocumentRecords_() {
-  const context = _directoryLoadContext_();
-  return Array.isArray(context.datosPersonales)
-    ? context.datosPersonales
-    : [];
+  const result = SUNARPCore.listRecordsFromSourcesCached([{
+    key: 'datosPersonales',
+    source: _accessDirectorySource_('servidores datos personales'),
+    requiredHeaders: ['servidor_id', 'tipo_documento', 'numero_documento']
+  }], 300);
+  return result.datosPersonales || [];
 }
 
 
 function _accessLoadDocumentTypeRecords_() {
-  const context = _directoryLoadContext_();
-  return Array.isArray(context.documentTypes)
-    ? context.documentTypes.filter(_accessCatalogIsActive_)
-    : [];
+  return _accessLoadDocumentTypes_().filter(_accessCatalogIsActive_);
 }
 
 
@@ -1096,7 +1113,7 @@ function _accessRecordUser_(auth, payload, action) {
     throw new Error('No puedes desactivar tu propia cuenta mientras administras el gestor.');
   }
 
-  const data = _accessLoadSecurityData_();
+  const data = auth.securityData;
   const existing = _accessFindBy_(data.usuarios, 'persona_id', personaId);
   if (action === 'create' && existing) throw new Error('La persona ya tiene una cuenta registrada.');
   if (action === 'edit' && !existing) throw new Error('No se encontró la cuenta que deseas actualizar.');
@@ -1153,7 +1170,7 @@ function saveAccessUserRole(payload) {
   const active = roleId ? _accessNormalizeActive_(payload.active === undefined ? true : payload.active, 'El estado de la asignación') : false;
   if (!personaId || !moduleId) throw new Error('Debes indicar persona_id y modulo_id.');
 
-  const data = _accessLoadSecurityData_();
+  const data = auth.securityData;
   if (!data.usuarios.some(row => _accessText_(row.persona_id) === personaId && _accessIsActive_(row.active))) {
     throw new Error('La persona no tiene una cuenta activa.');
   }
@@ -1205,7 +1222,7 @@ function saveAccessRole(payload) {
   if (!['create', 'edit'].includes(action)) throw new Error('La operación del rol no es válida.');
   if (!name) throw new Error('Ingresa el nombre del rol.');
 
-  const data = _accessLoadSecurityData_();
+  const data = auth.securityData;
   const originalId = action === 'edit' ? _accessUpper_(payload.rol_id_original || payload.originalRoleId || payload.rol_id) : '';
   const existing = action === 'edit' ? _accessFindBy_(data.roles, 'rol_id', originalId) : null;
   if (action === 'edit' && !existing) throw new Error('No se encontró el rol que deseas actualizar.');
@@ -1262,7 +1279,7 @@ function saveAccessPermission(payload) {
   const description = _accessText_(payload.descripcion || payload.description);
   if (!['create', 'edit'].includes(action)) throw new Error('La operación del permiso no es válida.');
   if (!moduleId || !operationId || !description) throw new Error('Completa el módulo, la operación y la descripción del permiso.');
-  const data = _accessLoadSecurityData_();
+  const data = auth.securityData;
   const module = data.modulos.find(item => _accessText_(item.modulo_id) === moduleId && _accessIsActive_(item.active));
   if (!module) throw new Error('El módulo no existe o está inactivo.');
   const originalId = action === 'edit' ? _accessUpper_(payload.permiso_id_original || payload.originalPermissionId || payload.permiso_id) : '';
@@ -1311,7 +1328,7 @@ function saveRolePermissions(payload) {
   if (!roleId) throw new Error('Selecciona un rol.');
 
   const permissionIds = [...new Set(selected.map(_accessText_).filter(Boolean))];
-  const data = _accessLoadSecurityData_();
+  const data = auth.securityData;
   const role = data.roles.find(row => _accessText_(row.rol_id) === roleId && _accessIsActive_(row.active));
   if (!role) throw new Error('El rol no existe o está inactivo.');
 
@@ -1357,7 +1374,7 @@ function saveAccessScopes(payload) {
 
   if (!personaId || !moduleId) throw new Error('Debes indicar persona_id y modulo_id.');
 
-  const data = _accessLoadSecurityData_();
+  const data = auth.securityData;
   const user = data.usuarios.find(row =>
     _accessText_(row.persona_id) === personaId && _accessIsActive_(row.active)
   );
@@ -1540,7 +1557,7 @@ function saveAccessUserConfiguration(payload) {
     throw new Error('Debes indicar la persona y la lista de accesos por módulo.');
   }
 
-  const data = _accessLoadSecurityData_();
+  const data = auth.securityData;
 
   const user = data.usuarios.find(item =>
     _accessText_(item.persona_id) === personaId &&
@@ -1733,84 +1750,38 @@ function saveAccessUserConfiguration(payload) {
           ? scopeInput.incluir_descendientes
           : scopeInput && scopeInput.includeDescendants;
 
-        if (!['TOTAL', 'SEDE', 'ESTRUCTURA_ORG', 'LOCAL'].includes(type)) {
-          throw new Error('Tipo de ámbito no válido: ' + (type || '(vacío)') + '.');
-        }
-
-        if (type === 'TOTAL') {
-          if (referenceId) {
-            throw new Error('Un ámbito Total no debe tener una referencia.');
-          }
-
-          normalizedScopes.push({
-            modulo_id: moduleId,
-            tipo_ambito_id: type,
-            referencia_id: '',
-            incluir_descendientes: 'NO'
-          });
-
+        const typeConfig = _accessScopeType_(data, type);
+        if (!typeConfig) throw new Error('Tipo de ámbito no válido o inactivo: ' + (type || '(vacío)') + '.');
+        const referenceEntity = _accessUpper_(typeConfig.entidad_referencia);
+        const requiresReference = _accessFlag_(typeConfig.requiere_referencia);
+        const allowsDescendants = _accessFlag_(typeConfig.permite_descendientes);
+        if (!requiresReference && referenceId) throw new Error('El ámbito ' + type + ' no admite referencia.');
+        if (requiresReference && !referenceId) throw new Error('El ámbito ' + type + ' requiere una referencia.');
+        if (referenceEntity === 'NINGUNA') {
+          normalizedScopes.push({ modulo_id: moduleId, tipo_ambito_id: type, referencia_id: '', incluir_descendientes: 'NO' });
           return;
         }
-
-        if (!referenceId) {
-          throw new Error('El ámbito ' + type + ' requiere una referencia.');
-        }
-
-        if (type === 'SEDE') {
+        if (referenceEntity === 'SEDE') {
           const site = _accessFindBy_(sites, 'id', referenceId);
-
-          if (!site || !_accessCatalogIsActive_(site)) {
-            throw new Error('La sede seleccionada no existe o está inactiva.');
-          }
-
-          normalizedScopes.push({
-            modulo_id: moduleId,
-            tipo_ambito_id: type,
-            referencia_id: referenceId,
-            incluir_descendientes: 'NO'
-          });
-
+          if (!site || !_accessCatalogIsActive_(site)) throw new Error('La sede seleccionada no existe o está inactiva.');
+          normalizedScopes.push({ modulo_id: moduleId, tipo_ambito_id: type, referencia_id: referenceId, incluir_descendientes: 'NO' });
           return;
         }
-
-        if (type === 'ESTRUCTURA_ORG') {
-          const structure = _accessFindBy_(
-            structures,
-            'id',
-            referenceId
-          );
-
-          if (!structure || !_accessCatalogIsActive_(structure)) {
-            throw new Error('La unidad orgánica seleccionada no existe o está inactiva.');
-          }
-
-          const descendants = includeInput === true ||
-            _accessUpper_(includeInput) === 'SI' ||
-            _accessUpper_(includeInput) === 'SÍ' ||
-            _accessUpper_(includeInput) === 'TRUE';
-
-          normalizedScopes.push({
-            modulo_id: moduleId,
-            tipo_ambito_id: type,
-            referencia_id: referenceId,
-            incluir_descendientes: descendants ? 'SI' : 'NO'
-          });
-
+        if (referenceEntity === 'ESTRUCTURA_ORG') {
+          const structure = _accessFindBy_(structures, 'id', referenceId);
+          if (!structure || !_accessCatalogIsActive_(structure)) throw new Error('La unidad orgánica seleccionada no existe o está inactiva.');
+          const descendants = _accessFlag_(includeInput);
+          if (descendants && !allowsDescendants) throw new Error('El tipo de ámbito ' + type + ' no permite incluir descendientes.');
+          normalizedScopes.push({ modulo_id: moduleId, tipo_ambito_id: type, referencia_id: referenceId, incluir_descendientes: descendants ? 'SI' : 'NO' });
           return;
         }
-
-        const local = _accessFindBy_(locals, 'id', referenceId);
-
-        if (!local || !_accessCatalogIsActive_(local)) {
-          throw new Error('El local seleccionado no existe o está inactivo.');
+        if (referenceEntity === 'LOCAL') {
+          const local = _accessFindBy_(locals, 'id', referenceId);
+          if (!local || !_accessCatalogIsActive_(local)) throw new Error('El local seleccionado no existe o está inactivo.');
+          normalizedScopes.push({ modulo_id: moduleId, tipo_ambito_id: type, referencia_id: referenceId, incluir_descendientes: 'NO' });
+          return;
         }
-
-        normalizedScopes.push({
-          modulo_id: moduleId,
-          tipo_ambito_id: 'LOCAL',
-          referencia_id: referenceId,
-          incluir_descendientes: 'NO'
-        });
+        throw new Error('El catálogo TiposAmbito contiene una entidad_referencia no admitida para ' + type + '.');
       });
     });
 
@@ -2254,8 +2225,8 @@ function getAccessManagementData() {
 function getAccessManagementTabData(tabId) {
   const tab = _accessText_(tabId).toLowerCase();
   if (tab === 'roles') {
-    _accessRequirePermission_('ROLES_ADMINISTRAR');
-    const result = SUNARPCore.listRecordsFromSourcesCached([{ key: 'roles', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.roles), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.roles }], 300);
+    const auth = _accessRequirePermission_('ROLES_ADMINISTRAR');
+    const result = auth.securityData;
     return { roles: (result.roles || []).map(item => ({ rol_id: _accessText_(item.rol_id), nombre: _accessText_(item.nombre), descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active) })) };
   }
   if (tab === 'permissions') {
@@ -2273,17 +2244,12 @@ function getAccessManagementTabData(tabId) {
     };
   }
   if (tab === 'assignments') {
-    _accessRequirePermission_('ROLES_ADMINISTRAR');
-    const result = SUNARPCore.listRecordsFromSourcesCached([
-      { key: 'roles', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.roles), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.roles },
-      { key: 'modules', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.modules), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.modules },
-      { key: 'permissions', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.permissions), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.permissions },
-      { key: 'rolePermissions', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.rolePermissions), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.rolePermissions }
-    ], 300);
+    const auth = _accessRequirePermission_('ROLES_ADMINISTRAR');
+    const result = auth.securityData;
     return {
       roles: (result.roles || []).map(item => ({ rol_id: _accessText_(item.rol_id), nombre: _accessText_(item.nombre), descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active) })),
       modules: (result.modules || []).map(item => ({ modulo_id: _accessText_(item.modulo_id), codigo: _accessUpper_(item.codigo), nombre: _accessText_(item.nombre), active: _accessIsActive_(item.active) })),
-      permissions: (result.permissions || []).map(item => ({ permiso_id: _accessText_(item.permiso_id), codigo: _accessUpper_(item.codigo), modulo_id: _accessText_(item.modulo_id), operacion_id: _accessUpper_(item.operacion_id), descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active) })),
+      permissions: (result.permisos || []).map(item => ({ permiso_id: _accessText_(item.permiso_id), codigo: _accessUpper_(item.codigo), modulo_id: _accessText_(item.modulo_id), operacion_id: _accessUpper_(item.operacion_id), operacion_nombre: _accessText_((result.operaciones.find(op => _accessUpper_(op.operacion_id) === _accessUpper_(item.operacion_id)) || {}).nombre), descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active) })),
       rolePermissions: (result.rolePermissions || []).map(item => ({ rol_id: _accessText_(item.rol_id), permiso_id: _accessText_(item.permiso_id), active: _accessIsActive_(item.active) }))
     };
   }
@@ -2773,7 +2739,7 @@ function getAccessEntityHistory(payload) {
 function _accessChangeStatus_(config) {
   const auth = _accessRequirePermission_(config.permission);
   const nextActive = _accessNormalizeActive_(config.active, 'El estado solicitado');
-  const data = _accessLoadSecurityData_();
+  const data = auth.securityData;
   const record = _accessFindBy_(data[config.collection], config.keyField, config.id);
   if (!record) throw new Error('No se encontró el registro "' + config.id + '".');
 
