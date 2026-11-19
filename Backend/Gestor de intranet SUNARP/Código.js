@@ -40,14 +40,6 @@ function getAppShellConfig() {
   const auth = getAuthContext_();
   const sourceItems = getNavigationItems_();
 
-  const accessManagementCodes = [
-    'USUARIOS_ADMINISTRAR',
-    'ROLES_ADMINISTRAR',
-    'PERMISOS_ADMINISTRAR',
-    'AMBITOS_ACCESO_ADMINISTRAR',
-    'AUDITORIA_VER'
-  ];
-
   const allowedItems = sourceItems.filter(item => {
     const requiredCode = String(item.permissionCode || '')
       .trim()
@@ -63,9 +55,7 @@ function getAppShellConfig() {
       requiredCode === 'ACCESOS_ADMINISTRAR' ||
       route === 'accesos'
     ) {
-      return accessManagementCodes.some(code =>
-        hasPermission_(auth, code)
-      );
+      return _accessIsGlobalAdministrator_(auth);
     }
 
     return hasPermission_(auth, requiredCode);
