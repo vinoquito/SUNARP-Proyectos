@@ -487,6 +487,11 @@ test('el listado de usuarios se consulta solo con filtro de sede o rol', () => {
   assert.match(accessUiSource, /createField\('Sede', siteSelect\)/);
   assert.match(accessUiSource, /createField\('Rol', roleSelect\)/);
   assert.match(accessUiSource, /rpc\('getAccessUsers'/);
+  assert.match(accessUiSource, /createButton\(\s*'Actualizar',[\s\S]*?\(\) => loadFilteredUsers\(true\)/);
+  assert.match(accessUiSource, /siteSelect\.addEventListener\('change', updateApplyState\)/);
+  assert.match(accessUiSource, /roleSelect\.addEventListener\('change', updateApplyState\)/);
+  assert.doesNotMatch(accessUiSource, /siteSelect\.addEventListener\('change', \(\) => loadFilteredUsers/);
+  assert.doesNotMatch(accessUiSource, /roleSelect\.addEventListener\('change', \(\) => loadFilteredUsers/);
   assert.match(accessUiSource, /searchPlaceholder: 'Buscar por nombre o correo institucional/);
   assert.match(accessUiSource, /state\.table\.setData\(state\.data\.users\)/);
 });

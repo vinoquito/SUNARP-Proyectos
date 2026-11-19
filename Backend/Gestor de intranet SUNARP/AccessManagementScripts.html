@@ -1541,9 +1541,10 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     host.appendChild(filters);
 
     let requestNumber = 0;
+    let loadingUsers = false;
 
     function updateApplyState() {
-      applyButton.disabled = !siteSelect.value && !roleSelect.value;
+      applyButton.disabled = loadingUsers || (!siteSelect.value && !roleSelect.value);
     }
 
     async function loadFilteredUsers(showLoading) {
@@ -1554,10 +1555,12 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       updateApplyState();
 
       if (!sedeId && !rolId) {
+        loadingUsers = false;
         state.data.users = [];
         if (state.table && typeof state.table.setData === 'function') {
           state.table.setData([]);
         }
+        updateApplyState();
         return;
       }
 
@@ -1565,7 +1568,8 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         ? () => {}
         : beginAccessPanelLoading();
 
-      applyButton.disabled = true;
+      loadingUsers = true;
+      updateApplyState();
 
       try {
         const result = await rpc('getAccessUsers', {
@@ -1589,12 +1593,17 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         }
       } finally {
         finishLoading();
-        if (currentRequest === requestNumber) updateApplyState();
+        if (currentRequest === requestNumber) {
+          loadingUsers = false;
+          updateApplyState();
+        }
       }
     }
 
-    siteSelect.addEventListener('change', () => loadFilteredUsers(true));
-    roleSelect.addEventListener('change', () => loadFilteredUsers(true));
+    // Los selectores solo actualizan el estado del botón.
+    // La consulta se ejecuta una vez, explícitamente, al pulsar Actualizar.
+    siteSelect.addEventListener('change', updateApplyState);
+    roleSelect.addEventListener('change', updateApplyState);
 
     renderTable(host, {
       data: [],
