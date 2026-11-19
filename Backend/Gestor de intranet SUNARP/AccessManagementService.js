@@ -564,7 +564,9 @@ function _accessRequirePermission_(permissionCode, moduleIdOrCode, record) {
       auth,
       moduleId,
       record,
-      catalogs.estructuraOrg
+      catalogs.estructuraOrg,
+      undefined,
+      catalogs.locales
     );
 
     if (!allowed) {
@@ -591,9 +593,16 @@ function requirePermission_(permissionCode, moduleId, record) {
 }
 
 
-function _accessRecordIsAllowed_(auth, moduleId, record, structures) {
+function _accessRecordIsAllowed_(auth, moduleId, record, structures, locals) {
   const resolvedModuleId = _accessResolveModuleId_(auth, moduleId);
-  return SUNARPCore.authorizationIsRecordInScope(auth, resolvedModuleId, record, structures || []);
+  return SUNARPCore.authorizationIsRecordInScope(
+    auth,
+    resolvedModuleId,
+    record,
+    structures || [],
+    undefined,
+    locals || []
+  );
 }
 
 
