@@ -423,7 +423,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     const canManage = state.data.capabilities.users;
     const section = makeTabPanel(
       'Usuarios',
-      'Cuentas institucionales vinculadas a personas del directorio. Los roles se asignan por módulo.',
+      'Busca a las personas por documento para habilitar sus cuentas institucionales. Los roles se asignan por módulo.',
       canManage ? 'Nueva cuenta' : '',
       canManage ? () => openUserModal(null) : null
     );
@@ -470,22 +470,24 @@ function createAccessStatusCell(row, method, id, entityLabel) {
   }
 
 
-  function openUserModal(row) {
+  async function openUserModal(row) {
     const editing = Boolean(row);
+    let documentTypes = [];
+
+    if (!editing) {
+      try {
+        documentTypes = await rpc('getAccessDocumentTypes');
+      } catch (error) {
+        SUNARPUI.notify('error', error.message || 'No se pudo cargar el catálogo de tipos de documento.');
+        return;
+      }
+    }
+
     const form = document.createElement('form');
     form.className = 'access-form';
     form.addEventListener('submit', event => event.preventDefault());
+
     const grid = createFormGrid();
-
-    const people = editing
-      ? [{ value: row.persona_id, label: row.nombre_completo + ' — ' + row.correo_institucional }]
-      : (state.data.availablePeople || []).map(person => ({
-          value: person.persona_id,
-          label: person.nombre_completo + ' — ' + person.correo_institucional
-        }));
-    const personSelect = createSelect(people, row && row.persona_id, editing ? null : 'Selecciona una persona');
-    personSelect.disabled = editing;
-
     const active = createSelect(
       [
         { value: 'true', label: 'Activa' },
@@ -494,20 +496,202 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       row ? String(Boolean(row.active)) : 'true'
     );
 
-    grid.append(
-      createField('Persona', personSelect),
-      createField('Estado de la cuenta', active)
-    );
-    form.appendChild(grid);
+    let selectedPerson = null;
+    let selectedPersonCanEnable = false;
+    let documentType = null;
+    let documentNumber = null;
+
+    if (editing) {
+      const identity = document.createElement('div');
+      identity.className = 'access-assignment';
+
+      const name = document.createElement('strong');
+      name.textContent = row.nombre_completo || row.persona_id;
+
+      const email = document.createElement('p');
+      email.className = 'access-muted';
+      email.textContent = row.correo_institucional || 'Sin correo institucional';
+
+      const id = document.createElement('small');
+      id.textContent = 'Persona: ' + row.persona_id;
+
+      identity.append(name, email, id);
+      grid.append(
+        createField('Persona vinculada', identity),
+        createField('Estado de la cuenta', active)
+      );
+    } else {
+      documentType = createSelect(
+        documentTypes.map(value => ({ value, label: value })),
+        '',
+        'Selecciona un tipo de documento'
+      );
+      documentType.required = true;
+
+      documentNumber = createInput('text', '', {
+        required: true,
+        maxlength: 30,
+        autocomplete: 'off',
+        spellcheck: 'false',
+        inputmode: 'text'
+      });
+
+      const searchButton = createButton(
+        'Buscar persona',
+        'outline',
+        async () => {
+          if (!documentType.value) {
+            documentType.reportValidity();
+            return;
+          }
+          if (!documentNumber.value.trim()) {
+            documentNumber.reportValidity();
+            return;
+          }
+
+          selectedPerson = null;
+          selectedPersonCanEnable = false;
+          searchButton.disabled = true;
+          resultHost.replaceChildren();
+
+          const loading = document.createElement('p');
+          loading.className = 'access-muted';
+          loading.textContent = 'Buscando coincidencia documental...';
+          resultHost.appendChild(loading);
+
+          try {
+            const result = await rpc('searchAccessPersonByDocument', {
+              tipo_documento: documentType.value,
+              numero_documento: documentNumber.value.trim()
+            });
+
+            resultHost.replaceChildren();
+
+            if (!result || result.found !== true || !result.person) {
+              const message = document.createElement('p');
+              message.className = 'access-muted';
+              message.textContent = result && result.message
+                ? result.message
+                : 'No se encontró una persona con esos datos.';
+              resultHost.appendChild(message);
+              return;
+            }
+
+            selectedPerson = result.person;
+
+            const existingAccount = (state.data.users || []).find(user =>
+              user.persona_id === selectedPerson.persona_id
+            );
+
+            selectedPersonCanEnable = Boolean(
+              result.canEnableAccount && !existingAccount
+            );
+
+            const identity = document.createElement('div');
+            identity.className = 'access-assignment';
+
+            const name = document.createElement('strong');
+            name.textContent = selectedPerson.nombre_completo || selectedPerson.persona_id;
+
+            const details = document.createElement('p');
+            details.className = 'access-muted';
+            details.textContent = [
+              'Documento: ' + selectedPerson.tipo_documento + ' ' + selectedPerson.numero_documento,
+              'Correo: ' + (selectedPerson.correo_institucional || 'No registrado'),
+              'ID: ' + selectedPerson.persona_id
+            ].join(' · ');
+
+            const status = document.createElement('p');
+            status.className = selectedPersonCanEnable
+              ? 'access-muted'
+              : 'access-warning';
+            status.textContent = existingAccount
+              ? (existingAccount.active
+                  ? 'Esta persona ya tiene una cuenta activa. No es posible crear otra.'
+                  : 'Esta persona ya tiene una cuenta inactiva. Utiliza «Editar cuenta» en la tabla para reactivarla.')
+              : (result.canEnableAccount
+                  ? 'Persona localizada. Puedes habilitar su cuenta.'
+                  : (result.reason || 'La persona no cumple las condiciones para habilitar una cuenta.'));
+
+            identity.append(name, details, status);
+            resultHost.appendChild(identity);
+          } catch (error) {
+            resultHost.replaceChildren();
+            const message = document.createElement('p');
+            message.className = 'access-warning';
+            message.textContent = error.message || 'No se pudo realizar la búsqueda documental.';
+            resultHost.appendChild(message);
+          } finally {
+            searchButton.disabled = false;
+          }
+        },
+        'search'
+      );
+
+      const searchActions = document.createElement('div');
+      searchActions.className = 'access-modal-actions';
+      searchActions.appendChild(searchButton);
+
+      const resultHost = document.createElement('div');
+      resultHost.className = 'access-person-search-result';
+      resultHost.setAttribute('aria-live', 'polite');
+
+      grid.append(
+        createField('Tipo de documento', documentType),
+        createField('Número de documento', documentNumber)
+      );
+
+      form.append(grid, searchActions, resultHost);
+
+      function resetSearchResult() {
+        selectedPerson = null;
+        selectedPersonCanEnable = false;
+        resultHost.replaceChildren();
+      }
+
+      documentType.addEventListener('change', resetSearchResult);
+      documentNumber.addEventListener('input', resetSearchResult);
+
+      if (!documentTypes.length) {
+        documentType.disabled = true;
+        documentNumber.disabled = true;
+        searchButton.disabled = true;
+
+        const message = document.createElement('p');
+        message.className = 'access-warning';
+        message.textContent = 'No hay tipos de documento registrados. Primero debe completarse el catálogo de datos personales.';
+        resultHost.appendChild(message);
+      }
+    }
+
+    if (editing) {
+      form.appendChild(grid);
+    }
 
     openFormModal(
       editing ? 'Editar cuenta' : 'Habilitar cuenta',
       form,
-      () => rpc('saveAccessUser', {
-        action: editing ? 'edit' : 'create',
-        persona_id: editing ? row.persona_id : personSelect.value,
-        active: active.value === 'true'
-      }),
+      async () => {
+        if (editing) {
+          return rpc('saveAccessUser', {
+            action: 'edit',
+            persona_id: row.persona_id,
+            active: active.value === 'true'
+          });
+        }
+
+        if (!selectedPerson || !selectedPersonCanEnable) {
+          throw new Error('Busca una persona válida por documento antes de habilitar su cuenta.');
+        }
+
+        return rpc('saveAccessUser', {
+          action: 'create',
+          persona_id: selectedPerson.persona_id,
+          tipo_documento: selectedPerson.tipo_documento,
+          numero_documento: selectedPerson.numero_documento,
+          active: active.value === 'true'
+        });
+      },
       editing ? 'Guardar cambios' : 'Habilitar cuenta'
     );
   }
