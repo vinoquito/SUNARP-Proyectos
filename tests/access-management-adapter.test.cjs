@@ -127,6 +127,14 @@ function createAdapterSandbox(data, email = 'prueba@sunarp.gob.pe') {
 
   sandbox.SUNARPCore = {
     getCurrentUserEmail: () => email,
+    findRecordsByFields: (source, filters, options) => {
+      const rows = (data.personas || []).filter(person => Object.keys(filters).every(field => {
+        const actual = String(person[field] === undefined || person[field] === null ? '' : person[field]);
+        const expected = String(filters[field] === undefined || filters[field] === null ? '' : filters[field]);
+        return options && options.matchCase === false ? actual.toLowerCase() === expected.toLowerCase() : actual === expected;
+      }));
+      return { records: rows, total: rows.length };
+    },
     resolveAuthorizationContext: value => sandbox.resolveAuthorizationContext(value),
     authorizationHasPermission: (...args) => sandbox.authorizationHasPermission(...args),
     authorizationIsRecordInScope: (...args) => sandbox.authorizationIsRecordInScope(...args)
@@ -171,6 +179,24 @@ test('la identidad de sesión se resuelve en personas y Core recibe persona_id',
   assert.equal(Object.hasOwn(auth.user, 'correo_institucional'), false);
   assert.equal(Object.hasOwn(auth.user, 'rol_id'), false);
   assert.equal(auth.email, 'prueba@sunarp.gob.pe');
+});
+
+
+test('la autorización resuelve identidad con una búsqueda exacta sin cargar el catálogo de personas', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  let calls = 0;
+  sandbox.SUNARPCore.findRecordsByFields = (source, filters, options) => {
+    calls++;
+    assert.equal(source.sheetName, 'personas');
+    assert.equal(filters.correo_institucional, 'prueba@sunarp.gob.pe');
+    assert.equal(options.searchField, 'correo_institucional');
+    return { records: makeSecurityData().personas, total: 1 };
+  };
+  const auth = sandbox._accessGetAuthContext_();
+  assert.equal(auth.authenticated, true);
+  assert.equal(calls, 1);
+  assert.equal(Object.hasOwn(auth, 'personasCatalog'), false);
+  assert.equal(Object.hasOwn(auth.securityData, 'personas'), false);
 });
 
 test('rechaza correos no registrados y correos duplicados en personas', () => {

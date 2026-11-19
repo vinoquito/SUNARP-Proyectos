@@ -218,9 +218,7 @@ function _accessLoadSecurityData_() {
   ];
   // Para autorizar no se necesita cargar el contexto completo del directorio.
   const data = SUNARPCore.listRecordsFromSourcesCached(requests, 300);
-  data.personas = _accessLoadPeople_();
-  data.datosPersonales = [];
-  data.documentTypes = [];
+  // La identidad se resuelve con una búsqueda exacta; no se carga el directorio completo.
   _accessValidateSnapshot_(data);
   return data;
 }
@@ -232,6 +230,20 @@ function _accessLoadPeople_() {
     requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people
   }], 300);
   return result.personas || [];
+}
+
+function _accessFindPersonById_(personaId) {
+  const id = _accessText_(personaId);
+  if (!id) return null;
+  const result = SUNARPCore.findRecordsByFields(
+    _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
+    { persona_id: id },
+    { searchField: 'persona_id', requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people }
+  );
+  if (result.total > 1) {
+    throw new Error('El identificador de persona está duplicado en el directorio: ' + id + '.');
+  }
+  return result.records[0] || null;
 }
 
 function _accessLoadDocumentTypes_() {
@@ -287,7 +299,6 @@ function _accessValidateUnique_(records, fields, label) {
  */
 function _accessValidateSnapshot_(data) {
   const unique = [
-    ['personas', ['persona_id'], 'personas.persona_id'],
     ['usuarios', ['persona_id'], 'Usuarios.persona_id'],
     ['modulos', ['modulo_id'], 'Modulos.modulo_id'],
     ['modulos', ['codigo'], 'Modulos.codigo'],
@@ -305,7 +316,6 @@ function _accessValidateSnapshot_(data) {
     _accessValidateUnique_(data[collection] || [], fields, label)
   );
 
-  const personIds = new Set(data.personas.map(row => _accessText_(row.persona_id)));
   const moduleIds = new Set(data.modulos.map(row => _accessText_(row.modulo_id)));
   const roleIds = new Set(data.roles.map(row => _accessText_(row.rol_id)));
   const permissionIds = new Set(data.permisos.map(row => _accessText_(row.permiso_id)));
@@ -340,14 +350,7 @@ function _accessValidateSnapshot_(data) {
     }
   });
 
-  data.usuarios.forEach(user => {
-    if (!personIds.has(_accessText_(user.persona_id))) {
-      throw new Error('Usuarios referencia una persona inexistente: ' + _accessText_(user.persona_id) + '.');
-    }
-  });
-
   data.usuarioRol.forEach(item => {
-    if (!personIds.has(_accessText_(item.persona_id))) throw new Error('UsuarioRol referencia una persona inexistente.');
     if (!userIds.has(_accessText_(item.persona_id))) throw new Error('UsuarioRol referencia una cuenta inexistente en Usuarios.');
     if (!moduleIds.has(_accessText_(item.modulo_id))) throw new Error('UsuarioRol referencia un módulo inexistente.');
     if (!roleIds.has(_accessText_(item.rol_id))) throw new Error('UsuarioRol referencia un rol inexistente.');
@@ -378,7 +381,6 @@ function _accessValidateSnapshot_(data) {
   });
 
   data.ambitosAcceso.forEach(item => {
-    if (!personIds.has(_accessText_(item.persona_id))) throw new Error('AmbitosAcceso referencia una persona inexistente.');
     if (!moduleIds.has(_accessText_(item.modulo_id))) throw new Error('AmbitosAcceso referencia un módulo inexistente.');
     const typeId = _accessUpper_(item.tipo_ambito_id);
     if (!scopeTypeIds.has(typeId)) throw new Error('AmbitosAcceso referencia un tipo_ambito_id inexistente.');
@@ -445,9 +447,12 @@ function _accessGetAuthContext_() {
   }
 
   const data = _accessLoadSecurityData_();
-  const matchingPeople = data.personas.filter(person =>
-    _accessText_(person.correo_institucional).toLowerCase() === email
+  const identityResult = SUNARPCore.findRecordsByFields(
+    _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
+    { correo_institucional: email },
+    { searchField: 'correo_institucional', matchCase: false, requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people }
   );
+  const matchingPeople = identityResult.records;
 
   if (matchingPeople.length !== 1) {
     _accessWriteAudit_({ email, name: '' }, {
@@ -503,7 +508,6 @@ function _accessGetAuthContext_() {
     email,
     name: [person.nombres, person.apellidos].map(_accessText_).filter(Boolean).join(' '),
     person,
-    personasCatalog: data.personas,
     userAccountsCatalog: data.usuarios,
     modules: data.modulos,
     permissionsCatalog: data.permisos,
@@ -792,7 +796,6 @@ function _accessAssertAdministratorContinuity_(before, after) {
 
 function _accessCopyData_(data) {
   return {
-    personas: (data.personas || []).map(row => Object.assign({}, row)),
     usuarios: (data.usuarios || []).map(row => Object.assign({}, row)),
     modulos: (data.modulos || []).map(row => Object.assign({}, row)),
     roles: (data.roles || []).map(row => Object.assign({}, row)),
@@ -988,10 +991,13 @@ function searchAccessPersonByDocument(payload) {
     'Número de documento'
   );
 
-  const matches = _accessFindDocumentMatches_(
-    documentType,
-    documentNumber,
-    _accessLoadPersonalDocumentRecords_()
+  const documentLookup = SUNARPCore.findRecordsByFields(
+    _accessDirectorySource_('servidores datos personales'),
+    { tipo_documento: documentType, numero_documento: documentNumber },
+    { searchField: 'numero_documento', matchCase: false, requiredHeaders: ['servidor_id', 'tipo_documento', 'numero_documento'] }
+  );
+  const matches = documentLookup.records.filter(record =>
+    _accessText_(record.tipo_documento).replace(/\\s+/g, '').toUpperCase() === documentType
   );
 
   if (!matches.length) {
@@ -1020,17 +1026,10 @@ function searchAccessPersonByDocument(payload) {
   }
 
   const personaId = _accessText_(documentRecord.servidor_id);
-  const people = (auth.personasCatalog || []).filter(person =>
-    _accessText_(person.persona_id) === personaId
-  );
-
-  if (people.length !== 1) {
-    throw new Error(
-      'El documento está registrado, pero no se pudo resolver una única persona en el directorio.'
-    );
+  const person = _accessFindPersonById_(personaId);
+  if (!person) {
+    throw new Error('El documento está registrado, pero no se pudo resolver la persona en el directorio.');
   }
-
-  const person = people[0];
   const name = [
     _accessText_(person.nombres),
     _accessText_(person.apellidos)
@@ -1084,7 +1083,7 @@ function _accessRecordUser_(auth, payload, action) {
   const personaId = _accessText_(payload.persona_id);
   const active = _accessNormalizeActive_(payload.active, 'El estado de la cuenta');
   if (!personaId) throw new Error('Selecciona una persona del directorio.');
-  const person = _accessFindBy_(auth.personasCatalog, 'persona_id', personaId);
+  const person = _accessFindPersonById_(personaId);
   if (!person) throw new Error('La persona seleccionada no existe en personas.');
   _accessValidateEmail_(person.correo_institucional);
   if (
@@ -1108,10 +1107,13 @@ function _accessRecordUser_(auth, payload, action) {
       throw new Error('Selecciona un tipo de documento vigente del catálogo institucional.');
     }
 
-    const documentMatches = _accessFindDocumentMatches_(
-      documentTypeId,
-      payload.numero_documento,
-      _accessLoadPersonalDocumentRecords_()
+    const documentLookup = SUNARPCore.findRecordsByFields(
+      _accessDirectorySource_('servidores datos personales'),
+      { tipo_documento: documentTypeId, numero_documento: payload.numero_documento },
+      { searchField: 'numero_documento', matchCase: false, requiredHeaders: ['servidor_id', 'tipo_documento', 'numero_documento'] }
+    );
+    const documentMatches = documentLookup.records.filter(record =>
+      _accessText_(record.tipo_documento).replace(/\\s+/g, '').toUpperCase() === documentTypeId
     );
 
     if (
@@ -1203,7 +1205,7 @@ function saveAccessUserRole(payload) {
   if (active) after.usuarioRol.push({ persona_id: personaId, modulo_id: moduleId, rol_id: roleId, active: true });
   _accessAssertAdministratorContinuity_(data, after);
 
-  const person = _accessFindBy_(data.personas, 'persona_id', personaId);
+  const person = _accessFindPersonById_(personaId);
   return _accessRunAudited_(auth, {
     accion: 'ACTUALIZAR_ROL_USUARIO',
     modulo: ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses,
@@ -1518,7 +1520,7 @@ function saveAccessScopes(payload) {
     _accessText_(row.persona_id) === personaId &&
     _accessText_(row.modulo_id) === moduleId
   );
-  const person = _accessFindBy_(data.personas, 'persona_id', personaId);
+  const person = _accessFindPersonById_(personaId);
 
   return _accessRunAudited_(auth, {
     accion: 'ACTUALIZAR_AMBITOS',
@@ -1971,7 +1973,7 @@ function saveAccessUserConfiguration(payload) {
 
   _accessAssertAdministratorContinuity_(data, after);
 
-  const person = _accessFindBy_(data.personas, 'persona_id', personaId);
+  const person = _accessFindPersonById_(personaId);
   const displayName = [
     person && person.nombres,
     person && person.apellidos
@@ -2334,7 +2336,8 @@ function getAccessUsers(filters) {
       sitesByPerson.get(personaId).add(assignedSiteId);
     });
   }
-  const people = new Map((security.personas || []).map(person => [_accessText_(person.persona_id), person]));
+  // El catálogo de personas se carga solo al solicitar el listado de usuarios.
+  const people = new Map(_accessLoadPeople_().map(person => [_accessText_(person.persona_id), person]));
   const rows = accounts.map(user => {
     const personaId = _accessText_(user.persona_id);
     const person = people.get(personaId) || {};
@@ -2781,7 +2784,7 @@ function _accessChangeStatus_(config) {
   _accessAssertAdministratorContinuity_(data, after);
 
   const person = config.collection === 'usuarios'
-    ? _accessFindBy_(data.personas, 'persona_id', record.persona_id)
+    ? _accessFindPersonById_(record.persona_id)
     : null;
   const displayName = config.getName ? config.getName(record, person) : _accessText_(config.id);
 
