@@ -163,3 +163,115 @@ function testAccessManagementIntegration() {
 
   return summary;
 }
+
+
+/**
+ * Diagnóstico de autorización para el usuario de prueba PER_117.
+ * No depende del correo de la sesión que ejecuta el editor.
+ * Solo lee las hojas de seguridad y consulta SUNARP Core.
+ */
+function testAuthorizationForPerson117() {
+  const personaId = 'PER_117';
+  const data = _accessLoadSecurityData_();
+
+  const personRows = data.personas.filter(row =>
+    _accessText_(row.persona_id) === personaId
+  );
+
+  const userRows = data.usuarios.filter(row =>
+    _accessText_(row.persona_id) === personaId
+  );
+
+  const context = SUNARPCore.resolveAuthorizationContext({
+    personaId,
+    users: data.usuarios,
+    modules: data.modulos,
+    roles: data.roles,
+    userRoles: data.usuarioRol,
+    permissions: data.permisos,
+    rolePermissions: data.rolPermiso,
+    scopes: data.ambitosAcceso
+  });
+
+  const adminContext = Object.assign({}, context, {
+    modules: data.modulos
+  });
+
+  const adminPermissionCodes = [
+    'USUARIOS_ADMINISTRAR',
+    'ROLES_ADMINISTRAR',
+    'PERMISOS_ADMINISTRAR',
+    'AMBITOS_ACCESO_ADMINISTRAR'
+  ];
+
+  const summary = {
+    personaId,
+    personRows: personRows.map(row => ({
+      persona_id: row.persona_id,
+      correo_institucional: row.correo_institucional,
+      active: row.active
+    })),
+    userRows: userRows.map(row => ({
+      persona_id: row.persona_id,
+      active: row.active
+    })),
+    coreAuthenticated: context.authenticated,
+    moduleAccess: (context.moduleAccess || []).map(item => ({
+      modulo_id: item.modulo_id,
+      moduleCode: item.module && item.module.codigo || '',
+      rol_id: item.rol_id,
+      permissionCodes: item.permissionCodes || [],
+      scopes: (item.scopes || []).map(scope => ({
+        tipo_ambito: scope.tipo_ambito,
+        referencia_id: scope.referencia_id,
+        incluir_descendientes: scope.incluir_descendientes
+      }))
+    })),
+    accessAdminPermissions: adminPermissionCodes.reduce((result, code) => {
+      result[code] = SUNARPCore.authorizationHasPermission(
+        context,
+        code,
+        'MOD_ACCESOS'
+      );
+      return result;
+    }, {}),
+    auditPermission: {
+      inModAccesos: SUNARPCore.authorizationHasPermission(
+        context,
+        'AUDITORIA_VER',
+        'MOD_ACCESOS'
+      ),
+      inModAuditoria: SUNARPCore.authorizationHasPermission(
+        context,
+        'AUDITORIA_VER',
+        'MOD_AUDITORIA'
+      )
+    },
+    globalAdministrator: context.authenticated
+      ? _accessIsGlobalAdministrator_(adminContext)
+      : false,
+    rawUserRoles: data.usuarioRol
+      .filter(row => _accessText_(row.persona_id) === personaId)
+      .map(row => ({
+        persona_id: row.persona_id,
+        modulo_id: row.modulo_id,
+        rol_id: row.rol_id,
+        active: row.active
+      })),
+    rawScopes: data.ambitosAcceso
+      .filter(row => _accessText_(row.persona_id) === personaId)
+      .map(row => ({
+        persona_id: row.persona_id,
+        modulo_id: row.modulo_id,
+        tipo_ambito: row.tipo_ambito,
+        referencia_id: row.referencia_id,
+        incluir_descendientes: row.incluir_descendientes,
+        active: row.active
+      }))
+  };
+
+  Logger.log('DIAGNÓSTICO DE AUTORIZACIÓN - PER_117');
+  Logger.log(JSON.stringify(summary, null, 2));
+
+  return summary;
+}
