@@ -161,8 +161,7 @@ function _accessLoadSecurityData_() {
     { key: 'usuarioRol', source: _accessSecuritySource_(s.userRoles), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.userRoles },
     { key: 'permisos', source: _accessSecuritySource_(s.permissions), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.permissions },
     { key: 'rolPermiso', source: _accessSecuritySource_(s.rolePermissions), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.rolePermissions },
-    { key: 'ambitosAcceso', source: _accessSecuritySource_(s.scopes), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.scopes },
-    { key: 'personas', source: _accessDirectorySource_(s.people), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people }
+    { key: 'ambitosAcceso', source: _accessSecuritySource_(s.scopes), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.scopes }
   ];
 
   // La identidad y los datos documentales se obtienen del contexto compartido
