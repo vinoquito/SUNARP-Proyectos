@@ -17,7 +17,8 @@ const ACCESS_MANAGEMENT_CONFIG = Object.freeze({
     scopes: 'AmbitosAcceso',
     audit: 'Auditoria',
     people: 'personas',
-    personalData: 'servidores datos personales'
+    personalData: 'servidores datos personales',
+    documentTypes: 'tipo_documento_identidad'
   }),
   moduleCodes: Object.freeze({
     accesses: 'ACCESOS',
@@ -164,7 +165,16 @@ function _accessLoadSecurityData_() {
     { key: 'personas', source: _accessDirectorySource_(s.people), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people }
   ];
 
-  const data = SUNARPCore.listRecordsFromSourcesCached(requests, 15);
+  // La identidad y los datos documentales se obtienen del contexto compartido
+  // del directorio. Ese contexto ya usa caché comprimida por fragmentos, por lo
+  // que no se vuelve a leer la pestaña personas (que supera el límite de CacheService).
+  const data = SUNARPCore.listRecordsFromSourcesCached(requests, 300);
+  const directoryContext = _directoryLoadContext_();
+
+  data.personas = directoryContext.personas || [];
+  data.datosPersonales = directoryContext.datosPersonales || [];
+  data.documentTypes = directoryContext.documentTypes || [];
+
   _accessValidateSnapshot_(data);
   return data;
 }
@@ -174,7 +184,7 @@ function _accessValidateHeaders_() {
   const sheets = ACCESS_MANAGEMENT_CONFIG.sheets;
   Object.keys(ACCESS_MANAGEMENT_FIELDS).forEach(key => {
     if (key === 'audit') return;
-    const source = key === 'people'
+    const source = key === 'people' || key === 'personalData' || key === 'documentTypes'
       ? _accessDirectorySource_(sheets[key])
       : _accessSecuritySource_(sheets[key]);
     const info = SUNARPCore.getSourceInfoCached(source, 300);
@@ -372,6 +382,7 @@ function _accessGetAuthContext_() {
     name: [person.nombres, person.apellidos].map(_accessText_).filter(Boolean).join(' '),
     person,
     personasCatalog: data.personas,
+    userAccountsCatalog: data.usuarios,
     modules: data.modulos,
     permissionsCatalog: data.permisos,
     rolesCatalog: data.roles
@@ -789,29 +800,18 @@ function _accessNormalizeDocumentValue_(value, label) {
 
 
 function _accessLoadPersonalDocumentRecords_() {
-  const source = _accessDirectorySource_(
-    ACCESS_MANAGEMENT_CONFIG.sheets.personalData
-  );
-  const info = SUNARPCore.getSourceInfoCached(source, 300);
-  const requiredHeaders = [
-    'servidor_id',
-    'tipo_documento',
-    'numero_documento'
-  ];
-  const missingHeaders = requiredHeaders.filter(header =>
-    !info.headers.includes(header)
-  );
+  const context = _directoryLoadContext_();
+  return Array.isArray(context.datosPersonales)
+    ? context.datosPersonales
+    : [];
+}
 
-  if (missingHeaders.length) {
-    throw new Error(
-      'La pestaña "' + ACCESS_MANAGEMENT_CONFIG.sheets.personalData +
-      '" no contiene los encabezados requeridos: ' +
-      missingHeaders.join(', ') + '.'
-    );
-  }
 
-  const result = SUNARPCore.listRecords(source);
-  return result && Array.isArray(result.records) ? result.records : [];
+function _accessLoadDocumentTypeRecords_() {
+  const context = _directoryLoadContext_();
+  return Array.isArray(context.documentTypes)
+    ? context.documentTypes.filter(_accessCatalogIsActive_)
+    : [];
 }
 
 
@@ -836,18 +836,13 @@ function _accessFindDocumentMatches_(documentType, documentNumber, records) {
 function getAccessDocumentTypes() {
   _accessRequirePermission_('USUARIOS_ADMINISTRAR');
 
-  const records = _accessLoadPersonalDocumentRecords_();
-  const types = new Map();
-
-  records.forEach(record => {
-    const value = _accessText_(record.tipo_documento);
-    const key = value.replace(/\s+/g, '').toUpperCase();
-    if (key && !types.has(key)) types.set(key, value);
-  });
-
-  return Array.from(types.values()).sort((a, b) =>
-    a.localeCompare(b, 'es', { sensitivity: 'base' })
-  );
+  return _accessLoadDocumentTypeRecords_()
+    .map(item => ({
+      id: _accessText_(item.id),
+      name: _accessText_(item.name)
+    }))
+    .filter(item => item.id && item.name)
+    .sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
 }
 
 
@@ -891,6 +886,17 @@ function searchAccessPersonByDocument(payload) {
   }
 
   const documentRecord = matches[0];
+  const documentTypeRecord = _accessLoadDocumentTypeRecords_().find(item =>
+    _accessText_(item.id).toUpperCase() ===
+    _accessText_(documentRecord.tipo_documento).toUpperCase()
+  );
+
+  if (!documentTypeRecord) {
+    throw new Error(
+      'El tipo de documento de la persona no existe en el catálogo tipo_documento_identidad.'
+    );
+  }
+
   const personaId = _accessText_(documentRecord.servidor_id);
   const people = (auth.personasCatalog || []).filter(person =>
     _accessText_(person.persona_id) === personaId
@@ -909,6 +915,9 @@ function searchAccessPersonByDocument(payload) {
   ].filter(Boolean).join(' ');
   const email = _accessText_(person.correo_institucional);
   const emailIsValid = /^[^\s@]+@sunarp\.gob\.pe$/i.test(email);
+  const existingUser = (auth.userAccountsCatalog || []).find(user =>
+    _accessText_(user.persona_id) === personaId
+  ) || null;
   const personIsActive =
     !Object.prototype.hasOwnProperty.call(person, 'active') ||
     _accessIsActive_(person.active);
@@ -922,7 +931,14 @@ function searchAccessPersonByDocument(payload) {
 
   return {
     found: true,
-    canEnableAccount: personIsActive && emailIsValid,
+    canEnableAccount: personIsActive && emailIsValid && !existingUser,
+    existingAccount: existingUser ? {
+      exists: true,
+      active: _accessIsActive_(existingUser.active)
+    } : {
+      exists: false,
+      active: false
+    },
     reason,
     person: {
       persona_id: personaId,
@@ -931,6 +947,7 @@ function searchAccessPersonByDocument(payload) {
       nombre_completo: name,
       correo_institucional: email,
       tipo_documento: _accessText_(documentRecord.tipo_documento),
+      tipo_documento_name: _accessText_(documentTypeRecord.name),
       numero_documento: _accessText_(documentRecord.numero_documento)
     }
   };
@@ -1509,6 +1526,16 @@ function getAccessManagementData() {
       }))
     },
     capabilities,
+
+    documentTypes: capabilities.users
+      ? (data.documentTypes || [])
+          .filter(_accessCatalogIsActive_)
+          .map(item => ({
+            id: _accessText_(item.id),
+            name: _accessText_(item.name)
+          }))
+          .filter(item => item.id && item.name)
+      : [],
 
     users: capabilities.users || capabilities.scopes || capabilities.userRoles
       ? data.usuarios.map(user => {
