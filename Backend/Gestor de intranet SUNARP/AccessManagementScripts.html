@@ -366,15 +366,6 @@
   }
 
 
-  function structureName(structureId) {
-    const structure = (
-      (state.data.catalogs || {}).estructuraOrg || []
-    ).find(item => item.id === structureId);
-
-    return structure
-      ? structure.name
-      : structureId || '—';
-  }
 
   /**
  * Cambia el estado y actualiza la tabla.
