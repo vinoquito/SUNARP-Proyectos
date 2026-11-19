@@ -326,9 +326,9 @@ test('Directorio exige modulo_id explícito y pasa local_id para ámbitos LOCAL'
 });
 
 test('la interfaz administra roles y ámbitos mediante persona_id y modulo_id', () => {
-  assert.match(accessUiSource, /id:\s*'userRoles'/);
-  assert.match(accessUiSource, /rpc\('saveAccessUserRole',\s*\{\s*persona_id:/s);
-  assert.match(accessUiSource, /rpc\('saveAccessScopes',\s*\{\s*persona_id:[\s\S]*?modulo_id:/s);
+  assert.match(accessUiSource, /capabilities\.userRoles/);
+  assert.match(accessUiSource, /rpc\('saveAccessUserConfiguration',\s*\{/s);
+  assert.match(accessUiSource, /ambitos:\s*\(item\.ambitos \|\| \[\]\)\.map/);
   assert.match(accessUiSource, /value:\s*'LOCAL'/);
   assert.match(appSource, /_accessIsGlobalAdministrator_\(auth\)\s*\|\|\s*hasPermission_\(auth, 'AUDITORIA_VER'\)/);
   assert.doesNotMatch(accessUiSource, /row\.estado|item\.estado|correo_original|estructura_org_id/);
