@@ -2200,6 +2200,112 @@ function getAccessManagementData() {
 }
 
 
+/** Devuelve únicamente los datos necesarios para actualizar una pestaña. */
+function getAccessManagementTabData(tabId) {
+  const tab = _accessText_(tabId).toLowerCase();
+  if (tab === 'roles') {
+    _accessRequirePermission_('ROLES_ADMINISTRAR');
+    const result = SUNARPCore.listRecordsFromSourcesCached([{ key: 'roles', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.roles), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.roles }], 15);
+    return { roles: (result.roles || []).map(item => ({ rol_id: _accessText_(item.rol_id), nombre: _accessText_(item.nombre), descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active) })) };
+  }
+  if (tab === 'permissions') {
+    _accessRequirePermission_('PERMISOS_ADMINISTRAR');
+    const result = SUNARPCore.listRecordsFromSourcesCached([
+      { key: 'modules', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.modules), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.modules },
+      { key: 'permissions', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.permissions), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.permissions }
+    ], 15);
+    const modules = result.modules || [];
+    return {
+      modules: modules.map(item => ({ modulo_id: _accessText_(item.modulo_id), codigo: _accessUpper_(item.codigo), nombre: _accessText_(item.nombre), active: _accessIsActive_(item.active) })),
+      permissions: (result.permissions || []).map(item => {
+        const module = modules.find(candidate => _accessText_(candidate.modulo_id) === _accessText_(item.modulo_id)) || {};
+        return { permiso_id: _accessText_(item.permiso_id), codigo: _accessUpper_(item.codigo), modulo_id: _accessText_(item.modulo_id), modulo_codigo: _accessUpper_(module.codigo), modulo_nombre: _accessText_(module.nombre), operacion: _accessUpper_(item.operacion), descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active) };
+      })
+    };
+  }
+  if (tab === 'assignments') {
+    _accessRequirePermission_('ROLES_ADMINISTRAR');
+    const result = SUNARPCore.listRecordsFromSourcesCached([
+      { key: 'roles', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.roles), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.roles },
+      { key: 'modules', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.modules), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.modules },
+      { key: 'permissions', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.permissions), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.permissions },
+      { key: 'rolePermissions', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.rolePermissions), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.rolePermissions }
+    ], 15);
+    return {
+      roles: (result.roles || []).map(item => ({ rol_id: _accessText_(item.rol_id), nombre: _accessText_(item.nombre), descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active) })),
+      modules: (result.modules || []).map(item => ({ modulo_id: _accessText_(item.modulo_id), codigo: _accessUpper_(item.codigo), nombre: _accessText_(item.nombre), active: _accessIsActive_(item.active) })),
+      permissions: (result.permissions || []).map(item => ({ permiso_id: _accessText_(item.permiso_id), codigo: _accessUpper_(item.codigo), modulo_id: _accessText_(item.modulo_id), operacion: _accessUpper_(item.operacion), descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active) })),
+      rolePermissions: (result.rolePermissions || []).map(item => ({ rol_id: _accessText_(item.rol_id), permiso_id: _accessText_(item.permiso_id), active: _accessIsActive_(item.active) }))
+    };
+  }
+  if (tab === 'operations') {
+    _accessRequirePermission_('PERMISOS_ADMINISTRAR');
+    return { operations: ACCESS_PERMISSION_OPERATIONS.map(item => ({ codigo: item.codigo, nombre: item.nombre })) };
+  }
+  throw new Error('La pestaña solicitada no admite actualización independiente.');
+}
+
+
+/** Lista usuarios bajo demanda después de seleccionar sede o rol. */
+function getAccessUsers(filters) {
+  _accessRequirePermission_('USUARIOS_ADMINISTRAR');
+  filters = filters && typeof filters === 'object' ? filters : {};
+  const sedeId = _accessText_(filters.sede_id);
+  const roleId = _accessUpper_(filters.rol_id);
+  const query = _accessText_(filters.search).toLocaleLowerCase();
+  if (!sedeId && !roleId) return { items: [], total: 0 };
+
+  const result = SUNARPCore.listRecordsFromSourcesCached([
+    { key: 'users', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.users), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.users },
+    { key: 'userRoles', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.userRoles), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.userRoles }
+  ], 15);
+  const directory = _directoryLoadContext_();
+  const peopleById = new Map((directory.personas || []).map(person => [_accessText_(person.persona_id), person]));
+  const rolesByPerson = new Map();
+  (result.userRoles || []).filter(item => _accessIsActive_(item.active)).forEach(item => {
+    const personaId = _accessText_(item.persona_id);
+    if (!rolesByPerson.has(personaId)) rolesByPerson.set(personaId, []);
+    rolesByPerson.get(personaId).push({ modulo_id: _accessText_(item.modulo_id), rol_id: _accessUpper_(item.rol_id) });
+  });
+  const sitesByPerson = new Map();
+  if (sedeId) {
+    (directory.asignaciones || []).filter(item => _accessIsActive_(item.active)).forEach(assignment => {
+      const personaId = _accessText_(assignment.persona_id);
+      try {
+        const location = _directoryResolveAssignmentLocation_(assignment, directory, false);
+        if (!location.sede_id) return;
+        if (!sitesByPerson.has(personaId)) sitesByPerson.set(personaId, new Set());
+        sitesByPerson.get(personaId).add(_accessText_(location.sede_id));
+      } catch (error) { /* No asignar una sede a una adscripción incoherente. */ }
+    });
+  }
+  const rows = (result.users || []).map(user => {
+    const personaId = _accessText_(user.persona_id);
+    const person = peopleById.get(personaId) || {};
+    const sedeIds = Array.from(sitesByPerson.get(personaId) || []);
+    const sedeNames = sedeIds.map(id => {
+      const site = (directory.sedes || []).find(item => _accessText_(item.id) === id);
+      return site ? _accessText_(site.name) : id;
+    });
+    return {
+      persona_id: personaId, correo_institucional: _accessText_(person.correo_institucional),
+      nombres: _accessText_(person.nombres), apellidos: _accessText_(person.apellidos),
+      nombre_completo: [_accessText_(person.nombres), _accessText_(person.apellidos)].filter(Boolean).join(' '),
+      sede_ids: sedeIds, sede_nombre: sedeNames.join(' · '),
+      active: _accessIsActive_(user.active), roles: rolesByPerson.get(personaId) || []
+    };
+  }).filter(user => {
+    if (sedeId && !user.sede_ids.includes(sedeId)) return false;
+    if (roleId && !user.roles.some(role => role.rol_id === roleId)) return false;
+    if (query) {
+      const haystack = [user.persona_id, user.nombre_completo, user.correo_institucional, user.sede_nombre].join(' ').toLocaleLowerCase();
+      if (!haystack.includes(query)) return false;
+    }
+    return true;
+  }).sort((a, b) => a.nombre_completo.localeCompare(b.nombre_completo, 'es'));
+  return { items: rows, total: rows.length };
+}
+
 function getAccessAuditHistory(filters) {
   _accessRequirePermission_('AUDITORIA_VER');
 
