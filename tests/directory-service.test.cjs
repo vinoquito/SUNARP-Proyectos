@@ -622,6 +622,7 @@ test('la invalidación elimina el manifiesto y todos los fragmentos de caché', 
 });
 
 
+
 test('la carga inicial indexa fichas personales y evita una búsqueda lineal por asignación', () => {
   const records = [
     { servidor_id: 'PER_001', numero_documento: '12345678' },
@@ -635,24 +636,24 @@ test('la carga inicial indexa fichas personales y evita una búsqueda lineal por
   const initialDataStart = serviceSource.indexOf('function getDirectoryInitialData() {');
   const initialDataEnd = serviceSource.indexOf('function listDirectoryPeople(', initialDataStart);
   const initialDataSource = serviceSource.slice(initialDataStart, initialDataEnd);
-  assert.match(initialDataSource, /_directoryCreatePersonalDataMap_\\(context\\.datosPersonales\\)/);
-  assert.doesNotMatch(initialDataSource, /_directoryGetPersonalDataRecord_\\(/);
+  assert.ok(initialDataSource.includes('_directoryCreatePersonalDataMap_(context.datosPersonales)'));
+  assert.ok(!initialDataSource.includes('_directoryGetPersonalDataRecord_('));
 });
 
 test('el filtro de asignaciones reutiliza la adscripción ya enriquecida', () => {
   const start = serviceSource.indexOf('function _directoryBuildView_(');
   const end = serviceSource.indexOf('function _directorySortAssignments_(', start);
   const implementation = serviceSource.slice(start, end);
-  assert.match(implementation, /estructura_id:\\s*record\\.estructura_id/);
-  assert.match(implementation, /sede_id:\\s*record\\.sede_id/);
-  assert.doesNotMatch(implementation, /_directoryResolveAssignmentLocation_\\(record/);
+  assert.ok(implementation.includes('estructura_id: record.estructura_id'));
+  assert.ok(implementation.includes('sede_id: record.sede_id'));
+  assert.ok(!implementation.includes('_directoryResolveAssignmentLocation_(record'));
 });
 
 test('el ordenamiento resuelve una sola vez la adscripción de cada registro', () => {
   const start = serviceSource.indexOf('function _directorySortAssignments_(');
   const end = serviceSource.indexOf('function _directoryGetPersonSchema_(', start);
   const implementation = serviceSource.slice(start, end);
-  assert.match(implementation, /const sortable = records\\.map/);
-  assert.match(implementation, /return sortable\\.map/);
-  assert.equal((implementation.match(/_directoryResolveAssignmentLocation_\\(/g) || []).length, 1);
+  assert.ok(implementation.includes('const sortable = records.map'));
+  assert.ok(implementation.includes('return sortable.map'));
+  assert.equal(implementation.split('_directoryResolveAssignmentLocation_(').length - 1, 1);
 });
