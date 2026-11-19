@@ -964,8 +964,7 @@ function listDirectoryAssignments(options) {
   const direction = directionValue === 'desc' ? -1 : 1;
   view.assignments.sort((a, b) =>
     _directoryCompare_(a[sortBy], b[sortBy]) * direction ||
-    _directoryCompare_(a.apellidos, b.apellidos) ||
-    _directoryCompare_(a.nombres, b.nombres)
+    _directoryCompare_(a.asignacion_id, b.asignacion_id)
   );
 
   const total = view.assignments.length;
@@ -1034,6 +1033,23 @@ function listDirectoryAssignments(options) {
 function getDirectoryPersonById(personaId) {
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
   const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false, includeDocumentTypes: false });
+
+  // Primero se determina qué asignaciones de esta persona están autorizadas.
+  // No se consulta su identidad ni sus datos personales antes de esta comprobación.
+  const view = _directoryBuildView_(context, authorization);
+  const assignments = view.assignments.filter(item =>
+    _directoryKey_(item.persona_id) === _directoryKey_(personaId)
+  );
+
+  if (!assignments.length) {
+    if (context.asignaciones.some(item =>
+      _directoryKey_(item.persona_id) === _directoryKey_(personaId)
+    )) {
+      throw new Error('No tienes ámbito de acceso para consultar esta persona.');
+    }
+    return null;
+  }
+
   const personResult = SUNARPCore.findRecordsByFields(
     _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
     { persona_id: _directoryKey_(personaId) },
@@ -1042,23 +1058,10 @@ function getDirectoryPersonById(personaId) {
   if (personResult.total > 1) {
     throw new Error('El identificador de persona está duplicado en el directorio.');
   }
-  if (personResult.total > 1) throw new Error('El identificador de persona está duplicado en el directorio.');
   const person = personResult.records[0] || null;
-  if (person) context.personas = [person];
-  if (!person) return null;
-
-  const view = _directoryBuildView_(context, authorization);
-  const assignments = view.assignments.filter(item =>
-    _directoryKey_(item.persona_id) === _directoryKey_(personaId)
-  );
-
-  if (!assignments.length && context.asignaciones.some(item =>
-    _directoryKey_(item.persona_id) === _directoryKey_(personaId)
-  )) {
-    throw new Error('No tienes ámbito de acceso para consultar esta persona.');
+  if (!person) {
+    throw new Error('Las asignaciones autorizadas no tienen una identidad válida en el directorio.');
   }
-
-  if (!assignments.length) return null;
 
   const personalDataResult = SUNARPCore.findRecordsByFields(
     _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
@@ -1072,8 +1075,14 @@ function getDirectoryPersonById(personaId) {
     throw new Error('La ficha de datos personales está duplicada para la persona solicitada.');
   }
 
+  const enrichedAssignments = assignments.map(item => Object.assign({}, item, {
+    nombres: person.nombres,
+    apellidos: person.apellidos,
+    correo_institucional: person.correo_institucional
+  }));
+
   return Object.assign({}, person, {
-    assignments,
+    assignments: enrichedAssignments,
     personalData: personalDataResult.records[0] || null
   });
 }
@@ -1091,6 +1100,17 @@ function getDirectoryAssignmentById(asignacionId) {
   );
   if (!assignment) return null;
 
+  const location = _directoryResolveAssignmentLocation_(assignment, context, false);
+  _directoryAssertScope_(
+    authorization,
+    Object.assign({}, assignment, {
+      estructura_id: location.estructura_id,
+      sede_id: location.sede_id
+    }),
+    'Consulta de una asignación fuera del ámbito asignado.'
+  );
+
+  // Solo después de validar el ámbito se recupera la identidad relacionada.
   const personResult = SUNARPCore.findRecordsByFields(
     _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
     { persona_id: _directoryKey_(assignment.persona_id) },
@@ -1102,26 +1122,9 @@ function getDirectoryAssignmentById(asignacionId) {
   context.personas = personResult.records;
   const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
   const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
-  const enriched = _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap);
-
-  const location = _directoryResolveAssignmentLocation_(assignment, context, false);
-  _directoryAssertScope_(
-    authorization,
-    Object.assign({}, enriched, {
-      estructura_id: location.estructura_id,
-      sede_id: location.sede_id
-    }),
-    'Consulta de una asignación fuera del ámbito asignado.'
-  );
-
-  return enriched;
+  return _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap);
 }
 
-/**
- * Crea o actualiza exclusivamente la identidad de una persona.
- * No se fusionan personas por coincidencia de nombres o apellidos:
- * esos campos no permiten distinguir homónimos.
- */
 function _saveDirectoryPerson_(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('Debes proporcionar los datos de la persona.');
