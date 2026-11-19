@@ -69,7 +69,7 @@ test('CoreAuthorization consume tipo_ambito_id y mantiene compatibilidad con dat
 });
 
 
-test('el Gestor consume SUNARP Core versión 8 para el contrato tipo_ambito_id', () => {
+test('el Gestor consume SUNARP Core versión 9 para la autorización optimizada', () => {
   const coreLibrary = appManifest.dependencies.libraries.find(item => item.userSymbol === 'SUNARPCore');
   assert.ok(coreLibrary, 'el manifiesto debe declarar SUNARPCore');
   assert.equal(String(coreLibrary.version), '9');
