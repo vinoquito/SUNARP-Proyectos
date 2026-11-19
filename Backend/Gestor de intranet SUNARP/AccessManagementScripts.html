@@ -18,7 +18,7 @@
 
   const $ = (selector, root = document) => root.querySelector(selector);
 
-  const $ = (selector, root = document) =>
+  const queryAll = (selector, root = document) =>
     Array.from(root.querySelectorAll(selector));
 
 
@@ -2277,7 +2277,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         SUNARPUI.notify('warning', 'Selecciona un rol.');
         return;
       }
-      const selected = $$('input[type="checkbox"][data-permission-id]:checked', checklist)
+      const selected = queryAll('input[type="checkbox"][data-permission-id]:checked', checklist)
         .map(input => input.dataset.permissionId);
       save.disabled = true;
       const finishLoading = beginAccessPanelLoading();
