@@ -474,9 +474,10 @@ function _directoryLoadContextFromSheets_(options) {
     ['cargos', 'cargos']
   ];
 
-  const selectedSheets = options.includePersonalData === false
-    ? sheetMap.filter(item => item[0] !== 'datosPersonales')
-    : sheetMap;
+  const selectedSheets = sheetMap.filter(item =>
+    !(options.includePersonalData === false && item[0] === 'datosPersonales') &&
+    !(options.includePeople === false && item[0] === 'personas')
+  );
   const requests = selectedSheets.map(item => ({
     key: item[0],
     source: _directorySource_(item[1]),
@@ -673,7 +674,7 @@ function _directoryAssertAllowedFields_(payload, allowedFields, label) {
  */
 function getDirectoryInitialData() {
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_({ includePersonalData: false });
+  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false });
   const view = _directoryBuildView_(context, authorization);
 
   const structureMap = _directoryCreateMap_(context.estructuraOrg);
@@ -771,7 +772,7 @@ function getDirectoryInitialData() {
     // No se entrega la colección completa al navegador durante el bootstrap.
     records: [],
     summary: {
-      people: view.people.length,
+      people: new Set(view.assignments.map(item => _directoryKey_(item.persona_id))).size,
       assignments: assignments.length
     }
   };
@@ -838,7 +839,7 @@ function listDirectoryPeople(options) {
 function listDirectoryAssignments(options) {
   options = options || {};
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_({ includePersonalData: false });
+  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false });
   const view = _directoryBuildView_(context, authorization);
 
   const activeFilter = options.active === undefined ? true : options.active;
@@ -898,13 +899,22 @@ function listDirectoryAssignments(options) {
 
   const search = _directoryText_(options.search).toLocaleLowerCase();
   if (search) {
+    const matchedPeople = SUNARPCore.searchRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+      search,
+      ['nombres', 'apellidos', 'correo_institucional'],
+      { matchCase: false }
+    );
+    const matchedPersonIds = new Set(
+      matchedPeople.records.map(person => _directoryKey_(person.persona_id))
+    );
     const fields = [
-      'nombres', 'apellidos', 'cargo_name', 'condicion_cargo',
-      'anexo', 'estructura_name', 'estructura_path', 'local_name',
-      'sede_name', 'referencia', 'observaciones'
+      'cargo_name', 'condicion_cargo', 'anexo', 'estructura_name',
+      'estructura_path', 'local_name', 'sede_name', 'referencia',
+      'observaciones'
     ];
-
     view.assignments = view.assignments.filter(record =>
+      matchedPersonIds.has(_directoryKey_(record.persona_id)) ||
       fields.some(field => _directoryText_(record[field]).toLocaleLowerCase().includes(search))
     );
   }
@@ -947,8 +957,31 @@ function listDirectoryAssignments(options) {
     ? view.assignments.slice(offset)
     : view.assignments.slice(offset, offset + limit);
 
+  const pagePersonaIds = [...new Set(
+    view.assignments.map(item => _directoryKey_(item.persona_id)).filter(Boolean)
+  )];
+  const peopleResult = pagePersonaIds.length
+    ? SUNARPCore.findRecordsByFields(
+        _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+        { persona_id: pagePersonaIds },
+        {
+          searchField: 'persona_id',
+          requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas
+        }
+      )
+    : { records: [] };
+  const peopleById = _directoryCreateMap_(peopleResult.records, 'persona_id');
+  const records = view.assignments.map(item => {
+    const person = peopleById.get(_directoryKey_(item.persona_id));
+    return Object.assign({}, item, {
+      nombres: person ? person.nombres : '',
+      apellidos: person ? person.apellidos : '',
+      correo_institucional: person ? person.correo_institucional : ''
+    });
+  });
+
   return {
-    records: view.assignments,
+    records,
     total,
     offset,
     limit,
@@ -959,10 +992,17 @@ function listDirectoryAssignments(options) {
 
 function getDirectoryPersonById(personaId) {
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_({ includePersonalData: false });
-  const person = context.personas.find(item =>
-    _directoryKey_(item.persona_id) === _directoryKey_(personaId)
+  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false });
+  const personResult = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+    { persona_id: _directoryKey_(personaId) },
+    { searchField: 'persona_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas }
   );
+  if (personResult.total > 1) {
+    throw new Error('El identificador de persona está duplicado en el directorio.');
+  }
+  const person = personResult.records[0] || null;
+  if (person) context.personas = [person];
   if (!person) return null;
 
   const view = _directoryBuildView_(context, authorization);
@@ -1003,12 +1043,21 @@ function getDirectoryAssignmentsByPersonId(personaId, options) {
 
 function getDirectoryAssignmentById(asignacionId) {
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_({ includePersonalData: false });
+  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false });
   const assignment = context.asignaciones.find(item =>
     _directoryKey_(item.asignacion_id) === _directoryKey_(asignacionId)
   );
   if (!assignment) return null;
 
+  const personResult = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+    { persona_id: _directoryKey_(assignment.persona_id) },
+    { searchField: 'persona_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas }
+  );
+  if (personResult.total !== 1) {
+    throw new Error('No se pudo resolver la identidad de la persona asignada.');
+  }
+  context.personas = personResult.records;
   const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
   const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
   const enriched = _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap);
