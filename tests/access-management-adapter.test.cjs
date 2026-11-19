@@ -333,3 +333,54 @@ test('la interfaz administra roles y ámbitos mediante persona_id y modulo_id', 
   assert.match(appSource, /_accessIsGlobalAdministrator_\(auth\)\s*\|\|\s*hasPermission_\(auth, 'AUDITORIA_VER'\)/);
   assert.doesNotMatch(accessUiSource, /row\.estado|item\.estado|correo_original|estructura_org_id/);
 });
+
+test('la cascada de ámbitos parte del local y recorre solo la jerarquía vinculada', () => {
+  const start = accessUiSource.indexOf('function structureHierarchyForLocal(localId)');
+  const end = accessUiSource.indexOf('function structureTypeName(structure)', start);
+  assert.ok(start >= 0 && end > start, 'debe existir el resolver de jerarquía por local');
+
+  const helpers = accessUiSource.slice(start, end);
+  const sandbox = vm.createContext({
+    catalogs: {
+      estructuraOrg: [
+        { id: 'U1', name: 'Unidad 1', parent_id: '', order: 1 },
+        { id: 'S1', name: 'Subunidad 1', parent_id: 'U1', order: 1 },
+        { id: 'A1', name: 'Área 1', parent_id: 'S1', order: 1 },
+        { id: 'U2', name: 'Unidad 2', parent_id: '', order: 2 },
+        { id: 'OUT', name: 'Unidad de otro local', parent_id: '' }
+      ],
+      estructuraLocal: [
+        { id: 'REL1', estructura_id: 'U1', local_id: 'LOC1' },
+        { id: 'REL2', estructura_id: 'S1', local_id: 'LOC1' },
+        { id: 'REL3', estructura_id: 'A1', local_id: 'LOC1' },
+        { id: 'REL4', estructura_id: 'U2', local_id: 'LOC1' },
+        { id: 'REL5', estructura_id: 'OUT', local_id: 'LOC2' }
+      ]
+    }
+  });
+
+  vm.runInContext(
+    helpers + '\\nthis.structureHierarchyForLocal = structureHierarchyForLocal;',
+    sandbox
+  );
+
+  const hierarchy = sandbox.structureHierarchyForLocal('LOC1');
+  assert.deepEqual(Array.from(hierarchy.roots, item => item.id), ['U1', 'U2']);
+  assert.deepEqual(
+    Array.from(hierarchy.structures.filter(item => item.parent_id === 'U1'), item => item.id),
+    ['S1']
+  );
+  assert.deepEqual(
+    Array.from(hierarchy.structures.filter(item => item.parent_id === 'S1'), item => item.id),
+    ['A1']
+  );
+
+  const otherLocal = sandbox.structureHierarchyForLocal('LOC2');
+  assert.deepEqual(Array.from(otherLocal.roots, item => item.id), ['OUT']);
+
+  assert.match(accessUiSource, /type === 'ESTRUCTURA_ORG' \|\| type === 'LOCAL'/);
+  assert.match(accessUiSource, /String\(item\.parent_id \|\| ''\) === String\(selectedId\)/);
+  assert.match(accessUiSource, /selectedReferenceId = type === 'LOCAL' \? localId : ''/);
+  assert.match(accessUiSource, /sedeName\(item\.sede_id\) \+ ' — ' \+ item\.name/);
+  assert.doesNotMatch(accessUiSource, /function structuresForSede\(sedeId\)/);
+});
