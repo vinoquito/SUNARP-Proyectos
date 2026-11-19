@@ -503,13 +503,15 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     let saveButton = null;
 
     const resultHost = document.createElement('div');
-    resultHost.id = 'accessUserDocumentSearchResult';
     resultHost.className = 'access-person-search-result';
     resultHost.setAttribute('aria-live', 'polite');
 
+    const alertHost = document.createElement('div');
+    alertHost.id = 'accessUserDocumentSearchAlert';
+
     function showSearchAlert(type, title, message) {
       SUNARPUI.showAlert({
-        containerId: resultHost.id,
+        containerId: alertHost.id,
         type,
         title,
         message,
@@ -597,6 +599,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           documentType.disabled = true;
           documentNumber.disabled = true;
 
+          resultHost.replaceChildren(alertHost);
           const finishLoading = SUNARPUI.beginLoading();
           showSearchAlert(
             'info',
@@ -610,6 +613,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             resultHost.replaceChildren();
 
             if (!result || result.found !== true || !result.person) {
+              resultHost.appendChild(alertHost);
               showSearchAlert(
                 'info',
                 'Sin coincidencias',
@@ -647,7 +651,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             personId.textContent = 'Identificador: ' + selectedPerson.persona_id;
 
             identity.append(name, details, personId);
-            resultHost.appendChild(identity);
+            resultHost.append(identity, alertHost);
 
             if (accountExists && existingAccount.active) {
               showSearchAlert(
@@ -679,6 +683,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           } catch (error) {
             selectedPerson = null;
             selectedPersonCanEnable = false;
+            resultHost.replaceChildren(alertHost);
             showSearchAlert(
               'error',
               'No se pudo completar la búsqueda',
