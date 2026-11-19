@@ -2366,10 +2366,16 @@ function getAccessAuditHistory(filters) {
     ACCESS_MANAGEMENT_CONFIG.sheets.audit
   );
 
-  const result = SUNARPCore.listRecords(source, {
-    sortBy: 'fecha_hora',
-    sortDirection: 'desc'
-  });
+  const cached = SUNARPCore.listRecordsFromSourcesCached([{
+    key: 'audit',
+    source,
+    requiredHeaders: ACCESS_MANAGEMENT_FIELDS.audit
+  }], 60);
+  const result = {
+    records: (cached.audit || []).slice().sort((a, b) =>
+      new Date(b.fecha_hora).getTime() - new Date(a.fecha_hora).getTime()
+    )
+  };
 
   const actor = _accessText_(
     filters.actor || filters.actorEmail
