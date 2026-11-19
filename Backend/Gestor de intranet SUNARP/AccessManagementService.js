@@ -75,6 +75,12 @@ function _accessIsActive_(value) {
 }
 
 
+function _accessCatalogIsActive_(record) {
+  if (!record) return false;
+  if (!Object.prototype.hasOwnProperty.call(record, 'active')) return true;
+  return _accessIsActive_(record.active);
+}
+
 function _accessNormalizeActive_(value, label) {
   if (value === true || _accessUpper_(value) === 'TRUE') return true;
   if (value === false || _accessUpper_(value) === 'FALSE') return false;
@@ -736,7 +742,7 @@ function _accessValidateOrgStructure_(structureId, catalogs) {
     structureId
   );
 
-  if (!structure || !_accessIsActive_(structure.active)) {
+  if (!structure || !_accessCatalogIsActive_(structure)) {
     throw new Error(
       'La unidad orgánica seleccionada no existe o está inactiva en Global parameters.'
     );
@@ -1092,13 +1098,13 @@ function saveAccessScopes(payload) {
 
     if (type === 'SEDE') {
       const site = _accessFindBy_(sites, 'id', referenceId);
-      if (!site || !_accessIsActive_(site.active)) throw new Error('La sede "' + referenceId + '" no existe o está inactiva.');
+      if (!site || !_accessCatalogIsActive_(site)) throw new Error('La sede "' + referenceId + '" no existe o está inactiva.');
       return { tipo_ambito: type, referencia_id: referenceId, incluir_descendientes: 'NO', _siteId: referenceId };
     }
 
     if (type === 'ESTRUCTURA_ORG') {
       const structure = _accessFindBy_(structures, 'id', referenceId);
-      if (!structure || !_accessIsActive_(structure.active)) throw new Error('La estructura orgánica "' + referenceId + '" no existe o está inactiva.');
+      if (!structure || !_accessCatalogIsActive_(structure)) throw new Error('La estructura orgánica "' + referenceId + '" no existe o está inactiva.');
       const descendants = includeInput === true ||
         _accessUpper_(includeInput) === 'SI' ||
         _accessUpper_(includeInput) === 'SÍ' ||
@@ -1112,7 +1118,7 @@ function saveAccessScopes(payload) {
     }
 
     const local = _accessFindBy_(locals, 'id', referenceId);
-    if (!local || !_accessIsActive_(local.active)) throw new Error('El local "' + referenceId + '" no existe o está inactivo.');
+    if (!local || !_accessCatalogIsActive_(local)) throw new Error('El local "' + referenceId + '" no existe o está inactivo.');
     return {
       tipo_ambito: 'LOCAL',
       referencia_id: referenceId,
@@ -1358,9 +1364,9 @@ function getAccessManagementData() {
       : [],
 
     catalogs: {
-      sedes: (catalogs.sedes || []).filter(row => _accessIsActive_(row.active))
+      sedes: (catalogs.sedes || []).filter(_accessCatalogIsActive_)
         .map(row => ({ id: _accessText_(row.id), name: _accessText_(row.name) })),
-      estructuraOrg: (catalogs.estructuraOrg || []).filter(row => _accessIsActive_(row.active))
+      estructuraOrg: (catalogs.estructuraOrg || []).filter(_accessCatalogIsActive_)
         .map(row => ({
           id: _accessText_(row.id),
           sede_id: _accessText_(row.sede_id),
@@ -1368,7 +1374,7 @@ function getAccessManagementData() {
           name: _accessText_(row.name),
           order: row.order
         })),
-      locales: (catalogs.locales || []).filter(row => _accessIsActive_(row.active))
+      locales: (catalogs.locales || []).filter(_accessCatalogIsActive_)
         .map(row => ({ id: _accessText_(row.id), name: _accessText_(row.name), sede_id: _accessText_(row.sede_id) }))
     }
   };
