@@ -234,6 +234,12 @@ function putCachedValue(key, value, expirationSeconds) {
   const serializedBytes = Utilities.newBlob(serialized).getBytes().length;
   const cache = _coreGetCache_();
 
+  // Reemplazar una entrada grande o pequeña nunca debe dejar disponible
+  // una generación anterior si la nueva no puede almacenarse.
+  const previousChunkKeys = _coreCacheGetManifestChunkKeys_(cache, fullKey);
+  cache.remove(fullKey);
+  if (previousChunkKeys.length) cache.removeAll(previousChunkKeys);
+
   if (serializedBytes <= _CORE_CACHE_MAX_BYTES_) {
     const envelope = JSON.stringify({
       format: _CORE_CACHE_FORMAT_,
