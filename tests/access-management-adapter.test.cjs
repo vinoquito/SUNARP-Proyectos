@@ -225,6 +225,55 @@ test('los permisos administrativos de otro módulo no completan los requisitos d
   assert.equal(sandbox._accessHasPermission_(auth, 'USUARIOS_ADMINISTRAR', 'MOD_ACCESOS'), false);
 });
 
+test('AUDITORIA_VER es independiente y no concede administración de accesos', () => {
+  const base = makeSecurityData();
+  const data = makeSecurityData({
+    permisos: base.permisos.concat([{
+      permiso_id: 'PERM_AUDIT',
+      codigo: 'AUDITORIA_VER',
+      modulo_id: 'MOD_ACCESOS',
+      operacion: 'VER',
+      descripcion: 'Consultar auditoría',
+      active: true
+    }]),
+    usuarioRol: [{
+      persona_id: 'PER_117',
+      modulo_id: 'MOD_ACCESOS',
+      rol_id: 'ROL_EDITOR',
+      active: true
+    }],
+    rolePermissions: base.rolPermiso.concat([
+      ...base.rolPermiso
+        .filter(item => item.rol_id === 'ROL_ADMIN')
+        .map(item => ({ rol_id: 'ROL_EDITOR', permiso_id: item.permiso_id, active: true })),
+      { rol_id: 'ROL_EDITOR', permiso_id: 'PERM_AUDIT', active: true }
+    ]),
+    ambitosAcceso: [{
+      persona_id: 'PER_117',
+      modulo_id: 'MOD_ACCESOS',
+      tipo_ambito: 'SEDE',
+      referencia_id: 'SEDE_CENTRAL',
+      incluir_descendientes: 'NO',
+      active: true
+    }]
+  });
+
+  const sandbox = createAdapterSandbox(data);
+  const auth = sandbox._accessGetAuthContext_();
+
+  assert.equal(sandbox._accessIsGlobalAdministrator_(auth), false);
+  assert.equal(sandbox._accessRequirePermission_('AUDITORIA_VER'), auth);
+  assert.throws(
+    () => sandbox._accessRequirePermission_('USUARIOS_ADMINISTRAR'),
+    /requiere ROL_ADMIN y ámbito TOTAL/i
+  );
+
+  const view = sandbox.getAccessManagementData();
+  assert.equal(view.capabilities.audit, true);
+  assert.equal(view.capabilities.users, false);
+  assert.equal(view.users.length, 0);
+});
+
 test('el contador de administradores globales ignora cuentas, roles o ámbitos incompletos', () => {
   const sandbox = createAdapterSandbox(makeSecurityData());
   const data = makeSecurityData();
@@ -281,5 +330,6 @@ test('la interfaz administra roles y ámbitos mediante persona_id y modulo_id', 
   assert.match(accessUiSource, /rpc\('saveAccessUserRole',\s*\{\s*persona_id:/s);
   assert.match(accessUiSource, /rpc\('saveAccessScopes',\s*\{\s*persona_id:[\s\S]*?modulo_id:/s);
   assert.match(accessUiSource, /value:\s*'LOCAL'/);
+  assert.match(appSource, /_accessIsGlobalAdministrator_\(auth\)\s*\|\|\s*hasPermission_\(auth, 'AUDITORIA_VER'\)/);
   assert.doesNotMatch(accessUiSource, /row\.estado|item\.estado|correo_original|estructura_org_id/);
 });
