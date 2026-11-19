@@ -79,13 +79,13 @@ function _coreAuthTruthy_(value) {
   ].includes(_coreAuthUpper_(value));
 }
 
-function _coreAuthFindModule_(modules, moduleKey) {
+function _coreAuthFindModuleEntry_(moduleEntries, moduleKey) {
   const expected = _coreAuthUpper_(moduleKey);
   if (!expected) return null;
 
-  return (modules || []).find(module =>
-    _coreAuthUpper_(module.modulo_id) === expected ||
-    _coreAuthUpper_(module.codigo) === expected
+  return (moduleEntries || []).find(module =>
+    _coreAuthUpper_(module.id) === expected ||
+    _coreAuthUpper_(module.code) === expected
   ) || null;
 }
 
@@ -441,7 +441,10 @@ function resolveAuthorizationContext(data, fields) {
           ? {
               record: scope,
               moduleId,
-              moduleCode: module.code
+              moduleCode: module.code,
+              type: _coreAuthUpper_(scope[f.scopeType]),
+              referenceId: _coreAuthText_(scope[f.scopeReferenceId]),
+              includeDescendants: scope[f.scopeIncludeDescendants]
             }
           : null;
       })
@@ -467,7 +470,8 @@ function resolveAuthorizationContext(data, fields) {
       scopes: scopedRecords,
       scopeEntries,
       modules: moduleEntries.map(entry => entry.record),
-      moduleEntries
+      moduleEntries,
+      fields: f
     };
   }
 
@@ -558,7 +562,10 @@ function resolveAuthorizationContext(data, fields) {
   const legacyScopeEntries = userScopes.map(item => ({
     record: item,
     moduleId: '',
-    moduleCode: _coreAuthUpper_(item[f.scopeModule])
+    moduleCode: _coreAuthUpper_(item[f.scopeModule]),
+    type: _coreAuthUpper_(item[f.scopeType]),
+    referenceId: _coreAuthText_(item[f.scopeReferenceId]),
+    includeDescendants: item[f.scopeIncludeDescendants]
   }));
 
   return {
@@ -585,7 +592,8 @@ function resolveAuthorizationContext(data, fields) {
     permissionCodes: Array.from(permissionByCode.keys()),
     scopes: userScopes,
     scopeEntries: legacyScopeEntries,
-    modules: []
+    modules: [],
+    fields: f
   };
 }
 
@@ -603,17 +611,16 @@ function authorizationHasPermission(context, permissionCode, moduleIdOrCode) {
 
   if (context.model === 'persona') {
     const requestedModule = _coreAuthText_(moduleIdOrCode);
-
     let expectedModuleId = '';
 
     if (requestedModule) {
-      const module = _coreAuthFindModule_(
-        context.moduleEntries.map(item => item.record),
+      const module = _coreAuthFindModuleEntry_(
+        context.moduleEntries,
         requestedModule
       );
 
       if (!module) return false;
-      expectedModuleId = _coreAuthText_(module.modulo_id);
+      expectedModuleId = module.id;
     }
 
     return (context.permissionEntries || []).some(entry =>
@@ -643,63 +650,73 @@ function authorizationIsRecordInScope(context, moduleIdOrCode, record, structure
   const requestedModule = _coreAuthText_(moduleIdOrCode);
   if (!requestedModule) return false;
 
-  let scopes = [];
+  let scopeEntries = [];
 
   if (context.model === 'persona') {
-    const module = _coreAuthFindModule_(
-      (context.moduleEntries || []).map(item => item.record),
+    const module = _coreAuthFindModuleEntry_(
+      context.moduleEntries,
       requestedModule
     );
 
     if (!module) return false;
 
-    const moduleId = _coreAuthText_(module.modulo_id);
-
-    scopes = (context.scopeEntries || [])
-      .filter(entry => entry.moduleId === moduleId)
-      .map(entry => entry.record);
+    scopeEntries = (context.scopeEntries || [])
+      .filter(entry => entry.moduleId === module.id);
   } else {
     const expectedModule = _coreAuthUpper_(requestedModule);
 
-    scopes = (context.scopeEntries || [])
-      .filter(entry => entry.moduleCode === expectedModule)
-      .map(entry => entry.record);
+    scopeEntries = (context.scopeEntries || [])
+      .filter(entry => entry.moduleCode === expectedModule);
   }
 
-  if (!scopes.length) return false;
+  if (!scopeEntries.length) return false;
 
-  if (scopes.some(item =>
-    _coreAuthUpper_(item.tipo_ambito) === 'TOTAL'
-  )) {
+  if (scopeEntries.some(entry => entry.type === 'TOTAL')) {
     return true;
   }
 
   record = record || {};
 
+  const f = context.fields || {};
+  const structureNodeIdField = f.structureNodeId || 'id';
+  const structureParentIdField = f.structureParentId || 'parent_id';
+  const structureSiteIdField = f.structureSiteId || 'sede_id';
+  const recordOrganizationStructureIdField =
+    f.recordOrganizationStructureId || 'estructura_org_id';
+  const recordStructureIdField = f.recordStructureId || 'estructura_id';
+  const recordLocalIdField = f.recordLocalId || 'local_id';
+  const recordSiteIdField = f.recordSiteId || 'sede_id';
+
   const nodes = Array.isArray(structures) ? structures : [];
 
   const structureMap = new Map(nodes.map(node => [
-    _coreAuthText_(node.id),
+    _coreAuthText_(node[structureNodeIdField]),
     node
   ]));
 
   const structureId = _coreAuthText_(
-    record.estructura_org_id ||
-    record.estructura_id ||
+    record[recordOrganizationStructureIdField] ||
+    record[recordStructureIdField] ||
     record.structureId
   );
 
   // Si existe una estructura orgánica conocida, la sede se deriva
   // del catálogo maestro y no de un sede_id enviado en el registro.
-  let siteId = structureId && structureMap.has(structureId)
-    ? _coreAuthText_(structureMap.get(structureId).sede_id)
-    : _coreAuthText_(record.sede_id || record.sedeId);
+  const siteId = structureId && structureMap.has(structureId)
+    ? _coreAuthText_(
+        structureMap.get(structureId)[structureSiteIdField]
+      )
+    : _coreAuthText_(
+        record[recordSiteIdField] || record.sedeId
+      );
 
-  const localId = _coreAuthText_(record.local_id || record.localId);
+  const localId = _coreAuthText_(
+    record[recordLocalIdField] || record.localId
+  );
 
-  return scopes.some(scope => {
-    const type = _coreAuthUpper_(scope.tipo_ambito);
-    const referenceId = _coreAuthText_(scope.referencia_id);
+  return scopeEntries.some(scope => {
+    const type = scope.type;
+    const referenceId = scope.referenceId;
 
     if (type === 'SEDE') {
       return Boolean(referenceId && siteId && referenceId === siteId);
@@ -720,7 +737,7 @@ function authorizationIsRecordInScope(context, moduleIdOrCode, record, structure
       if (!referenceId || !structureId) return false;
       if (referenceId === structureId) return true;
 
-      if (!_coreAuthTruthy_(scope.incluir_descendientes)) return false;
+      if (!_coreAuthTruthy_(scope.includeDescendants)) return false;
 
       const visited = new Set();
       let currentId = structureId;
@@ -732,7 +749,9 @@ function authorizationIsRecordInScope(context, moduleIdOrCode, record, structure
 
         if (!current) return false;
 
-        const parentId = _coreAuthText_(current.parent_id);
+        const parentId = _coreAuthText_(
+          current[structureParentIdField]
+        );
 
         if (!parentId) return false;
         if (parentId === referenceId) return true;
