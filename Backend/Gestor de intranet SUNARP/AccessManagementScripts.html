@@ -2307,7 +2307,13 @@ window.SUNARPAccessHistory = Object.freeze({
         },
         {
           key: 'modulo',
-          label: 'Módulo'
+          label: 'Módulo',
+          render: value => {
+            const module = (state.data.modules || []).find(item =>
+              item.codigo === String(value || '').toUpperCase()
+            );
+            return module ? module.nombre : 'Módulo no disponible';
+          }
         },
         {
           key: 'registro_nombre',
@@ -2358,8 +2364,8 @@ window.SUNARPAccessHistory = Object.freeze({
           label: 'Módulo',
 
           options: (state.data.modules || []).map(item => ({
-            value: item,
-            label: item
+            value: item.codigo,
+            label: item.nombre
           }))
         }
       ],
