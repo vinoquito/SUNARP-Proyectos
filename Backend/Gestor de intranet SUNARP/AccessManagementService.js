@@ -3204,8 +3204,20 @@ function migrateAccessManagementSchema() {
     });
 
     const permissions = _accessMigrationReadSheet_(spreadsheet, ACCESS_MANAGEMENT_CONFIG.sheets.permissions, [
-      'permiso_id', 'codigo', 'modulo_id'
+      'permiso_id', 'codigo', 'modulo_id', 'active'
     ]);
+    const permissionIds = new Set();
+    const permissionCodes = new Set();
+    permissions.records.forEach(row => {
+      const id = row.get('permiso_id');
+      const code = _accessUpper_(row.get('codigo'));
+      if (!id || !code) throw new Error('Permisos tiene una fila sin permiso_id o codigo en la fila ' + row.rowNumber + '.');
+      if (permissionIds.has(id)) throw new Error('Permisos tiene un permiso_id duplicado: ' + id + '.');
+      if (permissionCodes.has(code)) throw new Error('Permisos tiene un codigo duplicado: ' + code + '.');
+      permissionIds.add(id);
+      permissionCodes.add(code);
+    });
+
     const permissionPlan = _accessMigrationPrepareColumn_(
       permissions,
       'operacion_id',
@@ -3221,7 +3233,7 @@ function migrateAccessManagementSchema() {
     );
 
     const scopes = _accessMigrationReadSheet_(spreadsheet, ACCESS_MANAGEMENT_CONFIG.sheets.scopes, [
-      'persona_id', 'modulo_id', 'referencia_id', 'active'
+      'persona_id', 'modulo_id', 'referencia_id', 'incluir_descendientes', 'active'
     ]);
     const scopePlan = _accessMigrationPrepareColumn_(
       scopes,
@@ -3247,6 +3259,22 @@ function migrateAccessManagementSchema() {
         return token;
       }
     );
+
+    const scopeValueByRow = new Map(scopePlan.updates.map(update => [update.rowNumber, update.value]));
+    const seenScopeKeys = new Set();
+    scopes.records.forEach(row => {
+      const typeId = scopeValueByRow.get(row.rowNumber);
+      const key = [
+        row.get('persona_id'),
+        row.get('modulo_id'),
+        typeId,
+        row.get('referencia_id')
+      ].join('\\u0000');
+      if (seenScopeKeys.has(key)) {
+        throw new Error('AmbitosAcceso contiene ámbitos duplicados para la misma persona, módulo y referencia.');
+      }
+      seenScopeKeys.add(key);
+    });
 
     // La hoja de tipos se crea/normaliza después de validar las relaciones
     // existentes, evitando cambios parciales por valores huérfanos.
