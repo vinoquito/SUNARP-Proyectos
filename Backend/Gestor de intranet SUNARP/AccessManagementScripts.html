@@ -2791,6 +2791,10 @@ window.SUNARPAccessHistory = Object.freeze({
         id: 'permissions',
         label: 'Permisos'
       });
+      tabs.push({
+        id: 'operations',
+        label: 'Operaciones'
+      });
     }
 
     if (caps.assignments) {
@@ -2824,6 +2828,7 @@ window.SUNARPAccessHistory = Object.freeze({
       users: renderUsers,
       roles: renderRoles,
       permissions: renderPermissions,
+      operations: renderOperations,
       assignments: renderAssignments,
       audit: renderAudit
     };
