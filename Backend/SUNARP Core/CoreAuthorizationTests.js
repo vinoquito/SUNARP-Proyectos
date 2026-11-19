@@ -976,6 +976,38 @@ function runAuthorizationSelfTests_() {
     'Permite adaptar los campos del registro y del catálogo organizacional.'
   );
 
+  const cachedScopeStructures = [
+    { id: 'CACHE_ROOT', parent_id: '', sede_id: 'SITE_A', active: true },
+    { id: 'CACHE_CHILD', parent_id: 'CACHE_ROOT', sede_id: 'SITE_A', active: true }
+  ];
+  const cachedScopeLocals = [
+    { id: 'CACHE_LOCAL', sede_id: 'SITE_A', active: true }
+  ];
+  const firstCatalogIndex = _coreAuthGetScopeCatalogMaps_(
+    cachedScopeStructures,
+    cachedScopeLocals
+  );
+  const secondCatalogIndex = _coreAuthGetScopeCatalogMaps_(
+    cachedScopeStructures,
+    cachedScopeLocals
+  );
+  assert(
+    firstCatalogIndex === secondCatalogIndex &&
+    firstCatalogIndex.structureMap.size === 2 &&
+    firstCatalogIndex.localMap.size === 1,
+    'Reutiliza los mapas de unidades orgánicas y locales durante la misma solicitud.'
+  );
+
+  const differentFieldsIndex = _coreAuthGetScopeCatalogMaps_(
+    cachedScopeStructures,
+    cachedScopeLocals,
+    { structureParentId: 'parent' }
+  );
+  assert(
+    differentFieldsIndex !== firstCatalogIndex,
+    'Mantiene índices separados cuando cambia la configuración de campos del catálogo.'
+  );
+
   console.log(results.join('\n'));
 
   return {
