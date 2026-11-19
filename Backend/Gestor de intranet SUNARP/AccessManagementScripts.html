@@ -1435,17 +1435,111 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     const canConfigure = state.data.capabilities.userRoles;
     const section = makeTabPanel(
       'Usuarios',
-      'Busca a las personas por documento, habilita sus cuentas y configura sus accesos por módulo.',
+      'Selecciona una sede o un rol para consultar las cuentas. El buscador permite acotar los resultados.',
       canManage ? 'Nueva cuenta' : '',
-      canManage ? () => openUserModal(null) : null
+      canManage ? () => openUserModal(null) : null,
+      { hideRefresh: true }
     );
     host.appendChild(section);
 
+    const filters = document.createElement('div');
+    filters.className = 'access-users-filters';
+
+    const siteSelect = createSelect(
+      (state.data.catalogs && state.data.catalogs.sedes || []).map(item => ({
+        value: item.id,
+        label: item.name
+      })),
+      '',
+      'Todas las sedes'
+    );
+
+    const roleSelect = createSelect(
+      activeRoles().map(role => ({
+        value: role.rol_id,
+        label: role.nombre
+      })),
+      '',
+      'Todos los roles'
+    );
+
+    const applyButton = createButton(
+      'Actualizar',
+      'outline',
+      () => loadFilteredUsers(true),
+      'refresh'
+    );
+    applyButton.disabled = true;
+
+    filters.append(
+      createField('Sede', siteSelect),
+      createField('Rol', roleSelect),
+      applyButton
+    );
+    host.appendChild(filters);
+
+    let requestNumber = 0;
+
+    function updateApplyState() {
+      applyButton.disabled = !siteSelect.value && !roleSelect.value;
+    }
+
+    async function loadFilteredUsers(showLoading) {
+      const sedeId = siteSelect.value;
+      const rolId = roleSelect.value;
+      const currentRequest = ++requestNumber;
+
+      updateApplyState();
+
+      if (!sedeId && !rolId) {
+        state.data.users = [];
+        if (state.table && typeof state.table.setData === 'function') {
+          state.table.setData([]);
+        }
+        return;
+      }
+
+      const finishLoading = showLoading === false
+        ? () => {}
+        : SUNARPUI.beginLoading({ backdrop: 'translucent' });
+
+      applyButton.disabled = true;
+
+      try {
+        const result = await rpc('getAccessUsers', {
+          sede_id: sedeId,
+          rol_id: rolId
+        });
+
+        if (currentRequest !== requestNumber) return;
+
+        state.data.users = Array.isArray(result.items) ? result.items : [];
+
+        if (state.table && typeof state.table.setData === 'function') {
+          state.table.setData(state.data.users);
+        }
+      } catch (error) {
+        if (currentRequest === requestNumber) {
+          SUNARPUI.notify(
+            'error',
+            error.message || 'No se pudieron consultar los usuarios.'
+          );
+        }
+      } finally {
+        finishLoading();
+        if (currentRequest === requestNumber) updateApplyState();
+      }
+    }
+
+    siteSelect.addEventListener('change', () => loadFilteredUsers(true));
+    roleSelect.addEventListener('change', () => loadFilteredUsers(true));
+
     renderTable(host, {
-      data: state.data.users || [],
+      data: [],
       columns: [
         { key: 'nombre_completo', label: 'Nombre' },
         { key: 'correo_institucional', label: 'Correo institucional' },
+        { key: 'sede_nombre', label: 'Sede' },
         {
           key: 'roles',
           label: 'Roles por módulo',
@@ -1476,8 +1570,13 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         }] : [])
       ],
       searchPlaceholder: 'Buscar por nombre o correo institucional...',
-      emptyMessage: 'No hay cuentas registradas.'
+      emptyMessage: 'Selecciona una sede o un rol para consultar usuarios. No se carga el listado completo.'
     });
+
+    state.userListController = {
+      refresh: () => loadFilteredUsers(false)
+    };
+    updateApplyState();
   }
 
 
