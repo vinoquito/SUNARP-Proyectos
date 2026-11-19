@@ -772,12 +772,18 @@ function getDirectoryInitialData() {
     scopedStructures.map(item => _directoryKey_(item.tipo_estructura_id))
   );
 
-  const assignments = _directorySortAssignments_(view.assignments.slice(), context);
+  const assignments = view.assignments;
+  const scopedSedes = context.sedes.filter(item =>
+    _directoryIsActive_(item) && allowedSedeIds.has(_directoryKey_(item.id))
+  );
+  const usedCargoIds = new Set(assignments.map(item => _directoryKey_(item.cargo_id)));
+  const scopedCargos = context.cargos.filter(item =>
+    _directoryIsActive_(item) && usedCargoIds.has(_directoryKey_(item.id))
+  );
+
   return {
     catalogs: {
-      sedes: context.sedes.filter(item =>
-        _directoryIsActive_(item) && allowedSedeIds.has(_directoryKey_(item.id))
-      ),
+      sedes: scopedSedes,
       tiposLocal: context.tiposLocal.filter(item =>
         _directoryIsActive_(item) && allowedLocalTypes.has(_directoryKey_(item.id))
       ),
@@ -793,13 +799,10 @@ function getDirectoryInitialData() {
         })),
       estructuraOrg: scopedStructures,
       estructuraLocal: scopedRelations,
-      cargos: context.cargos.filter(item =>
-        _directoryIsActive_(item) &&
-        assignments.some(record => _directoryKey_(record.cargo_id) === _directoryKey_(item.id))
-      ),
+      cargos: scopedCargos,
       filterVisibility: {
-        sede: allowedSedeIds.size > 1,
-        cargo: new Set(assignments.map(item => _directoryKey_(item.cargo_id))).size > 1,
+        sede: scopedSedes.length > 1,
+        cargo: scopedCargos.length > 1,
         hierarchy: scopedStructures.length > 1
       }
     },
