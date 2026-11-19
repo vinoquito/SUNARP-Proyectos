@@ -461,11 +461,7 @@ function _accessGetAuthContext_() {
     userRoles: data.usuarioRol,
     permissions: data.permisos,
     rolePermissions: data.rolPermiso,
-    // El contrato compartido de autorización aún utiliza tipo_ambito.
-    // El almacenamiento de la aplicación sigue normalizado en tipo_ambito_id.
-    scopes: data.ambitosAcceso.map(scope => Object.assign({}, scope, {
-      tipo_ambito: _accessUpper_(scope.tipo_ambito_id)
-    }))
+    scopes: data.ambitosAcceso
   });
 
   if (!context.authenticated) {
