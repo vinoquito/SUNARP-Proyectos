@@ -478,7 +478,11 @@ test('la administración incluye filtro de módulo, catálogo de operaciones y s
   assert.match(accessUiSource, /function renderScopeTypes\(host\)/);
   assert.match(accessUiSource, /scopeTypes: renderScopeTypes/);
   assert.match(accessUiSource, /Buscar operación/);
+  assert.match(accessUiSource, /permission\.operacion_nombre \|\| permission\.operacion_id/);
+  assert.match(accessUiSource, /row\.operacion_nombre \|\| row\.operacion_id/);
   assert.match(accessSource, /function _accessScopeType_\(data, typeId\)/);
+  assert.match(accessSource, /function migrateAccessManagementSchema\(\)/);
+  assert.match(accessSource, /typeIdsByName/);
   assert.match(accessUiSource, /Seleccionar todo el bloque/);
   assert.match(accessUiSource, /groupToggle\.indeterminate/);
   assert.match(accessUiSource, /groupToggle\.checked = checkboxes\.length > 0/);
