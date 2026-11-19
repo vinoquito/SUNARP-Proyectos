@@ -154,6 +154,17 @@ function runCoreSelfTests_() {
       partialSearch.records[0].id === 'TST_001',
       'La búsqueda parcial recupera únicamente filas coincidentes mediante TextFinder.'
     );
+    const accentSearch = searchRecordsByFields(
+      source,
+      'perez',
+      ['nombre'],
+      { matchCase: false }
+    );
+    assert(
+      accentSearch.total === 1 &&
+      accentSearch.records[0].id === 'TST_002',
+      'La búsqueda parcial ignora diferencias de acentuación.'
+    );
 
 
     // 4.2. Probar almacenamiento centralizado de valores que superan 95 KiB.

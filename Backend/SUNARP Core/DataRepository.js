@@ -633,6 +633,37 @@ function findRecordsByFields(source, filters, options) {
 }
 
 
+
+function _coreNormalizeSearchText_(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase();
+}
+
+
+function _coreBuildAccentInsensitivePattern_(value) {
+  const variants = {
+    a: 'aáàâäãå',
+    e: 'eéèêë',
+    i: 'iíìîï',
+    o: 'oóòôöõ',
+    u: 'uúùûü',
+    n: 'nñ',
+    c: 'cç',
+    y: 'yýÿ',
+    s: 'sśš',
+    z: 'zźżž'
+  };
+  const normalized = String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
+  return normalized.split('').map(character => {
+    if (variants[character]) return '[' + variants[character] + ']';
+    return character.replace(/[.*+?^$()|[\]\\]/g, item => '\\' + item);
+  }).join('');
+}
+
+
+
 /**
  * Busca texto parcial en columnas indicadas sin descargar la tabla completa.
  * TextFinder localiza filas candidatas y Core recupera únicamente esas filas.
@@ -684,16 +715,21 @@ function searchRecordsByFields(source, query, fields, options) {
 
   const candidateRows = new Set();
   const matchCase = options.matchCase === true;
+  const searchPattern = options.accentInsensitive === false
+    ? search
+    : _coreBuildAccentInsensitivePattern_(search);
   fields.forEach(field => {
-    sheet.getRange(
+    const finder = sheet.getRange(
       dataStartRow, headerMap[field] + 1, dataRows, 1
-    ).createTextFinder(search)
-      .matchCase(matchCase)
-      .findAll()
-      .forEach(cell => candidateRows.add(cell.getRow()));
+    ).createTextFinder(searchPattern)
+      .matchCase(matchCase);
+    if (options.accentInsensitive !== false) finder.useRegularExpression(true);
+    finder.findAll().forEach(cell => candidateRows.add(cell.getRow()));
   });
 
-  const expected = matchCase ? search : search.toLocaleLowerCase();
+  const expected = options.accentInsensitive === false
+    ? (matchCase ? search : search.toLocaleLowerCase())
+    : _coreNormalizeSearchText_(search);
   const records = [];
   const orderedRows = [...candidateRows].sort((a, b) => a - b);
   const candidateValues = _coreReadCandidateRows_(
@@ -704,11 +740,9 @@ function searchRecordsByFields(source, query, fields, options) {
     if (_coreIsEmptyRow_(values)) return;
     const record = _coreRowToRecord_(headers, values);
     const matches = fields.some(field => {
-      const actual = String(
-        record[field] === null || record[field] === undefined
-          ? ''
-          : record[field]
-      );
+      const actual = options.accentInsensitive === false
+        ? String(record[field] === null || record[field] === undefined ? '' : record[field])
+        : _coreNormalizeSearchText_(record[field]);
       return (matchCase ? actual : actual.toLocaleLowerCase()).includes(expected);
     });
     if (matches) records.push(record);
