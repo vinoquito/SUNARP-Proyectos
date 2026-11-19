@@ -446,7 +446,6 @@ function _accessGetAuthContext_() {
     throw new Error('No se pudo identificar tu cuenta institucional. Verifica la implementación de la aplicación web.');
   }
 
-  const data = _accessLoadSecurityData_();
   const identityResult = SUNARPCore.findRecordsByFields(
     _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
     { correo_institucional: email },
@@ -472,6 +471,7 @@ function _accessGetAuthContext_() {
   }
 
   const person = matchingPeople[0];
+  const data = _accessLoadSecurityData_();
   if (Object.prototype.hasOwnProperty.call(person, 'active') && !_accessIsActive_(person.active)) {
     throw new Error('La persona vinculada a tu correo institucional está inactiva.');
   }
