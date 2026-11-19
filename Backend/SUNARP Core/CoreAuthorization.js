@@ -282,12 +282,6 @@ function resolveAuthorizationContext(data) {
     'RolPermiso'
   );
 
-  _coreAuthAssertUniqueActivePairs_(
-    scopes.filter(scope => _coreAuthText_(scope.persona_id) === personaId),
-    'modulo_id',
-    'referencia_id',
-    'AmbitoAcceso'
-  );
 
   const rolePermissionIdsByRole = new Map();
 
