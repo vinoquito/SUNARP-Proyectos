@@ -409,29 +409,17 @@ test('la cascada de ámbitos parte del local y recorre solo la jerarquía vincul
 
 test('los identificadores de roles y permisos se normalizan y autogeneran', () => {
   const sandbox = createAdapterSandbox(makeSecurityData());
+  const generated = vm.runInContext(`({
+    token: _accessIdentifierToken_('Gestión de usuarios'),
+    roleId: _accessGenerateUniqueIdentifier_('ROL_', 'Gestión de usuarios', [], 'rol_id', 50),
+    collisionId: _accessGenerateUniqueIdentifier_('ROL_', 'Editor', [{ rol_id: 'ROL_EDITOR' }], 'rol_id', 50),
+    permissionCode: _accessBuildPermissionCode_('INFORMACION_PERSONAL', 'VER')
+  })`, sandbox);
 
-  assert.equal(
-    sandbox._accessIdentifierToken_('Gestión de usuarios'),
-    'GESTION_DE_USUARIOS'
-  );
-  assert.equal(
-    sandbox._accessGenerateUniqueIdentifier_('ROL_', 'Gestión de usuarios', [], 'rol_id', 50),
-    'ROL_GESTION_DE_USUARIOS'
-  );
-  assert.equal(
-    sandbox._accessGenerateUniqueIdentifier_(
-      'ROL_',
-      'Editor',
-      [{ rol_id: 'ROL_EDITOR' }],
-      'rol_id',
-      50
-    ),
-    'ROL_EDITOR_2'
-  );
-  assert.equal(
-    sandbox._accessBuildPermissionCode_('INFORMACION_PERSONAL', 'VER'),
-    'INFORMACION_PERSONAL_VER'
-  );
+  assert.equal(generated.token, 'GESTION_DE_USUARIOS');
+  assert.equal(generated.roleId, 'ROL_GESTION_DE_USUARIOS');
+  assert.equal(generated.collisionId, 'ROL_EDITOR_2');
+  assert.equal(generated.permissionCode, 'INFORMACION_PERSONAL_VER');
   assert.match(accessSource, /const ACCESS_PERMISSION_OPERATIONS = Object\.freeze\(\[/);
 });
 
