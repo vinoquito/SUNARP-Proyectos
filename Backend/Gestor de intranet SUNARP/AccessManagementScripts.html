@@ -589,7 +589,14 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         const id = String(current.id);
         if (!id || visited.has(id)) break;
         visited.add(id);
-        parts.unshift(current.name);
+        const structureType = (catalogs.tiposEstructura || []).find(item =>
+          String(item.id) === String(current.tipo_estructura_id)
+        );
+        parts.unshift(
+          structureType
+            ? structureType.name + ': ' + current.name
+            : current.name
+        );
         current = current.parent_id
           ? byId.get(String(current.parent_id)) || null
           : null;
@@ -950,7 +957,17 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
             const selectedId = selectedChain[level - 1] || '';
             const levelSelect = createSelect(
-              options.map(item => ({ value: item.id, label: item.name })),
+              options.map(item => {
+                const structureType = (catalogs.tiposEstructura || []).find(type =>
+                  String(type.id) === String(item.tipo_estructura_id)
+                );
+                return {
+                  value: item.id,
+                  label: structureType
+                    ? structureType.name + ' — ' + item.name
+                    : item.name
+                };
+              }),
               selectedId,
               'Selecciona una unidad orgánica'
             );
