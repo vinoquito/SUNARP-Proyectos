@@ -221,7 +221,7 @@ function _accessValidateSnapshot_(data) {
     ['roles', ['rol_id'], 'Roles.rol_id'],
     ['permisos', ['permiso_id'], 'Permisos.permiso_id'],
     ['permisos', ['codigo'], 'Permisos.codigo'],
-    ['usuarioRol', ['persona_id', 'modulo_id'], 'UsuarioRol.persona_id+modulo_id'],
+    ['usuarioRol', ['persona_id', 'modulo_id', 'rol_id'], 'UsuarioRol.persona_id+modulo_id+rol_id'],
     ['rolPermiso', ['rol_id', 'permiso_id'], 'RolPermiso.rol_id+permiso_id'],
     ['ambitosAcceso', ['persona_id', 'modulo_id', 'tipo_ambito', 'referencia_id'], 'AmbitosAcceso']
   ];
@@ -1041,422 +1041,340 @@ function saveRolePermissions(payload) {
 
 
 function saveAccessScopes(payload) {
-  const auth = _accessRequirePermission_(
-    'AMBITOS_ACCESO_ADMINISTRAR'
-  );
+  const auth = _accessRequirePermission_('AMBITOS_ACCESO_ADMINISTRAR');
+  const personaId = _accessText_(payload && payload.persona_id);
+  const moduleId = _accessText_(payload && payload.modulo_id);
+  const scopesInput = Array.isArray(payload && payload.ambitos) ? payload.ambitos :
+    Array.isArray(payload && payload.scopes) ? payload.scopes : [];
 
-  const email = _accessText_(
-    payload && (
-      payload.correo_institucional ||
-      payload.email
-    )
-  ).toLowerCase();
-
-  const moduleCode = _accessUpper_(
-    payload && (
-      payload.modulo ||
-      payload.module
-    )
-  );
-
-  const scopesInput = Array.isArray(payload && payload.ambitos)
-    ? payload.ambitos
-    : Array.isArray(payload && payload.scopes)
-      ? payload.scopes
-      : [];
-
-  _accessValidateEmail_(email);
-
-  if (!moduleCode) {
-    throw new Error('Selecciona un módulo.');
-  }
+  if (!personaId || !moduleId) throw new Error('Debes indicar persona_id y modulo_id.');
 
   const data = _accessLoadSecurityData_();
-
-  const user = _accessFindBy_(
-    data.usuarios,
-    'correo_institucional',
-    email
+  const user = data.usuarios.find(row =>
+    _accessText_(row.persona_id) === personaId && _accessIsActive_(row.active)
   );
+  if (!user) throw new Error('La persona no tiene una cuenta activa.');
 
-  if (!user) {
-    throw new Error(
-      'El usuario no existe en la hoja Usuarios.'
-    );
-  }
-
-  const knownModules = new Set(
-    data.permisos
-      .map(row => _accessUpper_(row.modulo))
-      .filter(Boolean)
+  const userRole = data.usuarioRol.find(row =>
+    _accessText_(row.persona_id) === personaId &&
+    _accessText_(row.modulo_id) === moduleId &&
+    _accessIsActive_(row.active)
   );
+  if (!userRole) throw new Error('La persona debe tener un rol activo en el módulo antes de asignarle ámbitos.');
 
-  if (!knownModules.has(moduleCode)) {
-    throw new Error(
-      'El módulo no existe en el catálogo de permisos.'
-    );
-  }
+  const module = data.modulos.find(row =>
+    _accessText_(row.modulo_id) === moduleId && _accessIsActive_(row.active)
+  );
+  if (!module) throw new Error('El módulo no existe o está inactivo.');
 
   const catalogs = _accessOrgCatalog_();
+  const structures = catalogs.estructuraOrg || [];
+  const sites = catalogs.sedes || [];
+  const locals = catalogs.locales || [];
 
   const normalized = scopesInput.map(item => {
-    const type = _accessUpper_(
-      item.tipo_ambito ||
-      item.scopeType
-    );
+    const type = _accessUpper_(item.tipo_ambito || item.scopeType);
+    const referenceId = _accessText_(item.referencia_id || item.referenceId);
+    const includeInput = item.incluir_descendientes !== undefined
+      ? item.incluir_descendientes
+      : item.includeDescendants;
 
-    const referenceId = _accessText_(
-      item.referencia_id ||
-      item.referenceId
-    );
-
-    let descendants = _accessUpper_(
-      item.incluir_descendientes ||
-      item.includeDescendants ||
-      'NO'
-    );
-
-    if (!['TOTAL', 'SEDE', 'ESTRUCTURA_ORG'].includes(type)) {
-      throw new Error(
-        `Tipo de ámbito no válido: ${type || '(vacío)'}.`
-      );
+    if (!['TOTAL', 'SEDE', 'ESTRUCTURA_ORG', 'LOCAL'].includes(type)) {
+      throw new Error('Tipo de ámbito no válido: ' + (type || '(vacío)') + '.');
     }
 
     if (type === 'TOTAL') {
-      if (referenceId) {
-        throw new Error(
-          'Un ámbito TOTAL debe tener referencia_id vacío.'
-        );
-      }
-
-      descendants = 'NO';
-
-    } else if (type === 'SEDE') {
-      if (
-        !referenceId ||
-        !_accessFindBy_(catalogs.sedes, 'id', referenceId)
-      ) {
-        throw new Error(
-          `La sede "${referenceId}" no existe en Global parameters.`
-        );
-      }
-
-      descendants = 'NO';
-
-    } else {
-      const structure = _accessFindBy_(
-        catalogs.estructuraOrg,
-        'id',
-        referenceId
-      );
-
-      if (
-        !referenceId ||
-        !structure ||
-        !_accessIsActive_(structure.active)
-      ) {
-        throw new Error(
-          `La estructura orgánica "${referenceId}" no existe o está inactiva en Global parameters.`
-        );
-      }
-
-      if (!['SI', 'SÍ', 'NO'].includes(descendants)) {
-        throw new Error(
-          'incluir_descendientes debe ser SI o NO.'
-        );
-      }
-
-      descendants = descendants === 'SÍ'
-        ? 'SI'
-        : descendants;
+      if (referenceId) throw new Error('Un ámbito TOTAL debe tener referencia_id vacío.');
+      return { tipo_ambito: type, referencia_id: '', incluir_descendientes: 'NO', _siteId: '' };
     }
 
+    if (!referenceId) throw new Error('El ámbito ' + type + ' requiere una referencia.');
+
+    if (type === 'SEDE') {
+      const site = _accessFindBy_(sites, 'id', referenceId);
+      if (!site || !_accessIsActive_(site.active)) throw new Error('La sede "' + referenceId + '" no existe o está inactiva.');
+      return { tipo_ambito: type, referencia_id: referenceId, incluir_descendientes: 'NO', _siteId: referenceId };
+    }
+
+    if (type === 'ESTRUCTURA_ORG') {
+      const structure = _accessFindBy_(structures, 'id', referenceId);
+      if (!structure || !_accessIsActive_(structure.active)) throw new Error('La estructura orgánica "' + referenceId + '" no existe o está inactiva.');
+      const descendants = includeInput === true ||
+        _accessUpper_(includeInput) === 'SI' ||
+        _accessUpper_(includeInput) === 'SÍ' ||
+        _accessUpper_(includeInput) === 'TRUE';
+      return {
+        tipo_ambito: type,
+        referencia_id: referenceId,
+        incluir_descendientes: descendants ? 'SI' : 'NO',
+        _siteId: _accessText_(structure.sede_id)
+      };
+    }
+
+    const local = _accessFindBy_(locals, 'id', referenceId);
+    if (!local || !_accessIsActive_(local.active)) throw new Error('El local "' + referenceId + '" no existe o está inactivo.');
     return {
-      tipo_ambito: type,
+      tipo_ambito: 'LOCAL',
       referencia_id: referenceId,
-      incluir_descendientes: descendants
+      incluir_descendientes: 'NO',
+      _siteId: _accessText_(local.sede_id)
     };
   });
 
-  const totalScopes = normalized.filter(item =>
-    item.tipo_ambito === 'TOTAL'
-  );
-
-  if (totalScopes.length && normalized.length > 1) {
-    throw new Error(
-      'El ámbito TOTAL es exclusivo: no puede combinarse con SEDE o ESTRUCTURA_ORG para el mismo usuario y módulo.'
-    );
+  if (normalized.some(item => item.tipo_ambito === 'TOTAL') && normalized.length > 1) {
+    throw new Error('TOTAL es exclusivo dentro del mismo módulo.');
   }
 
-  const unique = new Set();
-
+  const seen = new Set();
   normalized.forEach(item => {
-    const key =
-      `${item.tipo_ambito}\u0000${item.referencia_id}`;
-
-    if (unique.has(key)) {
-      throw new Error('Has seleccionado un ámbito duplicado.');
-    }
-
-    unique.add(key);
+    const key = item.tipo_ambito + '\\u0000' + item.referencia_id;
+    if (seen.has(key)) throw new Error('Has seleccionado un ámbito duplicado.');
+    seen.add(key);
   });
 
-  const before = data.ambitosAcceso.filter(row =>
-    _accessText_(row.correo_institucional).toLowerCase() === email &&
-    _accessUpper_(row.modulo) === moduleCode
+  // Los ámbitos específicos se restringen a una sola sede en todos los módulos.
+  // TOTAL solo es exclusivo dentro del módulo al que pertenece.
+  const siteIds = new Set();
+  const existingSpecific = data.ambitosAcceso.filter(scope =>
+    _accessText_(scope.persona_id) === personaId &&
+    _accessText_(scope.modulo_id) !== moduleId &&
+    _accessIsActive_(scope.active) &&
+    _accessUpper_(scope.tipo_ambito) !== 'TOTAL'
   );
+
+  existingSpecific.forEach(scope => {
+    const type = _accessUpper_(scope.tipo_ambito);
+    const refId = _accessText_(scope.referencia_id);
+    let siteId = '';
+    if (type === 'SEDE') siteId = refId;
+    if (type === 'ESTRUCTURA_ORG') {
+      const structure = _accessFindBy_(structures, 'id', refId);
+      siteId = structure ? _accessText_(structure.sede_id) : '';
+    }
+    if (type === 'LOCAL') {
+      const local = _accessFindBy_(locals, 'id', refId);
+      siteId = local ? _accessText_(local.sede_id) : '';
+    }
+    if (!siteId) throw new Error('Existe un ámbito específico previo con referencia inválida. Corrige ese ámbito antes de continuar.');
+    siteIds.add(siteId);
+  });
+
+  normalized.forEach(scope => {
+    if (scope.tipo_ambito !== 'TOTAL') {
+      if (!scope._siteId) throw new Error('No se pudo determinar la sede del ámbito.');
+      siteIds.add(scope._siteId);
+    }
+  });
+
+  if (siteIds.size > 1) {
+    throw new Error('Los ámbitos específicos de una persona deben pertenecer a una sola sede, aunque correspondan a módulos distintos.');
+  }
+
+  const recordsToSync = normalized.map(scope => ({
+    tipo_ambito: scope.tipo_ambito,
+    referencia_id: scope.referencia_id,
+    incluir_descendientes: scope.incluir_descendientes
+  }));
+
+  const before = data.ambitosAcceso.filter(row =>
+    _accessText_(row.persona_id) === personaId &&
+    _accessText_(row.modulo_id) === moduleId
+  );
+  const person = _accessFindBy_(data.personas, 'persona_id', personaId);
 
   return _accessRunAudited_(auth, {
     accion: 'ACTUALIZAR_AMBITOS',
-    modulo: 'ACCESOS',
+    modulo: ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses,
     tipo_entidad: 'AMBITO_ACCESO',
-    registro_id: email,
-    registro_nombre: `${email} — ${moduleCode}`,
-    detalle: 'Actualización de ámbitos de acceso.',
-    ambito_modulo: moduleCode,
+    registro_id: personaId,
+    registro_nombre: [person && person.nombres, person && person.apellidos].filter(Boolean).join(' '),
+    detalle: 'Actualización de ámbitos del módulo ' + _accessText_(module.nombre || module.codigo) + '.',
+    ambito_modulo: _accessText_(module.codigo),
     datos_antes: before
-
   }, () => {
     const result = SUNARPCore.syncRecordsByKey(
-      _accessSecuritySource_(
-        ACCESS_MANAGEMENT_CONFIG.sheets.scopes
-      ),
-      {
-        correo_institucional: email,
-        modulo: moduleCode
-      },
-      [
-        'tipo_ambito',
-        'referencia_id'
-      ],
-      normalized,
-      'estado',
-      'ACTIVO',
-      'INACTIVO',
-      {
-        allowEmptyKeyFields: ['referencia_id']
-      }
+      _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.scopes),
+      { persona_id: personaId, modulo_id: moduleId },
+      ['tipo_ambito', 'referencia_id'],
+      recordsToSync,
+      'active',
+      true,
+      false,
+      { allowEmptyKeyFields: ['referencia_id'] }
     );
-
     return {
-      value: {
-        success: true,
-        message: 'Ámbitos de acceso actualizados correctamente.',
-        ...result
-      },
-
-      auditAfter: normalized
+      value: { success: true, message: 'Ámbitos de acceso actualizados correctamente.', ...result },
+      auditAfter: recordsToSync.map(item => Object.assign({}, item, { active: true }))
     };
   });
 }
 
 
-/**
- * Devuelve datos del módulo según las capacidades del usuario.
- * Los datos no autorizados no se envían al navegador.
- */
 function getAccessManagementData() {
   const auth = _accessGetAuthContext_();
+  const accessModuleId = _accessResolveModuleId_(auth, ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses);
+
+  if (!_accessIsGlobalAdministrator_(auth)) {
+    throw new Error('La administración de accesos requiere ROL_ADMIN y ámbito TOTAL en el módulo ACCESOS.');
+  }
 
   const capabilities = {
-    users: SUNARPCore.authorizationHasPermission(
-      auth,
-      'USUARIOS_ADMINISTRAR'
-    ),
-
-    roles: SUNARPCore.authorizationHasPermission(
-      auth,
-      'ROLES_ADMINISTRAR'
-    ),
-
-    permissions: SUNARPCore.authorizationHasPermission(
-      auth,
-      'PERMISOS_ADMINISTRAR'
-    ),
-
-    scopes: SUNARPCore.authorizationHasPermission(
-      auth,
-      'AMBITOS_ACCESO_ADMINISTRAR'
-    ),
-
-    audit: SUNARPCore.authorizationHasPermission(
-      auth,
-      'AUDITORIA_VER'
-    )
+    users: _accessHasPermission_(auth, 'USUARIOS_ADMINISTRAR', accessModuleId),
+    roles: _accessHasPermission_(auth, 'ROLES_ADMINISTRAR', accessModuleId),
+    permissions: _accessHasPermission_(auth, 'PERMISOS_ADMINISTRAR', accessModuleId),
+    scopes: _accessHasPermission_(auth, 'AMBITOS_ACCESO_ADMINISTRAR', accessModuleId),
+    audit: _accessHasPermission_(auth, 'AUDITORIA_VER', accessModuleId)
   };
-
-  capabilities.assignments =
-    capabilities.roles &&
-    capabilities.permissions;
+  capabilities.assignments = capabilities.roles && capabilities.permissions;
+  capabilities.userRoles = capabilities.users && capabilities.roles;
 
   if (!Object.values(capabilities).some(Boolean)) {
-    throw new Error(
-      'No tienes permisos para administrar accesos ni consultar auditoría.'
-    );
+    throw new Error('Tu cuenta no tiene capacidades de administración de accesos.');
   }
 
   const data = _accessLoadSecurityData_();
-
-  // Catálogos maestros para obtener la sede
-  // correspondiente a la unidad orgánica del usuario.
-  const needsOrgCatalog =
-    capabilities.users || capabilities.scopes;
-
-  const orgCatalogs = needsOrgCatalog
+  const needsCatalogs = capabilities.users || capabilities.scopes;
+  const catalogs = needsCatalogs
     ? _accessOrgCatalog_()
-    : {
-      sedes: [],
-      estructuraOrg: []
-    };
+    : { sedes: [], estructuraOrg: [], locales: [] };
 
-  const structureMap = new Map(
-    orgCatalogs.estructuraOrg.map(item => [
-      _accessText_(item.id),
-      item
-    ])
-  );
+  const personById = new Map(data.personas.map(person => [
+    _accessText_(person.persona_id),
+    person
+  ]));
 
-  const sedeMap = new Map(
-    orgCatalogs.sedes.map(item => [
-      _accessText_(item.id),
-      item
-    ])
-  );
+  const userRolesByPerson = new Map();
+  data.usuarioRol.forEach(assignment => {
+    const personaId = _accessText_(assignment.persona_id);
+    if (!userRolesByPerson.has(personaId)) userRolesByPerson.set(personaId, []);
+    userRolesByPerson.get(personaId).push(assignment);
+  });
 
-  const response = {
+  return {
     currentUser: {
+      persona_id: auth.personaId,
       email: auth.email,
       name: auth.name,
-      roleId: auth.roleId,
-      roleName: auth.roleName
+      roles: auth.moduleAccess.map(item => ({
+        modulo_id: item.modulo_id,
+        modulo: item.module.nombre,
+        rol_id: item.rol_id,
+        rol: item.role.nombre
+      }))
     },
-
     capabilities,
 
-    users: (
-      capabilities.users ||
-      capabilities.scopes
-    ) ? data.usuarios.map(row => {
+    users: capabilities.users || capabilities.scopes || capabilities.userRoles
+      ? data.usuarios.map(user => {
+          const person = personById.get(_accessText_(user.persona_id)) || {};
+          return {
+            persona_id: _accessText_(user.persona_id),
+            correo_institucional: _accessText_(person.correo_institucional),
+            nombres: _accessText_(person.nombres),
+            apellidos: _accessText_(person.apellidos),
+            nombre_completo: [_accessText_(person.nombres), _accessText_(person.apellidos)].filter(Boolean).join(' '),
+            active: _accessIsActive_(user.active),
+            roles: (userRolesByPerson.get(_accessText_(user.persona_id)) || [])
+              .filter(item => _accessIsActive_(item.active))
+              .map(item => ({ modulo_id: _accessText_(item.modulo_id), rol_id: _accessText_(item.rol_id) }))
+          };
+        })
+      : [],
 
-      const structure = structureMap.get(
-        _accessText_(row.estructura_org_id)
-      );
+    availablePeople: capabilities.users
+      ? data.personas.filter(person =>
+          _accessText_(person.correo_institucional) &&
+          !data.usuarios.some(user => _accessText_(user.persona_id) === _accessText_(person.persona_id))
+        ).map(person => ({
+          persona_id: _accessText_(person.persona_id),
+          correo_institucional: _accessText_(person.correo_institucional),
+          nombres: _accessText_(person.nombres),
+          apellidos: _accessText_(person.apellidos),
+          nombre_completo: [_accessText_(person.nombres), _accessText_(person.apellidos)].filter(Boolean).join(' ')
+        }))
+      : [],
 
-      const sede = structure
-        ? sedeMap.get(_accessText_(structure.sede_id))
-        : null;
+    modules: capabilities.permissions || capabilities.scopes || capabilities.userRoles
+      ? data.modulos.map(module => ({
+          modulo_id: _accessText_(module.modulo_id),
+          codigo: _accessUpper_(module.codigo),
+          nombre: _accessText_(module.nombre),
+          descripcion: _accessText_(module.descripcion),
+          active: _accessIsActive_(module.active)
+        }))
+      : [],
 
-      return {
-        correo_institucional: _accessText_(row.correo_institucional),
-        nombres: _accessText_(row.nombres),
-        apellidos: _accessText_(row.apellidos),
-
-        nombre_completo: [
-          _accessText_(row.nombres),
-          _accessText_(row.apellidos)
-        ].filter(Boolean).join(' '),
-
-        estado: _accessUpper_(row.estado),
-        rol_id: _accessText_(row.rol_id),
-
-        estructura_org_id: _accessText_(row.estructura_org_id),
-
-        // Datos derivados del catálogo maestro.
-        sede_id: sede
-          ? _accessText_(sede.id)
-          : '',
-
-        sede_name: sede
-          ? _accessText_(sede.name)
-          : ''
-      };
-
-    }) : [],
-
-    roles: (
-      capabilities.roles ||
-      capabilities.users
-    ) ? data.roles.map(row => ({
-      rol_id: _accessText_(row.rol_id),
-      nombre: _accessText_(row.nombre),
-      descripcion: _accessText_(row.descripcion),
-      estado: _accessUpper_(row.estado)
-    })) : [],
+    roles: capabilities.roles || capabilities.users
+      ? data.roles.map(role => ({
+          rol_id: _accessText_(role.rol_id),
+          nombre: _accessText_(role.nombre),
+          descripcion: _accessText_(role.descripcion),
+          active: _accessIsActive_(role.active)
+        }))
+      : [],
 
     permissions: capabilities.permissions
-      ? data.permisos.map(row => ({
-        permiso_id: _accessText_(row.permiso_id),
-        codigo: _accessUpper_(row.codigo),
-        modulo: _accessUpper_(row.modulo),
-        operacion: _accessUpper_(row.operacion),
-
-        nombre: _accessText_(
-          row.nombre ||
-          row.nombre_permiso ||
-          row.descripcion
-        ),
-
-        descripcion: _accessText_(row.descripcion),
-        estado: _accessUpper_(row.estado)
-      }))
+      ? data.permisos.map(permission => {
+          const module = data.modulos.find(item => _accessText_(item.modulo_id) === _accessText_(permission.modulo_id)) || {};
+          return {
+            permiso_id: _accessText_(permission.permiso_id),
+            codigo: _accessUpper_(permission.codigo),
+            modulo_id: _accessText_(permission.modulo_id),
+            modulo_codigo: _accessUpper_(module.codigo),
+            modulo_nombre: _accessText_(module.nombre),
+            operacion: _accessUpper_(permission.operacion),
+            descripcion: _accessText_(permission.descripcion),
+            active: _accessIsActive_(permission.active)
+          };
+        })
       : [],
 
     rolePermissions: capabilities.assignments
-      ? data.rolPermiso.map(row => ({
-        rol_id: _accessText_(row.rol_id),
-        permiso_id: _accessText_(row.permiso_id),
-        estado: _accessUpper_(row.estado)
-      }))
+      ? data.rolPermiso.map(item => ({
+          rol_id: _accessText_(item.rol_id),
+          permiso_id: _accessText_(item.permiso_id),
+          active: _accessIsActive_(item.active)
+        }))
+      : [],
+
+    userRoles: capabilities.userRoles
+      ? data.usuarioRol.map(item => ({
+          persona_id: _accessText_(item.persona_id),
+          modulo_id: _accessText_(item.modulo_id),
+          rol_id: _accessText_(item.rol_id),
+          active: _accessIsActive_(item.active)
+        }))
       : [],
 
     scopes: capabilities.scopes
-      ? data.ambitosAcceso.map(row => ({
-        correo_institucional: _accessText_(row.correo_institucional),
-        modulo: _accessUpper_(row.modulo),
-        tipo_ambito: _accessUpper_(row.tipo_ambito),
-        referencia_id: _accessText_(row.referencia_id),
-        incluir_descendientes: _accessUpper_(row.incluir_descendientes),
-        estado: _accessUpper_(row.estado)
-      }))
-      : []
-  };
+      ? data.ambitosAcceso.map(item => ({
+          persona_id: _accessText_(item.persona_id),
+          modulo_id: _accessText_(item.modulo_id),
+          tipo_ambito: _accessUpper_(item.tipo_ambito),
+          referencia_id: _accessText_(item.referencia_id),
+          incluir_descendientes: _accessText_(item.incluir_descendientes),
+          active: _accessIsActive_(item.active)
+        }))
+      : [],
 
-  response.modules = [
-    ...new Set(
-      data.permisos
-        .map(row => _accessUpper_(row.modulo))
-        .filter(Boolean)
-    )
-  ].sort();
-
-  if (capabilities.users || capabilities.scopes) {
-    const catalogs = orgCatalogs;
-
-    response.catalogs = {
-      sedes: catalogs.sedes.map(row => ({
-        id: _accessText_(row.id),
-        name: _accessText_(row.name)
-      })),
-
-      estructuraOrg: catalogs.estructuraOrg
-        .filter(row => _accessIsActive_(row.active))
+    catalogs: {
+      sedes: (catalogs.sedes || []).filter(row => _accessIsActive_(row.active))
+        .map(row => ({ id: _accessText_(row.id), name: _accessText_(row.name) })),
+      estructuraOrg: (catalogs.estructuraOrg || []).filter(row => _accessIsActive_(row.active))
         .map(row => ({
           id: _accessText_(row.id),
           sede_id: _accessText_(row.sede_id),
           parent_id: _accessText_(row.parent_id),
           name: _accessText_(row.name),
           order: row.order
-        }))
-    };
-  }
-
-  return response;
+        })),
+      locales: (catalogs.locales || []).filter(row => _accessIsActive_(row.active))
+        .map(row => ({ id: _accessText_(row.id), name: _accessText_(row.name), sede_id: _accessText_(row.sede_id) }))
+    }
+  };
 }
 
 
-/**
- * Consulta el historial de auditoría con filtros y paginación.
- */
 function getAccessAuditHistory(filters) {
   _accessRequirePermission_('AUDITORIA_VER');
 
@@ -1856,152 +1774,88 @@ function getAccessEntityHistory(payload) {
  */
 function _accessChangeStatus_(config) {
   const auth = _accessRequirePermission_(config.permission);
-
-  const nextStatus = _accessUpper_(config.status);
-
-  if (!['ACTIVO', 'INACTIVO'].includes(nextStatus)) {
-    throw new Error('El estado solicitado no es válido.');
-  }
-
+  const nextActive = _accessNormalizeActive_(config.active, 'El estado solicitado');
   const data = _accessLoadSecurityData_();
+  const record = _accessFindBy_(data[config.collection], config.keyField, config.id);
+  if (!record) throw new Error('No se encontró el registro "' + config.id + '".');
 
-  const record = _accessFindBy_(
-    data[config.collection],
-    config.keyField,
-    config.id
-  );
-
-  if (!record) {
-    throw new Error(`No se encontró el registro "${config.id}".`);
+  const currentActive = _accessIsActive_(record.active);
+  if (currentActive === nextActive) {
+    return { success: true, message: 'El registro ya se encuentra ' + (nextActive ? 'activo' : 'inactivo') + '.' };
   }
 
-  const currentStatus = _accessIsActive_(record.estado)
-    ? 'ACTIVO'
-    : 'INACTIVO';
-
-  if (currentStatus === nextStatus) {
-    return {
-      success: true,
-      message: `El registro ya se encuentra ${nextStatus.toLowerCase()}.`
-    };
-  }
-
-  // Impedir la desactivación de la propia cuenta.
-  if (
-    config.collection === 'usuarios' &&
-    nextStatus === 'INACTIVO' &&
-    _accessText_(record.correo_institucional).toLowerCase() ===
-    auth.email.toLowerCase()
-  ) {
+  if (config.collection === 'usuarios' && !nextActive &&
+      _accessText_(record.persona_id) === _accessText_(auth.personaId)) {
     throw new Error('No puedes desactivar tu propia cuenta.');
   }
 
-  // Impedir desactivar roles asignados a usuarios activos.
-  if (
-    config.collection === 'roles' &&
-    nextStatus === 'INACTIVO'
-  ) {
-    const assignedUsers = data.usuarios.filter(user =>
-      _accessText_(user.rol_id) === _accessText_(record.rol_id) &&
-      _accessIsActive_(user.estado)
+  if (config.collection === 'roles' && !nextActive) {
+    const assignments = data.usuarioRol.filter(item =>
+      _accessText_(item.rol_id) === _accessText_(record.rol_id) && _accessIsActive_(item.active)
     );
-
-    if (assignedUsers.length > 0) {
-      throw new Error(
-        `No puedes desactivar este rol porque tiene ${assignedUsers.length} usuario(s) activo(s) asignado(s). Reasigna primero esas cuentas.`
-      );
-    }
+    if (assignments.length) throw new Error('No puedes desactivar un rol que tiene asignaciones activas.');
   }
 
-  // Proteger la continuidad de la administración.
   const after = _accessCopyData_(data);
-
-  const afterRecord = _accessFindBy_(
-    after[config.collection],
-    config.keyField,
-    config.id
-  );
-
-  afterRecord.estado = nextStatus;
-
+  const afterRecord = _accessFindBy_(after[config.collection], config.keyField, config.id);
+  afterRecord.active = nextActive;
   _accessAssertAdministratorContinuity_(data, after);
 
-  const displayName = config.getName
-    ? config.getName(record)
-    : _accessText_(config.id);
+  const person = config.collection === 'usuarios'
+    ? _accessFindBy_(data.personas, 'persona_id', record.persona_id)
+    : null;
+  const displayName = config.getName ? config.getName(record, person) : _accessText_(config.id);
 
   return _accessRunAudited_(auth, {
-    accion: nextStatus === 'ACTIVO'
-      ? config.activateAction
-      : config.deactivateAction,
-
-    modulo: 'ACCESOS',
+    accion: nextActive ? config.activateAction : config.deactivateAction,
+    modulo: ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses,
     tipo_entidad: config.entity,
     registro_id: _accessText_(config.id),
     registro_nombre: displayName,
-    detalle: `Cambio de estado de ${config.entity.toLowerCase()}.`,
+    detalle: 'Cambio de estado de ' + config.entity.toLowerCase() + '.',
     datos_antes: record
-
   }, () => {
     const result = SUNARPCore.setRecordStatus(
       _accessSecuritySource_(config.sheet),
       config.keyField,
       config.id,
-      'estado',
-      nextStatus
+      'active',
+      nextActive
     );
-
     return {
       value: {
         success: true,
-        message: nextStatus === 'ACTIVO'
-          ? 'Registro activado correctamente.'
-          : 'Registro desactivado correctamente.'
+        message: nextActive ? 'Registro activado correctamente.' : 'Registro desactivado correctamente.'
       },
-
-      auditAfter: Object.assign(
-        {},
-        record,
-        { estado: nextStatus }
-      )
+      auditAfter: Object.assign({}, record, { active: nextActive })
     };
   });
 }
 
 
-/**
- * Activar / desactivar usuarios.
- */
-function setAccessUserStatus(email, status) {
+function setAccessUserStatus(personaId, active) {
   return _accessChangeStatus_({
     collection: 'usuarios',
     sheet: ACCESS_MANAGEMENT_CONFIG.sheets.users,
-    keyField: 'correo_institucional',
-    id: _accessText_(email).toLowerCase(),
-    status,
+    keyField: 'persona_id',
+    id: _accessText_(personaId),
+    active,
     permission: 'USUARIOS_ADMINISTRAR',
     entity: 'USUARIO',
     activateAction: 'ACTIVAR_USUARIO',
     deactivateAction: 'DESACTIVAR_USUARIO',
-
-    getName: record => [
-      record.nombres,
-      record.apellidos
-    ].map(_accessText_).filter(Boolean).join(' ')
+    getName: (record, person) => [person && person.nombres, person && person.apellidos].map(_accessText_).filter(Boolean).join(' ')
   });
 }
 
 
-/**
- * Activar / desactivar roles.
- */
-function setAccessRoleStatus(roleId, status) {
+function setAccessRoleStatus(roleId, active) {
   return _accessChangeStatus_({
     collection: 'roles',
     sheet: ACCESS_MANAGEMENT_CONFIG.sheets.roles,
     keyField: 'rol_id',
     id: _accessUpper_(roleId),
-    status,
+    active,
     permission: 'ROLES_ADMINISTRAR',
     entity: 'ROL',
     activateAction: 'ACTIVAR_ROL',
@@ -2011,16 +1865,13 @@ function setAccessRoleStatus(roleId, status) {
 }
 
 
-/**
- * Activar / desactivar permisos.
- */
-function setAccessPermissionStatus(permissionId, status) {
+function setAccessPermissionStatus(permissionId, active) {
   return _accessChangeStatus_({
     collection: 'permisos',
     sheet: ACCESS_MANAGEMENT_CONFIG.sheets.permissions,
     keyField: 'permiso_id',
     id: _accessUpper_(permissionId),
-    status,
+    active,
     permission: 'PERMISOS_ADMINISTRAR',
     entity: 'PERMISO',
     activateAction: 'ACTIVAR_PERMISO',
@@ -2028,3 +1879,5 @@ function setAccessPermissionStatus(permissionId, status) {
     getName: record => record.codigo
   });
 }
+
+
