@@ -360,7 +360,7 @@ test('la cascada de ámbitos parte del local y recorre solo la jerarquía vincul
   });
 
   vm.runInContext(
-    helpers + '\\nthis.structureHierarchyForLocal = structureHierarchyForLocal;',
+    helpers + '\nthis.structureHierarchyForLocal = structureHierarchyForLocal;',
     sandbox
   );
 
