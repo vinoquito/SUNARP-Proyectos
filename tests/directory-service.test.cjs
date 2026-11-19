@@ -8,10 +8,12 @@ const root = path.resolve(__dirname, '..');
 const servicePath = path.join(root, 'Backend/Gestor de intranet SUNARP/DirectoryService.js');
 const frontendPath = path.join(root, 'Backend/Gestor de intranet SUNARP/DirectoryScripts.html');
 const coreTestsPath = path.join(root, 'Backend/SUNARP Core/DataCoreTests.js');
+const coreRepositoryPath = path.join(root, 'Backend/SUNARP Core/DataRepository.js');
 
 const serviceSource = fs.readFileSync(servicePath, 'utf8');
 const frontendSource = fs.readFileSync(frontendPath, 'utf8');
 const coreTestsSource = fs.readFileSync(coreTestsPath, 'utf8');
+const coreRepositorySource = fs.readFileSync(coreRepositoryPath, 'utf8');
 
 const scriptStart = frontendSource.split('<script>')[1];
 assert.ok(scriptStart, 'DirectoryScripts.html debe contener el bloque JavaScript principal');
@@ -45,6 +47,7 @@ test('el servicio, el frontend y las pruebas Core tienen sintaxis válida', () =
   assert.doesNotThrow(() => new vm.Script(serviceSource));
   assert.doesNotThrow(() => new vm.Script(frontendScript));
   assert.doesNotThrow(() => new vm.Script(coreTestsSource));
+  assert.doesNotThrow(() => new vm.Script(coreRepositorySource));
 });
 
 
