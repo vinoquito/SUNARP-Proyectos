@@ -51,6 +51,18 @@ test('el servicio, el frontend y las pruebas Core tienen sintaxis válida', () =
 });
 
 
+test('SUNARP Core no contiene definiciones globales duplicadas en DataRepository', () => {
+  const declarations = [...coreRepositorySource.matchAll(/^function\\s+([A-Za-z0-9_$]+)\\s*\\(/gm)]
+    .map(match => match[1]);
+  const counts = new Map();
+  declarations.forEach(name => counts.set(name, (counts.get(name) || 0) + 1));
+  const duplicates = [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([name]) => name);
+  assert.deepEqual(duplicates, []);
+  assert.match(coreRepositorySource, /ignoreWhitespace/);
+});
+
 test('el catálogo de tipos de documento se resuelve exclusivamente desde Global parameters', () => {
   const requested = [];
   sandbox.getIntranetDataSource = (sourceKey, sheetName, headerRow) => {
