@@ -530,12 +530,6 @@ function findRecordsByFields(source, filters, options) {
   const expectedValues = Array.isArray(filters[searchField])
     ? filters[searchField]
     : [filters[searchField]];
-  const candidateRows = new Set();
-  const dataStartRow = config.headerRow + 1;
-  const dataRows = Math.max(0, lastRow - config.headerRow);
-
-  if (!dataRows) return { records: [], total: 0 };
-
   if (expectedValues.some(expected =>
     expected === null || expected === undefined || String(expected) === ''
   )) {
@@ -543,6 +537,11 @@ function findRecordsByFields(source, filters, options) {
       'SUNARP Core: los filtros de búsqueda exacta no admiten valores vacíos.'
     );
   }
+
+  const candidateRows = new Set();
+  const dataStartRow = config.headerRow + 1;
+  const dataRows = Math.max(0, lastRow - config.headerRow);
+  if (!dataRows) return { records: [], total: 0 };
 
   const range = sheet.getRange(
     dataStartRow,
@@ -558,29 +557,20 @@ function findRecordsByFields(source, filters, options) {
       .findAll()
       .forEach(cell => candidateRows.add(cell.getRow()));
   } else {
+    // Una expresión regular por lote evita una llamada TextFinder por persona.
     for (let i = 0; i < expectedValues.length; i += 100) {
       const batch = expectedValues.slice(i, i + 100).map(value =>
-        String(value).replace(/[.*+?^$()|[\]\\]/g, '\\  expectedValues.forEach(expected => {
-    if (expected === null || expected === undefined || String(expected) === '') {
-      throw new Error(
-        'SUNARP Core: los filtros de búsqueda exacta no admiten valores vacíos.'
+        String(value).replace(/[.*+?^$()|[\]\\]/g, character => '\\' + character)
       );
+      const pattern = '^(?:' + batch.join('|') + ')$';
+      range.createTextFinder(pattern)
+        .useRegularExpression(true)
+        .matchEntireCell(true)
+        .matchCase(options.matchCase !== false)
+        .findAll()
+        .forEach(cell => candidateRows.add(cell.getRow()));
     }
-
-    const range = sheet.getRange(
-      dataStartRow,
-      headerMap[searchField] + 1,
-      dataRows,
-      1
-    );
-    const finder = range.createTextFinder(String(expected))
-      .matchEntireCell(true)
-      .matchCase(options.matchCase !== false);
-
-    finder.findAll().forEach(cell => candidateRows.add(cell.getRow()));
-  });')
-      );
-      const pattern = '^(?:' + batch.join('|') + ')
+  }
 
   const records = [];
   [...candidateRows].sort((a, b) => a - b).forEach(rowNumber => {
@@ -607,21 +597,6 @@ function findRecordsByFields(source, filters, options) {
   };
 }
 
-
-/**
- * Inserta un nuevo registro.
- *
- * options:
- * {
- *   idField: 'id'
- * }
- *
- * Si se proporciona idField, verifica que el identificador
- * exista y no esté duplicado.
- *
- * La generación del identificador corresponde a la aplicación
- * que utiliza la biblioteca.
- */
 function insertRecord(source, record, options) {
   options = options || {};
 
