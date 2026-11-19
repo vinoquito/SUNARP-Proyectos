@@ -691,7 +691,9 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           const role = (state.data.roles || []).find(item =>
             item.rol_id === assignment.rol_id
           );
-          roleCell.textContent = role ? role.nombre : 'Rol no disponible';
+          roleCell.textContent = role
+            ? role.nombre + (role.active === true ? '' : ' (inactivo)')
+            : 'Rol no disponible';
 
           const scopesCell = document.createElement('td');
           const scopes = assignment.ambitos || [];
@@ -803,13 +805,28 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
       panelHeading.append(panelTitle, panelDescription);
 
+      const roleOptions = activeRoles().map(role => ({
+        value: role.rol_id,
+        label: role.nombre
+      }));
+
+      if (
+        original.rol_id &&
+        !roleOptions.some(option => option.value === original.rol_id)
+      ) {
+        const inactiveRole = (state.data.roles || []).find(role =>
+          role.rol_id === original.rol_id
+        );
+
+        roleOptions.unshift({
+          value: original.rol_id,
+          label: (inactiveRole ? inactiveRole.nombre : 'Rol no disponible') +
+            ' (inactivo)'
+        });
+      }
+
       const roleSelect = createSelect(
-        [{ value: '', label: 'Selecciona un rol' }].concat(
-          activeRoles().map(role => ({
-            value: role.rol_id,
-            label: role.nombre
-          }))
-        ),
+        [{ value: '', label: 'Selecciona un rol' }].concat(roleOptions),
         original.rol_id
       );
       roleSelect.required = true;
