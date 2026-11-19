@@ -1298,15 +1298,17 @@ function _directoryCreatePersonalDataMap_(records) {
 function _directoryAssertDocumentAvailable_(type, number, records, excludedPersonaId) {
   const normalizedType = _directoryNormalizeDocument_(type, 'Tipo de documento');
   const normalizedNumber = _directoryNormalizeDocument_(number, 'Número de documento');
-  const matches = SUNARPCore.findRecordsByFields(
-    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
-    { numero_documento: normalizedNumber },
-    {
-      searchField: 'numero_documento',
-      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.datosPersonales,
-      matchCase: false
-    }
-  );
+  const matches = Array.isArray(records)
+    ? { records: records }
+    : SUNARPCore.findRecordsByFields(
+        _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
+        { numero_documento: normalizedNumber },
+        {
+          searchField: 'numero_documento',
+          requiredHeaders: DIRECTORY_REQUIRED_HEADERS.datosPersonales,
+          matchCase: false
+        }
+      );
   const duplicate = matches.records.find(item =>
     _directoryKey_(item.servidor_id) !== _directoryKey_(excludedPersonaId) &&
     _directoryText_(item.tipo_documento).replace(/\s+/g, '').toUpperCase() === normalizedType &&
