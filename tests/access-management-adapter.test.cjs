@@ -184,6 +184,11 @@ test('la identidad de sesión se resuelve en personas y Core recibe persona_id',
 
 test('la autorización resuelve identidad con una búsqueda exacta sin cargar el catálogo de personas', () => {
   const sandbox = createAdapterSandbox(makeSecurityData());
+  sandbox._accessLoadSecurityData_ = () => {
+    const security = makeSecurityData();
+    delete security.personas;
+    return security;
+  };
   let calls = 0;
   sandbox.SUNARPCore.findRecordsByFields = (source, filters, options) => {
     calls++;
