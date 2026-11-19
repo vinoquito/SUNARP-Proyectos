@@ -275,3 +275,75 @@ function testAuthorizationForPerson117() {
 
   return summary;
 }
+
+
+/**
+ * Aísla la resolución de identidad de SUNARP Core:
+ * compara un usuario mínimo conocido con la fila real de Usuarios.
+ * No escribe ni modifica hojas.
+ */
+function testCoreAuthorizationUserResolution() {
+  const personaId = 'PER_117';
+  const data = _accessLoadSecurityData_();
+  const realUser = data.usuarios.find(row =>
+    _accessText_(row.persona_id) === personaId
+  ) || null;
+
+  const minimalContext = SUNARPCore.resolveAuthorizationContext({
+    personaId,
+    users: [{ persona_id: personaId, active: true }],
+    modules: [],
+    roles: [],
+    userRoles: [],
+    permissions: [],
+    rolePermissions: [],
+    scopes: []
+  });
+
+  const realUserContext = SUNARPCore.resolveAuthorizationContext({
+    personaId,
+    users: realUser ? [realUser] : [],
+    modules: [],
+    roles: [],
+    userRoles: [],
+    permissions: [],
+    rolePermissions: [],
+    scopes: []
+  });
+
+  const fullContext = SUNARPCore.resolveAuthorizationContext({
+    personaId,
+    users: data.usuarios,
+    modules: data.modulos,
+    roles: data.roles,
+    userRoles: data.usuarioRol,
+    permissions: data.permisos,
+    rolePermissions: data.rolPermiso,
+    scopes: data.ambitosAcceso
+  });
+
+  const result = {
+    personaId,
+    realUserFound: Boolean(realUser),
+    realUserPersonaId: realUser ? realUser.persona_id : null,
+    realUserActive: realUser ? realUser.active : null,
+    realUserActiveType: realUser ? typeof realUser.active : null,
+    minimalContext: {
+      authenticated: minimalContext.authenticated,
+      userFound: Boolean(minimalContext.user)
+    },
+    realUserOnlyContext: {
+      authenticated: realUserContext.authenticated,
+      userFound: Boolean(realUserContext.user)
+    },
+    fullContext: {
+      authenticated: fullContext.authenticated,
+      userFound: Boolean(fullContext.user),
+      moduleAccessCount: (fullContext.moduleAccess || []).length
+    }
+  };
+
+  Logger.log('PRUEBA AISLADA DE RESOLUCIÓN DE USUARIO - CORE');
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
