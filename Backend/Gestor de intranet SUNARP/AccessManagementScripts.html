@@ -1030,13 +1030,14 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           }
 
           while (options.length && level <= 20) {
-            const selectedId = selectedChain[level - 1] || '';
+            const currentLevel = level;
+            const selectedId = selectedChain[currentLevel - 1] || '';
             const levelTypeNames = Array.from(new Set(
               options.map(structureTypeName).filter(Boolean)
             ));
-            const fieldLabel = level === 1
+            const fieldLabel = currentLevel === 1
               ? 'Unidades orgánicas del local'
-              : 'Nivel ' + level + (
+              : 'Nivel ' + currentLevel + (
                 levelTypeNames.length === 1
                   ? ' — ' + levelTypeNames[0]
                   : ''
@@ -1048,7 +1049,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
                 label: structureOptionLabel(item)
               })),
               selectedId,
-              level === 1
+              currentLevel === 1
                 ? 'Selecciona una unidad del local'
                 : 'Selecciona el nivel siguiente'
             );
@@ -1058,7 +1059,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             levelsHost.appendChild(createField(fieldLabel, levelSelect));
 
             levelSelect.addEventListener('change', () => {
-              selectedChain.splice(level - 1);
+              selectedChain.splice(currentLevel - 1);
               if (levelSelect.value) selectedChain.push(levelSelect.value);
 
               selectedReferenceId = type === 'LOCAL'
