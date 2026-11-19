@@ -1141,14 +1141,14 @@ function _saveDirectoryPerson_(payload) {
   const authorization = _directoryAuthorizationContext_(
     isUpdate ? 'INFORMACION_PERSONAL_EDITAR' : 'INFORMACION_PERSONAL_CREAR'
   );
-  const context = _directoryLoadContext_();
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeDocumentTypes: false
+  });
 
-  const existing = isUpdate
-    ? context.personas.find(item => _directoryKey_(item.persona_id) === personaId)
-    : null;
-
+  const existing = isUpdate ? _directoryFindPersonById_(personaId) : null;
   if (isUpdate && !existing) throw new Error('No se encontró la persona "' + personaId + '".');
-
   if (isUpdate) {
     _directoryAssertPersonMutationScope_(authorization, existing, context.asignaciones, context);
   }
@@ -1161,7 +1161,13 @@ function _saveDirectoryPerson_(payload) {
 
   if (email) {
     _accessValidateEmail_(email);
-    const duplicateEmail = context.personas.some(item =>
+    const matches = SUNARPCore.searchRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+      email,
+      ['correo_institucional'],
+      { matchCase: false }
+    );
+    const duplicateEmail = matches.records.some(item =>
       _directoryKey_(item.persona_id) !== _directoryKey_(personaId) &&
       _directoryText_(item.correo_institucional).toLowerCase() === email
     );
@@ -1170,10 +1176,20 @@ function _saveDirectoryPerson_(payload) {
     }
   }
 
+  let peopleForId = [];
+  if (!isUpdate) {
+    const peopleResult = SUNARPCore.listRecordsFromSourcesCached([{
+      key: 'people',
+      source: _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas
+    }], DIRECTORY_DATA_CACHE_TTL);
+    peopleForId = peopleResult.people || [];
+  }
+
   const record = {
     persona_id: isUpdate
       ? personaId
-      : _directoryGenerateId_(context.personas, DIRECTORY_SERVICE_CONFIG.ids.persona),
+      : _directoryGenerateId_(peopleForId, DIRECTORY_SERVICE_CONFIG.ids.persona),
     nombres: _directoryText_(payload.nombres !== undefined ? payload.nombres : existing && existing.nombres),
     apellidos: _directoryText_(payload.apellidos !== undefined ? payload.apellidos : existing && existing.apellidos),
     correo_institucional: email
@@ -1211,8 +1227,6 @@ function _saveDirectoryPerson_(payload) {
     };
   });
 }
-
-
 function _directoryNormalizeDocument_(value, label) {
   const normalized = _directoryText_(value).replace(/\s+/g, '').toUpperCase();
   if (!normalized) throw new Error(label + ' es obligatorio.');
@@ -1249,6 +1263,28 @@ function _directoryNormalizeDateInput_(value, label) {
 
   return normalized;
 }
+
+function _directoryFindPersonById_(personaId) {
+  const result = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+    { persona_id: _directoryKey_(personaId) },
+    { searchField: 'persona_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas }
+  );
+  if (result.total > 1) throw new Error('El identificador de persona está duplicado en el directorio.');
+  return result.records[0] || null;
+}
+
+
+function _directoryFindPersonalDataById_(personaId) {
+  const result = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
+    { servidor_id: _directoryKey_(personaId) },
+    { searchField: 'servidor_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.datosPersonales }
+  );
+  if (result.total > 1) throw new Error('La ficha de datos personales está duplicada para la persona solicitada.');
+  return result.records[0] || null;
+}
+
 
 function _directoryGetPersonalDataRecord_(personaId, records) {
   return (records || []).find(item =>
