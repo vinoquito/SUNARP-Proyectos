@@ -427,24 +427,32 @@ function _directoryValidateHeaders_(context) {
   });
 }
 
-function _directoryValidateSnapshot_(context) {
-  _directoryAssertUnique_(context.personas, 'persona_id', 'personas');
+function _directoryValidateSnapshot_(context, options) {
+  options = options || {};
+  _directoryAssertUnique_(context.personas || [], 'persona_id', 'personas');
   _directoryAssertUnique_(context.asignaciones, 'asignacion_id', 'asignaciones');
   _directoryAssertUnique_(context.documentTypes || [], 'id', 'tipo_documento_identidad');
-  const peopleIds = new Set(context.personas.map(x => _directoryKey_(x.persona_id)));
+  const peopleIds = options.includePeople === false
+    ? null
+    : new Set((context.personas || []).map(x => _directoryKey_(x.persona_id)));
   const cargoIds = new Set(context.cargos.map(x => _directoryKey_(x.id)));
   const localIds = new Set(context.locales.map(x => _directoryKey_(x.id)));
   const structureIds = new Set(context.estructuraOrg.map(x => _directoryKey_(x.id)));
-  const personalIds = new Set(), documentKeys = new Set();
-  (context.datosPersonales || []).forEach(record => {
-    const id = _directoryKey_(record.servidor_id);
-    if (!id || !peopleIds.has(id)) throw new Error('La ficha de datos personales referencia una persona inexistente o carece de servidor_id.');
-    if (personalIds.has(id)) throw new Error('Existe más de una ficha de datos personales para ' + id + '.');
-    personalIds.add(id);
-    const type = _directoryText_(record.tipo_documento).replace(/\s+/g, '').toUpperCase();
-    const number = _directoryText_(record.numero_documento).replace(/\s+/g, '').toUpperCase();
-    if (type && number) { const key = JSON.stringify([type, number]); if (documentKeys.has(key)) throw new Error('Existe un documento de identidad duplicado en datos personales.'); documentKeys.add(key); }
-  });
+  if (options.includePersonalData !== false) {
+    if (options.includePeople === false) {
+      throw new Error('No se puede validar la integridad de datos personales sin cargar personas.');
+    }
+    const personalIds = new Set(), documentKeys = new Set();
+    (context.datosPersonales || []).forEach(record => {
+      const id = _directoryKey_(record.servidor_id);
+      if (!id || !peopleIds.has(id)) throw new Error('La ficha de datos personales referencia una persona inexistente o carece de servidor_id.');
+      if (personalIds.has(id)) throw new Error('Existe más de una ficha de datos personales para ' + id + '.');
+      personalIds.add(id);
+      const type = _directoryText_(record.tipo_documento).replace(/\s+/g, '').toUpperCase();
+      const number = _directoryText_(record.numero_documento).replace(/\s+/g, '').toUpperCase();
+      if (type && number) { const key = JSON.stringify([type, number]); if (documentKeys.has(key)) throw new Error('Existe un documento de identidad duplicado en datos personales.'); documentKeys.add(key); }
+    });
+  }
   _directoryAssertUnique_(context.estructuraLocal, 'id', 'estructura_local');
   context.estructuraLocal.forEach(relation => {
     if (!structureIds.has(_directoryKey_(relation.estructura_id))) throw new Error('La relación estructura_local ' + _directoryKey_(relation.id) + ' referencia una estructura orgánica inexistente.');
@@ -452,7 +460,7 @@ function _directoryValidateSnapshot_(context) {
   });
   context.asignaciones.forEach(assignment => {
     const id = _directoryKey_(assignment.asignacion_id);
-    if (!peopleIds.has(_directoryKey_(assignment.persona_id))) throw new Error('La asignación ' + id + ' referencia una persona inexistente.');
+    if (peopleIds && !peopleIds.has(_directoryKey_(assignment.persona_id))) throw new Error('La asignación ' + id + ' referencia una persona inexistente.');
     if (!cargoIds.has(_directoryKey_(assignment.cargo_id))) throw new Error('La asignación ' + id + ' referencia un cargo inexistente.');
     try { _directoryResolveAssignmentLocation_(assignment, context, false); }
     catch (error) { throw new Error('La asignación ' + id + ': ' + error.message); }
@@ -496,7 +504,7 @@ function _directoryLoadContextFromSheets_(options) {
   if (!Array.isArray(context.personas)) context.personas = [];
   if (!Array.isArray(context.datosPersonales)) context.datosPersonales = [];
 
-  _directoryValidateSnapshot_(context);
+  _directoryValidateSnapshot_(context, options);
 
   return context;
 }
@@ -971,6 +979,9 @@ function listDirectoryAssignments(options) {
         }
       )
     : { records: [] };
+  if (peopleResult.total !== pagePersonaIds.length) {
+    throw new Error('Una o más asignaciones visibles no tienen una persona válida en el directorio.');
+  }
   const peopleById = _directoryCreateMap_(peopleResult.records, 'persona_id');
   const records = view.assignments.map(item => {
     const person = peopleById.get(_directoryKey_(item.persona_id));
@@ -1002,6 +1013,7 @@ function getDirectoryPersonById(personaId) {
   if (personResult.total > 1) {
     throw new Error('El identificador de persona está duplicado en el directorio.');
   }
+  if (personResult.total > 1) throw new Error('El identificador de persona está duplicado en el directorio.');
   const person = personResult.records[0] || null;
   if (person) context.personas = [person];
   if (!person) return null;
