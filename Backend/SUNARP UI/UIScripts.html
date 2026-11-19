@@ -19,6 +19,7 @@
   // ============================================================
 
   let pendingLoads = 0;
+  let pendingTranslucentLoads = 0;
   let shellInitialized = false;
   let resourcesLoaded = document.readyState === 'complete';
   let loaderHideTimer = null;
@@ -77,11 +78,36 @@
   }
 
   /**
+   * Ajusta el fondo del loader según las operaciones pendientes.
+   * Si existe una carga estándar, se conserva el fondo blanco.
+   */
+  function syncLoaderBackdrop() {
+    const loader = $('#sunarpLoader');
+    if (!loader) return;
+
+    loader.classList.toggle(
+      'is-translucent',
+      pendingLoads > 0 && pendingTranslucentLoads === pendingLoads
+    );
+  }
+
+  /**
    * Registra una operación asíncrona.
    * Devuelve una función para indicar que terminó.
+   *
+   * Opcional:
+   * beginLoading({ backdrop: 'translucent' })
    */
-  function beginLoading() {
+  function beginLoading(options = {}) {
+    const translucent = options.backdrop === 'translucent';
+
     pendingLoads++;
+
+    if (translucent) {
+      pendingTranslucentLoads++;
+    }
+
+    syncLoaderBackdrop();
     showLoader();
 
     let finished = false;
@@ -92,6 +118,14 @@
       finished = true;
       pendingLoads = Math.max(0, pendingLoads - 1);
 
+      if (translucent) {
+        pendingTranslucentLoads = Math.max(
+          0,
+          pendingTranslucentLoads - 1
+        );
+      }
+
+      syncLoaderBackdrop();
       updateLoaderVisibility();
     };
   }
@@ -523,6 +557,28 @@
       title.textContent = String(options.title);
 
       content.appendChild(title);
+    }
+
+    if (Array.isArray(options.details) && options.details.length) {
+      const details = document.createElement('div');
+      details.className = 'sunarp-alert-details';
+
+      options.details
+        .map(value => String(value ?? '').trim())
+        .filter(Boolean)
+        .forEach((value, index) => {
+          const line = document.createElement(
+            index === 0 ? 'strong' : 'span'
+          );
+
+          line.className = 'sunarp-alert-detail';
+          line.textContent = value;
+          details.appendChild(line);
+        });
+
+      if (details.childNodes.length) {
+        content.appendChild(details);
+      }
     }
 
     if (options.message) {
