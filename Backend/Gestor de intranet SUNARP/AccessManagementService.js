@@ -66,7 +66,7 @@ function _accessBuildPermissionCode_(moduleCode, operation) {
 }
 
 function _accessGetOperationCatalog_(operations) {
-  return (operations || []).filter(_accessCatalogIsActive_).map(item => ({
+  return (operations || []).map(item => ({
     operacion_id: _accessUpper_(item.operacion_id), nombre: _accessText_(item.nombre),
     descripcion: _accessText_(item.descripcion), active: _accessCatalogIsActive_(item)
   })).filter(item => item.operacion_id && item.nombre).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
@@ -2235,7 +2235,7 @@ function getAccessManagementTabData(tabId) {
       operations,
       permissions: (result.permisos || []).map(item => {
         const module = modules.find(candidate => _accessText_(candidate.modulo_id) === _accessText_(item.modulo_id)) || {};
-        return { permiso_id: _accessText_(item.permiso_id), codigo: _accessUpper_(item.codigo), modulo_id: _accessText_(item.modulo_id), modulo_codigo: _accessUpper_(module.codigo), modulo_nombre: _accessText_(module.nombre), operacion_id: _accessUpper_(item.operacion_id), descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active) };
+        return { permiso_id: _accessText_(item.permiso_id), codigo: _accessUpper_(item.codigo), modulo_id: _accessText_(item.modulo_id), modulo_codigo: _accessUpper_(module.codigo), modulo_nombre: _accessText_(module.nombre), operacion_id: _accessUpper_(item.operacion_id), operacion_nombre: _accessText_((result.operaciones.find(op => _accessUpper_(op.operacion_id) === _accessUpper_(item.operacion_id)) || {}).nombre), descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active) };
       })
     };
   }
