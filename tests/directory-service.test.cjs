@@ -32,7 +32,8 @@ vm.runInContext(
     'assignmentSchema: _directoryGetAssignmentSchema_,' +
     'enrichAssignment: _directoryEnrichAssignment_,' +
     'buildView: _directoryBuildView_,' +
-    'createPersonalDataMap: _directoryCreatePersonalDataMap_' +
+    'createPersonalDataMap: _directoryCreatePersonalDataMap_,' +
+    'resolveDocumentTypesSource: _directoryResolveDocumentTypesSource_' +
   '};',
   sandbox,
   { filename: 'DirectoryService.js' }
@@ -44,6 +45,30 @@ test('el servicio, el frontend y las pruebas Core tienen sintaxis válida', () =
   assert.doesNotThrow(() => new vm.Script(serviceSource));
   assert.doesNotThrow(() => new vm.Script(frontendScript));
   assert.doesNotThrow(() => new vm.Script(coreTestsSource));
+});
+
+
+test('el catálogo de tipos de documento se resuelve exclusivamente desde Global parameters', () => {
+  const requested = [];
+  sandbox.getIntranetDataSource = (sourceKey, sheetName, headerRow) => {
+    requested.push({ sourceKey, sheetName, headerRow });
+    return { sourceKey, sheetName, headerRow };
+  };
+  sandbox.SUNARPCore = {
+    getSourceInfoCached: source => ({
+      headers: ['id', 'name']
+    })
+  };
+
+  const source = api.resolveDocumentTypesSource();
+
+  assert.deepEqual(requested, [{
+    sourceKey: 'MASTER_DATA',
+    sheetName: 'tipo_documento_identidad',
+    headerRow: 1
+  }]);
+  assert.equal(source.sourceKey, 'MASTER_DATA');
+  assert.equal(source.sheetName, 'tipo_documento_identidad');
 });
 
 test('acepta fechas ISO válidas y campos de fecha vacíos', () => {
