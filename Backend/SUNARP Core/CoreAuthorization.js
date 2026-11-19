@@ -61,6 +61,16 @@ function _coreAuthIsActive_(value) {
   return _coreAuthUpper_(value) === 'TRUE';
 }
 
+function _coreAuthCatalogIsActive_(record) {
+  if (!record || typeof record !== 'object') return false;
+
+  if (!Object.prototype.hasOwnProperty.call(record, 'active')) {
+    return true;
+  }
+
+  return _coreAuthIsActive_(record.active);
+}
+
 function _coreAuthIsTruthy_(value) {
   if (value === true) return true;
   if (value === false || value === null || value === undefined) return false;
@@ -482,6 +492,8 @@ function authorizationIsRecordInScope(
   const localMap = new Map();
 
   nodes.forEach(node => {
+    if (!_coreAuthCatalogIsActive_(node)) return;
+
     const id = _coreAuthText_(node[f.structureId]);
 
     if (!id) return;
@@ -497,6 +509,8 @@ function authorizationIsRecordInScope(
   });
 
   localNodes.forEach(local => {
+    if (!_coreAuthCatalogIsActive_(local)) return;
+
     const id = _coreAuthText_(local[f.localId]);
 
     if (!id) return;
