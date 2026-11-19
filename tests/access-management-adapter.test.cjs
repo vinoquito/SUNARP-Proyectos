@@ -338,7 +338,10 @@ test('el contrato del Gestor no busca usuarios por correo ni lee rol_id desde Us
 
 test('Directorio exige modulo_id explícito y pasa local_id para ámbitos LOCAL', () => {
   assert.match(directorySource, /const moduleId = 'MOD_INFO_PERSONAL';[\s\S]*?requirePermission_\([\s\S]*?permissionCode \|\| 'INFORMACION_PERSONAL_VER',[\s\S]*?moduleId/s);
-  assert.match(directorySource, /_accessRecordIsAllowed_\(authorization\.auth, 'MOD_INFO_PERSONAL',\s*\{\s*estructura_id:[^}]*local_id:/s);
+  const buildViewStart = directorySource.indexOf('function _directoryBuildView_(');
+  const buildViewEnd = directorySource.indexOf('function _directorySortAssignments_(', buildViewStart);
+  const buildViewSource = directorySource.slice(buildViewStart, buildViewEnd);
+  assert.match(buildViewSource, /_accessRecordIsAllowed_\([\s\S]*?estructura_id:\s*record\.estructura_id[\s\S]*?local_id:\s*record\.local_id/s);
   assert.match(directorySource, /{ sede_id: _directoryKey_\(local\.sede_id\), local_id: _directoryKey_\(local\.id\) }/);
 });
 
