@@ -789,9 +789,28 @@ function _accessNormalizeDocumentValue_(value, label) {
 
 
 function _accessLoadPersonalDocumentRecords_() {
-  const result = SUNARPCore.listRecords(
-    _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.personalData)
+  const source = _accessDirectorySource_(
+    ACCESS_MANAGEMENT_CONFIG.sheets.personalData
   );
+  const info = SUNARPCore.getSourceInfoCached(source, 300);
+  const requiredHeaders = [
+    'servidor_id',
+    'tipo_documento',
+    'numero_documento'
+  ];
+  const missingHeaders = requiredHeaders.filter(header =>
+    !info.headers.includes(header)
+  );
+
+  if (missingHeaders.length) {
+    throw new Error(
+      'La pestaña "' + ACCESS_MANAGEMENT_CONFIG.sheets.personalData +
+      '" no contiene los encabezados requeridos: ' +
+      missingHeaders.join(', ') + '.'
+    );
+  }
+
+  const result = SUNARPCore.listRecords(source);
   return result && Array.isArray(result.records) ? result.records : [];
 }
 
@@ -929,6 +948,12 @@ function _accessRecordUser_(auth, payload, action) {
   const person = _accessFindBy_(auth.personasCatalog, 'persona_id', personaId);
   if (!person) throw new Error('La persona seleccionada no existe en personas.');
   _accessValidateEmail_(person.correo_institucional);
+  if (
+    Object.prototype.hasOwnProperty.call(person, 'active') &&
+    !_accessIsActive_(person.active)
+  ) {
+    throw new Error('No se puede habilitar una cuenta para una persona inactiva.');
+  }
 
   // La creación debe corresponder exactamente a la búsqueda documental
   // realizada en el servidor; no basta con enviar persona_id desde el cliente.
