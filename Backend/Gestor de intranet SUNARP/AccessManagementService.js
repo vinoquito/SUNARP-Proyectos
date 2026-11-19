@@ -203,7 +203,8 @@ function _accessSecuritySource_(sheetName) {
 /**
  * Carga los datos de seguridad necesarios para autorización y gestión.
  */
-function _accessLoadSecurityData_() {
+function _accessLoadSecurityData_(options) {
+  options = options || {};
   const s = ACCESS_MANAGEMENT_CONFIG.sheets;
   const requests = [
     { key: 'usuarios', source: _accessSecuritySource_(s.users), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.users },
@@ -219,7 +220,7 @@ function _accessLoadSecurityData_() {
   // Para autorizar no se necesita cargar el contexto completo del directorio.
   const data = SUNARPCore.listRecordsFromSourcesCached(requests, 300);
   // La identidad se resuelve con una búsqueda exacta; no se carga el directorio completo.
-  _accessValidateSnapshot_(data);
+  if (options.validate !== false) _accessValidateSnapshot_(data);
   return data;
 }
 
@@ -462,7 +463,7 @@ function _accessGetAuthContext_() {
   }
 
   const person = matchingPeople[0];
-  const data = _accessLoadSecurityData_();
+  const data = _accessLoadSecurityData_({ validate: false });
   if (Object.prototype.hasOwnProperty.call(person, 'active') && !_accessIsActive_(person.active)) {
     throw new Error('La persona vinculada a tu correo institucional está inactiva.');
   }
