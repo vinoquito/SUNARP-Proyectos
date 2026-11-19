@@ -2841,3 +2841,392 @@ function setAccessPermissionStatus(permissionId, active) {
 }
 
 
+
+
+/* ==========================================================================
+   MIGRACIÓN DEL ESQUEMA NORMALIZADO DE ACCESOS
+   --------------------------------------------------------------------------
+   - No modifica ni reemplaza el contenido de Operaciones.
+   - Crea/normaliza el catálogo cerrado TiposAmbito.
+   - Migra AmbitosAcceso.tipo_ambito -> tipo_ambito_id.
+   - Migra Permisos.operacion -> operacion_id usando Operaciones.
+   - Conserva las columnas antiguas como respaldo.
+   ========================================================================== */
+
+const ACCESS_SCHEMA_MIGRATION_SCOPE_ROWS = Object.freeze([
+  Object.freeze({
+    tipo_ambito_id: 'TOTAL',
+    nombre: 'Total',
+    descripcion: 'Acceso a todos los registros del módulo',
+    entidad_referencia: 'NINGUNA',
+    requiere_referencia: 'NO',
+    permite_descendientes: 'NO',
+    active: 'SI'
+  }),
+  Object.freeze({
+    tipo_ambito_id: 'SEDE',
+    nombre: 'Sede',
+    descripcion: 'Acceso a los registros pertenecientes a una sede',
+    entidad_referencia: 'SEDE',
+    requiere_referencia: 'SI',
+    permite_descendientes: 'NO',
+    active: 'SI'
+  }),
+  Object.freeze({
+    tipo_ambito_id: 'ESTRUCTURA_ORG',
+    nombre: 'Unidad orgánica',
+    descripcion: 'Acceso a una unidad orgánica y, opcionalmente, a sus descendientes',
+    entidad_referencia: 'ESTRUCTURA_ORG',
+    requiere_referencia: 'SI',
+    permite_descendientes: 'SI',
+    active: 'SI'
+  }),
+  Object.freeze({
+    tipo_ambito_id: 'LOCAL',
+    nombre: 'Local directamente asignado',
+    descripcion: 'Acceso a registros adscritos directamente a un local, sin unidad orgánica',
+    entidad_referencia: 'LOCAL',
+    requiere_referencia: 'SI',
+    permite_descendientes: 'NO',
+    active: 'SI'
+  })
+]);
+
+const ACCESS_SCHEMA_MIGRATION_SCOPE_HEADERS = Object.freeze([
+  'tipo_ambito_id',
+  'nombre',
+  'descripcion',
+  'entidad_referencia',
+  'requiere_referencia',
+  'permite_descendientes',
+  'active'
+]);
+
+function _accessMigrationReadSheet_(spreadsheet, sheetName, requiredHeaders) {
+  const sheet = spreadsheet.getSheetByName(sheetName);
+  if (!sheet) throw new Error('No existe la pestaña "' + sheetName + '" en el archivo de seguridad.');
+
+  const lastColumn = sheet.getLastColumn();
+  const lastRow = sheet.getLastRow();
+  if (!lastColumn || lastRow < 1) throw new Error('La pestaña "' + sheetName + '" no contiene encabezados.');
+
+  const headers = sheet.getRange(1, 1, 1, lastColumn).getDisplayValues()[0]
+    .map(value => String(value || '').trim());
+  const seen = new Set();
+  headers.forEach(header => {
+    if (!header) return;
+    if (seen.has(header)) throw new Error('La pestaña "' + sheetName + '" tiene el encabezado duplicado "' + header + '".');
+    seen.add(header);
+  });
+
+  const missing = (requiredHeaders || []).filter(header => !headers.includes(header));
+  if (missing.length) throw new Error('La pestaña "' + sheetName + '" no contiene: ' + missing.join(', ') + '.');
+
+  const rows = lastRow > 1
+    ? sheet.getRange(2, 1, lastRow - 1, lastColumn).getDisplayValues()
+    : [];
+
+  const records = rows.map((values, index) => ({
+    rowNumber: index + 2,
+    values,
+    get: field => {
+      const column = headers.indexOf(field);
+      return column < 0 ? '' : String(values[column] === undefined ? '' : values[column]).trim();
+    }
+  })).filter(row => row.values.some(value => String(value || '').trim() !== ''));
+
+  return { sheet, sheetName, headers, records, lastColumn, lastRow };
+}
+
+function _accessMigrationIsActive_(value) {
+  const normalized = _accessUpper_(value);
+  return !['FALSE', '0', 'NO', 'INACTIVO', 'INACTIVE'].includes(normalized);
+}
+
+function _accessMigrationAssertAdministrator_(securitySpreadsheet) {
+  const email = SUNARPCore.getCurrentUserEmail();
+  if (!email) throw new Error('No se pudo identificar tu correo institucional para ejecutar la migración.');
+
+  const directorySource = getIntranetDataSource('DIRECTORY', 'personas', 1);
+  const directorySpreadsheet = SpreadsheetApp.openById(directorySource.spreadsheetId);
+  const people = _accessMigrationReadSheet_(directorySpreadsheet, 'personas', [
+    'persona_id', 'correo_institucional'
+  ]);
+  const matchingPeople = people.records.filter(row => row.get('correo_institucional').toLowerCase() === email);
+  if (matchingPeople.length !== 1) throw new Error('La migración requiere una única persona asociada a tu correo institucional.');
+  const personaId = matchingPeople[0].get('persona_id');
+
+  const users = _accessMigrationReadSheet_(securitySpreadsheet, 'Usuarios', ['persona_id', 'active']);
+  const accounts = users.records.filter(row => row.get('persona_id') === personaId && _accessMigrationIsActive_(row.get('active')));
+  if (accounts.length !== 1) throw new Error('La migración requiere una cuenta activa en Usuarios.');
+
+  const modules = _accessMigrationReadSheet_(securitySpreadsheet, 'Modulos', ['modulo_id', 'codigo', 'active']);
+  const accessModules = modules.records.filter(row =>
+    _accessUpper_(row.get('codigo')) === ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses &&
+    _accessMigrationIsActive_(row.get('active'))
+  );
+  if (accessModules.length !== 1) throw new Error('No se pudo resolver un único módulo ACCESOS activo.');
+  const moduleId = accessModules[0].get('modulo_id');
+
+  const roles = _accessMigrationReadSheet_(securitySpreadsheet, 'Roles', ['rol_id', 'active']);
+  const adminRoles = roles.records.filter(row =>
+    _accessUpper_(row.get('rol_id')) === ACCESS_MANAGEMENT_CONFIG.adminRoleId &&
+    _accessMigrationIsActive_(row.get('active'))
+  );
+  if (adminRoles.length !== 1) throw new Error('No se encontró el rol ROL_ADMIN activo.');
+
+  const userRoles = _accessMigrationReadSheet_(securitySpreadsheet, 'UsuarioRol', [
+    'persona_id', 'modulo_id', 'rol_id', 'active'
+  ]);
+  const hasAdminRole = userRoles.records.some(row =>
+    row.get('persona_id') === personaId &&
+    row.get('modulo_id') === moduleId &&
+    _accessUpper_(row.get('rol_id')) === ACCESS_MANAGEMENT_CONFIG.adminRoleId &&
+    _accessMigrationIsActive_(row.get('active'))
+  );
+  if (!hasAdminRole) throw new Error('Solo un administrador global ROL_ADMIN puede ejecutar esta migración.');
+
+  const permissions = _accessMigrationReadSheet_(securitySpreadsheet, 'Permisos', [
+    'permiso_id', 'codigo', 'modulo_id', 'active'
+  ]);
+  const rolePermissions = _accessMigrationReadSheet_(securitySpreadsheet, 'RolPermiso', [
+    'rol_id', 'permiso_id', 'active'
+  ]);
+  const adminPermissionIds = new Set(rolePermissions.records.filter(row =>
+    _accessUpper_(row.get('rol_id')) === ACCESS_MANAGEMENT_CONFIG.adminRoleId &&
+    _accessMigrationIsActive_(row.get('active'))
+  ).map(row => row.get('permiso_id')));
+  const grantedCodes = new Set(permissions.records.filter(row =>
+    row.get('modulo_id') === moduleId &&
+    _accessMigrationIsActive_(row.get('active')) &&
+    adminPermissionIds.has(row.get('permiso_id'))
+  ).map(row => _accessUpper_(row.get('codigo'))));
+
+  const missingPermissions = ACCESS_MANAGEMENT_CONFIG.adminPermissionCodes.filter(code => !grantedCodes.has(code));
+  if (missingPermissions.length) {
+    throw new Error('La migración requiere ROL_ADMIN con todos los permisos administrativos. Faltan: ' + missingPermissions.join(', ') + '.');
+  }
+
+  const scopes = _accessMigrationReadSheet_(securitySpreadsheet, 'AmbitosAcceso', [
+    'persona_id', 'modulo_id', 'active'
+  ]);
+  const scopeTypeField = scopes.headers.includes('tipo_ambito_id')
+    ? 'tipo_ambito_id'
+    : scopes.headers.includes('tipo_ambito')
+      ? 'tipo_ambito'
+      : '';
+  if (!scopeTypeField) throw new Error('AmbitosAcceso no contiene tipo_ambito ni tipo_ambito_id para validar al administrador.');
+  const hasGlobalScope = scopes.records.some(row =>
+    row.get('persona_id') === personaId &&
+    row.get('modulo_id') === moduleId &&
+    _accessUpper_(row.get(scopeTypeField)) === 'TOTAL' &&
+    _accessMigrationIsActive_(row.get('active'))
+  );
+  if (!hasGlobalScope) throw new Error('La migración requiere que tu cuenta conserve un ámbito TOTAL activo en ACCESOS.');
+
+  return { email, personaId };
+}
+
+function _accessMigrationPrepareColumn_(table, targetField, legacyField, resolveValue) {
+  const targetIndex = table.headers.indexOf(targetField);
+  const legacyIndex = table.headers.indexOf(legacyField);
+  if (targetIndex < 0 && legacyIndex < 0) {
+    throw new Error('La pestaña "' + table.sheetName + '" no contiene "' + targetField + '" ni el campo anterior "' + legacyField + '".');
+  }
+
+  const targetColumn = targetIndex >= 0 ? targetIndex + 1 : table.lastColumn + 1;
+  const updates = table.records.map(row => {
+    const current = targetIndex >= 0 ? row.get(targetField) : '';
+    const legacy = legacyIndex >= 0 ? row.get(legacyField) : '';
+    const source = current || legacy;
+    if (!source) throw new Error('La fila ' + row.rowNumber + ' de "' + table.sheetName + '" no tiene valor para ' + targetField + '.');
+    const normalized = resolveValue(source, row);
+    if (!normalized) throw new Error('No se pudo normalizar ' + targetField + ' en la fila ' + row.rowNumber + ' de "' + table.sheetName + '".');
+    return { rowNumber: row.rowNumber, value: normalized };
+  });
+
+  return {
+    sheet: table.sheet,
+    sheetName: table.sheetName,
+    targetField,
+    targetColumn,
+    createHeader: targetIndex < 0,
+    updates
+  };
+}
+
+function _accessMigrationWriteColumn_(plan) {
+  if (plan.createHeader) plan.sheet.getRange(1, plan.targetColumn).setValue(plan.targetField);
+  plan.updates.forEach(update => {
+    plan.sheet.getRange(update.rowNumber, plan.targetColumn).setValue(update.value);
+  });
+}
+
+function _accessMigrationEnsureScopeTypes_(spreadsheet) {
+  const sheetName = ACCESS_MANAGEMENT_CONFIG.sheets.scopeTypes;
+  let sheet = spreadsheet.getSheetByName(sheetName);
+  const created = !sheet;
+  if (!sheet) sheet = spreadsheet.insertSheet(sheetName);
+
+  if (!sheet.getLastColumn() || !sheet.getLastRow()) {
+    sheet.getRange(1, 1, 1, ACCESS_SCHEMA_MIGRATION_SCOPE_HEADERS.length)
+      .setValues([ACCESS_SCHEMA_MIGRATION_SCOPE_HEADERS.slice()]);
+  }
+
+  let lastColumn = sheet.getLastColumn();
+  let headers = sheet.getRange(1, 1, 1, lastColumn).getDisplayValues()[0]
+    .map(value => String(value || '').trim());
+  const seenHeaders = new Set();
+  headers.forEach(header => {
+    if (!header) return;
+    if (seenHeaders.has(header)) throw new Error('TiposAmbito tiene el encabezado duplicado "' + header + '".');
+    seenHeaders.add(header);
+  });
+
+  ACCESS_SCHEMA_MIGRATION_SCOPE_HEADERS.forEach(header => {
+    if (headers.includes(header)) return;
+    lastColumn += 1;
+    sheet.getRange(1, lastColumn).setValue(header);
+    headers.push(header);
+  });
+
+  const lastRow = sheet.getLastRow();
+  const rows = lastRow > 1
+    ? sheet.getRange(2, 1, lastRow - 1, headers.length).getDisplayValues()
+    : [];
+  const indexes = new Map(headers.map((header, index) => [header, index]));
+  const existing = new Map();
+
+  rows.forEach((values, index) => {
+    if (!values.some(value => String(value || '').trim() !== '')) return;
+    const id = _accessUpper_(values[indexes.get('tipo_ambito_id')]);
+    if (!id) throw new Error('TiposAmbito contiene un registro sin tipo_ambito_id en la fila ' + (index + 2) + '.');
+    if (existing.has(id)) throw new Error('TiposAmbito contiene el identificador duplicado ' + id + '.');
+    if (!ACCESS_SCOPE_TYPE_IDS.includes(id)) throw new Error('TiposAmbito contiene una categoría no admitida: ' + id + '.');
+    existing.set(id, index + 2);
+  });
+
+  let added = 0;
+  ACCESS_SCHEMA_MIGRATION_SCOPE_ROWS.forEach(record => {
+    const rowNumber = existing.get(record.tipo_ambito_id);
+    if (!rowNumber) {
+      const targetRow = sheet.getLastRow() + 1;
+      const values = headers.map(header =>
+        Object.prototype.hasOwnProperty.call(record, header) ? record[header] : ''
+      );
+      sheet.getRange(targetRow, 1, 1, headers.length).setValues([values]);
+      added += 1;
+      return;
+    }
+
+    ACCESS_SCHEMA_MIGRATION_SCOPE_HEADERS.forEach(field => {
+      sheet.getRange(rowNumber, indexes.get(field) + 1).setValue(record[field]);
+    });
+  });
+
+  return { created, added };
+}
+
+function _accessMigrationInvalidateSource_(source) {
+  ['records', 'info'].forEach(kind => {
+    const identity = [
+      source.spreadsheetId,
+      source.sheetName,
+      source.headerRow || 1,
+      kind
+    ].join('|');
+    const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, identity);
+    const hash = Utilities.base64EncodeWebSafe(digest).replace(/=+$/g, '');
+    SUNARPCore.removeCachedValue('source-data:v1:' + hash);
+  });
+}
+
+/**
+ * Ejecuta una sola vez la migración del esquema en el archivo Seguridad.
+ * Requiere ROL_ADMIN, todos sus permisos administrativos y ámbito TOTAL.
+ * Los campos anteriores se conservan para permitir una revisión posterior.
+ */
+function migrateAccessManagementSchema() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const usersSource = getIntranetDataSource('SECURITY', ACCESS_MANAGEMENT_CONFIG.sheets.users, 1);
+    const spreadsheet = SpreadsheetApp.openById(usersSource.spreadsheetId);
+    const actor = _accessMigrationAssertAdministrator_(spreadsheet);
+
+    const operations = _accessMigrationReadSheet_(spreadsheet, ACCESS_MANAGEMENT_CONFIG.sheets.operations, [
+      'operacion_id', 'nombre'
+    ]);
+    const operationById = new Map();
+    const operationIdsByName = new Map();
+    operations.records.forEach(row => {
+      const id = _accessUpper_(row.get('operacion_id'));
+      const name = row.get('nombre');
+      if (!id || !name) throw new Error('Operaciones contiene una fila sin operacion_id o nombre.');
+      if (operationById.has(id)) throw new Error('Operaciones contiene el operacion_id duplicado ' + id + '.');
+      operationById.set(id, id);
+      const nameKey = name.toLocaleLowerCase();
+      if (!operationIdsByName.has(nameKey)) operationIdsByName.set(nameKey, []);
+      operationIdsByName.get(nameKey).push(id);
+    });
+
+    const permissions = _accessMigrationReadSheet_(spreadsheet, ACCESS_MANAGEMENT_CONFIG.sheets.permissions, [
+      'permiso_id', 'codigo', 'modulo_id'
+    ]);
+    const permissionPlan = _accessMigrationPrepareColumn_(
+      permissions,
+      'operacion_id',
+      'operacion',
+      value => {
+        const token = _accessUpper_(value);
+        if (operationById.has(token)) return token;
+        const matches = operationIdsByName.get(String(value || '').trim().toLocaleLowerCase()) || [];
+        if (matches.length === 1) return matches[0];
+        if (matches.length > 1) throw new Error('El valor de operación "' + value + '" es ambiguo en Operaciones.');
+        throw new Error('El valor de operación "' + value + '" no existe en la pestaña Operaciones.');
+      }
+    );
+
+    const scopes = _accessMigrationReadSheet_(spreadsheet, ACCESS_MANAGEMENT_CONFIG.sheets.scopes, [
+      'persona_id', 'modulo_id', 'referencia_id', 'active'
+    ]);
+    const scopePlan = _accessMigrationPrepareColumn_(
+      scopes,
+      'tipo_ambito_id',
+      'tipo_ambito',
+      value => {
+        const token = _accessUpper_(value);
+        if (!ACCESS_SCOPE_TYPE_IDS.includes(token)) {
+          throw new Error('El tipo de ámbito "' + value + '" no pertenece al catálogo cerrado.');
+        }
+        return token;
+      }
+    );
+
+    // La hoja de tipos se crea/normaliza después de validar las relaciones
+    // existentes, evitando cambios parciales por valores huérfanos.
+    const scopeCatalogResult = _accessMigrationEnsureScopeTypes_(spreadsheet);
+    _accessMigrationWriteColumn_(permissionPlan);
+    _accessMigrationWriteColumn_(scopePlan);
+    SpreadsheetApp.flush();
+
+    [
+      getIntranetDataSource('SECURITY', ACCESS_MANAGEMENT_CONFIG.sheets.permissions, 1),
+      getIntranetDataSource('SECURITY', ACCESS_MANAGEMENT_CONFIG.sheets.scopes, 1),
+      getIntranetDataSource('SECURITY', ACCESS_MANAGEMENT_CONFIG.sheets.scopeTypes, 1)
+    ].forEach(_accessMigrationInvalidateSource_);
+
+    return {
+      success: true,
+      message: 'La estructura de accesos quedó normalizada. Las columnas antiguas se conservaron como respaldo.',
+      actor: actor.email,
+      persona_id: actor.personaId,
+      permisos_migrados: permissionPlan.updates.length,
+      ambitos_migrados: scopePlan.updates.length,
+      tipos_ambito_creados: scopeCatalogResult.added,
+      pestaña_tipos_ambito_creada: scopeCatalogResult.created
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
