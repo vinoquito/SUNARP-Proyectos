@@ -16,7 +16,7 @@
  *   permissions: [{ permiso_id, codigo, modulo_id, active }],
  *   rolePermissions: [{ rol_id, permiso_id, active }],
  *   scopes: [{
- *     persona_id, modulo_id, tipo_ambito, referencia_id,
+ *     persona_id, modulo_id, tipo_ambito_id, referencia_id,
  *     incluir_descendientes, active
  *   }]
  * });
@@ -69,6 +69,10 @@ function _coreAuthCatalogIsActive_(record) {
   }
 
   return _coreAuthIsActive_(record.active);
+}
+
+function _coreAuthScopeType_(scope) {
+  return _coreAuthUpper_(scope && (scope.tipo_ambito_id || scope.tipo_ambito));
 }
 
 function _coreAuthIsTruthy_(value) {
@@ -466,7 +470,7 @@ function authorizationIsRecordInScope(
   const activeScopes = moduleAccess.scopes;
 
   if (activeScopes.some(scope =>
-    _coreAuthUpper_(scope.tipo_ambito) === 'TOTAL'
+    _coreAuthScopeType_(scope) === 'TOTAL'
   )) {
     return true;
   }
@@ -562,7 +566,7 @@ function authorizationIsRecordInScope(
   }
 
   return activeScopes.some(scope => {
-    const type = _coreAuthUpper_(scope.tipo_ambito);
+    const type = _coreAuthScopeType_(scope);
     const referenceId = _coreAuthText_(scope.referencia_id);
 
     if (type === 'SEDE') {
