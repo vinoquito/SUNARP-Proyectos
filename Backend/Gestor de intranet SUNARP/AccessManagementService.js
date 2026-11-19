@@ -255,6 +255,20 @@ function _accessValidateSnapshot_(data) {
     if (!roleIds.has(_accessText_(item.rol_id))) throw new Error('UsuarioRol referencia un rol inexistente.');
   });
 
+  const activeRoleByPersonModule = new Map();
+  data.usuarioRol.forEach(item => {
+    if (!_accessIsActive_(item.active)) return;
+    const key = _accessText_(item.persona_id) + '\\u0000' + _accessText_(item.modulo_id);
+    if (activeRoleByPersonModule.has(key)) {
+      throw new Error(
+        'UsuarioRol tiene más de un rol activo para la persona ' +
+        _accessText_(item.persona_id) + ' en el módulo ' +
+        _accessText_(item.modulo_id) + '.'
+      );
+    }
+    activeRoleByPersonModule.set(key, _accessText_(item.rol_id));
+  });
+
   data.permisos.forEach(permission => {
     if (!moduleIds.has(_accessText_(permission.modulo_id))) {
       throw new Error('El permiso ' + _accessText_(permission.permiso_id) + ' referencia un modulo_id inexistente.');
@@ -1155,11 +1169,11 @@ function saveAccessScopes(payload) {
     if (type === 'SEDE') siteId = refId;
     if (type === 'ESTRUCTURA_ORG') {
       const structure = _accessFindBy_(structures, 'id', refId);
-      siteId = structure ? _accessText_(structure.sede_id) : '';
+      siteId = _accessCatalogIsActive_(structure) ? _accessText_(structure.sede_id) : '';
     }
     if (type === 'LOCAL') {
       const local = _accessFindBy_(locals, 'id', refId);
-      siteId = local ? _accessText_(local.sede_id) : '';
+      siteId = _accessCatalogIsActive_(local) ? _accessText_(local.sede_id) : '';
     }
     if (!siteId) throw new Error('Existe un ámbito específico previo con referencia inválida. Corrige ese ámbito antes de continuar.');
     siteIds.add(siteId);
