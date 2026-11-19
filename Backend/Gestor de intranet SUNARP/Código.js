@@ -55,7 +55,10 @@ function getAppShellConfig() {
       requiredCode === 'ACCESOS_ADMINISTRAR' ||
       route === 'accesos'
     ) {
-      return _accessIsGlobalAdministrator_(auth);
+      return (
+        _accessIsGlobalAdministrator_(auth) ||
+        hasPermission_(auth, 'AUDITORIA_VER')
+      );
     }
 
     return hasPermission_(auth, requiredCode);
