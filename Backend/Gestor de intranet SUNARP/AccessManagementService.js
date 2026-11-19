@@ -301,6 +301,7 @@ function _accessOrgCatalog_() {
     { key: 'sedes', source: getIntranetDataSource('SECURITY', 'Sedes', 1) },
     { key: 'estructuraOrg', source: getIntranetDataSource('SECURITY', 'EstructuraOrg', 1) },
     { key: 'locales', source: getIntranetDataSource('DIRECTORY', 'locales', 1) },
+    { key: 'tiposEstructura', source: getIntranetDataSource('DIRECTORY', 'tipos_estructura', 1) },
     { key: 'estructuraLocal', source: getIntranetDataSource('DIRECTORY', 'estructura_local', 1) }
   ];
 
@@ -310,6 +311,7 @@ function _accessOrgCatalog_() {
     sedes: (catalogs.sedes || []).filter(_accessCatalogIsActive_),
     estructuraOrg: (catalogs.estructuraOrg || []).filter(_accessCatalogIsActive_),
     locales: (catalogs.locales || []).filter(_accessCatalogIsActive_),
+    tiposEstructura: (catalogs.tiposEstructura || []).filter(_accessCatalogIsActive_),
     estructuraLocal: (catalogs.estructuraLocal || []).filter(_accessCatalogIsActive_)
   };
 }
@@ -2189,6 +2191,7 @@ function getAccessManagementData() {
           id: _accessText_(row.id),
           sede_id: _accessText_(row.sede_id),
           parent_id: _accessText_(row.parent_id),
+          tipo_estructura_id: _accessText_(row.tipo_estructura_id),
           name: _accessText_(row.name),
           order: row.order
         })),
@@ -2197,6 +2200,11 @@ function getAccessManagementData() {
           id: _accessText_(row.id),
           name: _accessText_(row.name),
           sede_id: _accessText_(row.sede_id)
+        })),
+      tiposEstructura: (catalogs.tiposEstructura || []).filter(_accessCatalogIsActive_)
+        .map(row => ({
+          id: _accessText_(row.id),
+          name: _accessText_(row.name)
         })),
       estructuraLocal: (catalogs.estructuraLocal || []).filter(_accessCatalogIsActive_)
         .map(row => ({
