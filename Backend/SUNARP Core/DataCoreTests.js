@@ -143,6 +143,17 @@ function runCoreSelfTests_() {
       exactMany.total === 2,
       'La búsqueda exacta por múltiples identificadores resuelve el subconjunto en lotes.'
     );
+    const partialSearch = searchRecordsByFields(
+      source,
+      'ana',
+      ['nombre'],
+      { matchCase: false }
+    );
+    assert(
+      partialSearch.total === 1 &&
+      partialSearch.records[0].id === 'TST_001',
+      'La búsqueda parcial recupera únicamente filas coincidentes mediante TextFinder.'
+    );
 
 
     // 4.2. Probar almacenamiento centralizado de valores que superan 95 KiB.

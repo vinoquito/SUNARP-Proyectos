@@ -597,6 +597,91 @@ function findRecordsByFields(source, filters, options) {
   };
 }
 
+
+/**
+ * Busca texto parcial en columnas indicadas sin descargar la tabla completa.
+ * TextFinder localiza filas candidatas y Core recupera únicamente esas filas.
+ */
+function searchRecordsByFields(source, query, fields, options) {
+  options = options || {};
+  const search = String(query === null || query === undefined ? '' : query).trim();
+  if (!search) return { records: [], total: 0 };
+  if (!Array.isArray(fields) || !fields.length) {
+    throw new Error('SUNARP Core: debes indicar las columnas de búsqueda.');
+  }
+
+  const context = _coreOpenSource_(source);
+  const config = context.config;
+  const sheet = context.sheet;
+  const lastRow = sheet.getLastRow();
+  const lastColumn = sheet.getLastColumn();
+  if (!lastColumn || lastRow < config.headerRow) {
+    throw new Error('SUNARP Core: la fuente no contiene encabezados.');
+  }
+
+  const headers = sheet.getRange(
+    config.headerRow, 1, 1, lastColumn
+  ).getDisplayValues()[0].map(value => String(value).trim());
+  const headerMap = {};
+  headers.forEach((header, index) => {
+    if (!header || Object.prototype.hasOwnProperty.call(headerMap, header)) {
+      throw new Error(
+        'SUNARP Core: existen encabezados vacíos o duplicados en "' +
+        config.sheetName + '".'
+      );
+    }
+    headerMap[header] = index;
+  });
+
+  const missing = fields.filter(field =>
+    !Object.prototype.hasOwnProperty.call(headerMap, field)
+  );
+  if (missing.length) {
+    throw new Error(
+      'SUNARP Core: la fuente "' + config.sheetName +
+      '" no contiene las columnas de búsqueda: ' + missing.join(', ') + '.'
+    );
+  }
+
+  const dataStartRow = config.headerRow + 1;
+  const dataRows = Math.max(0, lastRow - config.headerRow);
+  if (!dataRows) return { records: [], total: 0 };
+
+  const candidateRows = new Set();
+  const matchCase = options.matchCase === true;
+  fields.forEach(field => {
+    sheet.getRange(
+      dataStartRow, headerMap[field] + 1, dataRows, 1
+    ).createTextFinder(search)
+      .matchCase(matchCase)
+      .findAll()
+      .forEach(cell => candidateRows.add(cell.getRow()));
+  });
+
+  const expected = matchCase ? search : search.toLocaleLowerCase();
+  const records = [];
+  [...candidateRows].sort((a, b) => a - b).forEach(rowNumber => {
+    const values = sheet.getRange(
+      rowNumber, 1, 1, lastColumn
+    ).getValues()[0];
+    if (_coreIsEmptyRow_(values)) return;
+    const record = _coreRowToRecord_(headers, values);
+    const matches = fields.some(field => {
+      const actual = String(
+        record[field] === null || record[field] === undefined
+          ? ''
+          : record[field]
+      );
+      return (matchCase ? actual : actual.toLocaleLowerCase()).includes(expected);
+    });
+    if (matches) records.push(record);
+  });
+
+  return { records, total: records.length };
+}
+
+
+
 function insertRecord(source, record, options) {
   options = options || {};
 
