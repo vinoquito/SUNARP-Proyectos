@@ -555,7 +555,7 @@ test('la carga inicial no recupera ni entrega datos personales de todos los serv
   const initialDataStart = serviceSource.indexOf('function getDirectoryInitialData() {');
   const initialDataEnd = serviceSource.indexOf('function listDirectoryPeople(', initialDataStart);
   const initialDataSource = serviceSource.slice(initialDataStart, initialDataEnd);
-  assert.match(initialDataSource, /_directoryLoadContext_\(\{ includePersonalData: false \}\)/);
+  assert.match(initialDataSource, /_directoryLoadContext_\(\{ includePersonalData: false, includePeople: false \}\)/);
   assert.doesNotMatch(initialDataSource, /context\.datosPersonales|tipo_documento|numero_documento|fecha_nacimiento/);
   assert.match(serviceSource, /function getDirectoryPersonById\([\s\S]*?findRecordsByFields\([\s\S]*?servidor_id/s);
   assert.match(frontendScript, /callServer\('getDirectoryPersonById', record\.persona_id\)/);
