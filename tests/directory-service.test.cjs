@@ -539,21 +539,14 @@ test('el Directorio utiliza exclusivamente la caché central de SUNARP Core', ()
   assert.match(serviceSource, /function clearDirectoryCache\(\)/);
 });
 
-test('la carga inicial indexa fichas personales y evita una búsqueda lineal por asignación', () => {
-  const records = [
-    { servidor_id: 'PER_001', numero_documento: '12345678' },
-    { servidor_id: 'PER_002', numero_documento: '87654321' }
-  ];
-  const index = api.createPersonalDataMap(records);
-  assert.equal(index.get('PER_001'), records[0]);
-  assert.equal(index.get('PER_002'), records[1]);
-  assert.equal(index.has('PER_003'), false);
-
+test('la carga inicial no recupera ni entrega datos personales de todos los servidores', () => {
   const initialDataStart = serviceSource.indexOf('function getDirectoryInitialData() {');
   const initialDataEnd = serviceSource.indexOf('function listDirectoryPeople(', initialDataStart);
   const initialDataSource = serviceSource.slice(initialDataStart, initialDataEnd);
-  assert.ok(initialDataSource.includes('_directoryCreatePersonalDataMap_(context.datosPersonales)'));
-  assert.ok(!initialDataSource.includes('_directoryGetPersonalDataRecord_('));
+  assert.match(initialDataSource, /_directoryLoadContext_\(\{ includePersonalData: false \}\)/);
+  assert.doesNotMatch(initialDataSource, /context\.datosPersonales|tipo_documento|numero_documento|fecha_nacimiento/);
+  assert.match(serviceSource, /function getDirectoryPersonById\([\s\S]*?findRecordsByFields\([\s\S]*?servidor_id/s);
+  assert.match(frontendScript, /callServer\('getDirectoryPersonById', record\.persona_id\)/);
 });
 
 test('el filtro de asignaciones reutiliza la adscripción ya enriquecida', () => {

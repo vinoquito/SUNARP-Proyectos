@@ -1403,12 +1403,30 @@ const DirectoryPage = (() => {
      ===================================================== */
 
 
-  function openDirectoryForm(record, options = {}) {
+  async function openDirectoryForm(record, options = {}) {
 
     const assignmentOnly = options.assignmentOnly === true;
     const isEditing = Boolean(record) && !assignmentOnly;
+    let formRecord = record;
 
-    const formData = buildDirectoryForm(record, assignmentOnly);
+    if (isEditing) {
+      try {
+        const detail = await callServer('getDirectoryPersonById', record.persona_id);
+        if (!detail) throw new Error('No se encontró la ficha de la persona.');
+        const assignment = (detail.assignments || []).find(item =>
+          key(item.asignacion_id) === key(record.asignacion_id || record.id)
+        );
+        if (!assignment) throw new Error('No se encontró la asignación que deseas editar dentro de tu ámbito.');
+        formRecord = Object.assign({}, detail, assignment, {
+          id: assignment.asignacion_id
+        }, detail.personalData || {});
+      } catch (error) {
+        notify('error', error.message || 'No se pudo recuperar la ficha de la persona.');
+        return;
+      }
+    }
+
+    const formData = buildDirectoryForm(formRecord, assignmentOnly);
 
     // Convertir la cadena HTML del formulario en un fragmento DOM.
     const template = document.createElement('template');

@@ -459,7 +459,8 @@ function _directoryValidateSnapshot_(context) {
   });
 }
 
-function _directoryLoadContextFromSheets_() {
+function _directoryLoadContextFromSheets_(options) {
+  options = options || {};
   const sheetMap = [
     ['personas', 'personas'],
     ['datosPersonales', 'servidores datos personales'],
@@ -473,7 +474,10 @@ function _directoryLoadContextFromSheets_() {
     ['cargos', 'cargos']
   ];
 
-  const requests = sheetMap.map(item => ({
+  const selectedSheets = options.includePersonalData === false
+    ? sheetMap.filter(item => item[0] !== 'datosPersonales')
+    : sheetMap;
+  const requests = selectedSheets.map(item => ({
     key: item[0],
     source: _directorySource_(item[1]),
     requiredHeaders: DIRECTORY_REQUIRED_HEADERS[item[0]]
@@ -488,15 +492,16 @@ function _directoryLoadContextFromSheets_() {
   // Core agrupa la lectura por libro aunque el catálogo documental
   // se encuentre en Global parameters o en Directorios telefónicos.
   const context = SUNARPCore.listRecordsFromSourcesCached(requests, DIRECTORY_DATA_CACHE_TTL);
+  if (!Array.isArray(context.datosPersonales)) context.datosPersonales = [];
 
   _directoryValidateSnapshot_(context);
 
   return context;
 }
 
-function _directoryLoadContext_() {
+function _directoryLoadContext_(options) {
   const started = Date.now();
-  const context = _directoryLoadContextFromSheets_();
+  const context = _directoryLoadContextFromSheets_(options);
   console.log('[DirectoryService] Contexto recuperado mediante caché central de SUNARP Core:', Date.now() - started, 'ms.');
   return context;
 }
@@ -668,7 +673,7 @@ function _directoryAssertAllowedFields_(payload, allowedFields, label) {
  */
 function getDirectoryInitialData() {
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_();
+  const context = _directoryLoadContext_({ includePersonalData: false });
   const view = _directoryBuildView_(context, authorization);
 
   const structureMap = _directoryCreateMap_(context.estructuraOrg);
@@ -737,8 +742,6 @@ function getDirectoryInitialData() {
   );
 
   const assignments = _directorySortAssignments_(view.assignments.slice(), context);
-  const personalDataByPerson = _directoryCreatePersonalDataMap_(context.datosPersonales);
-
   return {
     catalogs: {
       sedes: context.sedes.filter(item =>
@@ -761,17 +764,9 @@ function getDirectoryInitialData() {
       estructuraLocal: scopedRelations,
       cargos: context.cargos.filter(_directoryIsActive_)
     },
-    records: assignments.map(item => {
-      const personalData = personalDataByPerson.get(_directoryKey_(item.persona_id));
-      return Object.assign({}, item, {
-        id: item.asignacion_id,
-        tipo_documento: personalData ? personalData.tipo_documento : '',
-        numero_documento: personalData ? personalData.numero_documento : '',
-        fecha_nacimiento: personalData ? _directoryFormatDateInput_(personalData.fecha_nacimiento) : '',
-        fecha_inicio_servicios: personalData ? _directoryFormatDateInput_(personalData.fecha_inicio_servicios) : '',
-        fecha_cese: personalData ? _directoryFormatDateInput_(personalData.fecha_cese) : ''
-      });
-    }),
+    records: assignments.map(item => Object.assign({}, item, {
+      id: item.asignacion_id
+    })),
     summary: {
       people: view.people.length,
       assignments: assignments.length
@@ -840,7 +835,7 @@ function listDirectoryPeople(options) {
 function listDirectoryAssignments(options) {
   options = options || {};
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_();
+  const context = _directoryLoadContext_({ includePersonalData: false });
   const view = _directoryBuildView_(context, authorization);
 
   const activeFilter = options.active === undefined ? true : options.active;
@@ -916,7 +911,7 @@ function listDirectoryAssignments(options) {
 
 function getDirectoryPersonById(personaId) {
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_();
+  const context = _directoryLoadContext_({ includePersonalData: false });
   const person = context.personas.find(item =>
     _directoryKey_(item.persona_id) === _directoryKey_(personaId)
   );
@@ -935,7 +930,22 @@ function getDirectoryPersonById(personaId) {
 
   if (!assignments.length) return null;
 
-  return Object.assign({}, person, { assignments: assignments });
+  const personalDataResult = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
+    { servidor_id: _directoryKey_(personaId) },
+    {
+      searchField: 'servidor_id',
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.datosPersonales
+    }
+  );
+  if (personalDataResult.total > 1) {
+    throw new Error('La ficha de datos personales está duplicada para la persona solicitada.');
+  }
+
+  return Object.assign({}, person, {
+    assignments,
+    personalData: personalDataResult.records[0] || null
+  });
 }
 
 function getDirectoryAssignmentsByPersonId(personaId, options) {
@@ -945,7 +955,7 @@ function getDirectoryAssignmentsByPersonId(personaId, options) {
 
 function getDirectoryAssignmentById(asignacionId) {
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_();
+  const context = _directoryLoadContext_({ includePersonalData: false });
   const assignment = context.asignaciones.find(item =>
     _directoryKey_(item.asignacion_id) === _directoryKey_(asignacionId)
   );
