@@ -518,11 +518,26 @@ function _accessRunAudited_(auth, event, callback) {
  */
 function _accessRequirePermission_(permissionCode, moduleIdOrCode, record) {
   const auth = _accessGetAuthContext_();
-  const moduleId = _accessResolveModuleId_(auth, moduleIdOrCode || ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses);
-  const accessModuleId = _accessResolveModuleId_(auth, ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses);
+  const moduleId = _accessResolveModuleId_(
+    auth,
+    moduleIdOrCode || ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses
+  );
+  const accessModuleId = _accessResolveModuleId_(
+    auth,
+    ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses
+  );
   const code = _accessUpper_(permissionCode);
 
-  if (moduleId === accessModuleId && !_accessIsGlobalAdministrator_(auth)) {
+  // La regla de administrador global protege las operaciones de gestión,
+  // pero AUDITORIA_VER conserva su permiso independiente.
+  const isAdministrativeOperation =
+    ACCESS_MANAGEMENT_CONFIG.adminPermissionCodes.includes(code);
+
+  if (
+    moduleId === accessModuleId &&
+    isAdministrativeOperation &&
+    !_accessIsGlobalAdministrator_(auth)
+  ) {
     _accessWriteAudit_(auth, {
       accion: 'AUTORIZACION_DENEGADA',
       modulo: ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses,
@@ -532,7 +547,9 @@ function _accessRequirePermission_(permissionCode, moduleIdOrCode, record) {
       resultado: 'DENEGADO',
       detalle: 'La administración de accesos exige ROL_ADMIN y ámbito TOTAL en el módulo ACCESOS.'
     });
-    throw new Error('La administración de accesos requiere ROL_ADMIN y ámbito TOTAL en el módulo Accesos.');
+    throw new Error(
+      'La administración de accesos requiere ROL_ADMIN y ámbito TOTAL en el módulo Accesos.'
+    );
   }
 
   if (!SUNARPCore.authorizationHasPermission(auth, code, moduleId)) {
@@ -550,7 +567,13 @@ function _accessRequirePermission_(permissionCode, moduleIdOrCode, record) {
 
   if (record) {
     const catalogs = _accessOrgCatalog_();
-    const allowed = SUNARPCore.authorizationIsRecordInScope(auth, moduleId, record, catalogs.estructuraOrg);
+    const allowed = SUNARPCore.authorizationIsRecordInScope(
+      auth,
+      moduleId,
+      record,
+      catalogs.estructuraOrg
+    );
+
     if (!allowed) {
       _accessWriteAudit_(auth, {
         accion: 'AUTORIZACION_DENEGADA',
@@ -564,6 +587,7 @@ function _accessRequirePermission_(permissionCode, moduleIdOrCode, record) {
       throw new Error('No tienes ámbito de acceso para operar sobre este registro.');
     }
   }
+
   return auth;
 }
 
@@ -1254,27 +1278,45 @@ function saveAccessScopes(payload) {
 
 function getAccessManagementData() {
   const auth = _accessGetAuthContext_();
-  const accessModuleId = _accessResolveModuleId_(auth, ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses);
-
-  if (!_accessIsGlobalAdministrator_(auth)) {
-    throw new Error('La administración de accesos requiere ROL_ADMIN y ámbito TOTAL en el módulo ACCESOS.');
-  }
+  const accessModuleId = _accessResolveModuleId_(
+    auth,
+    ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses
+  );
+  const globalAdministrator = _accessIsGlobalAdministrator_(auth);
 
   const capabilities = {
-    users: _accessHasPermission_(auth, 'USUARIOS_ADMINISTRAR', accessModuleId),
-    roles: _accessHasPermission_(auth, 'ROLES_ADMINISTRAR', accessModuleId),
-    permissions: _accessHasPermission_(auth, 'PERMISOS_ADMINISTRAR', accessModuleId),
-    scopes: _accessHasPermission_(auth, 'AMBITOS_ACCESO_ADMINISTRAR', accessModuleId),
+    users: globalAdministrator && _accessHasPermission_(auth, 'USUARIOS_ADMINISTRAR', accessModuleId),
+    roles: globalAdministrator && _accessHasPermission_(auth, 'ROLES_ADMINISTRAR', accessModuleId),
+    permissions: globalAdministrator && _accessHasPermission_(auth, 'PERMISOS_ADMINISTRAR', accessModuleId),
+    scopes: globalAdministrator && _accessHasPermission_(auth, 'AMBITOS_ACCESO_ADMINISTRAR', accessModuleId),
     audit: _accessHasPermission_(auth, 'AUDITORIA_VER', accessModuleId)
   };
   capabilities.assignments = capabilities.roles && capabilities.permissions;
   capabilities.userRoles = capabilities.users && capabilities.roles;
 
   if (!Object.values(capabilities).some(Boolean)) {
-    throw new Error('Tu cuenta no tiene capacidades de administración de accesos.');
+    throw new Error('Tu cuenta no tiene capacidades de administración de accesos ni permiso de auditoría.');
   }
 
-  const data = _accessLoadSecurityData_();
+  const needsManagementData =
+    capabilities.users ||
+    capabilities.roles ||
+    capabilities.permissions ||
+    capabilities.scopes;
+
+  const data = needsManagementData
+    ? _accessLoadSecurityData_()
+    : {
+        personas: [],
+        usuarios: [],
+        modulos: [],
+        roles: [],
+        usuarioRol: [],
+        permisos: [],
+        rolPermiso: [],
+        ambitosAcceso: []
+      };
+
   const needsCatalogs = capabilities.users || capabilities.scopes;
   const catalogs = needsCatalogs
     ? _accessOrgCatalog_()
@@ -1318,7 +1360,10 @@ function getAccessManagementData() {
             active: _accessIsActive_(user.active),
             roles: (userRolesByPerson.get(_accessText_(user.persona_id)) || [])
               .filter(item => _accessIsActive_(item.active))
-              .map(item => ({ modulo_id: _accessText_(item.modulo_id), rol_id: _accessText_(item.rol_id) }))
+              .map(item => ({
+                modulo_id: _accessText_(item.modulo_id),
+                rol_id: _accessText_(item.rol_id)
+              }))
           };
         })
       : [],
@@ -1326,7 +1371,9 @@ function getAccessManagementData() {
     availablePeople: capabilities.users
       ? data.personas.filter(person =>
           _accessText_(person.correo_institucional) &&
-          !data.usuarios.some(user => _accessText_(user.persona_id) === _accessText_(person.persona_id))
+          !data.usuarios.some(user =>
+            _accessText_(user.persona_id) === _accessText_(person.persona_id)
+          )
         ).map(person => ({
           persona_id: _accessText_(person.persona_id),
           correo_institucional: _accessText_(person.correo_institucional),
@@ -1357,7 +1404,9 @@ function getAccessManagementData() {
 
     permissions: capabilities.permissions
       ? data.permisos.map(permission => {
-          const module = data.modulos.find(item => _accessText_(item.modulo_id) === _accessText_(permission.modulo_id)) || {};
+          const module = data.modulos.find(item =>
+            _accessText_(item.modulo_id) === _accessText_(permission.modulo_id)
+          ) || {};
           return {
             permiso_id: _accessText_(permission.permiso_id),
             codigo: _accessUpper_(permission.codigo),
@@ -1401,7 +1450,10 @@ function getAccessManagementData() {
 
     catalogs: {
       sedes: (catalogs.sedes || []).filter(_accessCatalogIsActive_)
-        .map(row => ({ id: _accessText_(row.id), name: _accessText_(row.name) })),
+        .map(row => ({
+          id: _accessText_(row.id),
+          name: _accessText_(row.name)
+        })),
       estructuraOrg: (catalogs.estructuraOrg || []).filter(_accessCatalogIsActive_)
         .map(row => ({
           id: _accessText_(row.id),
@@ -1411,7 +1463,11 @@ function getAccessManagementData() {
           order: row.order
         })),
       locales: (catalogs.locales || []).filter(_accessCatalogIsActive_)
-        .map(row => ({ id: _accessText_(row.id), name: _accessText_(row.name), sede_id: _accessText_(row.sede_id) }))
+        .map(row => ({
+          id: _accessText_(row.id),
+          name: _accessText_(row.name),
+          sede_id: _accessText_(row.sede_id)
+        }))
     }
   };
 }
