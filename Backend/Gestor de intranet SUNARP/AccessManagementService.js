@@ -167,7 +167,7 @@ function _accessLoadSecurityData_() {
   // La identidad y los datos documentales se obtienen del contexto compartido
   // del directorio. Ese contexto ya usa caché comprimida por fragmentos, por lo
   // que no se vuelve a leer la pestaña personas (que supera el límite de CacheService).
-  const data = SUNARPCore.listRecordsFromSourcesCached(requests, 300);
+  const data = SUNARPCore.listRecordsFromSourcesCached(requests, 15);
   const directoryContext = _directoryLoadContext_();
 
   data.personas = directoryContext.personas || [];
