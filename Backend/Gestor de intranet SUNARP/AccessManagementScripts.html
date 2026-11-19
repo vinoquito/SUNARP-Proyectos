@@ -11,6 +11,7 @@
     activeTab: '',
     tabs: null,
     table: null,
+    userListController: null
   };
 
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -270,46 +271,45 @@
   }
 
 
-  function makeTabPanel(title, description, actionLabel, action) {
+  function makeTabPanel(title, description, actionLabel, action, options) {
+    options = options || {};
     const wrapper = document.createElement('div');
-
     wrapper.className = 'access-section';
 
     const heading = document.createElement('div');
-
     heading.className = 'access-section-heading';
 
     const copy = document.createElement('div');
-
     const titleNode = document.createElement('h3');
-
     titleNode.textContent = title;
-
     copy.appendChild(titleNode);
 
     if (description) {
       const paragraph = document.createElement('p');
-
       paragraph.textContent = description;
-
       copy.appendChild(paragraph);
     }
 
     heading.appendChild(copy);
 
+    const actions = document.createElement('div');
+    actions.className = 'access-section-actions';
+
     if (actionLabel && action) {
-      heading.appendChild(
-        createButton(
-          actionLabel,
-          'primary',
-          action,
-          'add'
-        )
-      );
+      actions.appendChild(createButton(actionLabel, 'primary', action, 'add'));
     }
 
-    wrapper.appendChild(heading);
+    if (!options.hideRefresh) {
+      actions.appendChild(createButton(
+        'Actualizar',
+        'outline',
+        () => refreshCurrentTabData(true),
+        'refresh'
+      ));
+    }
 
+    if (actions.childElementCount) heading.appendChild(actions);
+    wrapper.appendChild(heading);
     return wrapper;
   }
 
