@@ -714,7 +714,7 @@ function searchRecordsByFields(source, query, fields, options) {
   if (!dataRows) return { records: [], total: 0 };
 
   const candidateRows = new Set();
-  const matchCase = options.matchCase === true;
+  const matchCase = options.accentInsensitive === false && options.matchCase === true;
   const searchPattern = options.accentInsensitive === false
     ? search
     : _coreBuildAccentInsensitivePattern_(search);
