@@ -153,41 +153,31 @@ function _directorySource_(sheetName, sourceKey) {
 
 
 /**
- * Localiza el catálogo oficial de tipos de documento.
- * Se busca primero en Global parameters y después en el libro del directorio.
+ * El catálogo de tipos de documento tiene una única fuente maestra:
+ * Global parameters. No se buscan copias alternativas en archivos
+ * consumidores, porque eso ocultaría errores de configuración y permitiría
+ * que cada aplicación termine usando catálogos divergentes.
  */
 function _directoryResolveDocumentTypesSource_() {
-  const sourceKeys = ['MASTER_DATA', DIRECTORY_SERVICE_CONFIG.sourceKey];
-  const failures = [];
+  const source = _directorySource_(
+    DIRECTORY_SERVICE_CONFIG.sheets.documentTypes,
+    'MASTER_DATA'
+  );
+  const info = SUNARPCore.getSourceInfoCached(source, 300);
+  const missing = DIRECTORY_REQUIRED_HEADERS.documentTypes.filter(header =>
+    !info.headers.includes(header)
+  );
 
-  for (const sourceKey of sourceKeys) {
-    const source = _directorySource_(
-      DIRECTORY_SERVICE_CONFIG.sheets.documentTypes,
-      sourceKey
+  if (missing.length) {
+    throw new Error(
+      'La fuente maestra Global parameters, pestaña "' +
+      DIRECTORY_SERVICE_CONFIG.sheets.documentTypes +
+      '", no contiene los encabezados requeridos: ' +
+      missing.join(', ') + '.'
     );
-
-    try {
-      const info = SUNARPCore.getSourceInfoCached(source, 300);
-      const missing = DIRECTORY_REQUIRED_HEADERS.documentTypes.filter(header =>
-        !info.headers.includes(header)
-      );
-
-      if (missing.length) {
-        throw new Error(
-          'Faltan encabezados requeridos: ' + missing.join(', ') + '.'
-        );
-      }
-
-      return source;
-    } catch (error) {
-      failures.push(sourceKey + ': ' + error.message);
-    }
   }
 
-  throw new Error(
-    'No se pudo localizar la pestaña "tipo_documento_identidad" en Global parameters ni en Directorios telefónicos. ' +
-    failures.join(' | ')
-  );
+  return source;
 }
 
 function _directoryAuthorizationContext_(permissionCode) {
