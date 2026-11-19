@@ -554,7 +554,7 @@ test('el Directorio utiliza exclusivamente la caché central de SUNARP Core', ()
   assert.doesNotMatch(serviceSource, /function _directoryWriteCachedContext_/);
   assert.doesNotMatch(serviceSource, /function _directoryReadCachedContext_/);
   assert.doesNotMatch(serviceSource, /DIRECTORY_CACHE_PART_SUFFIX/);
-  assert.match(serviceSource, /SUNARPCore\.invalidateSourceCache\(_directorySource_\(sheetName\)\)/);
+  assert.match(serviceSource, /sources\.map\(source => SUNARPCore\.invalidateSourceCache\(source\)\)/);
   assert.match(serviceSource, /function clearDirectoryCache\(\)/);
 });
 
