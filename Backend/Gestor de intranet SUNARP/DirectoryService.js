@@ -207,7 +207,7 @@ function _directoryAssertPersonMutationScope_(authorization, person, assignments
   linked.forEach(assignment => {
     const location = _directoryResolveAssignmentLocation_(assignment, context, false);
     _directoryAssertScope_(authorization, { persona_id: person.persona_id, asignacion_id: assignment.asignacion_id,
-      nombres: person.nombres, apellidos: person.apellidos, estructura_id: location.estructura_id, sede_id: location.sede_id },
+      nombres: person.nombres, apellidos: person.apellidos, estructura_id: location.estructura_id, sede_id: location.sede_id, local_id: assignment.local_id },
       'La modificación de la identidad afectaría una asignación fuera del ámbito autorizado.');
   });
 }
@@ -615,7 +615,7 @@ function _directoryBuildView_(context, authorization) {
   const assignments = context.asignaciones.map(x => _directoryEnrichAssignment_(x, context, relationMap, peopleMap)).filter(record => {
     const location = _directoryResolveAssignmentLocation_(record, context, false);
     return _accessRecordIsAllowed_(authorization.auth, 'MOD_INFO_PERSONAL',
-      { estructura_id: location.estructura_id, sede_id: location.sede_id }, authorization.structures);
+      { estructura_id: location.estructura_id, sede_id: location.sede_id, local_id: record.local_id }, authorization.structures);
   });
   const visiblePersonIds = new Set(assignments.map(x => _directoryKey_(x.persona_id)));
   const hasTotalScope = _accessRecordIsAllowed_(authorization.auth, 'MOD_INFO_PERSONAL', {}, authorization.structures);
@@ -751,7 +751,7 @@ function getDirectoryInitialData() {
   const scopedLocals = context.locales.filter(local =>
     _directoryIsActive_(local) &&
     _accessRecordIsAllowed_(authorization.auth, 'MOD_INFO_PERSONAL',
-      { sede_id: _directoryKey_(local.sede_id) }, authorization.structures)
+      { sede_id: _directoryKey_(local.sede_id), local_id: _directoryKey_(local.id) }, authorization.structures)
   );
   const relationLocalIds = new Set(scopedRelations.map(item => _directoryKey_(item.local_id)));
   const catalogLocals = context.locales.filter(local =>
@@ -1032,7 +1032,16 @@ function _saveDirectoryPerson_(payload) {
       : existing && existing.correo_institucional
   ).toLowerCase();
 
-  if (email) _accessValidateEmail_(email);
+  if (email) {
+    _accessValidateEmail_(email);
+    const duplicateEmail = context.personas.some(item =>
+      _directoryKey_(item.persona_id) !== _directoryKey_(personaId) &&
+      _directoryText_(item.correo_institucional).toLowerCase() === email
+    );
+    if (duplicateEmail) {
+      throw new Error('El correo institucional ya está asociado a otra persona.');
+    }
+  }
 
   const record = {
     persona_id: isUpdate
