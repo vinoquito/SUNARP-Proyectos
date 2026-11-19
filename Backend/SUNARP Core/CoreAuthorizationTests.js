@@ -1,7 +1,8 @@
 /**
- * SUNARP Core — pruebas de autorización.
- * Ejecutar runAuthorizationSelfTests_() desde el editor de Core.
- * No crea ni modifica hojas de cálculo.
+ * SUNARP Core — pruebas del contrato único de autorización.
+ *
+ * Ejecutar runAuthorizationSelfTests_() desde el editor de SUNARP Core.
+ * Las pruebas son unitarias: no leen ni modifican hojas de cálculo.
  */
 function runAuthorizationSelfTests_() {
   const results = [];
@@ -14,30 +15,51 @@ function runAuthorizationSelfTests_() {
     results.push('OK: ' + label);
   }
 
+  function assertThrows(callback, expectedText, label) {
+    let thrown = null;
+
+    try {
+      callback();
+    } catch (error) {
+      thrown = error;
+    }
+
+    assert(
+      Boolean(thrown) &&
+      (!expectedText || thrown.message.includes(expectedText)),
+      label
+    );
+  }
+
   const modules = [
     {
       modulo_id: 'MOD_INFO_PERSONAL',
       codigo: 'INFORMACION_PERSONAL',
+      nombre: 'Información de personal',
       active: true
     },
     {
       modulo_id: 'MOD_ACCESOS',
       codigo: 'ACCESOS',
+      nombre: 'Administración de accesos',
       active: true
     },
     {
       modulo_id: 'MOD_DOCUMENTOS',
       codigo: 'DOCUMENTOS_NORMATIVOS',
+      nombre: 'Documentos normativos',
       active: true
     },
     {
       modulo_id: 'MOD_LOCAL',
       codigo: 'MODULO_LOCAL',
+      nombre: 'Módulo de prueba local',
       active: true
     },
     {
       modulo_id: 'MOD_INACTIVO',
       codigo: 'MODULO_INACTIVO',
+      nombre: 'Módulo inactivo',
       active: false
     }
   ];
@@ -88,15 +110,14 @@ function runAuthorizationSelfTests_() {
     },
     {
       permiso_id: 'PERM_007',
-      codigo: 'ACCESOS_ROLES_ADMINISTRAR',
-      modulo_id: 'MOD_ACCESOS',
+      codigo: 'PERMISO_INACTIVO',
+      modulo_id: 'MOD_INFO_PERSONAL',
       active: true
     }
   ];
 
   const baseData = {
     personaId: 'PER_117',
-    email: 'prueba@sunarp.gob.pe',
     users: [
       {
         persona_id: 'PER_117',
@@ -171,8 +192,13 @@ function runAuthorizationSelfTests_() {
       },
       {
         rol_id: 'ROL_EDITOR',
-        permiso_id: 'PERM_007',
+        permiso_id: 'PERM_003',
         active: true
+      },
+      {
+        rol_id: 'ROL_EDITOR',
+        permiso_id: 'PERM_007',
+        active: false
       }
     ],
     scopes: [
@@ -215,6 +241,14 @@ function runAuthorizationSelfTests_() {
         referencia_id: '',
         incluir_descendientes: false,
         active: true
+      },
+      {
+        persona_id: 'PER_117',
+        modulo_id: 'MOD_INFO_PERSONAL',
+        tipo_ambito: 'TOTAL',
+        referencia_id: '',
+        incluir_descendientes: false,
+        active: false
       }
     ]
   };
@@ -255,8 +289,15 @@ function runAuthorizationSelfTests_() {
   );
 
   assert(
-    context.roleAssignments.length === 4,
-    'Resuelve roles diferentes por módulo e ignora el módulo inactivo.'
+    context.moduleAccess.length === 4,
+    'Resuelve únicamente módulos activos con rol activo asignado.'
+  );
+
+  assert(
+    context.moduleAccess.every(item =>
+      item.modulo_id && item.role && item.module
+    ),
+    'Cada acceso modular contiene su módulo y su rol resueltos.'
   );
 
   assert(
@@ -265,7 +306,7 @@ function runAuthorizationSelfTests_() {
       'INFORMACION_PERSONAL_VER',
       'MOD_INFO_PERSONAL'
     ),
-    'Reconoce el permiso activo del rol asignado en Información de personal.'
+    'Reconoce un permiso activo asignado al rol del módulo.'
   );
 
   assert(
@@ -274,7 +315,7 @@ function runAuthorizationSelfTests_() {
       'INFORMACION_PERSONAL_EDITAR',
       'MOD_INFO_PERSONAL'
     ),
-    'Ignora permisos inactivos aunque RolPermiso esté activo.'
+    'Ignora un permiso inactivo aunque su relación rol-permiso esté activa.'
   );
 
   assert(
@@ -283,7 +324,7 @@ function runAuthorizationSelfTests_() {
       'USUARIOS_ADMINISTRAR',
       'MOD_ACCESOS'
     ),
-    'Reconoce el permiso del rol asignado en Accesos.'
+    'Reconoce el permiso administrativo en el módulo al que pertenece.'
   );
 
   assert(
@@ -296,26 +337,38 @@ function runAuthorizationSelfTests_() {
   );
 
   assert(
-    !authorizationHasPermission(context, 'USUARIOS_ADMINISTRAR'),
-    'Exige indicar el módulo al comprobar permisos en el nuevo modelo.'
-  );
-
-  assert(
-    !authorizationHasPermission(
-      context,
-      'ACCESOS_ROLES_ADMINISTRAR',
-      'MOD_ACCESOS'
-    ),
-    'No concede en Accesos un permiso asignado a un rol de otro módulo.'
-  );
-
-  assert(
     !authorizationHasPermission(
       context,
       'INFORMACION_PERSONAL_ELIMINAR',
+      'MOD_ACCESOS'
+    ),
+    'No traslada permisos de Información de personal a Accesos.'
+  );
+
+  assert(
+    !authorizationHasPermission(
+      context,
+      'USUARIOS_ADMINISTRAR',
+      'ACCESOS'
+    ),
+    'Exige modulo_id y no acepta el código del módulo como sustituto.'
+  );
+
+  assert(
+    !authorizationHasPermission(
+      context,
+      'USUARIOS_ADMINISTRAR'
+    ),
+    'Exige indicar el módulo en toda comprobación de permisos.'
+  );
+
+  assert(
+    !authorizationHasPermission(
+      context,
+      'PERMISO_INACTIVO',
       'MOD_INFO_PERSONAL'
     ),
-    'No hereda el rol ROL_ADMIN de Accesos en otro módulo.'
+    'Ignora una relación RolPermiso inactiva.'
   );
 
   assert(
@@ -325,7 +378,7 @@ function runAuthorizationSelfTests_() {
       { estructura_id: 'SC_AREA_CONTABILIDAD' },
       structures
     ),
-    'Incluye descendientes de una estructura cuando incluir_descendientes es TRUE.'
+    'Incluye descendientes cuando incluir_descendientes es TRUE.'
   );
 
   assert(
@@ -335,34 +388,34 @@ function runAuthorizationSelfTests_() {
       { estructura_id: 'ZR_I_UNIDAD', sede_id: 'ZR_I' },
       structures
     ),
-    'Rechaza estructuras ajenas al ámbito orgánico.'
+    'Rechaza estructuras fuera del ámbito orgánico asignado.'
+  );
+
+  assert(
+    !authorizationIsRecordInScope(
+      context,
+      'MOD_INFO_PERSONAL',
+      { estructura_id: 'SC_UNIDAD_TESORERIA' },
+      structures
+    ) === false,
+    'Acepta el ámbito de la estructura de referencia y sus descendientes.'
   );
 
   assert(
     !authorizationIsRecordInScope(
       context,
       'MOD_DOCUMENTOS',
-      { sede_id: 'SEDE_DISTINTA' },
+      { estructura_id: 'ZR_I_UNIDAD', sede_id: 'SEDE_CENTRAL' },
       structures
     ),
-    'El ámbito TOTAL de otro módulo no amplía el ámbito del módulo actual.'
-  );
-
-  assert(
-    authorizationIsRecordInScope(
-      context,
-      'INFORMACION_PERSONAL',
-      { estructura_id: 'SC_UNIDAD_TESORERIA' },
-      structures
-    ),
-    'Acepta el código del módulo además de su modulo_id.'
+    'No reutiliza el ámbito orgánico de otro módulo.'
   );
 
   assert(
     authorizationIsRecordInScope(
       context,
       'MOD_ACCESOS',
-      { estructura_id: 'ZR_I_UNIDAD', sede_id: 'ZR_I' },
+      { estructura_id: 'ZR_I_UNIDAD' },
       structures
     ),
     'Interpreta TOTAL como acceso a todos los registros de su propio módulo.'
@@ -371,31 +424,18 @@ function runAuthorizationSelfTests_() {
   assert(
     !authorizationIsRecordInScope(
       context,
-      'MOD_INEXISTENTE',
-      { estructura_id: 'ZR_I_UNIDAD', sede_id: 'ZR_I' },
+      'MOD_DOCUMENTOS',
+      { estructura_id: 'SC_UNIDAD_TESORERIA', sede_id: 'ZR_I' },
       structures
-    ),
-    'No aplica un ámbito a un módulo inexistente.'
+    ) === false,
+    'Deriva la sede desde la estructura del catálogo y no desde el registro.'
   );
 
   assert(
     authorizationIsRecordInScope(
       context,
       'MOD_DOCUMENTOS',
-      {
-        estructura_id: 'SC_UNIDAD_TESORERIA',
-        sede_id: 'ZR_I'
-      },
-      structures
-    ),
-    'Deriva la sede desde el catálogo orgánico y no desde la sede enviada en el registro.'
-  );
-
-  assert(
-    authorizationIsRecordInScope(
-      context,
-      'MOD_DOCUMENTOS',
-      { estructura_id: 'SC_OTRA_UNIDAD', sede_id: 'SEDE_CENTRAL' },
+      { estructura_id: 'SC_OTRA_UNIDAD', sede_id: 'ZR_I' },
       structures
     ),
     'El ámbito SEDE incluye distintas estructuras orgánicas de la misma sede.'
@@ -405,10 +445,20 @@ function runAuthorizationSelfTests_() {
     !authorizationIsRecordInScope(
       context,
       'MOD_DOCUMENTOS',
-      { estructura_id: 'ZR_I_UNIDAD', sede_id: 'ZR_I' },
+      { estructura_id: 'ZR_I_UNIDAD', sede_id: 'SEDE_CENTRAL' },
       structures
     ),
-    'El ámbito SEDE rechaza estructuras pertenecientes a otra sede.'
+    'El ámbito SEDE rechaza estructuras de otra sede.'
+  );
+
+  assert(
+    !authorizationIsRecordInScope(
+      context,
+      'MOD_DOCUMENTOS',
+      { estructura_id: 'ESTRUCTURA_DESCONOCIDA', sede_id: 'SEDE_CENTRAL' },
+      structures
+    ),
+    'Rechaza estructuras desconocidas sin confiar en la sede del registro.'
   );
 
   assert(
@@ -418,7 +468,7 @@ function runAuthorizationSelfTests_() {
       { local_id: 'LOCAL_001' },
       structures
     ),
-    'Permite el ámbito LOCAL para una asignación directamente vinculada al local.'
+    'Permite LOCAL para una asignación vinculada directamente al local.'
   );
 
   assert(
@@ -441,7 +491,7 @@ function runAuthorizationSelfTests_() {
       },
       structures
     ),
-    'Rechaza LOCAL cuando el registro también pertenece a una estructura orgánica.'
+    'Rechaza LOCAL si el registro también pertenece a una estructura orgánica.'
   );
 
   assert(
@@ -451,23 +501,69 @@ function runAuthorizationSelfTests_() {
       { local_id: 'LOCAL_001' },
       structures
     ),
-    'No reutiliza el ámbito LOCAL en otro módulo.'
+    'No transfiere el ámbito LOCAL a Información de personal.'
   );
 
-  const inactiveUserContext = resolveAuthorizationContext({
+  assert(
+    !authorizationIsRecordInScope(
+      context,
+      'MOD_NO_EXISTE',
+      { estructura_id: 'ZR_I_UNIDAD' },
+      structures
+    ),
+    'Rechaza consultas de ámbito para un módulo no asignado.'
+  );
+
+  const noIdentityContext = resolveAuthorizationContext({
+    email: 'persona@sunarp.gob.pe',
+    users: [{
+      correo_institucional: 'persona@sunarp.gob.pe',
+      estado: 'ACTIVO',
+      rol_id: 'ROL_ADMIN'
+    }]
+  });
+
+  assert(
+    !noIdentityContext.authenticated,
+    'No utiliza correo, estado ni rol_id en Usuarios como identidad alternativa.'
+  );
+
+  const noActiveUserContext = resolveAuthorizationContext({
     personaId: 'PER_INACTIVA',
-    users: [{ persona_id: 'PER_INACTIVA', active: false }],
+    users: [{
+      persona_id: 'PER_INACTIVA',
+      active: false
+    }],
     modules,
     roles,
     userRoles: [],
-    permissions: [],
+    permissions,
     rolePermissions: [],
     scopes: []
   });
 
   assert(
-    !inactiveUserContext.authenticated,
+    !noActiveUserContext.authenticated,
     'Rechaza usuarios con active FALSE.'
+  );
+
+  const stateOnlyUserContext = resolveAuthorizationContext({
+    personaId: 'PER_ESTADO',
+    users: [{
+      persona_id: 'PER_ESTADO',
+      estado: 'ACTIVO'
+    }],
+    modules,
+    roles,
+    userRoles: [],
+    permissions,
+    rolePermissions: [],
+    scopes: []
+  });
+
+  assert(
+    !stateOnlyUserContext.authenticated,
+    'No interpreta estado ACTIVO como sustituto de active TRUE.'
   );
 
   const inactiveRoleContext = resolveAuthorizationContext({
@@ -497,7 +593,7 @@ function runAuthorizationSelfTests_() {
 
   assert(
     inactiveRoleContext.authenticated &&
-    inactiveRoleContext.roleAssignments.length === 0 &&
+    inactiveRoleContext.moduleAccess.length === 0 &&
     !authorizationHasPermission(
       inactiveRoleContext,
       'INFORMACION_PERSONAL_VER',
@@ -509,109 +605,125 @@ function runAuthorizationSelfTests_() {
       {},
       structures
     ),
-    'Ignora roles inactivos y sus permisos y ámbitos.'
+    'No concede acceso mediante roles inactivos.'
   );
 
-  const duplicateAssignmentContext = resolveAuthorizationContext({
+  assertThrows(
+    function () {
+      resolveAuthorizationContext({
+        personaId: 'PER_117',
+        users: [{ persona_id: 'PER_117', active: true }],
+        modules: [modules[0]],
+        roles: [roles[0], roles[1]],
+        userRoles: [
+          {
+            persona_id: 'PER_117',
+            modulo_id: 'MOD_INFO_PERSONAL',
+            rol_id: 'ROL_EDITOR',
+            active: true
+          },
+          {
+            persona_id: 'PER_117',
+            modulo_id: 'MOD_INFO_PERSONAL',
+            rol_id: 'ROL_ADMIN',
+            active: true
+          }
+        ]
+      });
+    },
+    'más de un rol activo',
+    'Detecta más de un rol activo de la misma persona en un módulo.'
+  );
+
+  assertThrows(
+    function () {
+      resolveAuthorizationContext({
+        personaId: 'PER_117',
+        users: [
+          { persona_id: 'PER_117', active: true },
+          { persona_id: 'PER_117', active: true }
+        ],
+        modules,
+        roles,
+        userRoles: [],
+        permissions: [],
+        rolePermissions: [],
+        scopes: []
+      });
+    },
+    'más de un usuario activo',
+    'Detecta identidades duplicadas activas.'
+  );
+
+  assertThrows(
+    function () {
+      resolveAuthorizationContext({
+        personaId: 'PER_117',
+        users: [{ persona_id: 'PER_117', active: true }],
+        modules: [
+          { modulo_id: 'MOD_DUP', active: true },
+          { modulo_id: 'MOD_DUP', active: true }
+        ],
+        roles: [],
+        userRoles: [],
+        permissions: [],
+        rolePermissions: [],
+        scopes: []
+      });
+    },
+    'duplicado en Modulos.modulo_id',
+    'Detecta identificadores de módulo duplicados activos.'
+  );
+
+  const customFieldContext = resolveAuthorizationContext({
     personaId: 'PER_117',
     users: [{ persona_id: 'PER_117', active: true }],
-    modules: [modules[0]],
-    roles: [roles[0]],
-    userRoles: [
-      {
-        persona_id: 'PER_117',
-        modulo_id: 'MOD_INFO_PERSONAL',
-        rol_id: 'ROL_EDITOR',
-        active: true
-      },
-      {
-        persona_id: 'PER_117',
-        modulo_id: 'MOD_INFO_PERSONAL',
-        rol_id: 'ROL_ADMIN',
-        active: true
-      }
-    ],
-    permissions,
-    rolePermissions: [{
-      rol_id: 'ROL_EDITOR',
-      permiso_id: 'PERM_001',
+    modules: [{
+      modulo_id: 'MOD_CUSTOM',
+      codigo: 'CUSTOM',
       active: true
     }],
-    scopes: []
-  });
-
-  assert(
-    duplicateAssignmentContext.roleAssignments.length === 0,
-    'Evita combinar roles cuando hay más de una asignación activa en un módulo.'
-  );
-
-  // Compatibilidad con el esquema anterior basado en correo, rol_id y estado.
-  const legacyContext = resolveAuthorizationContext({
-    email: 'legado@sunarp.gob.pe',
-    users: [{
-      correo_institucional: 'legado@sunarp.gob.pe',
-      estado: 'ACTIVO',
-      rol_id: 'ROL_LEGADO'
-    }],
-    roles: [{
-      rol_id: 'ROL_LEGADO',
-      estado: 'ACTIVO'
-    }],
-    permissions: [{
-      permiso_id: 'PERM_LEGADO',
-      codigo: 'DIRECTORIOS_VER',
-      estado: 'ACTIVO'
-    }],
-    rolePermissions: [{
-      rol_id: 'ROL_LEGADO',
-      permiso_id: 'PERM_LEGADO',
-      estado: 'ACTIVO'
-    }],
-    scopes: [{
-      correo_institucional: 'legado@sunarp.gob.pe',
-      modulo: 'DIRECTORIOS',
-      tipo_ambito: 'TOTAL',
-      referencia_id: '',
-      estado: 'ACTIVO'
-    }]
-  });
-
-  assert(
-    legacyContext.authenticated &&
-    authorizationHasPermission(legacyContext, 'DIRECTORIOS_VER'),
-    'Mantiene compatibilidad con usuarios, roles y permisos del esquema anterior.'
-  );
-
-  assert(
-    authorizationIsRecordInScope(
-      legacyContext,
-      'DIRECTORIOS',
-      { estructura_id: 'ZR_I_UNIDAD', sede_id: 'ZR_I' },
-      structures
-    ),
-    'Mantiene compatibilidad con ámbitos textuales del esquema anterior.'
-  );
-
-  const legacyBooleanContext = resolveAuthorizationContext({
-    email: 'booleano@sunarp.gob.pe',
-    users: [{
-      correo_institucional: 'booleano@sunarp.gob.pe',
-      active: true,
-      estado: 'INACTIVO',
-      rol_id: 'ROL_BOOLEANO'
-    }],
-    roles: [{
-      rol_id: 'ROL_BOOLEANO',
+    roles: [{ rol_id: 'ROL_CUSTOM', active: true }],
+    userRoles: [{
+      persona_id: 'PER_117',
+      modulo_id: 'MOD_CUSTOM',
+      rol_id: 'ROL_CUSTOM',
       active: true
     }],
     permissions: [],
     rolePermissions: [],
-    scopes: []
+    scopes: [{
+      persona_id: 'PER_117',
+      modulo_id: 'MOD_CUSTOM',
+      tipo_ambito: 'ESTRUCTURA_ORG',
+      referencia_id: 'ORG_ROOT',
+      incluir_descendientes: true,
+      active: true
+    }]
   });
 
   assert(
-    legacyBooleanContext.authenticated,
-    'Da prioridad al campo active cuando coexiste con el antiguo estado.'
+    authorizationIsRecordInScope(
+      customFieldContext,
+      'MOD_CUSTOM',
+      { orgId: 'ORG_CHILD' },
+      [{
+        structureId: 'ORG_ROOT',
+        parentId: '',
+        siteId: 'SITE_A'
+      }, {
+        structureId: 'ORG_CHILD',
+        parentId: 'ORG_ROOT',
+        siteId: 'SITE_A'
+      }],
+      {
+        recordStructureId: 'orgId',
+        structureId: 'structureId',
+        structureParentId: 'parentId',
+        structureSiteId: 'siteId'
+      }
+    ),
+    'Permite adaptar los campos del registro y del catálogo organizacional.'
   );
 
   console.log(results.join('\n'));
