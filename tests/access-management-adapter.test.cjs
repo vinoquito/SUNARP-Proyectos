@@ -405,3 +405,78 @@ test('la cascada de ámbitos parte del local y recorre solo la jerarquía vincul
   assert.match(accessUiSource, /sedeName\(item\.sede_id\) \+ ' — ' \+ item\.name/);
   assert.doesNotMatch(accessUiSource, /function structuresForSede\(sedeId\)/);
 });
+
+
+test('los identificadores de roles y permisos se normalizan y autogeneran', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+
+  assert.equal(
+    sandbox._accessIdentifierToken_('Gestión de usuarios'),
+    'GESTION_DE_USUARIOS'
+  );
+  assert.equal(
+    sandbox._accessGenerateUniqueIdentifier_('ROL_', 'Gestión de usuarios', [], 'rol_id', 50),
+    'ROL_GESTION_DE_USUARIOS'
+  );
+  assert.equal(
+    sandbox._accessGenerateUniqueIdentifier_(
+      'ROL_',
+      'Editor',
+      [{ rol_id: 'ROL_EDITOR' }],
+      'rol_id',
+      50
+    ),
+    'ROL_EDITOR_2'
+  );
+  assert.equal(
+    sandbox._accessBuildPermissionCode_('INFORMACION_PERSONAL', 'VER'),
+    'INFORMACION_PERSONAL_VER'
+  );
+  assert.match(accessSource, /const ACCESS_PERMISSION_OPERATIONS = Object\.freeze\(\[/);
+});
+
+test('el listado de usuarios se consulta solo con filtro de sede o rol', () => {
+  assert.match(accessSource, /users:\s*\[\]/);
+  assert.match(accessSource, /function getAccessUsers\(filters\)/);
+  assert.match(accessSource, /if \(!sedeId && !roleId\) return \{ items: \[\], total: 0 \}/);
+  assert.match(accessUiSource, /createField\('Sede', siteSelect\)/);
+  assert.match(accessUiSource, /createField\('Rol', roleSelect\)/);
+  assert.match(accessUiSource, /rpc\('getAccessUsers'/);
+  assert.match(accessUiSource, /searchPlaceholder: 'Buscar por nombre o correo institucional/);
+  assert.match(accessUiSource, /state\.table\.setData\(state\.data\.users\)/);
+});
+
+test('los formularios de rol y permiso no permiten ingresar IDs, códigos ni estados manualmente', () => {
+  const roleStart = accessUiSource.indexOf('function openRoleModal(row)');
+  const roleEnd = accessUiSource.indexOf('function renderPermissions(host)', roleStart);
+  const roleForm = accessUiSource.slice(roleStart, roleEnd);
+  assert.match(roleForm, /previewIdentifier\('ROL_'/);
+  assert.doesNotMatch(roleForm, /createField\('Estado'/);
+
+  const permissionStart = accessUiSource.indexOf('function openPermissionModal(row)');
+  const permissionEnd = accessUiSource.indexOf('function renderAssignments(host)', permissionStart);
+  const permissionForm = accessUiSource.slice(permissionStart, permissionEnd);
+  assert.match(permissionForm, /previewPermissionCode\(/);
+  assert.match(permissionForm, /createSelect\(\s*operationOptions/);
+  assert.doesNotMatch(permissionForm, /createField\('Estado'/);
+  assert.match(permissionForm, /readOnly: true/);
+});
+
+test('la administración incluye filtro de módulo, catálogo de operaciones y selección masiva por bloque', () => {
+  assert.match(accessUiSource, /key: 'modulo_id',[\s\S]*?label: 'Módulo'/);
+  assert.match(accessUiSource, /function renderOperations\(host\)/);
+  assert.match(accessUiSource, /operations: renderOperations/);
+  assert.match(accessUiSource, /Seleccionar todo el bloque/);
+  assert.match(accessUiSource, /groupToggle\.indeterminate/);
+  assert.match(accessUiSource, /groupToggle\.checked = checkboxes\.length > 0/);
+});
+
+test('las actualizaciones se ejecutan por pestaña y usan el loader translúcido', () => {
+  assert.match(accessUiSource, /function refreshCurrentTabData\(showNotification\)/);
+  assert.match(accessUiSource, /getAccessManagementTabData', 'roles'/);
+  assert.match(accessUiSource, /getAccessManagementTabData', 'permissions'/);
+  assert.match(accessUiSource, /getAccessManagementTabData', 'assignments'/);
+  assert.match(accessUiSource, /state\.table\.refresh\(\)/);
+  assert.match(accessUiSource, /backdrop: 'translucent'/);
+  assert.doesNotMatch(accessUiSource, /accessRefreshButton/);
+});
