@@ -16,7 +16,8 @@ const ACCESS_MANAGEMENT_CONFIG = Object.freeze({
     rolePermissions: 'RolPermiso',
     scopes: 'AmbitosAcceso',
     audit: 'Auditoria',
-    people: 'personas'
+    people: 'personas',
+    personalData: 'servidores datos personales'
   }),
   moduleCodes: Object.freeze({
     accesses: 'ACCESOS',
@@ -775,6 +776,149 @@ function _accessValidateOrgStructure_(structureId, catalogs) {
 }
 
 /**
+ * Normaliza los valores documentales para consultas exactas.
+ * Se conservan letras y signos; únicamente se eliminan espacios y
+ * diferencias de mayúsculas/minúsculas.
+ */
+function _accessNormalizeDocumentValue_(value, label) {
+  const normalized = _accessText_(value).replace(/\\s+/g, '').toUpperCase();
+  if (!normalized) throw new Error((label || 'El documento') + ' es obligatorio.');
+  if (normalized.length > 30) throw new Error((label || 'El documento') + ' no puede superar 30 caracteres.');
+  return normalized;
+}
+
+
+function _accessLoadPersonalDocumentRecords_() {
+  const result = SUNARPCore.listRecords(
+    _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.personalData)
+  );
+  return result && Array.isArray(result.records) ? result.records : [];
+}
+
+
+function _accessFindDocumentMatches_(documentType, documentNumber, records) {
+  const expectedType = _accessNormalizeDocumentValue_(documentType, 'Tipo de documento');
+  const expectedNumber = _accessNormalizeDocumentValue_(documentNumber, 'Número de documento');
+
+  return (records || []).filter(record =>
+    _accessText_(record.tipo_documento).replace(/\\s+/g, '').toUpperCase() === expectedType &&
+    _accessText_(record.numero_documento).replace(/\\s+/g, '').toUpperCase() === expectedNumber
+  );
+}
+
+
+/**
+ * Devuelve los tipos documentales realmente utilizados en el registro
+ * de datos personales. No expone datos personales ni números de documento.
+ *
+ * Mientras se incorpora el catálogo maestro acordado, las opciones se
+ * derivan de los tipos ya registrados para evitar valores codificados.
+ */
+function getAccessDocumentTypes() {
+  _accessRequirePermission_('USUARIOS_ADMINISTRAR');
+
+  const records = _accessLoadPersonalDocumentRecords_();
+  const types = new Map();
+
+  records.forEach(record => {
+    const value = _accessText_(record.tipo_documento);
+    const key = value.replace(/\\s+/g, '').toUpperCase();
+    if (key && !types.has(key)) types.set(key, value);
+  });
+
+  return Array.from(types.values()).sort((a, b) =>
+    a.localeCompare(b, 'es', { sensitivity: 'base' })
+  );
+}
+
+
+/**
+ * Busca una persona por coincidencia exacta de tipo y número documental.
+ * La consulta y la resolución persona_id se realizan en el servidor.
+ */
+function searchAccessPersonByDocument(payload) {
+  const auth = _accessRequirePermission_('USUARIOS_ADMINISTRAR');
+
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('Debes indicar el tipo y número de documento.');
+  }
+
+  const documentType = _accessNormalizeDocumentValue_(
+    payload.tipo_documento,
+    'Tipo de documento'
+  );
+  const documentNumber = _accessNormalizeDocumentValue_(
+    payload.numero_documento,
+    'Número de documento'
+  );
+
+  const matches = _accessFindDocumentMatches_(
+    documentType,
+    documentNumber,
+    _accessLoadPersonalDocumentRecords_()
+  );
+
+  if (!matches.length) {
+    return {
+      found: false,
+      message: 'No se encontró una persona con ese tipo y número de documento.'
+    };
+  }
+
+  if (matches.length > 1) {
+    throw new Error(
+      'El documento aparece asociado a más de un registro. Debe corregirse la duplicidad antes de habilitar una cuenta.'
+    );
+  }
+
+  const documentRecord = matches[0];
+  const personaId = _accessText_(documentRecord.servidor_id);
+  const people = (auth.personasCatalog || []).filter(person =>
+    _accessText_(person.persona_id) === personaId
+  );
+
+  if (people.length !== 1) {
+    throw new Error(
+      'El documento está registrado, pero no se pudo resolver una única persona en el directorio.'
+    );
+  }
+
+  const person = people[0];
+  const name = [
+    _accessText_(person.nombres),
+    _accessText_(person.apellidos)
+  ].filter(Boolean).join(' ');
+  const email = _accessText_(person.correo_institucional);
+  const emailIsValid = /^[^\\s@]+@sunarp\\.gob\\.pe$/i.test(email);
+  const personIsActive =
+    !Object.prototype.hasOwnProperty.call(person, 'active') ||
+    _accessIsActive_(person.active);
+
+  let reason = '';
+  if (!personIsActive) {
+    reason = 'La persona está inactiva en el directorio.';
+  } else if (!emailIsValid) {
+    reason = 'La persona no tiene un correo institucional válido del dominio sunarp.gob.pe.';
+  }
+
+  return {
+    found: true,
+    canEnableAccount: personIsActive && emailIsValid,
+    reason,
+    person: {
+      persona_id: personaId,
+      nombres: _accessText_(person.nombres),
+      apellidos: _accessText_(person.apellidos),
+      nombre_completo: name,
+      correo_institucional: email,
+      tipo_documento: _accessText_(documentRecord.tipo_documento),
+      numero_documento: _accessText_(documentRecord.numero_documento)
+    }
+  };
+}
+
+
+/**
  * Crea o actualiza un usuario.
  */
 function _accessRecordUser_(auth, payload, action) {
@@ -785,6 +929,26 @@ function _accessRecordUser_(auth, payload, action) {
   const person = _accessFindBy_(auth.personasCatalog, 'persona_id', personaId);
   if (!person) throw new Error('La persona seleccionada no existe en personas.');
   _accessValidateEmail_(person.correo_institucional);
+
+  // La creación debe corresponder exactamente a la búsqueda documental
+  // realizada en el servidor; no basta con enviar persona_id desde el cliente.
+  if (action === 'create') {
+    const documentMatches = _accessFindDocumentMatches_(
+      payload.tipo_documento,
+      payload.numero_documento,
+      _accessLoadPersonalDocumentRecords_()
+    );
+
+    if (
+      documentMatches.length !== 1 ||
+      _accessText_(documentMatches[0].servidor_id) !== personaId
+    ) {
+      throw new Error(
+        'No se pudo validar el documento con la persona seleccionada. Realiza nuevamente la búsqueda.'
+      );
+    }
+  }
+
   if (personaId === _accessText_(auth.personaId) && !active) {
     throw new Error('No puedes desactivar tu propia cuenta mientras administras el gestor.');
   }
@@ -1339,21 +1503,6 @@ function getAccessManagementData() {
               }))
           };
         })
-      : [],
-
-    availablePeople: capabilities.users
-      ? data.personas.filter(person =>
-          _accessText_(person.correo_institucional) &&
-          !data.usuarios.some(user =>
-            _accessText_(user.persona_id) === _accessText_(person.persona_id)
-          )
-        ).map(person => ({
-          persona_id: _accessText_(person.persona_id),
-          correo_institucional: _accessText_(person.correo_institucional),
-          nombres: _accessText_(person.nombres),
-          apellidos: _accessText_(person.apellidos),
-          nombre_completo: [_accessText_(person.nombres), _accessText_(person.apellidos)].filter(Boolean).join(' ')
-        }))
       : [],
 
     modules: capabilities.permissions || capabilities.scopes || capabilities.userRoles
