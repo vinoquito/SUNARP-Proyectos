@@ -406,8 +406,14 @@ async function changeAccessStatus(method, id, row, entityLabel) {
   const action = isActive ? 'desactivar' : 'activar';
   const confirmed = window.confirm('¿Deseas ' + action + ' ' + entityLabel + '?\n\n' + id);
   if (!confirmed) return;
-  const result = await rpc(method, id, nextActive);
-  await refreshData(false);
+  const finishLoading = SUNARPUI.beginLoading({ backdrop: 'translucent' });
+  let result;
+  try {
+    result = await rpc(method, id, nextActive);
+    await refreshCurrentTabData(false);
+  } finally {
+    finishLoading();
+  }
   SUNARPUI.notify('success', result.message || 'Estado actualizado correctamente.');
 }
 
@@ -1916,7 +1922,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           );
         } catch (error) {
           try {
-            await refreshData(false);
+            await refreshCurrentTabData(false);
           } catch (refreshError) {
             // Se conserva el error de la configuración.
           }
@@ -2231,17 +2237,18 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       const selected = $$('input[type="checkbox"][data-permission-id]:checked', checklist)
         .map(input => input.dataset.permissionId);
       save.disabled = true;
+      const finishLoading = SUNARPUI.beginLoading({ backdrop: 'translucent' });
       try {
         await rpc('saveRolePermissions', {
           rol_id: roleSelect.value,
           permiso_ids: selected
         });
-        await refreshData(false);
+        await refreshCurrentTabData(false);
         SUNARPUI.notify('success', 'Asignaciones actualizadas correctamente.');
-        renderActiveTab('assignments');
       } catch (error) {
         SUNARPUI.notify('error', error.message);
       } finally {
+        finishLoading();
         save.disabled = false;
       }
     }, 'save');
@@ -3004,16 +3011,7 @@ window.SUNARPAccessHistory = Object.freeze({
   });
 
 
-  document.addEventListener('DOMContentLoaded', () => {
-    const refreshButton = $('#accessRefreshButton');
-
-    if (refreshButton) {
-      refreshButton.addEventListener(
-        'click',
-        () => refreshData(true)
-      );
-    }
-  });
+  // Cada pestaña administra su propio botón de actualización.
 
 
   return Object.freeze({
