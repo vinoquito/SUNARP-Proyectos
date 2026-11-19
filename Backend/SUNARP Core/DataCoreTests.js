@@ -124,6 +124,34 @@ function runCoreSelfTests_() {
     const cachedRepeated = listRecordsFromSourcesCached([{ key: 'registros', source, requiredHeaders: ['id', 'nombre'] }], 300);
     assert(cachedRepeated.registros.length === 2, 'Reutilización de la instantánea de fuente en una lectura posterior.');
 
+    // 4.2. Probar almacenamiento centralizado de valores que superan 95 KiB.
+    let largeValue = '';
+    let seed = 123456789;
+    for (let i = 0; i < 220000; i++) {
+      seed = (seed * 16807) % 2147483647;
+      largeValue += String.fromCharCode(32 + (seed % 90));
+    }
+    const largeCacheResult = putCachedValue('core-test:large-value', {
+      payload: largeValue
+    }, 300);
+    assert(
+      largeCacheResult.success &&
+      ['gzip-inline', 'gzip-chunks'].includes(largeCacheResult.storage),
+      'Almacena valores grandes mediante compresión y fragmentación centralizadas.'
+    );
+    const largeCachedValue = getCachedValue('core-test:large-value');
+    assert(
+      largeCachedValue &&
+      largeCachedValue.payload === largeValue,
+      'Reconstruye íntegramente un valor grande desde la caché.'
+    );
+    removeCachedValue('core-test:large-value');
+    assert(
+      getCachedValue('core-test:large-value') === null,
+      'La invalidación elimina el manifiesto de un valor grande.'
+    );
+
+
     expectError(() => listRecordsFromSources([{
       key: 'registros',
       source,
