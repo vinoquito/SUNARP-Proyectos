@@ -1107,168 +1107,17 @@ function createAccessStatusCell(row, method, id, entityLabel) {
   }
 
 
-  function _accessScopeSignature(scopes) {
-    return (scopes || [])
-      .map(scope => [
-        String(scope.tipo_ambito || ''),
-        String(scope.referencia_id || ''),
-        String(scope.incluir_descendientes || 'NO')
-      ].join('\u0000'))
-      .sort()
-      .join('\u0001');
-  }
-
-
   /**
-   * Persiste el borrador de accesos por módulo.
-   * Se conservan las reglas de validación y auditoría de los servicios existentes.
+   * Envía todas las asignaciones de la persona en una sola solicitud.
+   * El backend valida y sincroniza roles y ámbitos en bloque.
    */
   async function saveUserModuleAccess(personaId, editor) {
     if (!editor) return;
 
-    const capabilities = state.data.capabilities || {};
-    const canManageRoles = capabilities.userRoles === true;
-    const canManageScopes = canManageRoles && capabilities.scopes === true;
-
-    if (!canManageRoles) return;
-
-    const desiredAssignments = new Map(
-      editor.getAssignments().map(item => [item.modulo_id, item])
-    );
-
-    const previousRoles = (state.data.userRoles || []).filter(item =>
-      item.persona_id === personaId && item.active === true
-    );
-
-    const previousScopes = (state.data.scopes || []).filter(item =>
-      item.persona_id === personaId && item.active === true
-    );
-
-    const previousRoleByModule = new Map(
-      previousRoles.map(item => [item.modulo_id, item.rol_id])
-    );
-
-    const previousScopesByModule = new Map();
-    previousScopes.forEach(item => {
-      if (!previousScopesByModule.has(item.modulo_id)) {
-        previousScopesByModule.set(item.modulo_id, []);
-      }
-      previousScopesByModule.get(item.modulo_id).push({
-        tipo_ambito: item.tipo_ambito,
-        referencia_id: item.referencia_id,
-        incluir_descendientes: item.incluir_descendientes || 'NO'
-      });
+    return rpc('saveAccessUserConfiguration', {
+      persona_id: personaId,
+      accesos: editor.getAssignments()
     });
-
-    const moduleIds = new Set([
-      ...previousRoleByModule.keys(),
-      ...previousScopesByModule.keys(),
-      ...desiredAssignments.keys()
-    ]);
-
-    const changes = Array.from(moduleIds).map(moduleId => {
-      const desired = desiredAssignments.get(moduleId);
-      const previousRoleId = previousRoleByModule.get(moduleId) || '';
-      const desiredRoleId = desired ? desired.rol_id : '';
-
-      const oldScopes = previousScopesByModule.get(moduleId) || [];
-      const newScopes = desired
-        ? desired.ambitos || []
-        : [];
-
-      return {
-        modulo_id: moduleId,
-        previous_rol_id: previousRoleId,
-        rol_id: desiredRoleId,
-        previous_ambitos: oldScopes,
-        ambitos: canManageScopes
-          ? newScopes
-          : oldScopes
-      };
-    });
-
-    const roleChanges = changes.filter(item =>
-      String(item.previous_rol_id || '') !== String(item.rol_id || '')
-    );
-
-    const scopeChanges = canManageScopes
-      ? changes.filter(item =>
-          _accessScopeSignature(item.previous_ambitos) !==
-          _accessScopeSignature(item.ambitos)
-        )
-      : [];
-
-    if (!roleChanges.length && !scopeChanges.length) return;
-
-    if (!canManageScopes) {
-      const removingRoleWithScopes = roleChanges.some(item =>
-        !item.rol_id && item.previous_ambitos.length
-      );
-
-      if (removingRoleWithScopes) {
-        throw new Error(
-          'No puedes retirar un acceso que tiene ámbitos asignados porque no tienes permiso para administrarlos.'
-        );
-      }
-    }
-
-    let completedOperations = 0;
-
-    async function run(method, payload) {
-      await rpc(method, payload);
-      completedOperations++;
-    }
-
-    try {
-      // Primero se limpian los ámbitos modificados. Esto permite cambiar
-      // referencias de sede sin chocar con ámbitos antiguos en otros módulos.
-      for (const item of scopeChanges) {
-        if (item.previous_ambitos.length) {
-          await run('saveAccessScopes', {
-            persona_id: personaId,
-            modulo_id: item.modulo_id,
-            ambitos: []
-          });
-        }
-      }
-
-      for (const item of roleChanges) {
-        await run('saveAccessUserRole', {
-          persona_id: personaId,
-          modulo_id: item.modulo_id,
-          rol_id: item.rol_id,
-          active: Boolean(item.rol_id)
-        });
-      }
-
-      for (const item of scopeChanges) {
-        if (item.rol_id && item.ambitos.length) {
-          await run('saveAccessScopes', {
-            persona_id: personaId,
-            modulo_id: item.modulo_id,
-            ambitos: item.ambitos
-          });
-        }
-      }
-
-    } catch (error) {
-      if (completedOperations) {
-        try {
-          await refreshData(false);
-        } catch (refreshError) {
-          // Se conserva el error de la operación original.
-        }
-
-        throw new Error(
-          'La configuración no se completó por completo. Se guardaron ' +
-          completedOperations +
-          ' operación(es) antes del error. Actualiza la vista y revisa los accesos antes de volver a intentarlo. Detalle: ' +
-          (error.message || 'Error no identificado.')
-        );
-      }
-
-      throw error;
-    }
   }
 
 
