@@ -298,6 +298,25 @@ function assignmentContext() {
   };
 }
 
+test('la validación de contexto parcial conserva las relaciones sin exigir cargar todas las personas', () => {
+  const context = assignmentContext();
+  context.personas = [];
+  context.datosPersonales = [];
+  context.asignaciones = [{
+    asignacion_id: 'ASG_001',
+    persona_id: 'PER_001',
+    cargo_id: 'CAR_001',
+    estructura_local_id: 'REL_1',
+    local_id: ''
+  }];
+  assert.doesNotThrow(() =>
+    api.validateSnapshot(context, {
+      includePeople: false,
+      includePersonalData: false
+    })
+  );
+});
+
 test('acepta una asignación vinculada únicamente a estructura_local_id y no completa local_id', () => {
   const context = assignmentContext();
   const assignment = { estructura_local_id: 'REL_1', local_id: '' };
