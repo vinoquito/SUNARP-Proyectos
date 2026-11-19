@@ -476,9 +476,9 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       };
     }
 
-    const modules = (state.data.modules || [])
+    const allModules = (state.data.modules || []).slice();
+    const modules = allModules
       .filter(item => item.active === true)
-      .slice()
       .sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es'));
 
     const catalogs = state.data.catalogs || {};
@@ -513,7 +513,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     const draft = new Map();
 
     roleAssignments.forEach(item => {
-      const module = modules.find(candidate =>
+      const module = allModules.find(candidate =>
         candidate.modulo_id === item.modulo_id
       );
       if (!module) return;
@@ -534,7 +534,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     fallbackRoles.forEach(item => {
       if (draft.has(item.modulo_id)) return;
 
-      const module = modules.find(candidate =>
+      const module = allModules.find(candidate =>
         candidate.modulo_id === item.modulo_id
       );
       if (!module) return;
@@ -593,8 +593,11 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     host.appendChild(tableHost);
 
     function moduleName(moduleId) {
-      const match = modules.find(item => item.modulo_id === moduleId);
-      return match ? match.nombre : 'Módulo no disponible';
+      const match = allModules.find(item => item.modulo_id === moduleId);
+      if (!match) return 'Módulo no disponible';
+      return match.active === true
+        ? match.nombre
+        : match.nombre + ' (inactivo)';
     }
 
     function scopeReferenceName(scope) {
@@ -701,6 +704,10 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           const actionsCell = document.createElement('td');
           actionsCell.className = 'access-user-assignment-actions';
 
+          const moduleIsActive = modules.some(item =>
+            item.modulo_id === assignment.modulo_id
+          );
+
           const editButton = createButton(
             'Editar',
             'outline',
@@ -708,7 +715,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             'edit'
           );
           editButton.classList.add('access-small-button');
-          editButton.disabled = Boolean(disabled);
+          editButton.disabled = Boolean(disabled) || !moduleIsActive;
 
           const removeButton = createButton(
             'Eliminar',
@@ -740,7 +747,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             'delete'
           );
           removeButton.classList.add('access-small-button');
-          removeButton.disabled = Boolean(disabled);
+          removeButton.disabled = Boolean(disabled) || !moduleIsActive;
 
           actionsCell.append(editButton, removeButton);
           row.append(moduleCell, roleCell, scopesCell, actionsCell);
