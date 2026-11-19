@@ -31,7 +31,8 @@ vm.runInContext(
     'validateSnapshot: _directoryValidateSnapshot_,' +
     'assignmentSchema: _directoryGetAssignmentSchema_,' +
     'enrichAssignment: _directoryEnrichAssignment_,' +
-    'buildView: _directoryBuildView_', 'createPersonalDataMap: _directoryCreatePersonalDataMap_' +
+    'buildView: _directoryBuildView_,' +
+    'createPersonalDataMap: _directoryCreatePersonalDataMap_' +
   '};',
   sandbox,
   { filename: 'DirectoryService.js' }
