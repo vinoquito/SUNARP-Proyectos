@@ -2079,11 +2079,16 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     const grid = createFormGrid();
 
     const id = createInput('text', row && row.permiso_id, {
-      required: true, maxlength: 50, readOnly: editing
+      required: true,
+      maxlength: 50,
+      readOnly: true
     });
     const code = createInput('text', row && row.codigo, {
-      required: true, maxlength: 80, pattern: '[A-Za-z0-9_]{3,80}', readOnly: editing
+      required: true,
+      maxlength: 80,
+      readOnly: true
     });
+
     const modules = (state.data.modules || []).filter(item => item.active);
     const module = createSelect(
       modules.map(item => ({
@@ -2095,23 +2100,57 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     );
     if (editing) module.disabled = true;
 
-    const operation = createInput('text', row && row.operacion, {
-      required: true, maxlength: 60
-    });
+    const operationOptions = (state.data.operations || []).map(item => ({
+      value: item.codigo,
+      label: item.nombre + ' (' + item.codigo + ')'
+    }));
+
+    if (editing && row.operacion && !operationOptions.some(item => item.value === row.operacion)) {
+      operationOptions.unshift({
+        value: row.operacion,
+        label: row.operacion + ' (valor existente)'
+      });
+    }
+
+    const operation = createSelect(
+      operationOptions,
+      row && row.operacion,
+      'Selecciona una operación'
+    );
+    if (editing) operation.disabled = true;
+
     const description = createTextarea(row && row.descripcion, 3);
     description.required = true;
-    const active = createSelect(
-      [{ value: 'true', label: 'Activo' }, { value: 'false', label: 'Inactivo' }],
-      row ? String(Boolean(row.active)) : 'true'
-    );
+
+    function updatePermissionPreview() {
+      if (editing) {
+        id.value = row.permiso_id;
+        code.value = row.codigo;
+        return;
+      }
+
+      const selectedModule = modules.find(item => item.modulo_id === module.value);
+      const generatedCode = selectedModule
+        ? previewPermissionCode(selectedModule.codigo, operation.value)
+        : '';
+      code.value = generatedCode;
+      id.value = generatedCode
+        ? previewIdentifier('PERM_', generatedCode, 50)
+        : '';
+    }
+
+    if (!editing) {
+      module.addEventListener('change', updatePermissionPreview);
+      operation.addEventListener('change', updatePermissionPreview);
+    }
+    updatePermissionPreview();
 
     grid.append(
-      createField('ID del permiso', id),
-      createField('Código', code, 'Ejemplo: INFORMACION_PERSONAL_VER.'),
+      createField('ID generado automáticamente', id, 'Se genera a partir del módulo y la operación.'),
+      createField('Código generado automáticamente', code, 'Convención: MODULO_OPERACION.'),
       createField('Módulo', module),
       createField('Operación', operation),
-      createField('Descripción', description),
-      createField('Estado', active)
+      createField('Descripción', description)
     );
     form.appendChild(grid);
 
@@ -2120,12 +2159,12 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       form,
       () => rpc('saveAccessPermission', {
         action: editing ? 'edit' : 'create',
-        permiso_id: id.value.trim().toUpperCase(),
-        codigo: code.value.trim().toUpperCase(),
+        permiso_id: editing ? row.permiso_id : '',
+        codigo: editing ? row.codigo : '',
         modulo_id: editing ? row.modulo_id : module.value,
         operacion: operation.value.trim().toUpperCase(),
         descripcion: description.value.trim(),
-        active: active.value === 'true'
+        active: editing ? row.active : true
       }),
       editing ? 'Guardar cambios' : 'Crear permiso'
     );
