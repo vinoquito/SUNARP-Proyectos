@@ -781,7 +781,7 @@ function _accessValidateOrgStructure_(structureId, catalogs) {
  * diferencias de mayúsculas/minúsculas.
  */
 function _accessNormalizeDocumentValue_(value, label) {
-  const normalized = _accessText_(value).replace(/\\s+/g, '').toUpperCase();
+  const normalized = _accessText_(value).replace(/\s+/g, '').toUpperCase();
   if (!normalized) throw new Error((label || 'El documento') + ' es obligatorio.');
   if (normalized.length > 30) throw new Error((label || 'El documento') + ' no puede superar 30 caracteres.');
   return normalized;
@@ -801,8 +801,8 @@ function _accessFindDocumentMatches_(documentType, documentNumber, records) {
   const expectedNumber = _accessNormalizeDocumentValue_(documentNumber, 'Número de documento');
 
   return (records || []).filter(record =>
-    _accessText_(record.tipo_documento).replace(/\\s+/g, '').toUpperCase() === expectedType &&
-    _accessText_(record.numero_documento).replace(/\\s+/g, '').toUpperCase() === expectedNumber
+    _accessText_(record.tipo_documento).replace(/\s+/g, '').toUpperCase() === expectedType &&
+    _accessText_(record.numero_documento).replace(/\s+/g, '').toUpperCase() === expectedNumber
   );
 }
 
@@ -822,7 +822,7 @@ function getAccessDocumentTypes() {
 
   records.forEach(record => {
     const value = _accessText_(record.tipo_documento);
-    const key = value.replace(/\\s+/g, '').toUpperCase();
+    const key = value.replace(/\s+/g, '').toUpperCase();
     if (key && !types.has(key)) types.set(key, value);
   });
 
@@ -889,7 +889,7 @@ function searchAccessPersonByDocument(payload) {
     _accessText_(person.apellidos)
   ].filter(Boolean).join(' ');
   const email = _accessText_(person.correo_institucional);
-  const emailIsValid = /^[^\\s@]+@sunarp\\.gob\\.pe$/i.test(email);
+  const emailIsValid = /^[^\s@]+@sunarp\.gob\.pe$/i.test(email);
   const personIsActive =
     !Object.prototype.hasOwnProperty.call(person, 'active') ||
     _accessIsActive_(person.active);
