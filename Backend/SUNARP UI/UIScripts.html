@@ -19,6 +19,7 @@
   // ============================================================
 
   let pendingLoads = 0;
+  let pendingTranslucentLoads = 0;
   let shellInitialized = false;
   let resourcesLoaded = document.readyState === 'complete';
   let loaderHideTimer = null;
@@ -77,12 +78,41 @@
   }
 
   /**
+   * Sincroniza la apariencia del loader con todas las cargas pendientes.
+   * El fondo translúcido solo se aplica cuando todas las cargas activas
+   * solicitaron expresamente ese modo.
+   */
+  function syncLoaderBackdrop() {
+    const loader = $('#sunarpLoader');
+    if (!loader) return;
+
+    loader.classList.toggle(
+      'is-translucent',
+      pendingLoads > 0 && pendingTranslucentLoads === pendingLoads
+    );
+  }
+
+  /**
    * Registra una operación asíncrona.
    * Devuelve una función para indicar que terminó.
+   *
+   * Opciones:
+   * beginLoading()
+   * beginLoading({ backdrop: 'translucent' })
+   *
+   * El modo predeterminado conserva el fondo blanco.
    */
-  function beginLoading() {
+  function beginLoading(options = {}) {
+    const translucent = options.backdrop === 'translucent';
+
     pendingLoads++;
+
+    if (translucent) {
+      pendingTranslucentLoads++;
+    }
+
     showLoader();
+    syncLoaderBackdrop();
 
     let finished = false;
 
@@ -92,6 +122,14 @@
       finished = true;
       pendingLoads = Math.max(0, pendingLoads - 1);
 
+      if (translucent) {
+        pendingTranslucentLoads = Math.max(
+          0,
+          pendingTranslucentLoads - 1
+        );
+      }
+
+      syncLoaderBackdrop();
       updateLoaderVisibility();
     };
   }
