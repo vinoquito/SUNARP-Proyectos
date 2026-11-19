@@ -362,6 +362,13 @@ function _directoryBuildRelations_(context, onlyActive) {
   const sedeMap = _directoryCreateMap_(context.sedes);
   const structureTypeMap = _directoryCreateMap_(context.tiposEstructura);
   const localTypeMap = _directoryCreateMap_(context.tiposLocal);
+  const structurePathMap = new Map();
+  context.estructuraOrg.forEach(node => {
+    structurePathMap.set(
+      _directoryKey_(node.id),
+      _directoryGetStructurePath_(node, structureMap)
+    );
+  });
 
   return context.estructuraLocal.map(relation => {
     const structure = structureMap.get(_directoryKey_(relation.estructura_id));
@@ -381,7 +388,7 @@ function _directoryBuildRelations_(context, onlyActive) {
     const structureType = structureTypeMap.get(_directoryKey_(structure.tipo_estructura_id));
     const localType = localTypeMap.get(_directoryKey_(local.tipo_local_id));
 
-    const structurePath = _directoryGetStructurePath_(structure, structureMap);
+    const structurePath = structurePathMap.get(_directoryKey_(structure.id)) || [];
     const reference = _directoryText_(relation.referencia);
     const locationLabel = [local.name, reference].filter(Boolean).join(' - ');
 
@@ -662,11 +669,19 @@ function _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap
 function _directoryBuildView_(context, authorization) {
   const relations = _directoryBuildRelations_(context, false), relationMap = _directoryCreateMap_(relations);
   const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
-  const assignments = context.asignaciones.map(x => _directoryEnrichAssignment_(x, context, relationMap, peopleMap)).filter(record => {
-    const location = _directoryResolveAssignmentLocation_(record, context, false);
-    return _accessRecordIsAllowed_(authorization.auth, 'MOD_INFO_PERSONAL',
-      { estructura_id: location.estructura_id, sede_id: location.sede_id, local_id: record.local_id }, authorization.structures, authorization.locals);
-  });
+  const assignments = context.asignaciones
+    .map(item => _directoryEnrichAssignment_(item, context, relationMap, peopleMap))
+    .filter(record => _accessRecordIsAllowed_(
+      authorization.auth,
+      'MOD_INFO_PERSONAL',
+      {
+        estructura_id: record.estructura_id,
+        sede_id: record.sede_id,
+        local_id: record.local_id
+      },
+      authorization.structures,
+      authorization.locals
+    ));
   const visiblePersonIds = new Set(assignments.map(x => _directoryKey_(x.persona_id)));
   const hasTotalScope = _accessRecordIsAllowed_(authorization.auth, 'MOD_INFO_PERSONAL', {}, authorization.structures);
   const people = context.personas.filter(x => hasTotalScope || visiblePersonIds.has(_directoryKey_(x.persona_id)));
@@ -681,22 +696,33 @@ function _directorySortAssignments_(records, context) {
   context.estructuraOrg.forEach(node => pathMap.set(
     _directoryKey_(node.id), _directoryGetStructureOrderPath_(node.id, structureMap)
   ));
-  records.sort((a, b) => {
-    const locA = _directoryResolveAssignmentLocation_(a, context, false);
-    const locB = _directoryResolveAssignmentLocation_(b, context, false);
-    const sedeA = sedeOrder.get(locA.sede_id) ?? Number.MAX_SAFE_INTEGER;
-    const sedeB = sedeOrder.get(locB.sede_id) ?? Number.MAX_SAFE_INTEGER;
-    if (sedeA !== sedeB) return sedeA - sedeB;
-    const pathA = locA.estructura_id ? pathMap.get(locA.estructura_id) || [] : [];
-    const pathB = locB.estructura_id ? pathMap.get(locB.estructura_id) || [] : [];
-    const pathDiff = _directoryCompareStructurePaths_(pathA, pathB);
-    if (pathDiff) return pathDiff;
-    const localDiff = _directoryCompare_(locA.local ? locA.local.name : '', locB.local ? locB.local.name : '');
-    if (localDiff) return localDiff;
-    return _directoryCompare_(Number(a.order), Number(b.order)) ||
-      _directoryCompare_(a.apellidos, b.apellidos) || _directoryCompare_(a.nombres, b.nombres);
+
+  // Resolver la adscripción una sola vez por registro, no en cada
+  // comparación del algoritmo de ordenamiento.
+  const sortable = records.map(record => {
+    const location = _directoryResolveAssignmentLocation_(record, context, false);
+    return {
+      record,
+      sedeOrder: sedeOrder.get(location.sede_id) ?? Number.MAX_SAFE_INTEGER,
+      structurePath: location.estructura_id
+        ? pathMap.get(location.estructura_id) || []
+        : [],
+      localName: location.local ? location.local.name : ''
+    };
   });
-  return records;
+
+  sortable.sort((a, b) => {
+    if (a.sedeOrder !== b.sedeOrder) return a.sedeOrder - b.sedeOrder;
+    const pathDiff = _directoryCompareStructurePaths_(a.structurePath, b.structurePath);
+    if (pathDiff) return pathDiff;
+    const localDiff = _directoryCompare_(a.localName, b.localName);
+    if (localDiff) return localDiff;
+    return _directoryCompare_(Number(a.record.order), Number(b.record.order)) ||
+      _directoryCompare_(a.record.apellidos, b.record.apellidos) ||
+      _directoryCompare_(a.record.nombres, b.record.nombres);
+  });
+
+  return sortable.map(item => item.record);
 }
 
 function _directoryGetPersonSchema_() {
@@ -772,16 +798,16 @@ function getDirectoryInitialData() {
   const view = _directoryBuildView_(context, authorization);
 
   const structureMap = _directoryCreateMap_(context.estructuraOrg);
-  const activeStructure = context.estructuraOrg.filter(_directoryIsActive_).map(node => {
-    const type = context.tiposEstructura.find(item =>
-      _directoryKey_(item.id) === _directoryKey_(node.tipo_estructura_id)
-    );
-
-    return Object.assign({}, node, {
-      path: _directoryGetStructurePath_(node, structureMap),
-      tipo_estructura_name: type ? type.name : ''
+  const structureTypeMap = _directoryCreateMap_(context.tiposEstructura);
+  const activeStructure = context.estructuraOrg
+    .filter(_directoryIsActive_)
+    .map(node => {
+      const type = structureTypeMap.get(_directoryKey_(node.tipo_estructura_id));
+      return Object.assign({}, node, {
+        path: _directoryGetStructurePath_(node, structureMap),
+        tipo_estructura_name: type ? type.name : ''
+      });
     });
-  });
 
   const scopedStructures = activeStructure.filter(node =>
     _accessRecordIsAllowed_(
@@ -792,28 +818,43 @@ function getDirectoryInitialData() {
     )
   );
 
-  const allowedStructureIds = new Set(scopedStructures.map(item => _directoryKey_(item.id)));
+  const allowedStructureIds = new Set(
+    scopedStructures.map(item => _directoryKey_(item.id))
+  );
   const scopedRelations = view.relations.filter(item =>
     item.active && allowedStructureIds.has(_directoryKey_(item.estructura_id))
   );
+
   // Los locales directos se autorizan por su sede; no requieren una
   // relación estructura_local ni se inventa una estructura orgánica.
   const scopedLocals = context.locales.filter(local =>
     _directoryIsActive_(local) &&
-    _accessRecordIsAllowed_(authorization.auth, 'MOD_INFO_PERSONAL',
-      { sede_id: _directoryKey_(local.sede_id), local_id: _directoryKey_(local.id) }, authorization.structures, authorization.locals)
+    _accessRecordIsAllowed_(
+      authorization.auth,
+      'MOD_INFO_PERSONAL',
+      { sede_id: _directoryKey_(local.sede_id), local_id: _directoryKey_(local.id) },
+      authorization.structures,
+      authorization.locals
+    )
   );
-  const relationLocalIds = new Set(scopedRelations.map(item => _directoryKey_(item.local_id)));
+  const relationLocalIds = new Set(
+    scopedRelations.map(item => _directoryKey_(item.local_id))
+  );
+  const scopedLocalIds = new Set(
+    scopedLocals.map(item => _directoryKey_(item.id))
+  );
   const catalogLocals = context.locales.filter(local =>
     _directoryIsActive_(local) &&
-    (relationLocalIds.has(_directoryKey_(local.id)) ||
-      scopedLocals.some(item => _directoryKey_(item.id) === _directoryKey_(local.id)))
+    (
+      relationLocalIds.has(_directoryKey_(local.id)) ||
+      scopedLocalIds.has(_directoryKey_(local.id))
+    )
   );
+
   const allowedSedeIds = new Set([
     ...scopedStructures.map(item => _directoryKey_(item.sede_id)),
     ...catalogLocals.map(item => _directoryKey_(item.sede_id))
   ]);
-  const allowedLocalIds = new Set(catalogLocals.map(item => _directoryKey_(item.id)));
   const allowedLocalTypes = new Set(
     catalogLocals.map(item => _directoryKey_(item.tipo_local_id))
   );
@@ -822,26 +863,32 @@ function getDirectoryInitialData() {
   );
 
   const assignments = _directorySortAssignments_(view.assignments.slice(), context);
+  const personalDataByPerson = _directoryCreatePersonalDataMap_(context.datosPersonales);
 
   return {
     catalogs: {
-      sedes: context.sedes.filter(item => _directoryIsActive_(item) && allowedSedeIds.has(_directoryKey_(item.id))),
-      tiposLocal: context.tiposLocal.filter(item => _directoryIsActive_(item) && allowedLocalTypes.has(_directoryKey_(item.id))),
+      sedes: context.sedes.filter(item =>
+        _directoryIsActive_(item) && allowedSedeIds.has(_directoryKey_(item.id))
+      ),
+      tiposLocal: context.tiposLocal.filter(item =>
+        _directoryIsActive_(item) && allowedLocalTypes.has(_directoryKey_(item.tipo_local_id || item.id))
+      ),
       locales: catalogLocals,
-      tiposEstructura: context.tiposEstructura.filter(item => _directoryIsActive_(item) && allowedStructureTypes.has(_directoryKey_(item.id))),
-      tiposDocumento: (context.documentTypes || []).filter(_directoryIsActive_).map(item => ({
-        id: _directoryKey_(item.id),
-        name: _directoryText_(item.name)
-      })),
+      tiposEstructura: context.tiposEstructura.filter(item =>
+        _directoryIsActive_(item) && allowedStructureTypes.has(_directoryKey_(item.id))
+      ),
+      tiposDocumento: (context.documentTypes || [])
+        .filter(_directoryIsActive_)
+        .map(item => ({
+          id: _directoryKey_(item.id),
+          name: _directoryText_(item.name)
+        })),
       estructuraOrg: scopedStructures,
       estructuraLocal: scopedRelations,
       cargos: context.cargos.filter(_directoryIsActive_)
     },
-    // El frontend consume la colección consolidada records.
-    // No se envían people y assignments por separado: duplicaban casi
-    // íntegramente la información y aumentaban innecesariamente la respuesta.
     records: assignments.map(item => {
-      const personalData = _directoryGetPersonalDataRecord_(item.persona_id, context.datosPersonales);
+      const personalData = personalDataByPerson.get(_directoryKey_(item.persona_id));
       return Object.assign({}, item, {
         id: item.asignacion_id,
         tipo_documento: personalData ? personalData.tipo_documento : '',
@@ -1183,6 +1230,15 @@ function _directoryGetPersonalDataRecord_(personaId, records) {
   return (records || []).find(item =>
     _directoryKey_(item.servidor_id) === _directoryKey_(personaId)
   ) || null;
+}
+
+function _directoryCreatePersonalDataMap_(records) {
+  const byPerson = new Map();
+  (records || []).forEach(record => {
+    const personaId = _directoryKey_(record.servidor_id);
+    if (personaId) byPerson.set(personaId, record);
+  });
+  return byPerson;
 }
 
 function _directoryAssertDocumentAvailable_(type, number, records, excludedPersonaId) {
