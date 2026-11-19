@@ -826,19 +826,6 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       host.appendChild(note);
     }
 
-    if (disabled) {
-      const noteHost = document.createElement('div');
-      noteHost.className = 'access-user-module-disabled-note';
-      SUNARPUI.showAlert({
-        containerId: 'accessUserModuleDisabledAlert',
-        type: 'warning',
-        title: 'Cuenta inactiva',
-        message: 'Activa la cuenta desde el listado de usuarios para modificar sus roles y ámbitos.'
-      });
-      noteHost.id = 'accessUserModuleDisabledAlert';
-      host.prepend(noteHost);
-    }
-
     return {
       element: host,
       getAssignments: () => editors.map(editor => ({
