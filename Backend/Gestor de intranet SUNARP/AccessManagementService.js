@@ -1461,6 +1461,513 @@ function saveAccessScopes(payload) {
 }
 
 
+/**
+ * Guarda en bloque los roles y ámbitos de acceso de una persona.
+ *
+ * El cliente envía el conjunto completo de asignaciones activas.
+ * SUNARP Core sincroniza todas las relaciones de la persona mediante
+ * claves compuestas, evitando una llamada remota por módulo.
+ */
+function saveAccessUserConfiguration(payload) {
+  const auth = _accessRequirePermission_('USUARIOS_ADMINISTRAR');
+  _accessRequirePermission_('ROLES_ADMINISTRAR');
+
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('No se recibieron los accesos que deseas guardar.');
+  }
+
+  const personaId = _accessText_(payload.persona_id);
+  const accessInput = Array.isArray(payload.accesos)
+    ? payload.accesos
+    : null;
+
+  if (!personaId || !accessInput) {
+    throw new Error('Debes indicar la persona y la lista de accesos por módulo.');
+  }
+
+  const data = _accessLoadSecurityData_();
+
+  const user = data.usuarios.find(item =>
+    _accessText_(item.persona_id) === personaId &&
+    _accessIsActive_(item.active)
+  );
+
+  if (!user) {
+    throw new Error('La persona no tiene una cuenta activa.');
+  }
+
+  const accessModuleId = _accessResolveModuleId_(
+    auth,
+    ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses
+  );
+
+  const canManageScopes = _accessHasPermission_(
+    auth,
+    'AMBITOS_ACCESO_ADMINISTRAR',
+    accessModuleId
+  );
+
+  const modulesById = new Map(
+    data.modulos.map(module => [
+      _accessText_(module.modulo_id),
+      module
+    ])
+  );
+
+  const rolesById = new Map(
+    data.roles.map(role => [
+      _accessText_(role.rol_id),
+      role
+    ])
+  );
+
+  const previousRoles = data.usuarioRol
+    .filter(item =>
+      _accessText_(item.persona_id) === personaId &&
+      _accessIsActive_(item.active)
+    )
+    .map(item => ({
+      modulo_id: _accessText_(item.modulo_id),
+      rol_id: _accessText_(item.rol_id)
+    }));
+
+  const previousScopes = data.ambitosAcceso
+    .filter(item =>
+      _accessText_(item.persona_id) === personaId &&
+      _accessIsActive_(item.active)
+    )
+    .map(item => ({
+      modulo_id: _accessText_(item.modulo_id),
+      tipo_ambito: _accessUpper_(item.tipo_ambito),
+      referencia_id: _accessText_(item.referencia_id),
+      incluir_descendientes: _accessUpper_(item.incluir_descendientes) === 'SI'
+        ? 'SI'
+        : 'NO'
+    }));
+
+  const previousRoleByModule = new Map(
+    previousRoles.map(item => [item.modulo_id, item.rol_id])
+  );
+
+  const previousScopesByModule = new Map();
+
+  previousScopes.forEach(scope => {
+    if (!previousScopesByModule.has(scope.modulo_id)) {
+      previousScopesByModule.set(scope.modulo_id, []);
+    }
+
+    previousScopesByModule.get(scope.modulo_id).push(scope);
+  });
+
+  const requestedByModule = new Map();
+
+  accessInput.forEach((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new Error('La asignación número ' + (index + 1) + ' no es válida.');
+    }
+
+    const moduleId = _accessText_(item.modulo_id);
+    const roleId = _accessText_(item.rol_id);
+
+    if (!moduleId || !roleId) {
+      throw new Error('Cada acceso debe tener un módulo y un rol.');
+    }
+
+    if (requestedByModule.has(moduleId)) {
+      throw new Error('Has agregado más de una asignación para el mismo módulo.');
+    }
+
+    requestedByModule.set(moduleId, {
+      modulo_id: moduleId,
+      rol_id: roleId,
+      ambitos: Array.isArray(item.ambitos) ? item.ambitos : []
+    });
+  });
+
+  const desiredRolesByModule = new Map();
+
+  // Las asignaciones de módulos inactivos o que ya no figuran en el catálogo
+  // se preservan. No se deben retirar como efecto colateral de editar otros módulos.
+  previousRoles.forEach(previous => {
+    const module = modulesById.get(previous.modulo_id);
+
+    if (!module || !_accessIsActive_(module.active)) {
+      desiredRolesByModule.set(previous.modulo_id, previous.rol_id);
+    }
+  });
+
+  requestedByModule.forEach((requested, moduleId) => {
+    const module = modulesById.get(moduleId);
+    const previousRoleId = previousRoleByModule.get(moduleId) || '';
+
+    if (!module || !_accessIsActive_(module.active)) {
+      if (previousRoleId && previousRoleId === requested.rol_id) {
+        desiredRolesByModule.set(moduleId, previousRoleId);
+        return;
+      }
+
+      throw new Error(
+        'No puedes agregar ni modificar asignaciones de un módulo inactivo o no disponible.'
+      );
+    }
+
+    const role = rolesById.get(requested.rol_id);
+
+    if (
+      (!role || !_accessIsActive_(role.active)) &&
+      previousRoleId !== requested.rol_id
+    ) {
+      throw new Error('El rol seleccionado no existe o está inactivo.');
+    }
+
+    desiredRolesByModule.set(moduleId, requested.rol_id);
+  });
+
+  const desiredRoles = Array.from(desiredRolesByModule.entries())
+    .map(([moduloId, roleId]) => ({
+      modulo_id: moduloId,
+      rol_id: roleId
+    }));
+
+  const desiredRoleIds = new Set(
+    desiredRoles.map(item => item.modulo_id)
+  );
+
+  if (!canManageScopes) {
+    const removingRoleWithScopes = previousScopes.some(scope =>
+      previousRoleByModule.has(scope.modulo_id) &&
+      !desiredRoleIds.has(scope.modulo_id)
+    );
+
+    if (removingRoleWithScopes) {
+      throw new Error(
+        'No puedes retirar un acceso que tiene ámbitos asignados porque no tienes permiso para administrarlos.'
+      );
+    }
+  }
+
+  let desiredScopes = previousScopes.map(scope => Object.assign({}, scope));
+
+  if (canManageScopes) {
+    const catalogs = _accessOrgCatalog_();
+    const structures = catalogs.estructuraOrg || [];
+    const sites = catalogs.sedes || [];
+    const locals = catalogs.locales || [];
+
+    const normalizedScopes = [];
+
+    requestedByModule.forEach((requested, moduleId) => {
+      const module = modulesById.get(moduleId);
+
+      // Los ámbitos de módulos inactivos se conservan sin modificarlos.
+      if (!module || !_accessIsActive_(module.active)) {
+        return;
+      }
+
+      requested.ambitos.forEach(scopeInput => {
+        const type = _accessUpper_(
+          scopeInput && (scopeInput.tipo_ambito || scopeInput.scopeType)
+        );
+
+        const referenceId = _accessText_(
+          scopeInput && (scopeInput.referencia_id || scopeInput.referenceId)
+        );
+
+        const includeInput = scopeInput && scopeInput.incluir_descendientes !== undefined
+          ? scopeInput.incluir_descendientes
+          : scopeInput && scopeInput.includeDescendants;
+
+        if (!['TOTAL', 'SEDE', 'ESTRUCTURA_ORG', 'LOCAL'].includes(type)) {
+          throw new Error('Tipo de ámbito no válido: ' + (type || '(vacío)') + '.');
+        }
+
+        if (type === 'TOTAL') {
+          if (referenceId) {
+            throw new Error('Un ámbito Total no debe tener una referencia.');
+          }
+
+          normalizedScopes.push({
+            modulo_id: moduleId,
+            tipo_ambito: type,
+            referencia_id: '',
+            incluir_descendientes: 'NO'
+          });
+
+          return;
+        }
+
+        if (!referenceId) {
+          throw new Error('El ámbito ' + type + ' requiere una referencia.');
+        }
+
+        if (type === 'SEDE') {
+          const site = _accessFindBy_(sites, 'id', referenceId);
+
+          if (!site || !_accessCatalogIsActive_(site)) {
+            throw new Error('La sede seleccionada no existe o está inactiva.');
+          }
+
+          normalizedScopes.push({
+            modulo_id: moduleId,
+            tipo_ambito: type,
+            referencia_id: referenceId,
+            incluir_descendientes: 'NO'
+          });
+
+          return;
+        }
+
+        if (type === 'ESTRUCTURA_ORG') {
+          const structure = _accessFindBy_(
+            structures,
+            'id',
+            referenceId
+          );
+
+          if (!structure || !_accessCatalogIsActive_(structure)) {
+            throw new Error('La unidad orgánica seleccionada no existe o está inactiva.');
+          }
+
+          const descendants = includeInput === true ||
+            _accessUpper_(includeInput) === 'SI' ||
+            _accessUpper_(includeInput) === 'SÍ' ||
+            _accessUpper_(includeInput) === 'TRUE';
+
+          normalizedScopes.push({
+            modulo_id: moduleId,
+            tipo_ambito: type,
+            referencia_id: referenceId,
+            incluir_descendientes: descendants ? 'SI' : 'NO'
+          });
+
+          return;
+        }
+
+        const local = _accessFindBy_(locals, 'id', referenceId);
+
+        if (!local || !_accessCatalogIsActive_(local)) {
+          throw new Error('El local seleccionado no existe o está inactivo.');
+        }
+
+        normalizedScopes.push({
+          modulo_id: moduleId,
+          tipo_ambito: 'LOCAL',
+          referencia_id: referenceId,
+          incluir_descendientes: 'NO'
+        });
+      });
+    });
+
+    // Preserva los ámbitos de módulos inactivos o no disponibles.
+    previousScopes.forEach(scope => {
+      const module = modulesById.get(scope.modulo_id);
+
+      if (!module || !_accessIsActive_(module.active)) {
+        normalizedScopes.push(Object.assign({}, scope));
+      }
+    });
+
+    const totalModules = new Set();
+
+    normalizedScopes.forEach(scope => {
+      if (scope.tipo_ambito === 'TOTAL') {
+        if (totalModules.has(scope.modulo_id)) {
+          throw new Error('Un ámbito Total es exclusivo dentro de cada módulo.');
+        }
+        totalModules.add(scope.modulo_id);
+      } else if (totalModules.has(scope.modulo_id)) {
+        throw new Error('No puedes combinar Total con otros ámbitos del mismo módulo.');
+      }
+    });
+
+    const seenScopes = new Set();
+
+    normalizedScopes.forEach(scope => {
+      const key = [
+        scope.modulo_id,
+        scope.tipo_ambito,
+        scope.referencia_id
+      ].join('\u0000');
+
+      if (seenScopes.has(key)) {
+        throw new Error('Has agregado un ámbito duplicado.');
+      }
+
+      seenScopes.add(key);
+    });
+
+    desiredScopes = normalizedScopes;
+
+    // Los ámbitos específicos de una persona deben corresponder a una sola sede
+    // en todos sus módulos.
+    const siteIds = new Set();
+
+    desiredScopes.forEach(scope => {
+      if (scope.tipo_ambito === 'TOTAL') return;
+
+      const referenceId = _accessText_(scope.referencia_id);
+      let siteId = '';
+
+      if (scope.tipo_ambito === 'SEDE') {
+        const site = _accessFindBy_(sites, 'id', referenceId);
+        siteId = _accessCatalogIsActive_(site)
+          ? _accessText_(site.id)
+          : '';
+      }
+
+      if (scope.tipo_ambito === 'ESTRUCTURA_ORG') {
+        const structure = _accessFindBy_(structures, 'id', referenceId);
+        siteId = _accessCatalogIsActive_(structure)
+          ? _accessText_(structure.sede_id)
+          : '';
+      }
+
+      if (scope.tipo_ambito === 'LOCAL') {
+        const local = _accessFindBy_(locals, 'id', referenceId);
+        siteId = _accessCatalogIsActive_(local)
+          ? _accessText_(local.sede_id)
+          : '';
+      }
+
+      if (!siteId) {
+        throw new Error(
+          'Existe un ámbito específico con una referencia inválida. Corrige esa asignación antes de continuar.'
+        );
+      }
+
+      siteIds.add(siteId);
+    });
+
+    if (siteIds.size > 1) {
+      throw new Error(
+        'Los ámbitos específicos de una persona deben pertenecer a una sola sede, aunque correspondan a módulos distintos.'
+      );
+    }
+  }
+
+  const roleSignature = records => records
+    .map(item => item.modulo_id + '\u0000' + item.rol_id)
+    .sort()
+    .join('\u0001');
+
+  const scopeSignature = records => records
+    .map(item => [
+      item.modulo_id,
+      item.tipo_ambito,
+      item.referencia_id,
+      item.incluir_descendientes || 'NO'
+    ].join('\u0000'))
+    .sort()
+    .join('\u0001');
+
+  const rolesChanged =
+    roleSignature(previousRoles) !== roleSignature(desiredRoles);
+
+  const scopesChanged = canManageScopes &&
+    scopeSignature(previousScopes) !== scopeSignature(desiredScopes);
+
+  if (!rolesChanged && !scopesChanged) {
+    return {
+      success: true,
+      message: 'Los accesos ya se encuentran actualizados.'
+    };
+  }
+
+  const after = _accessCopyData_(data);
+
+  after.usuarioRol = after.usuarioRol.filter(row =>
+    !(
+      _accessText_(row.persona_id) === personaId &&
+      _accessIsActive_(row.active)
+    )
+  );
+
+  desiredRoles.forEach(item => {
+    after.usuarioRol.push({
+      persona_id: personaId,
+      modulo_id: item.modulo_id,
+      rol_id: item.rol_id,
+      active: true
+    });
+  });
+
+  if (canManageScopes) {
+    after.ambitosAcceso = after.ambitosAcceso.filter(row =>
+      !(
+        _accessText_(row.persona_id) === personaId &&
+        _accessIsActive_(row.active)
+      )
+    );
+
+    desiredScopes.forEach(item => {
+      after.ambitosAcceso.push(Object.assign({
+        persona_id: personaId,
+        active: true
+      }, item));
+    });
+  }
+
+  _accessAssertAdministratorContinuity_(data, after);
+
+  const person = _accessFindBy_(data.personas, 'persona_id', personaId);
+  const displayName = [
+    person && person.nombres,
+    person && person.apellidos
+  ].map(_accessText_).filter(Boolean).join(' ');
+
+  return _accessRunAudited_(auth, {
+    accion: 'ACTUALIZAR_ACCESOS_USUARIO',
+    modulo: ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses,
+    tipo_entidad: 'USUARIO',
+    registro_id: personaId,
+    registro_nombre: displayName,
+    detalle: 'Actualización conjunta de roles por módulo y ámbitos de acceso.',
+    datos_antes: {
+      roles: previousRoles,
+      ambitos: previousScopes
+    }
+  }, () => {
+    const roleResult = rolesChanged
+      ? SUNARPCore.syncRecordsByKey(
+          _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.userRoles),
+          { persona_id: personaId },
+          ['modulo_id'],
+          desiredRoles,
+          'active',
+          true,
+          false
+        )
+      : null;
+
+    const scopeResult = scopesChanged
+      ? SUNARPCore.syncRecordsByKey(
+          _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.scopes),
+          { persona_id: personaId },
+          ['modulo_id', 'tipo_ambito', 'referencia_id'],
+          desiredScopes,
+          'active',
+          true,
+          false,
+          { allowEmptyKeyFields: ['referencia_id'] }
+        )
+      : null;
+
+    return {
+      value: {
+        success: true,
+        message: 'Los accesos por módulo se actualizaron correctamente.',
+        roles: roleResult,
+        ambitos: scopeResult
+      },
+      auditAfter: {
+        roles: desiredRoles,
+        ambitos: canManageScopes ? desiredScopes : previousScopes
+      }
+    };
+  });
+}
+
+
 function getAccessManagementData() {
   const auth = _accessGetAuthContext_();
   const accessModuleId = _accessResolveModuleId_(
