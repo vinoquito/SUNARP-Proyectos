@@ -539,6 +539,18 @@ test('el Directorio utiliza exclusivamente la caché central de SUNARP Core', ()
   assert.match(serviceSource, /function clearDirectoryCache\(\)/);
 });
 
+test('la carga inicial entrega solo catálogos y la lista de asignaciones admite filtros y paginación en servidor', () => {
+  const initialStart = serviceSource.indexOf('function getDirectoryInitialData() {');
+  const initialEnd = serviceSource.indexOf('function listDirectoryPeople(', initialStart);
+  const initial = serviceSource.slice(initialStart, initialEnd);
+  assert.match(initial, /records:\s*\[\]/);
+  assert.match(serviceSource, /if \(options\.sedeId\)/);
+  assert.match(serviceSource, /if \(options\.cargoId\)/);
+  assert.match(serviceSource, /if \(options\.estructuraId\)/);
+  assert.match(serviceSource, /pageSize > 100/);
+  assert.match(serviceSource, /view\.assignments\.slice\(offset, offset \+ limit\)/);
+});
+
 test('la carga inicial no recupera ni entrega datos personales de todos los servidores', () => {
   const initialDataStart = serviceSource.indexOf('function getDirectoryInitialData() {');
   const initialDataEnd = serviceSource.indexOf('function listDirectoryPeople(', initialDataStart);

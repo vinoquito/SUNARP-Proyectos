@@ -762,11 +762,14 @@ function getDirectoryInitialData() {
         })),
       estructuraOrg: scopedStructures,
       estructuraLocal: scopedRelations,
-      cargos: context.cargos.filter(_directoryIsActive_)
+      cargos: context.cargos.filter(item =>
+        _directoryIsActive_(item) &&
+        assignments.some(record => _directoryKey_(record.cargo_id) === _directoryKey_(item.id))
+      )
     },
-    records: assignments.map(item => Object.assign({}, item, {
-      id: item.asignacion_id
-    })),
+    // La tabla consulta sus filas bajo demanda mediante listDirectoryAssignments.
+    // No se entrega la colección completa al navegador durante el bootstrap.
+    records: [],
     summary: {
       people: view.people.length,
       assignments: assignments.length
@@ -864,6 +867,35 @@ function listDirectoryAssignments(options) {
     );
   }
 
+  if (options.sedeId) {
+    view.assignments = view.assignments.filter(item =>
+      _directoryKey_(item.sede_id) === _directoryKey_(options.sedeId)
+    );
+  }
+
+  if (options.cargoId) {
+    view.assignments = view.assignments.filter(item =>
+      _directoryKey_(item.cargo_id) === _directoryKey_(options.cargoId)
+    );
+  }
+
+  if (options.estructuraId) {
+    const targetId = _directoryKey_(options.estructuraId);
+    const structures = _directoryCreateMap_(context.estructuraOrg);
+    view.assignments = view.assignments.filter(item => {
+      let current = structures.get(_directoryKey_(item.estructura_id));
+      const visited = new Set();
+      while (current) {
+        const currentId = _directoryKey_(current.id);
+        if (!currentId || visited.has(currentId)) break;
+        if (currentId === targetId) return true;
+        visited.add(currentId);
+        current = structures.get(_directoryKey_(current.parent_id));
+      }
+      return false;
+    });
+  }
+
   const search = _directoryText_(options.search).toLocaleLowerCase();
   if (search) {
     const fields = [
@@ -889,23 +921,39 @@ function listDirectoryAssignments(options) {
   );
 
   const total = view.assignments.length;
-  const offset = options.offset === undefined ? 0 : Number(options.offset);
-  if (!Number.isInteger(offset) || offset < 0) throw new Error('offset no es válido.');
-
+  let offset;
   let limit = null;
-  if (options.limit !== undefined && options.limit !== null) {
-    limit = Number(options.limit);
-    if (!Number.isInteger(limit) || limit < 0) throw new Error('limit no es válido.');
-    view.assignments = view.assignments.slice(offset, offset + limit);
+  let page = null;
+  let pageSize = null;
+
+  if (options.page !== undefined || options.pageSize !== undefined) {
+    page = Math.max(1, Number.parseInt(options.page, 10) || 1);
+    pageSize = Number.parseInt(options.pageSize, 10) || 10;
+    if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+      throw new Error('pageSize debe estar entre 1 y 100.');
+    }
+    offset = (page - 1) * pageSize;
+    limit = pageSize;
   } else {
-    view.assignments = view.assignments.slice(offset);
+    offset = options.offset === undefined ? 0 : Number(options.offset);
+    if (!Number.isInteger(offset) || offset < 0) throw new Error('offset no es válido.');
+    if (options.limit !== undefined && options.limit !== null) {
+      limit = Number(options.limit);
+      if (!Number.isInteger(limit) || limit < 0) throw new Error('limit no es válido.');
+    }
   }
+
+  view.assignments = limit === null
+    ? view.assignments.slice(offset)
+    : view.assignments.slice(offset, offset + limit);
 
   return {
     records: view.assignments,
-    total: total,
-    offset: offset,
-    limit: limit
+    total,
+    offset,
+    limit,
+    page,
+    pageSize
   };
 }
 
