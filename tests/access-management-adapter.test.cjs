@@ -571,3 +571,15 @@ test('la migración transforma columnas antiguas sin perder referencias y no alt
     'la migración no debe escribir valores ni modificar el catálogo Operaciones'
   );
 });
+
+
+test('la actualización de Asignación de permisos usa claves reales de la instantánea de seguridad', () => {
+  const start = accessSource.indexOf("if (tab === 'assignments')");
+  const end = accessSource.indexOf("if (tab === 'operations')", start);
+  assert.ok(start >= 0 && end > start);
+  const endpoint = accessSource.slice(start, end);
+  assert.match(endpoint, /modules:\s*\(result\.modulos \|\| \[\]\)\.map/);
+  assert.match(endpoint, /permissions:\s*\(result\.permisos \|\| \[\]\)\.map/);
+  assert.match(endpoint, /rolePermissions:\s*\(result\.rolPermiso \|\| \[\]\)\.map/);
+  assert.doesNotMatch(endpoint, /result\.modules|result\.permissions|result\.rolePermissions/);
+});
