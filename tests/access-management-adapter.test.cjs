@@ -334,6 +334,15 @@ test('la interfaz administra roles y ámbitos mediante persona_id y modulo_id', 
   assert.doesNotMatch(accessUiSource, /row\.estado|item\.estado|correo_original|estructura_org_id/);
 });
 
+test('Agregar acceso incorpora directamente el ámbito seleccionado sin acción intermedia', () => {
+  assert.doesNotMatch(accessUiSource, /Agregar ámbito|function addScope\(\)/);
+  assert.match(accessUiSource, /Selecciona un ámbito \(opcional\)/);
+  assert.match(accessUiSource, /if \(canManageScopes && scopeType\.value\)/);
+  assert.match(accessUiSource, /nextScopes\.push\(\{[\s\S]*?tipo_ambito: type,[\s\S]*?referencia_id: referenceId/);
+  assert.match(accessUiSource, /ambitos: nextScopes/);
+  assert.match(accessUiSource, /editorHost\.replaceChildren\(\);[\s\S]*?refreshModulePicker\(\);[\s\S]*?renderTable\(\);/);
+});
+
 test('la cascada de ámbitos parte del local y recorre solo la jerarquía vinculada', () => {
   const start = accessUiSource.indexOf('function structureHierarchyForLocal(localId)');
   const end = accessUiSource.indexOf('function structureTypeName(structure)', start);
