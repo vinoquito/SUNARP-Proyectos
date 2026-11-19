@@ -2281,10 +2281,30 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       groups.forEach((items, moduleId) => {
         const group = document.createElement('section');
         group.className = 'access-permission-group';
-        const heading = document.createElement('h4');
+        const heading = document.createElement('div');
+        heading.className = 'access-permission-group-heading';
+
         const module = modules.get(moduleId);
-        heading.textContent = module ? module.nombre : moduleId;
+        const title = document.createElement('h4');
+        title.textContent = module ? module.nombre : moduleId;
+
+        const groupToggleLabel = document.createElement('label');
+        groupToggleLabel.className = 'access-check-row access-check-row--group';
+        const groupToggle = document.createElement('input');
+        groupToggle.type = 'checkbox';
+        groupToggle.setAttribute('aria-label', 'Seleccionar todos los permisos de ' + (module ? module.nombre : moduleId));
+        const groupToggleText = document.createElement('span');
+        groupToggleText.textContent = 'Seleccionar todo el bloque';
+        groupToggleLabel.append(groupToggle, groupToggleText);
+        heading.append(title, groupToggleLabel);
         group.appendChild(heading);
+
+        function syncGroupToggle() {
+          const checkboxes = Array.from(group.querySelectorAll('input[data-permission-id]'));
+          const selectedCount = checkboxes.filter(input => input.checked).length;
+          groupToggle.checked = checkboxes.length > 0 && selectedCount === checkboxes.length;
+          groupToggle.indeterminate = selectedCount > 0 && selectedCount < checkboxes.length;
+        }
 
         items.forEach((permission, index) => {
           const label = document.createElement('label');
@@ -2294,11 +2314,21 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           checkbox.checked = assigned.has(permission.permiso_id);
           checkbox.dataset.permissionId = permission.permiso_id;
           checkbox.id = 'access-permission-' + moduleId + '-' + index;
+          checkbox.addEventListener('change', syncGroupToggle);
           const text = document.createElement('span');
           text.textContent = permission.descripcion + ' (' + permission.codigo + ')';
           label.append(checkbox, text);
           group.appendChild(label);
         });
+
+        groupToggle.addEventListener('change', () => {
+          group.querySelectorAll('input[data-permission-id]').forEach(checkbox => {
+            checkbox.checked = groupToggle.checked;
+          });
+          syncGroupToggle();
+        });
+
+        syncGroupToggle();
         checklist.appendChild(group);
       });
     }
