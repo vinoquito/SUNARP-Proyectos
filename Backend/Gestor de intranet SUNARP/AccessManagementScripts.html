@@ -1006,15 +1006,45 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     alertHost.id = 'accessUserDocumentSearchAlert';
 
     function showSearchAlert(type, title, message, details) {
+      const detailLines = Array.isArray(details)
+        ? details.map(value => String(value || '').trim()).filter(Boolean)
+        : [];
+
+      const combinedMessage = detailLines.length
+        ? detailLines.concat(message ? ['', String(message)] : []).join('\n')
+        : String(message || '');
+
       SUNARPUI.showAlert({
         containerId: alertHost.id,
         type,
         title,
-        message,
-        details,
+        message: combinedMessage,
         dismissible: false,
         replace: true
       });
+    }
+
+    function beginDocumentSearchLoading() {
+      const overlay = document.createElement('div');
+      overlay.className = 'access-search-loading-overlay';
+      overlay.setAttribute('role', 'status');
+      overlay.setAttribute('aria-live', 'polite');
+
+      const content = document.createElement('div');
+      content.className = 'access-search-loading-content';
+
+      const spinner = document.createElement('span');
+      spinner.className = 'access-search-loading-spinner';
+      spinner.setAttribute('aria-hidden', 'true');
+
+      const message = document.createElement('p');
+      message.textContent = 'Buscando en el directorio institucional...';
+
+      content.append(spinner, message);
+      overlay.appendChild(content);
+      form.appendChild(overlay);
+
+      return () => overlay.remove();
     }
 
     function updateSaveState() {
@@ -1118,9 +1148,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           documentNumber.disabled = true;
 
           resultHost.appendChild(alertHost);
-          const finishLoading = SUNARPUI.beginLoading({
-            backdrop: 'translucent'
-          });
+          const finishLoading = beginDocumentSearchLoading();
 
           showSearchAlert(
             'info',
