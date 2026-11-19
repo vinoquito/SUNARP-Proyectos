@@ -55,10 +55,8 @@ function _coreAuthUpper_(value) {
  * valores de hoja como texto; estados ACTIVO/INACTIVO no son válidos aquí.
  */
 function _coreAuthIsActive_(value) {
-  if (value === true || value === 1) return true;
-  if (value === false || value === 0 || value === null || value === undefined) {
-    return false;
-  }
+  if (value === true) return true;
+  if (value === false || value === null || value === undefined) return false;
 
   return _coreAuthUpper_(value) === 'TRUE';
 }
@@ -103,6 +101,62 @@ function _coreAuthBuildActiveMap_(records, idField, label) {
   });
 
   return map;
+}
+
+function _coreAuthAssertUniqueActiveCodes_(records, label) {
+  const codes = new Set();
+
+  (records || []).forEach(record => {
+    if (!_coreAuthIsActive_(record.active)) return;
+
+    const code = _coreAuthUpper_(record.codigo);
+
+    if (!code) {
+      throw new Error(
+        'SUNARP Core: existe un registro activo sin código en ' + label + '.'
+      );
+    }
+
+    if (codes.has(code)) {
+      throw new Error(
+        'SUNARP Core: código activo duplicado en ' + label + ': ' + code + '.'
+      );
+    }
+
+    codes.add(code);
+  });
+}
+
+function _coreAuthAssertUniqueActivePairs_(
+  records,
+  firstField,
+  secondField,
+  label
+) {
+  const pairs = new Set();
+
+  (records || []).forEach(record => {
+    if (!_coreAuthIsActive_(record.active)) return;
+
+    const first = _coreAuthText_(record[firstField]);
+    const second = _coreAuthText_(record[secondField]);
+
+    if (!first || !second) {
+      throw new Error(
+        'SUNARP Core: existe una relación activa incompleta en ' + label + '.'
+      );
+    }
+
+    const key = first + '\u0000' + second;
+
+    if (pairs.has(key)) {
+      throw new Error(
+        'SUNARP Core: relación activa duplicada en ' + label + '.'
+      );
+    }
+
+    pairs.add(key);
+  });
 }
 
 /**
@@ -173,6 +227,7 @@ function resolveAuthorizationContext(data) {
     'modulo_id',
     'Modulos.modulo_id'
   );
+  _coreAuthAssertUniqueActiveCodes_(modules, 'Modulos.codigo');
 
   const roleById = _coreAuthBuildActiveMap_(
     roles,
@@ -185,6 +240,7 @@ function resolveAuthorizationContext(data) {
     'permiso_id',
     'Permisos.permiso_id'
   );
+  _coreAuthAssertUniqueActiveCodes_(permissions, 'Permisos.codigo');
 
   const activeUserRoleRows = userRoles.filter(item =>
     _coreAuthText_(item.persona_id) === personaId &&
@@ -218,6 +274,20 @@ function resolveAuthorizationContext(data) {
 
     activeAssignmentByModule.set(moduloId, item);
   });
+
+  _coreAuthAssertUniqueActivePairs_(
+    rolePermissions,
+    'rol_id',
+    'permiso_id',
+    'RolPermiso'
+  );
+
+  _coreAuthAssertUniqueActivePairs_(
+    scopes.filter(scope => _coreAuthText_(scope.persona_id) === personaId),
+    'modulo_id',
+    'referencia_id',
+    'AmbitoAcceso'
+  );
 
   const rolePermissionIdsByRole = new Map();
 
