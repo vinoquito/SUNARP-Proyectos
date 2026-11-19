@@ -380,7 +380,7 @@ function testDirectoryDocumentTypeCatalog() {
 
   const sampleMatches = (context.datosPersonales || []).filter(item =>
     String(item.tipo_documento || '').trim().toUpperCase() === 'TD_001' &&
-    String(item.numero_documento || '').replace(/\s+/g, '') === '40051271'
+    String(item.numero_documento || '').trim() !== ''
   );
 
   const result = {
@@ -388,7 +388,7 @@ function testDirectoryDocumentTypeCatalog() {
     types,
     expectedCatalogComplete: mismatches.length === 0,
     mismatches,
-    sampleDniMatchCount: sampleMatches.length,
+    recordsWithDniType: sampleMatches.length,
     sampleDniCatalogName: byId.get('TD_001') || ''
   };
 
