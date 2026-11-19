@@ -62,7 +62,12 @@ function _coreAuthIsActive_(value) {
 }
 
 function _coreAuthIsTruthy_(value) {
-  return _coreAuthIsActive_(value);
+  if (value === true) return true;
+  if (value === false || value === null || value === undefined) return false;
+
+  return ['TRUE', 'SI', 'SÍ', 'YES', '1'].includes(
+    _coreAuthUpper_(value)
+  );
 }
 
 function _coreAuthAssertUniqueActiveIds_(records, idField, label) {
