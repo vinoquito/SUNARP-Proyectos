@@ -380,7 +380,7 @@ function testDirectoryDocumentTypeCatalog() {
 
   const sampleMatches = (context.datosPersonales || []).filter(item =>
     String(item.tipo_documento || '').trim().toUpperCase() === 'TD_001' &&
-    String(item.numero_documento || '').replace(/\\s+/g, '') === '40051271'
+    String(item.numero_documento || '').replace(/\s+/g, '') === '40051271'
   );
 
   const result = {
