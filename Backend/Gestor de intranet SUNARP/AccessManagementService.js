@@ -2861,7 +2861,7 @@ const ACCESS_SCHEMA_MIGRATION_SCOPE_ROWS = Object.freeze([
     entidad_referencia: 'NINGUNA',
     requiere_referencia: 'NO',
     permite_descendientes: 'NO',
-    active: 'SI'
+    active: true
   }),
   Object.freeze({
     tipo_ambito_id: 'SEDE',
@@ -2870,7 +2870,7 @@ const ACCESS_SCHEMA_MIGRATION_SCOPE_ROWS = Object.freeze([
     entidad_referencia: 'SEDE',
     requiere_referencia: 'SI',
     permite_descendientes: 'NO',
-    active: 'SI'
+    active: true
   }),
   Object.freeze({
     tipo_ambito_id: 'ESTRUCTURA_ORG',
@@ -2879,7 +2879,7 @@ const ACCESS_SCHEMA_MIGRATION_SCOPE_ROWS = Object.freeze([
     entidad_referencia: 'ESTRUCTURA_ORG',
     requiere_referencia: 'SI',
     permite_descendientes: 'SI',
-    active: 'SI'
+    active: true
   }),
   Object.freeze({
     tipo_ambito_id: 'LOCAL',
@@ -2888,7 +2888,7 @@ const ACCESS_SCHEMA_MIGRATION_SCOPE_ROWS = Object.freeze([
     entidad_referencia: 'LOCAL',
     requiere_referencia: 'SI',
     permite_descendientes: 'NO',
-    active: 'SI'
+    active: true
   })
 ]);
 
