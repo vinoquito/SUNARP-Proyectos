@@ -515,71 +515,41 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
   function renderRoles(host) {
     const canManage = state.data.capabilities.roles;
-
     const section = makeTabPanel(
       'Roles',
-      'Define perfiles funcionales. Los ámbitos de datos se administran por separado.',
+      'Define perfiles funcionales reutilizables. Su asignación se realiza por módulo.',
       canManage ? 'Nuevo rol' : '',
       canManage ? () => openRoleModal(null) : null
     );
-
     host.appendChild(section);
-
     renderTable(host, {
       data: state.data.roles || [],
-
       columns: [
+        { key: 'rol_id', label: 'ID' },
+        { key: 'nombre', label: 'Nombre' },
+        { key: 'descripcion', label: 'Descripción' },
         {
-          key: 'rol_id',
-          label: 'ID'
-        },
-        {
-          key: 'nombre',
-          label: 'Nombre'
-        },
-        {
-          key: 'descripcion',
-          label: 'Descripción'
-        },
-        {
-          key: 'estado',
+          key: 'active',
           label: 'Estado',
           align: 'center',
-          render: (value, row) => createAccessStatusCell(
-            row,
-            'setAccessRoleStatus',
-            row.rol_id,
-            'el rol'
-          )
+          render: (value, row) => createAccessStatusCell(row, 'setAccessRoleStatus', row.rol_id, 'el rol')
         }
       ],
-
       rowActions: [
-
         ...(canManage ? [{
           label: 'Editar rol',
           icon: 'edit',
           variant: 'outline',
           onClick: row => openRoleModal(row)
         }] : []),
-
         ...(state.data.capabilities.audit ? [{
           label: 'Historial',
           icon: 'history',
           variant: 'outline',
-
-          onClick: row => openEntityHistory(
-            'ROL',
-            row.rol_id,
-            row.nombre
-          )
+          onClick: row => openEntityHistory('ROL', row.rol_id, row.nombre)
         }] : [])
-
       ],
-
-      searchPlaceholder:
-        'Buscar por ID, nombre o descripción...',
-
+      searchPlaceholder: 'Buscar por ID, nombre o descripción...',
       emptyMessage: 'No hay roles registrados.'
     });
   }
@@ -587,88 +557,40 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
   function openRoleModal(row) {
     const editing = Boolean(row);
-
     const form = document.createElement('form');
-
     form.className = 'access-form';
-
-    form.addEventListener(
-      'submit',
-      event => event.preventDefault()
-    );
-
+    form.addEventListener('submit', event => event.preventDefault());
     const grid = createFormGrid();
 
-    const id = createInput(
-      'text',
-      row && row.rol_id,
-      {
-        required: true,
-        maxlength: 50,
-        pattern: '[A-Za-z0-9_-]{2,50}',
-        readOnly: editing
-      }
-    );
-
-    const name = createInput(
-      'text',
-      row && row.nombre,
-      {
-        required: true,
-        maxlength: 100
-      }
-    );
-
-    const description = createTextarea(
-      row && row.descripcion,
-      3
-    );
-
-    const status = createSelect(
-      [
-        {
-          value: 'ACTIVO',
-          label: 'Activo'
-        },
-        {
-          value: 'INACTIVO',
-          label: 'Inactivo'
-        }
-      ],
-      row ? row.estado : 'ACTIVO'
+    const id = createInput('text', row && row.rol_id, {
+      required: true, maxlength: 50, pattern: '[A-Za-z0-9_-]{2,50}', readOnly: editing
+    });
+    const name = createInput('text', row && row.nombre, { required: true, maxlength: 100 });
+    const description = createTextarea(row && row.descripcion, 3);
+    const active = createSelect(
+      [{ value: 'true', label: 'Activo' }, { value: 'false', label: 'Inactivo' }],
+      row ? String(Boolean(row.active)) : 'true'
     );
 
     grid.append(
-      createField(
-        'Identificador del rol',
-        id,
-        'Ejemplo: ROL_EDITOR.'
-      ),
-
+      createField('Identificador del rol', id, 'Ejemplo: ROL_EDITOR.'),
       createField('Nombre', name),
       createField('Descripción', description),
-      createField('Estado', status)
+      createField('Estado', active)
     );
-
     form.appendChild(grid);
 
     openFormModal(
       editing ? 'Editar rol' : 'Crear rol',
       form,
-
       () => rpc('saveAccessRole', {
         action: editing ? 'edit' : 'create',
         rol_id: id.value.trim().toUpperCase(),
-
-        rol_id_original: editing
-          ? row.rol_id
-          : '',
-
+        rol_id_original: editing ? row.rol_id : '',
         nombre: name.value.trim(),
         descripcion: description.value.trim(),
-        estado: status.value
+        active: active.value === 'true'
       }),
-
       editing ? 'Guardar cambios' : 'Crear rol'
     );
   }
@@ -676,75 +598,42 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
   function renderPermissions(host) {
     const canManage = state.data.capabilities.permissions;
-
     const section = makeTabPanel(
       'Permisos',
-      'Catálogo de operaciones que pueden asignarse a los roles.',
+      'Catálogo de operaciones vinculadas mediante modulo_id.',
       canManage ? 'Nuevo permiso' : '',
       canManage ? () => openPermissionModal(null) : null
     );
-
     host.appendChild(section);
-
     renderTable(host, {
       data: state.data.permissions || [],
-
       columns: [
+        { key: 'codigo', label: 'Código' },
+        { key: 'modulo_nombre', label: 'Módulo' },
+        { key: 'operacion', label: 'Operación' },
+        { key: 'descripcion', label: 'Descripción' },
         {
-          key: 'codigo',
-          label: 'Código'
-        },
-        {
-          key: 'modulo',
-          label: 'Módulo'
-        },
-        {
-          key: 'operacion',
-          label: 'Operación'
-        },
-        {
-          key: 'descripcion',
-          label: 'Descripción'
-        },
-        {
-          key: 'estado',
+          key: 'active',
           label: 'Estado',
           align: 'center',
-          render: (value, row) => createAccessStatusCell(
-            row,
-            'setAccessPermissionStatus',
-            row.permiso_id,
-            'el permiso'
-          )
+          render: (value, row) => createAccessStatusCell(row, 'setAccessPermissionStatus', row.permiso_id, 'el permiso')
         }
       ],
-
       rowActions: [
-
         ...(canManage ? [{
           label: 'Editar permiso',
           icon: 'edit',
           variant: 'outline',
           onClick: row => openPermissionModal(row)
         }] : []),
-
         ...(state.data.capabilities.audit ? [{
           label: 'Historial',
           icon: 'history',
           variant: 'outline',
-
-          onClick: row => openEntityHistory(
-            'PERMISO',
-            row.permiso_id,
-            row.codigo
-          )
+          onClick: row => openEntityHistory('PERMISO', row.permiso_id, row.codigo)
         }] : [])
-
       ],
-
-      searchPlaceholder:
-        'Buscar por código, módulo u operación...',
-
+      searchPlaceholder: 'Buscar por código, módulo u operación...',
       emptyMessage: 'No hay permisos registrados.'
     });
   }
@@ -752,109 +641,60 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
   function openPermissionModal(row) {
     const editing = Boolean(row);
-
     const form = document.createElement('form');
-
     form.className = 'access-form';
-
-    form.addEventListener(
-      'submit',
-      event => event.preventDefault()
-    );
-
+    form.addEventListener('submit', event => event.preventDefault());
     const grid = createFormGrid();
 
-    const id = createInput(
-      'text',
-      row && row.permiso_id,
-      {
-        required: true,
-        maxlength: 50,
-        readOnly: editing
-      }
+    const id = createInput('text', row && row.permiso_id, {
+      required: true, maxlength: 50, readOnly: editing
+    });
+    const code = createInput('text', row && row.codigo, {
+      required: true, maxlength: 80, pattern: '[A-Za-z0-9_]{3,80}', readOnly: editing
+    });
+    const modules = (state.data.modules || []).filter(item => item.active);
+    const module = createSelect(
+      modules.map(item => ({
+        value: item.modulo_id,
+        label: item.nombre + ' (' + item.codigo + ')'
+      })),
+      row && row.modulo_id,
+      'Selecciona un módulo'
     );
+    if (editing) module.disabled = true;
 
-    const code = createInput(
-      'text',
-      row && row.codigo,
-      {
-        required: true,
-        maxlength: 80,
-        pattern: '[A-Za-z0-9_]{3,80}',
-        readOnly: editing
-      }
-    );
-
-    const module = createInput(
-      'text',
-      row && row.modulo,
-      {
-        required: true,
-        maxlength: 60
-      }
-    );
-
-    const operation = createInput(
-      'text',
-      row && row.operacion,
-      {
-        required: true,
-        maxlength: 60
-      }
-    );
-
-    const description = createTextarea(
-      row && row.descripcion,
-      3
-    );
-
+    const operation = createInput('text', row && row.operacion, {
+      required: true, maxlength: 60
+    });
+    const description = createTextarea(row && row.descripcion, 3);
     description.required = true;
-
-    const status = createSelect(
-      [
-        {
-          value: 'ACTIVO',
-          label: 'Activo'
-        },
-        {
-          value: 'INACTIVO',
-          label: 'Inactivo'
-        }
-      ],
-      row ? row.estado : 'ACTIVO'
+    const active = createSelect(
+      [{ value: 'true', label: 'Activo' }, { value: 'false', label: 'Inactivo' }],
+      row ? String(Boolean(row.active)) : 'true'
     );
 
     grid.append(
       createField('ID del permiso', id),
-
-      createField(
-        'Código',
-        code,
-        'Ejemplo: DIRECTORIOS_VER.'
-      ),
-
+      createField('Código', code, 'Ejemplo: INFORMACION_PERSONAL_VER.'),
       createField('Módulo', module),
       createField('Operación', operation),
       createField('Descripción', description),
-      createField('Estado', status)
+      createField('Estado', active)
     );
-
     form.appendChild(grid);
 
     openFormModal(
       editing ? 'Editar permiso' : 'Crear permiso',
       form,
-
       () => rpc('saveAccessPermission', {
         action: editing ? 'edit' : 'create',
         permiso_id: id.value.trim().toUpperCase(),
         codigo: code.value.trim().toUpperCase(),
-        modulo: module.value.trim().toUpperCase(),
+        modulo_id: editing ? row.modulo_id : module.value,
         operacion: operation.value.trim().toUpperCase(),
         descripcion: description.value.trim(),
-        estado: status.value
+        active: active.value === 'true'
       }),
-
       editing ? 'Guardar cambios' : 'Crear permiso'
     );
   }
