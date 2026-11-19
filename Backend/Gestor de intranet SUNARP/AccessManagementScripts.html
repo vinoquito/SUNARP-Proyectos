@@ -371,6 +371,31 @@
   }
 
 
+  function generatedToken(value) {
+    return String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+  }
+
+
+  function previewIdentifier(prefix, value, maxLength) {
+    const token = generatedToken(value);
+    return token ? (prefix + token).slice(0, maxLength || 50) : '';
+  }
+
+
+  function previewPermissionCode(moduleCode, operation) {
+    const moduleToken = generatedToken(moduleCode);
+    const operationToken = generatedToken(operation);
+    return moduleToken && operationToken
+      ? (moduleToken + '_' + operationToken).slice(0, 80)
+      : '';
+  }
+
+
 
   /**
  * Cambia el estado y actualiza la tabla.
@@ -1962,20 +1987,29 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     const grid = createFormGrid();
 
     const id = createInput('text', row && row.rol_id, {
-      required: true, maxlength: 50, pattern: '[A-Za-z0-9_-]{2,50}', readOnly: editing
+      required: true,
+      maxlength: 50,
+      readOnly: true
     });
-    const name = createInput('text', row && row.nombre, { required: true, maxlength: 100 });
+    const name = createInput('text', row && row.nombre, {
+      required: true,
+      maxlength: 100
+    });
     const description = createTextarea(row && row.descripcion, 3);
-    const active = createSelect(
-      [{ value: 'true', label: 'Activo' }, { value: 'false', label: 'Inactivo' }],
-      row ? String(Boolean(row.active)) : 'true'
-    );
+
+    function updateRoleIdPreview() {
+      id.value = editing
+        ? row.rol_id
+        : previewIdentifier('ROL_', name.value, 50);
+    }
+
+    if (!editing) name.addEventListener('input', updateRoleIdPreview);
+    updateRoleIdPreview();
 
     grid.append(
-      createField('Identificador del rol', id, 'Ejemplo: ROL_EDITOR.'),
+      createField('ID generado automáticamente', id, 'Se construye a partir del nombre del rol y no puede editarse.'),
       createField('Nombre', name),
-      createField('Descripción', description),
-      createField('Estado', active)
+      createField('Descripción', description)
     );
     form.appendChild(grid);
 
@@ -1984,11 +2018,11 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       form,
       () => rpc('saveAccessRole', {
         action: editing ? 'edit' : 'create',
-        rol_id: id.value.trim().toUpperCase(),
+        rol_id: id.value,
         rol_id_original: editing ? row.rol_id : '',
         nombre: name.value.trim(),
         descripcion: description.value.trim(),
-        active: active.value === 'true'
+        active: editing ? row.active : true
       }),
       editing ? 'Guardar cambios' : 'Crear rol'
     );
