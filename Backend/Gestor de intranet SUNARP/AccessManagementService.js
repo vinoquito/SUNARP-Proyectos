@@ -1715,7 +1715,7 @@ function getAccessEntityHistory(payload) {
   }
 
   const relatedTypes = {
-    USUARIO: ['USUARIO', 'AMBITO_ACCESO'],
+    USUARIO: ['USUARIO', 'USUARIO_ROL', 'AMBITO_ACCESO'],
     ROL: ['ROL', 'ROL_PERMISO'],
     PERMISO: ['PERMISO', 'ROL_PERMISO'],
     SERVIDOR: ['SERVIDOR']
