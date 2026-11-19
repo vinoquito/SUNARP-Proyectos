@@ -1268,7 +1268,16 @@ function _directoryCreatePersonalDataMap_(records) {
 function _directoryAssertDocumentAvailable_(type, number, records, excludedPersonaId) {
   const normalizedType = _directoryNormalizeDocument_(type, 'Tipo de documento');
   const normalizedNumber = _directoryNormalizeDocument_(number, 'Número de documento');
-  const duplicate = (records || []).find(item =>
+  const matches = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
+    { numero_documento: normalizedNumber },
+    {
+      searchField: 'numero_documento',
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.datosPersonales,
+      matchCase: false
+    }
+  );
+  const duplicate = matches.records.find(item =>
     _directoryKey_(item.servidor_id) !== _directoryKey_(excludedPersonaId) &&
     _directoryText_(item.tipo_documento).replace(/\s+/g, '').toUpperCase() === normalizedType &&
     _directoryText_(item.numero_documento).replace(/\s+/g, '').toUpperCase() === normalizedNumber
@@ -1278,7 +1287,6 @@ function _directoryAssertDocumentAvailable_(type, number, records, excludedPerso
   }
   return { tipo_documento: normalizedType, numero_documento: normalizedNumber };
 }
-
 function _directoryFormatDateInput_(value) {
   if (value === null || value === undefined || value === '') return '';
   if (value instanceof Date && !isNaN(value.getTime())) {
@@ -1309,13 +1317,28 @@ function _saveDirectoryPersonalData_(payload, allowUnassigned) {
 
   const personaId = _directoryText_(payload.servidor_id);
   if (!personaId) throw new Error('La persona vinculada es obligatoria.');
-  const context = _directoryLoadContext_();
-  const person = context.personas.find(item => _directoryKey_(item.persona_id) === personaId);
-  if (!person) throw new Error('No existe la persona vinculada a los datos personales.');
 
-  const linkedAssignments = context.asignaciones.filter(item => _directoryKey_(item.persona_id) === personaId);
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeDocumentTypes: true
+  });
+  const personResult = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+    { persona_id: personaId },
+    { searchField: 'persona_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas }
+  );
+  if (personResult.total !== 1) {
+    throw new Error('No existe una identidad única para la ficha de datos personales.');
+  }
+  const person = personResult.records[0];
+  const linkedAssignments = context.asignaciones.filter(item =>
+    _directoryKey_(item.persona_id) === personaId
+  );
   const createWithoutAssignment = allowUnassigned === true && !linkedAssignments.length;
-  const authorization = _directoryAuthorizationContext_(createWithoutAssignment ? 'INFORMACION_PERSONAL_CREAR' : 'INFORMACION_PERSONAL_EDITAR');
+  const authorization = _directoryAuthorizationContext_(
+    createWithoutAssignment ? 'INFORMACION_PERSONAL_CREAR' : 'INFORMACION_PERSONAL_EDITAR'
+  );
   if (!createWithoutAssignment) {
     _directoryAssertPersonMutationScope_(authorization, person, context.asignaciones, context);
   }
@@ -1323,7 +1346,7 @@ function _saveDirectoryPersonalData_(payload, allowUnassigned) {
   const normalizedDocument = _directoryAssertDocumentAvailable_(
     payload.tipo_documento,
     payload.numero_documento,
-    context.datosPersonales,
+    null,
     personaId
   );
   const record = {
@@ -1335,8 +1358,15 @@ function _saveDirectoryPersonalData_(payload, allowUnassigned) {
     fecha_cese: _directoryNormalizeDateInput_(payload.fecha_cese, 'Fecha de cese')
   };
   const source = _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales);
-  const existing = _directoryGetPersonalDataRecord_(personaId, context.datosPersonales);
-  const before = existing || null;
+  const existingResult = SUNARPCore.findRecordsByFields(
+    source,
+    { servidor_id: personaId },
+    { searchField: 'servidor_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.datosPersonales }
+  );
+  if (existingResult.total > 1) {
+    throw new Error('La ficha de datos personales está duplicada para la persona solicitada.');
+  }
+  const existing = existingResult.records[0] || null;
   const event = {
     accion: existing ? 'EDITAR_DATOS_PERSONALES_DIRECTORIO' : 'CREAR_DATOS_PERSONALES_DIRECTORIO',
     modulo: 'INFORMACION_PERSONAL',
@@ -1344,7 +1374,7 @@ function _saveDirectoryPersonalData_(payload, allowUnassigned) {
     registro_id: personaId,
     registro_nombre: [person.nombres, person.apellidos].filter(Boolean).join(' '),
     detalle: 'Registro de datos personales y validación única del documento de identidad.',
-    datos_antes: before
+    datos_antes: existing
   };
 
   return _accessRunAudited_(authorization.auth, event, () => {
@@ -1364,12 +1394,6 @@ function _saveDirectoryPersonalData_(payload, allowUnassigned) {
     return { value: Object.assign({}, result, { personalData: record }), auditAfter: record };
   });
 }
-
-/**
- * Operación de alta coordinada: persona + ficha personal + primera asignación.
- * Si una fase falla, se compensan las inserciones ya realizadas para no dejar
- * registros huérfanos. Las asignaciones adicionales usan saveDirectoryAssignment.
- */
 function saveDirectoryEntry(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('Debes proporcionar los datos del registro.');
@@ -1414,9 +1438,25 @@ function saveDirectoryEntry(payload) {
   if (personaId) personPayload.persona_id = personaId;
 
   if (!isNewPerson && !isNewAssignment) {
-    const snapshot = _directoryLoadContext_();
-    const previousPerson = snapshot.personas.find(item => _directoryKey_(item.persona_id) === personaId);
-    const previousPersonalData = _directoryGetPersonalDataRecord_(personaId, snapshot.datosPersonales);
+    const snapshot = _directoryLoadContext_({
+      includePersonalData: false,
+      includePeople: false,
+      includeDocumentTypes: false
+    });
+    const previousPersonResult = SUNARPCore.findRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+      { persona_id: personaId },
+      { searchField: 'persona_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas }
+    );
+    if (previousPersonResult.total !== 1) throw new Error('No se encontró una identidad única para la persona.');
+    const previousPerson = previousPersonResult.records[0];
+    const previousPersonalResult = SUNARPCore.findRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
+      { servidor_id: personaId },
+      { searchField: 'servidor_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.datosPersonales }
+    );
+    if (previousPersonalResult.total > 1) throw new Error('La ficha de datos personales está duplicada.');
+    const previousPersonalData = previousPersonalResult.records[0] || null;
     const previousAssignment = snapshot.asignaciones.find(item => _directoryKey_(item.asignacion_id) === assignmentId);
     if (!previousPerson || !previousAssignment) throw new Error('No se encontró la persona o asignación que se intenta editar.');
     if (_directoryKey_(previousAssignment.persona_id) !== personaId) {
@@ -1425,7 +1465,7 @@ function saveDirectoryEntry(payload) {
     const normalizedDocument = _directoryAssertDocumentAvailable_(
       payload.tipo_documento,
       payload.numero_documento,
-      snapshot.datosPersonales,
+      null,
       personaId
     );
 
@@ -1505,7 +1545,7 @@ function saveDirectoryEntry(payload) {
   const normalizedNewDocument = _directoryAssertDocumentAvailable_(
     payload.tipo_documento,
     payload.numero_documento,
-    _directoryLoadContext_().datosPersonales,
+    null,
     ''
   );
 
