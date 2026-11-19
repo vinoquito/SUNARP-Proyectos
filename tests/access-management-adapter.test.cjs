@@ -337,10 +337,22 @@ test('la interfaz administra roles y ámbitos mediante persona_id y modulo_id', 
 test('Agregar acceso incorpora directamente el ámbito seleccionado sin acción intermedia', () => {
   assert.doesNotMatch(accessUiSource, /Agregar ámbito|function addScope\(\)/);
   assert.match(accessUiSource, /Selecciona un ámbito \(opcional\)/);
-  assert.match(accessUiSource, /if \(canManageScopes && scopeType\.value\)/);
+  assert.match(accessUiSource, /let collectScopes = \(\) =>/);
+  assert.match(accessUiSource, /collectScopes = function \(\)/);
   assert.match(accessUiSource, /nextScopes\.push\(\{[\s\S]*?tipo_ambito: type,[\s\S]*?referencia_id: referenceId/);
-  assert.match(accessUiSource, /ambitos: nextScopes/);
+  assert.match(accessUiSource, /const scopeResult = collectScopes\(\);/);
+  assert.match(accessUiSource, /ambitos: scopeResult\.scopes/);
   assert.match(accessUiSource, /editorHost\.replaceChildren\(\);[\s\S]*?refreshModulePicker\(\);[\s\S]*?renderTable\(\);/);
+
+  const confirmStart = accessUiSource.indexOf('const confirmButton = createButton(');
+  const confirmEnd = accessUiSource.indexOf('actions.append(cancelButton, confirmButton)', confirmStart);
+  const confirmHandler = accessUiSource.slice(confirmStart, confirmEnd);
+  assert.ok(confirmStart >= 0 && confirmEnd > confirmStart);
+  assert.doesNotMatch(
+    confirmHandler,
+    /\\b(?:scopeType|selectedReferenceId|descendants|scopeContextHost)\\b/,
+    'el manejador no debe acceder a variables locales del bloque canManageScopes'
+  );
 });
 
 test('la cascada de ámbitos parte del local y recorre solo la jerarquía vinculada', () => {
