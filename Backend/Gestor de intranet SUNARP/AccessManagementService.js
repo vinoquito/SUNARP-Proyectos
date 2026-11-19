@@ -2061,18 +2061,6 @@ function getAccessManagementData() {
     ? _accessOrgManagementCatalog_()
     : { sedes: [], estructuraOrg: [], locales: [], tiposEstructura: [], estructuraLocal: [] };
 
-  const personById = new Map(data.personas.map(person => [
-    _accessText_(person.persona_id),
-    person
-  ]));
-
-  const userRolesByPerson = new Map();
-  data.usuarioRol.forEach(assignment => {
-    const personaId = _accessText_(assignment.persona_id);
-    if (!userRolesByPerson.has(personaId)) userRolesByPerson.set(personaId, []);
-    userRolesByPerson.get(personaId).push(assignment);
-  });
-
   return {
     currentUser: {
       persona_id: auth.personaId,
@@ -2097,25 +2085,8 @@ function getAccessManagementData() {
           .filter(item => item.id && item.name)
       : [],
 
-    users: capabilities.users || capabilities.scopes || capabilities.userRoles
-      ? data.usuarios.map(user => {
-          const person = personById.get(_accessText_(user.persona_id)) || {};
-          return {
-            persona_id: _accessText_(user.persona_id),
-            correo_institucional: _accessText_(person.correo_institucional),
-            nombres: _accessText_(person.nombres),
-            apellidos: _accessText_(person.apellidos),
-            nombre_completo: [_accessText_(person.nombres), _accessText_(person.apellidos)].filter(Boolean).join(' '),
-            active: _accessIsActive_(user.active),
-            roles: (userRolesByPerson.get(_accessText_(user.persona_id)) || [])
-              .filter(item => _accessIsActive_(item.active))
-              .map(item => ({
-                modulo_id: _accessText_(item.modulo_id),
-                rol_id: _accessText_(item.rol_id)
-              }))
-          };
-        })
-      : [],
+    // El listado se consulta bajo demanda según los filtros seleccionados.
+    users: [],
 
     modules: capabilities.permissions || capabilities.scopes || capabilities.userRoles
       ? data.modulos.map(module => ({
@@ -2160,6 +2131,10 @@ function getAccessManagementData() {
           permiso_id: _accessText_(item.permiso_id),
           active: _accessIsActive_(item.active)
         }))
+      : [],
+
+    operations: capabilities.permissions
+      ? _accessGetOperationCatalog_(data.permisos)
       : [],
 
     userRoles: capabilities.userRoles
