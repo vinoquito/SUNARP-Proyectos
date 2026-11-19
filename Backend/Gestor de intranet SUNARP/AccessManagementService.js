@@ -3096,10 +3096,24 @@ function _accessMigrationEnsureScopeTypes_(spreadsheet) {
     : [];
   const indexes = new Map(headers.map((header, index) => [header, index]));
   const existing = new Map();
+  const typeIdIndex = indexes.get('tipo_ambito_id');
+  const legacyTypeIndex = indexes.has('tipo_ambito') ? indexes.get('tipo_ambito') : -1;
+  const typeIdsByName = new Map(ACCESS_SCHEMA_MIGRATION_SCOPE_ROWS.map(item => [
+    item.nombre.toLocaleLowerCase(),
+    item.tipo_ambito_id
+  ]));
 
   rows.forEach((values, index) => {
     if (!values.some(value => String(value || '').trim() !== '')) return;
-    const id = _accessUpper_(values[indexes.get('tipo_ambito_id')]);
+    let id = _accessUpper_(values[typeIdIndex]);
+    if (!id && legacyTypeIndex >= 0) {
+      const legacyValue = String(values[legacyTypeIndex] || '').trim();
+      const legacyToken = _accessUpper_(legacyValue);
+      id = ACCESS_SCOPE_TYPE_IDS.includes(legacyToken)
+        ? legacyToken
+        : typeIdsByName.get(legacyValue.toLocaleLowerCase()) || '';
+      if (id) sheet.getRange(index + 2, typeIdIndex + 1).setValue(id);
+    }
     if (!id) throw new Error('TiposAmbito contiene un registro sin tipo_ambito_id en la fila ' + (index + 2) + '.');
     if (existing.has(id)) throw new Error('TiposAmbito contiene el identificador duplicado ' + id + '.');
     if (!ACCESS_SCOPE_TYPE_IDS.includes(id)) throw new Error('TiposAmbito contiene una categoría no admitida: ' + id + '.');
