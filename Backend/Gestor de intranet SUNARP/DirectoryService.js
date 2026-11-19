@@ -492,11 +492,13 @@ function _directoryLoadContextFromSheets_(options) {
     requiredHeaders: DIRECTORY_REQUIRED_HEADERS[item[0]]
   }));
 
-  requests.push({
-    key: 'documentTypes',
-    source: _directoryResolveDocumentTypesSource_(),
-    requiredHeaders: DIRECTORY_REQUIRED_HEADERS.documentTypes
-  });
+  if (options.includeDocumentTypes !== false) {
+    requests.push({
+      key: 'documentTypes',
+      source: _directoryResolveDocumentTypesSource_(),
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.documentTypes
+    });
+  }
 
   // Core agrupa la lectura por libro aunque el catálogo documental
   // se encuentre en Global parameters o en Directorios telefónicos.
@@ -517,9 +519,11 @@ function _directoryLoadContext_(options) {
 }
 
 function _directoryInvalidateCache_() {
-  const results = Object.values(DIRECTORY_SERVICE_CONFIG.sheets).map(sheetName =>
-    SUNARPCore.invalidateSourceCache(_directorySource_(sheetName))
-  );
+  const sheetNames = Object.values(DIRECTORY_SERVICE_CONFIG.sheets)
+    .filter(sheetName => sheetName !== DIRECTORY_SERVICE_CONFIG.sheets.documentTypes);
+  const sources = sheetNames.map(sheetName => _directorySource_(sheetName));
+  sources.push(_directoryResolveDocumentTypesSource_());
+  const results = sources.map(source => SUNARPCore.invalidateSourceCache(source));
   return {
     success: results.every(result => result && result.success !== false),
     sources: results.length
@@ -848,7 +852,7 @@ function listDirectoryPeople(options) {
 function listDirectoryAssignments(options) {
   options = options || {};
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false });
+  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false, includeDocumentTypes: false });
   const view = _directoryBuildView_(context, authorization);
 
   const activeFilter = options.active === undefined ? true : options.active;
@@ -1004,7 +1008,7 @@ function listDirectoryAssignments(options) {
 
 function getDirectoryPersonById(personaId) {
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false });
+  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false, includeDocumentTypes: false });
   const personResult = SUNARPCore.findRecordsByFields(
     _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
     { persona_id: _directoryKey_(personaId) },
@@ -1056,7 +1060,7 @@ function getDirectoryAssignmentsByPersonId(personaId, options) {
 
 function getDirectoryAssignmentById(asignacionId) {
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false });
+  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false, includeDocumentTypes: false });
   const assignment = context.asignaciones.find(item =>
     _directoryKey_(item.asignacion_id) === _directoryKey_(asignacionId)
   );
