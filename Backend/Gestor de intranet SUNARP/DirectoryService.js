@@ -1808,35 +1808,40 @@ function setDirectoryAssignmentActive(asignacionId, active) {
   }
 
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_CAMBIAR_ESTADO');
-  const context = _directoryLoadContext_();
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeDocumentTypes: false
+  });
   const id = _directoryText_(asignacionId);
-
   const existing = context.asignaciones.find(item =>
     _directoryKey_(item.asignacion_id) === id
   );
   if (!existing) throw new Error('No se encontró la asignación "' + id + '".');
 
-  const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
-  const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
   const location = _directoryResolveAssignmentLocation_(existing, context, false);
-  const enriched = _directoryEnrichAssignment_(existing, context, relationMap, peopleMap);
   _directoryAssertScope_(
     authorization,
-    Object.assign({}, enriched, {
+    Object.assign({}, existing, {
       estructura_id: location.estructura_id,
       sede_id: location.sede_id
     }),
     'Cambio de estado de una asignación fuera del ámbito asignado.'
   );
 
-  const person = peopleMap.get(_directoryKey_(existing.persona_id));
+  const person = _directoryFindPersonById_(existing.persona_id);
+  if (!person) throw new Error('La asignación no tiene una identidad válida.');
+  context.personas = [person];
+  const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
+  const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
+  const enriched = _directoryEnrichAssignment_(existing, context, relationMap, peopleMap);
 
   return _accessRunAudited_(authorization.auth, {
     accion: active ? 'ACTIVAR_ASIGNACION_DIRECTORIO' : 'DESACTIVAR_ASIGNACION_DIRECTORIO',
     modulo: 'INFORMACION_PERSONAL',
     tipo_entidad: 'ASIGNACION',
     registro_id: id,
-    registro_nombre: [person && person.nombres, person && person.apellidos].filter(Boolean).join(' '),
+    registro_nombre: [person.nombres, person.apellidos].filter(Boolean).join(' '),
     detalle: 'Cambio de estado de una asignación.',
     datos_antes: existing
   }, () => {
@@ -1847,7 +1852,6 @@ function setDirectoryAssignmentActive(asignacionId, active) {
       'active',
       active
     );
-
     return {
       value: Object.assign({}, result, {
         assignment: Object.assign({}, enriched, { active: active })
@@ -1862,34 +1866,35 @@ function deleteDirectoryAssignment(asignacionId) {
   if (!id) throw new Error('Debes proporcionar el identificador de la asignación.');
 
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_ELIMINAR');
-  const context = _directoryLoadContext_();
-
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeDocumentTypes: false
+  });
   const existing = context.asignaciones.find(item =>
     _directoryKey_(item.asignacion_id) === id
   );
   if (!existing) throw new Error('No se encontró la asignación "' + id + '".');
 
-  const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
-  const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
   const location = _directoryResolveAssignmentLocation_(existing, context, false);
-  const enriched = _directoryEnrichAssignment_(existing, context, relationMap, peopleMap);
   _directoryAssertScope_(
     authorization,
-    Object.assign({}, enriched, {
+    Object.assign({}, existing, {
       estructura_id: location.estructura_id,
       sede_id: location.sede_id
     }),
     'Eliminación de una asignación fuera del ámbito asignado.'
   );
 
-  const person = peopleMap.get(_directoryKey_(existing.persona_id));
+  const person = _directoryFindPersonById_(existing.persona_id);
+  if (!person) throw new Error('La asignación no tiene una identidad válida.');
 
   return _accessRunAudited_(authorization.auth, {
     accion: 'ELIMINAR_ASIGNACION_DIRECTORIO',
     modulo: 'INFORMACION_PERSONAL',
     tipo_entidad: 'ASIGNACION',
     registro_id: id,
-    registro_nombre: [person && person.nombres, person && person.apellidos].filter(Boolean).join(' '),
+    registro_nombre: [person.nombres, person.apellidos].filter(Boolean).join(' '),
     detalle: 'Eliminación física de una asignación. La persona se conserva.',
     datos_antes: existing
   }, () => {
@@ -1898,7 +1903,6 @@ function deleteDirectoryAssignment(asignacionId) {
       'asignacion_id',
       id
     );
-
     return {
       value: Object.assign({}, result, {
         success: true,
@@ -1910,29 +1914,23 @@ function deleteDirectoryAssignment(asignacionId) {
   });
 }
 
-/**
- * Elimina una persona solo cuando no tiene asignaciones ni
- * una ficha complementaria de datos personales vinculada.
- */
 function deleteDirectoryPerson(personaId) {
   const id = _directoryText_(personaId);
   if (!id) throw new Error('Debes proporcionar el identificador de la persona.');
 
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_ELIMINAR');
-  const context = _directoryLoadContext_();
-
-  const person = context.personas.find(item =>
-    _directoryKey_(item.persona_id) === id
-  );
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeDocumentTypes: false
+  });
+  const person = _directoryFindPersonById_(id);
   if (!person) throw new Error('No se encontró la persona "' + id + '".');
 
   const linkedAssignments = context.asignaciones.filter(item =>
     _directoryKey_(item.persona_id) === id
   );
-  const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
 
-  // Primero se comprueba el ámbito de todas las adscripciones para no
-  // revelar relaciones ni operar sobre identidades fuera del alcance.
   _directoryAssertPersonMutationScope_(
     authorization,
     person,
@@ -1948,10 +1946,8 @@ function deleteDirectoryPerson(personaId) {
     );
   }
 
-  const hasPersonalData = (context.datosPersonales || []).some(record =>
-    _directoryKey_(record.servidor_id) === id
-  );
-  if (hasPersonalData) {
+  const personalData = _directoryFindPersonalDataById_(id);
+  if (personalData) {
     throw new Error(
       'No se puede eliminar la persona porque tiene una ficha de datos personales vinculada.'
     );
@@ -1971,7 +1967,6 @@ function deleteDirectoryPerson(personaId) {
       'persona_id',
       id
     );
-
     return {
       value: Object.assign({}, result, {
         success: true,
@@ -1983,9 +1978,6 @@ function deleteDirectoryPerson(personaId) {
   });
 }
 
-/**
- * Invalida manualmente la caché del directorio.
- */
 function clearDirectoryCache() {
   requirePermission_('INFORMACION_PERSONAL_VER', 'MOD_INFO_PERSONAL');
   const result = _directoryInvalidateCache_();
