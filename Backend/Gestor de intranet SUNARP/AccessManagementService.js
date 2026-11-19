@@ -2134,7 +2134,10 @@ function getAccessManagementData() {
       : [],
 
     operations: capabilities.permissions
-      ? _accessGetOperationCatalog_(data.permisos)
+      ? ACCESS_PERMISSION_OPERATIONS.map(item => ({
+          codigo: item.codigo,
+          nombre: item.nombre
+        }))
       : [],
 
     userRoles: capabilities.userRoles
