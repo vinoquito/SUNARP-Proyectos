@@ -1,7 +1,7 @@
 <script>
   /**
  * GESTOR DE INTRANET SUNARP
- * Módulo: Directorios telefónicos
+ * Módulo: Información de personal
  *
  * Operaciones:
  * - Listar servidores.
@@ -1898,7 +1898,7 @@ async function deleteDirectoryEntry(record) {
       // Diagnóstico de rendimiento.
       const totalTime = performance.now() - totalStart;
 
-      console.group('Rendimiento - Directorios telefónicos');
+      console.group('Rendimiento - Información de personal');
 
       console.table({
         'Consulta al servidor': {
@@ -1928,20 +1928,20 @@ async function deleteDirectoryEntry(record) {
       state.loaded = false;
 
       console.error(
-        'Error al cargar Directorios telefónicos:',
+        'Error al cargar Información de personal:',
         error
       );
 
       notify(
         'error',
-        error.message || 'No se pudo cargar el directorio.'
+        error.message || 'No se pudo cargar la información de personal.'
       );
 
       const container = getElements().table;
 
       if (container) {
         container.textContent =
-          'No se pudo cargar la información del directorio.';
+          'No se pudo cargar la información de personal.';
       }
 
     } finally {
@@ -1968,7 +1968,7 @@ async function deleteDirectoryEntry(record) {
       event.detail?.route || ''
     );
 
-    if (route === 'directorios-telefonicos') {
+    if (route === 'informacion-personal') {
       load();
     } else {
       clearPageActions();
