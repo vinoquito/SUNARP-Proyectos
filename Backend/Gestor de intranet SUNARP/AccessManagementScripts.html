@@ -746,13 +746,17 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         return;
       }
 
-      modulePicker.disabled = true;
-      addModuleButton.disabled = true;
-
       const module = modules.find(item =>
         item.modulo_id === moduleId
       );
-      if (!module) return;
+
+      if (!module) {
+        SUNARPUI.notify('warning', 'El módulo seleccionado ya no está disponible.');
+        return;
+      }
+
+      modulePicker.disabled = true;
+      addModuleButton.disabled = true;
 
       const editing = Boolean(existingAssignment);
       const original = existingAssignment || {
