@@ -64,14 +64,11 @@ function getAppShellConfig() {
       route === 'accesos'
     ) {
       return accessManagementCodes.some(code =>
-        SUNARPCore.authorizationHasPermission(auth, code)
+        hasPermission_(auth, code)
       );
     }
 
-    return SUNARPCore.authorizationHasPermission(
-      auth,
-      requiredCode
-    );
+    return hasPermission_(auth, requiredCode);
   });
 
   const allowedIds = new Set(
@@ -88,7 +85,6 @@ function getAppShellConfig() {
     navigation
   };
 }
-
 /**
  * Lee y valida la configuración del menú.
  */
