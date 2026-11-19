@@ -601,7 +601,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       const next = createSelect(
         options,
         '',
-        options.length ? 'Selecciona un módulo' : 'No hay más módulos disponibles'
+        options.length ? 'Selecciona el módulo que deseas agregar' : 'No hay más módulos disponibles'
       );
 
       modulePicker.replaceChildren(...Array.from(next.childNodes));
