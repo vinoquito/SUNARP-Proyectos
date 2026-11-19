@@ -1175,39 +1175,43 @@ function saveAccessRole(payload) {
 function saveAccessPermission(payload) {
   const auth = _accessRequirePermission_('PERMISOS_ADMINISTRAR');
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('No se recibieron los datos del permiso.');
-
   const action = _accessText_(payload.action).toLowerCase();
-  const permissionId = _accessUpper_(payload.permiso_id || payload.permissionId);
-  const code = _accessUpper_(payload.codigo || payload.code);
   const moduleId = _accessText_(payload.modulo_id || payload.moduleId);
   const operation = _accessUpper_(payload.operacion || payload.operation);
   const description = _accessText_(payload.descripcion || payload.description);
-  const active = _accessNormalizeActive_(payload.active === undefined ? true : payload.active, 'El estado del permiso');
-
   if (!['create', 'edit'].includes(action)) throw new Error('La operación del permiso no es válida.');
-  if (!/^[A-Z0-9_]{3,80}$/.test(code)) throw new Error('El código del permiso no tiene un formato válido.');
-  if (!permissionId) throw new Error('Ingresa el ID del permiso.');
-  if (!moduleId || !operation || !description) throw new Error('Completa modulo_id, operación y descripción del permiso.');
+  if (!moduleId || !operation || !description) throw new Error('Completa el módulo, la operación y la descripción del permiso.');
 
   const data = _accessLoadSecurityData_();
   const module = data.modulos.find(item => _accessText_(item.modulo_id) === moduleId && _accessIsActive_(item.active));
   if (!module) throw new Error('El módulo no existe o está inactivo.');
-
-  const existing = _accessFindBy_(data.permisos, 'permiso_id', permissionId);
-  if (action === 'create' && existing) throw new Error('Ya existe un permiso con ese ID.');
+  const originalId = action === 'edit' ? _accessUpper_(payload.permiso_id_original || payload.originalPermissionId || payload.permiso_id) : '';
+  const existing = action === 'edit' ? _accessFindBy_(data.permisos, 'permiso_id', originalId) : null;
   if (action === 'edit' && !existing) throw new Error('No se encontró el permiso que deseas actualizar.');
-  if (existing && code !== _accessUpper_(existing.codigo)) throw new Error('El código de un permiso existente es inmutable.');
-  if (existing && moduleId !== _accessText_(existing.modulo_id)) throw new Error('El modulo_id de un permiso existente es inmutable. Crea otro permiso y reasigna sus relaciones.');
+
+  const knownOperation = ACCESS_PERMISSION_OPERATIONS.some(item => item.codigo === operation);
+  const unchangedLegacyOperation = existing && operation === _accessUpper_(existing.operacion);
+  if (!knownOperation && !unchangedLegacyOperation) throw new Error('Selecciona una operación disponible en el catálogo de operaciones.');
+  if (existing && moduleId !== _accessText_(existing.modulo_id)) throw new Error('El módulo de un permiso existente es inmutable. Crea otro permiso y reasigna sus relaciones.');
+  if (action === 'edit' && operation !== _accessUpper_(existing.operacion)) throw new Error('La operación de un permiso existente es inmutable porque forma parte de su código.');
+
+  const code = action === 'create' ? _accessBuildPermissionCode_(module.codigo, operation) : _accessUpper_(existing.codigo);
+  const permissionId = action === 'create'
+    ? _accessGenerateUniqueIdentifier_('PERM_', code, data.permisos, 'permiso_id', 50)
+    : originalId;
   if (data.permisos.some(row => _accessUpper_(row.codigo) === code && _accessText_(row.permiso_id) !== permissionId)) {
-    throw new Error('Ya existe un permiso con ese código.');
+    throw new Error('Ya existe un permiso con esa combinación de módulo y operación.');
   }
 
+  const active = action === 'create' ? true : _accessIsActive_(existing.active);
   const nextPermission = { permiso_id: permissionId, codigo: code, modulo_id: moduleId, operacion: operation, descripcion: description, active };
   const after = _accessCopyData_(data);
   if (action === 'edit') {
     const index = after.permisos.findIndex(row => _accessText_(row.permiso_id) === permissionId);
     after.permisos[index] = Object.assign({}, after.permisos[index], nextPermission);
-  } else after.permisos.push(nextPermission);
+  } else {
+    after.permisos.push(nextPermission);
+  }
   _accessAssertAdministratorContinuity_(data, after);
 
   return _accessRunAudited_(auth, {
@@ -1221,22 +1225,20 @@ function saveAccessPermission(payload) {
   }, () => {
     const sheet = ACCESS_MANAGEMENT_CONFIG.sheets.permissions;
     const source = _accessSecuritySource_(sheet);
-    const record = _accessFilterPayload_(sheet, nextPermission, [
-      'permiso_id', 'codigo', 'modulo_id', 'operacion', 'descripcion', 'active'
-    ]);
-    if (action === 'create') SUNARPCore.insertRecord(source, record, { idField: 'permiso_id' });
-    else {
+    const record = _accessFilterPayload_(sheet, nextPermission, ['permiso_id', 'codigo', 'modulo_id', 'operacion', 'descripcion', 'active']);
+    if (action === 'create') {
+      SUNARPCore.insertRecord(source, record, { idField: 'permiso_id' });
+    } else {
       const updates = Object.assign({}, record);
       delete updates.permiso_id;
       SUNARPCore.updateRecord(source, 'permiso_id', permissionId, updates);
     }
     return {
-      value: { success: true, message: action === 'create' ? 'Permiso creado correctamente.' : 'Permiso actualizado correctamente.' },
+      value: { success: true, permiso_id: permissionId, codigo: code, message: action === 'create' ? 'Permiso creado correctamente.' : 'Permiso actualizado correctamente.' },
       auditAfter: nextPermission
     };
   });
 }
-
 
 function saveRolePermissions(payload) {
   const auth = _accessRequirePermission_('ROLES_ADMINISTRAR');
