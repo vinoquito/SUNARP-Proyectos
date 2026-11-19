@@ -1119,36 +1119,31 @@ function saveAccessRole(payload) {
   const auth = _accessRequirePermission_('ROLES_ADMINISTRAR');
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('No se recibieron los datos del rol.');
   const action = _accessText_(payload.action).toLowerCase();
-  const roleId = _accessUpper_(payload.rol_id || payload.roleId);
   const name = _accessText_(payload.nombre || payload.name);
   const description = _accessText_(payload.descripcion || payload.description);
-  const active = _accessNormalizeActive_(payload.active === undefined ? true : payload.active, 'El estado del rol');
-  const originalId = _accessUpper_(payload.rol_id_original || payload.originalRoleId || roleId);
-
   if (!['create', 'edit'].includes(action)) throw new Error('La operación del rol no es válida.');
-  if (!/^[A-Z0-9_-]{2,50}$/.test(roleId)) throw new Error('El ID del rol solo admite letras, números, guion y guion bajo.');
   if (!name) throw new Error('Ingresa el nombre del rol.');
-  if (action === 'edit' && roleId !== originalId) throw new Error('No está permitido cambiar el ID de un rol existente.');
 
   const data = _accessLoadSecurityData_();
-  const existing = _accessFindBy_(data.roles, 'rol_id', action === 'edit' ? originalId : roleId);
-  if (action === 'create' && existing) throw new Error('Ya existe un rol con ese ID.');
+  const originalId = action === 'edit' ? _accessUpper_(payload.rol_id_original || payload.originalRoleId || payload.rol_id) : '';
+  const existing = action === 'edit' ? _accessFindBy_(data.roles, 'rol_id', originalId) : null;
   if (action === 'edit' && !existing) throw new Error('No se encontró el rol que deseas actualizar.');
-  if (data.roles.some(row => _accessText_(row.rol_id) !== originalId &&
-      _accessText_(row.nombre).toLowerCase() === name.toLowerCase())) {
+  if (data.roles.some(row => _accessText_(row.rol_id) !== originalId && _accessText_(row.nombre).toLowerCase() === name.toLowerCase())) {
     throw new Error('Ya existe un rol con ese nombre.');
   }
-  if (action === 'edit' && !active && data.usuarioRol.some(item =>
-      _accessText_(item.rol_id) === originalId && _accessIsActive_(item.active))) {
-    throw new Error('No puedes desactivar un rol asignado a personas. Retira primero esas asignaciones.');
-  }
 
+  const roleId = action === 'create'
+    ? _accessGenerateUniqueIdentifier_('ROL_', name, data.roles, 'rol_id', 50)
+    : originalId;
+  const active = action === 'create' ? true : _accessIsActive_(existing.active);
   const nextRole = { rol_id: roleId, nombre: name, descripcion: description, active };
   const after = _accessCopyData_(data);
   if (action === 'edit') {
     const index = after.roles.findIndex(row => _accessText_(row.rol_id) === originalId);
     after.roles[index] = Object.assign({}, after.roles[index], nextRole);
-  } else after.roles.push(nextRole);
+  } else {
+    after.roles.push(nextRole);
+  }
   _accessAssertAdministratorContinuity_(data, after);
 
   return _accessRunAudited_(auth, {
@@ -1163,19 +1158,19 @@ function saveAccessRole(payload) {
     const sheet = ACCESS_MANAGEMENT_CONFIG.sheets.roles;
     const source = _accessSecuritySource_(sheet);
     const record = _accessAddMetadata_(sheet, nextRole, action === 'create', auth);
-    if (action === 'create') SUNARPCore.insertRecord(source, record, { idField: 'rol_id' });
-    else {
+    if (action === 'create') {
+      SUNARPCore.insertRecord(source, record, { idField: 'rol_id' });
+    } else {
       const updates = Object.assign({}, record);
       delete updates.rol_id;
       SUNARPCore.updateRecord(source, 'rol_id', originalId, updates);
     }
     return {
-      value: { success: true, message: action === 'create' ? 'Rol creado correctamente.' : 'Rol actualizado correctamente.' },
+      value: { success: true, rol_id: roleId, message: action === 'create' ? 'Rol creado correctamente.' : 'Rol actualizado correctamente.' },
       auditAfter: nextRole
     };
   });
 }
-
 
 function saveAccessPermission(payload) {
   const auth = _accessRequirePermission_('PERMISOS_ADMINISTRAR');
