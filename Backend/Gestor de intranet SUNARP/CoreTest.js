@@ -347,3 +347,53 @@ function testCoreAuthorizationUserResolution() {
   Logger.log(JSON.stringify(result, null, 2));
   return result;
 }
+
+
+/**
+ * Comprueba el catálogo oficial de tipos de documento y su correspondencia
+ * con el valor almacenado en servidores datos personales.
+ * No modifica hojas ni imprime números de documento.
+ */
+function testDirectoryDocumentTypeCatalog() {
+  const context = _directoryLoadContext_();
+
+  const expected = {
+    TD_001: 'DNI',
+    TD_002: 'Carné de extranjería',
+    TD_003: 'Pasaporte',
+    TD_004: 'Carné de Permiso Temporal de Permanencia (CPP)',
+    TD_005: 'Carné Temporal Migratorio',
+    TD_006: 'Carné de identidad del Ministerio de Relaciones Exteriores',
+    TD_007: 'Cédula de identidad extranjera',
+    TD_008: 'Documento de viaje o salvoconducto'
+  };
+
+  const types = (context.documentTypes || []).map(item => ({
+    id: String(item.id || '').trim(),
+    name: String(item.name || '').trim()
+  }));
+
+  const byId = new Map(types.map(item => [item.id, item.name]));
+  const mismatches = Object.keys(expected).filter(id =>
+    byId.get(id) !== expected[id]
+  );
+
+  const sampleMatches = (context.datosPersonales || []).filter(item =>
+    String(item.tipo_documento || '').trim().toUpperCase() === 'TD_001' &&
+    String(item.numero_documento || '').replace(/\\s+/g, '') === '40051271'
+  );
+
+  const result = {
+    catalogCount: types.length,
+    types,
+    expectedCatalogComplete: mismatches.length === 0,
+    mismatches,
+    sampleDniMatchCount: sampleMatches.length,
+    sampleDniCatalogName: byId.get('TD_001') || ''
+  };
+
+  Logger.log('VALIDACIÓN DEL CATÁLOGO TIPO_DOCUMENTO_IDENTIDAD');
+  Logger.log(JSON.stringify(result, null, 2));
+
+  return result;
+}
