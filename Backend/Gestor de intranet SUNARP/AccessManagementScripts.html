@@ -226,14 +226,14 @@
         if (save.disabled || !form.reportValidity() || !canSave()) return;
 
         save.disabled = true;
-        const finishLoading = SUNARPUI.beginLoading();
+        const finishLoading = SUNARPUI.beginLoading({ backdrop: 'translucent' });
 
         try {
           await onSave();
 
           SUNARPUI.closeModal();
 
-          await refreshData(false);
+          await refreshCurrentTabData(false);
 
           SUNARPUI.notify(
             'success',
