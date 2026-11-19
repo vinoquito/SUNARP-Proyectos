@@ -1938,30 +1938,45 @@ function saveAccessUserConfiguration(payload) {
       ambitos: previousScopes
     }
   }, () => {
-    const roleResult = rolesChanged
-      ? SUNARPCore.syncRecordsByKey(
-          _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.userRoles),
-          { persona_id: personaId },
-          ['modulo_id'],
-          desiredRoles,
-          'active',
-          true,
-          false
-        )
-      : null;
+    let roleResult = null;
+    let scopeResult = null;
 
-    const scopeResult = scopesChanged
-      ? SUNARPCore.syncRecordsByKey(
-          _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.scopes),
-          { persona_id: personaId },
-          ['modulo_id', 'tipo_ambito', 'referencia_id'],
-          desiredScopes,
-          'active',
-          true,
-          false,
-          { allowEmptyKeyFields: ['referencia_id'] }
-        )
-      : null;
+    try {
+      roleResult = rolesChanged
+        ? SUNARPCore.syncRecordsByKey(
+            _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.userRoles),
+            { persona_id: personaId },
+            ['modulo_id'],
+            desiredRoles,
+            'active',
+            true,
+            false
+          )
+        : null;
+
+      scopeResult = scopesChanged
+        ? SUNARPCore.syncRecordsByKey(
+            _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.scopes),
+            { persona_id: personaId },
+            ['modulo_id', 'tipo_ambito', 'referencia_id'],
+            desiredScopes,
+            'active',
+            true,
+            false,
+            { allowEmptyKeyFields: ['referencia_id'] }
+          )
+        : null;
+
+    } catch (error) {
+      if (roleResult) {
+        throw new Error(
+          'Los roles se actualizaron, pero no se pudieron completar los ámbitos de acceso. Revisa la configuración antes de volver a guardar. Detalle: ' +
+          (error.message || 'Error no identificado.')
+        );
+      }
+
+      throw error;
+    }
 
     return {
       value: {
