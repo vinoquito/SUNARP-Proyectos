@@ -42,12 +42,8 @@
   }
 
   .access-user-module-picker {
-    align-items: end;
-  }
-
-  .access-user-module-picker > .sunarp-btn {
-    justify-self: start;
-    min-height: 40px;
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 480px;
   }
 
   .access-user-module-editor-panel {
@@ -160,15 +156,7 @@
     justify-content: flex-start;
   }
 
-  @media (max-width: 720px) {
-    .access-user-module-picker {
-      grid-template-columns: minmax(0, 1fr);
-    }
 
-    .access-user-module-picker > .sunarp-btn {
-      justify-self: start;
-    }
-  }
 </style>
 
 <section
