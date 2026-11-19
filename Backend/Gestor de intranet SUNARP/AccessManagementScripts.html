@@ -480,11 +480,6 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       ? user.roles
       : [];
 
-    const persistedModuleIds = new Set([
-      ...roleAssignments.map(item => item.modulo_id),
-      ...fallbackRoles.map(item => item.modulo_id)
-    ]);
-
     const scopeAssignments = (state.data.scopes || []).filter(item =>
       item.persona_id === personaId && item.active === true
     );
@@ -500,6 +495,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       draft.set(item.modulo_id, {
         modulo_id: item.modulo_id,
         rol_id: item.rol_id,
+        has_scopes: item.has_scopes === true,
         ambitos: scopeAssignments
           .filter(scope => scope.modulo_id === item.modulo_id)
           .map(scope => ({
@@ -521,6 +517,9 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       draft.set(item.modulo_id, {
         modulo_id: item.modulo_id,
         rol_id: item.rol_id,
+        has_scopes: roleAssignments.some(role =>
+          role.modulo_id === item.modulo_id && role.has_scopes === true
+        ),
         ambitos: scopeAssignments
           .filter(scope => scope.modulo_id === item.modulo_id)
           .map(scope => ({
@@ -702,6 +701,14 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             'Eliminar',
             'outline',
             () => {
+              if (!canManageScopes && assignment.has_scopes === true) {
+                SUNARPUI.notify(
+                  'warning',
+                  'No puedes retirar este acceso porque tiene ámbitos asignados y tu cuenta no tiene permiso para administrarlos.'
+                );
+                return;
+              }
+
               if (editorHost.childElementCount) {
                 SUNARPUI.notify(
                   'warning',
@@ -1045,6 +1052,9 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           draft.set(moduleId, {
             modulo_id: moduleId,
             rol_id: roleSelect.value,
+            has_scopes: existingAssignment
+              ? existingAssignment.has_scopes === true
+              : false,
             ambitos: canManageScopes
               ? scopeDraft.map(item => Object.assign({}, item))
               : (original.ambitos || []).map(item => Object.assign({}, item))
