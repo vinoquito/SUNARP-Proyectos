@@ -1,35 +1,34 @@
 /**
  * GESTOR DE INTRANET SUNARP
- * Servicio: Administración de accesos.
- *
- * Hojas: Usuarios, Roles, Permisos, RolPermiso, AmbitosAcceso y Auditoria.
- * Los catálogos sede y estructura_org se leen desde las pestañas espejo
- * Sedes y EstructuraOrg de la fuente SECURITY (IMPORTRANGE de MASTER_DATA).
- * Las escrituras de datos se delegan a SUNARP Core.
+ * Servicio de administración de accesos sobre el contrato único del Core.
+ * La identidad se resuelve desde personas; Usuarios solo almacena persona_id.
  */
 
 const ACCESS_MANAGEMENT_CONFIG = Object.freeze({
   sourceKey: 'SECURITY',
-
+  peopleSourceKey: 'DIRECTORY',
   sheets: Object.freeze({
     users: 'Usuarios',
+    modules: 'Modulos',
     roles: 'Roles',
+    userRoles: 'UsuarioRol',
     permissions: 'Permisos',
     rolePermissions: 'RolPermiso',
     scopes: 'AmbitosAcceso',
-    audit: 'Auditoria'
+    audit: 'Auditoria',
+    people: 'personas'
   }),
-
-  statusActive: 'ACTIVO',
-  statusInactive: 'INACTIVO',
-
+  moduleCodes: Object.freeze({
+    accesses: 'ACCESOS',
+    personalInformation: 'INFORMACION_PERSONAL'
+  }),
+  adminRoleId: 'ROL_ADMIN',
   adminPermissionCodes: Object.freeze([
     'USUARIOS_ADMINISTRAR',
     'ROLES_ADMINISTRAR',
     'PERMISOS_ADMINISTRAR',
     'AMBITOS_ACCESO_ADMINISTRAR'
   ]),
-
   privilegedRolePermissionCodes: Object.freeze([
     'USUARIOS_ADMINISTRAR',
     'ROLES_ADMINISTRAR',
@@ -40,63 +39,19 @@ const ACCESS_MANAGEMENT_CONFIG = Object.freeze({
 });
 
 const ACCESS_MANAGEMENT_FIELDS = Object.freeze({
-  users: Object.freeze([
-    'correo_institucional',
-    'nombres',
-    'apellidos',
-    'estado',
-    'rol_id',
-    'estructura_org_id'
-  ]),
-
-  roles: Object.freeze([
-    'rol_id',
-    'nombre',
-    'descripcion',
-    'estado'
-  ]),
-
-  permissions: Object.freeze([
-    'permiso_id',
-    'codigo',
-    'modulo',
-    'operacion',
-    'descripcion',
-    'estado'
-  ]),
-
-  rolePermissions: Object.freeze([
-    'rol_id',
-    'permiso_id',
-    'estado'
-  ]),
-
-  scopes: Object.freeze([
-    'correo_institucional',
-    'modulo',
-    'tipo_ambito',
-    'referencia_id',
-    'incluir_descendientes',
-    'estado'
-  ]),
-
+  users: Object.freeze(['persona_id', 'active']),
+  modules: Object.freeze(['modulo_id', 'codigo', 'nombre', 'descripcion', 'active']),
+  roles: Object.freeze(['rol_id', 'nombre', 'descripcion', 'active']),
+  userRoles: Object.freeze(['persona_id', 'modulo_id', 'rol_id', 'active']),
+  permissions: Object.freeze(['permiso_id', 'codigo', 'modulo_id', 'operacion', 'descripcion', 'active']),
+  rolePermissions: Object.freeze(['rol_id', 'permiso_id', 'active']),
+  scopes: Object.freeze(['persona_id', 'modulo_id', 'tipo_ambito', 'referencia_id', 'incluir_descendientes', 'active']),
+  people: Object.freeze(['persona_id', 'nombres', 'apellidos', 'correo_institucional']),
   audit: Object.freeze([
-    'evento_id',
-    'fecha_hora',
-    'actor_correo',
-    'actor_nombre',
-    'accion',
-    'modulo',
-    'tipo_entidad',
-    'registro_id',
-    'registro_nombre',
-    'resultado',
-    'detalle',
-    'datos_antes',
-    'datos_despues',
-    'ambito_modulo',
-    'ambito_tipo',
-    'ambito_referencia_id'
+    'evento_id', 'fecha_hora', 'actor_correo', 'actor_nombre', 'accion',
+    'modulo', 'tipo_entidad', 'registro_id', 'registro_nombre', 'resultado',
+    'detalle', 'datos_antes', 'datos_despues', 'ambito_modulo',
+    'ambito_tipo', 'ambito_referencia_id'
   ])
 });
 
@@ -114,15 +69,73 @@ function _accessUpper_(value) {
 
 
 function _accessIsActive_(value) {
-  return [
-    'ACTIVO',
-    'ACTIVE',
-    'TRUE',
-    'VERDADERO',
-    '1',
-    'SI',
-    'SÍ'
-  ].includes(_accessUpper_(value));
+  if (value === true) return true;
+  if (value === false || value === null || value === undefined) return false;
+  return _accessUpper_(value) === 'TRUE';
+}
+
+
+function _accessNormalizeActive_(value, label) {
+  if (value === true || _accessUpper_(value) === 'TRUE') return true;
+  if (value === false || _accessUpper_(value) === 'FALSE') return false;
+  throw new Error((label || 'El estado') + ' debe ser TRUE o FALSE.');
+}
+
+function _accessDirectorySource_(sheetName) {
+  return getIntranetDataSource(ACCESS_MANAGEMENT_CONFIG.peopleSourceKey, sheetName, 1);
+}
+
+function _accessResolveModuleId_(auth, moduleIdOrCode) {
+  const expected = _accessUpper_(moduleIdOrCode);
+  if (!expected) throw new Error('Debes indicar el modulo_id para la autorización.');
+
+  const module = (auth && auth.modules || []).find(item =>
+    _accessUpper_(item.modulo_id) === expected ||
+    _accessUpper_(item.codigo) === expected
+  );
+
+  if (!module || !_accessIsActive_(module.active)) {
+    throw new Error('El módulo solicitado no existe o está inactivo.');
+  }
+
+  return _accessText_(module.modulo_id);
+}
+
+function _accessGetModuleAccess_(auth, moduleIdOrCode) {
+  const moduleId = _accessResolveModuleId_(auth, moduleIdOrCode);
+  return (auth.moduleAccess || []).find(item =>
+    _accessText_(item.modulo_id) === moduleId
+  ) || null;
+}
+
+function _accessHasPermission_(auth, permissionCode, moduleIdOrCode) {
+  const moduleId = _accessResolveModuleId_(auth, moduleIdOrCode);
+  return SUNARPCore.authorizationHasPermission(auth, permissionCode, moduleId);
+}
+
+function _accessIsGlobalAdministrator_(auth) {
+  const moduleId = _accessResolveModuleId_(auth, ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses);
+  const access = _accessGetModuleAccess_(auth, moduleId);
+
+  if (!access || access.rol_id !== ACCESS_MANAGEMENT_CONFIG.adminRoleId) return false;
+
+  if (!SUNARPCore.authorizationIsRecordInScope(auth, moduleId, {}, [])) return false;
+
+  return ACCESS_MANAGEMENT_CONFIG.adminPermissionCodes.every(code =>
+    SUNARPCore.authorizationHasPermission(auth, code, moduleId)
+  );
+}
+
+function hasPermission_(auth, permissionCode) {
+  const code = _accessUpper_(permissionCode);
+  if (!auth || !auth.authenticated || !code) return false;
+
+  const matches = (auth.permissionsCatalog || []).filter(permission =>
+    _accessUpper_(permission.codigo) === code && _accessIsActive_(permission.active)
+  );
+  if (matches.length !== 1) return false;
+
+  return _accessHasPermission_(auth, code, matches[0].modulo_id);
 }
 
 
@@ -140,81 +153,39 @@ function _accessSecuritySource_(sheetName) {
  */
 function _accessLoadSecurityData_() {
   const s = ACCESS_MANAGEMENT_CONFIG.sheets;
-
   const requests = [
-    {
-      key: 'usuarios',
-      source: _accessSecuritySource_(s.users),
-      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.users
-    },
-    {
-      key: 'roles',
-      source: _accessSecuritySource_(s.roles),
-      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.roles
-    },
-    {
-      key: 'permisos',
-      source: _accessSecuritySource_(s.permissions),
-      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.permissions
-    },
-    {
-      key: 'rolPermiso',
-      source: _accessSecuritySource_(s.rolePermissions),
-      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.rolePermissions
-    },
-    {
-      key: 'ambitosAcceso',
-      source: _accessSecuritySource_(s.scopes),
-      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.scopes
-    }
+    { key: 'usuarios', source: _accessSecuritySource_(s.users), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.users },
+    { key: 'modulos', source: _accessSecuritySource_(s.modules), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.modules },
+    { key: 'roles', source: _accessSecuritySource_(s.roles), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.roles },
+    { key: 'usuarioRol', source: _accessSecuritySource_(s.userRoles), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.userRoles },
+    { key: 'permisos', source: _accessSecuritySource_(s.permissions), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.permissions },
+    { key: 'rolPermiso', source: _accessSecuritySource_(s.rolePermissions), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.rolePermissions },
+    { key: 'ambitosAcceso', source: _accessSecuritySource_(s.scopes), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.scopes },
+    { key: 'personas', source: _accessDirectorySource_(s.people), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people }
   ];
 
-  // Los datos de autorización se comparten entre módulos durante 15 s.
-  // Las escrituras realizadas mediante SUNARP Core invalidan la fuente afectada.
   const data = SUNARPCore.listRecordsFromSourcesCached(requests, 15);
-
-  // Los encabezados se validan en la misma lectura agrupada de SUNARP Core.
   _accessValidateSnapshot_(data);
-
   return data;
 }
 
 
-/**
- * Comprueba que existan los encabezados mínimos requeridos.
- */
 function _accessValidateHeaders_() {
-  const s = ACCESS_MANAGEMENT_CONFIG.sheets;
-  const required = ACCESS_MANAGEMENT_FIELDS;
-
-  const keys = [
-    'users',
-    'roles',
-    'permissions',
-    'rolePermissions',
-    'scopes'
-  ];
-
-  keys.forEach(key => {
-    const source = _accessSecuritySource_(s[key]);
+  const sheets = ACCESS_MANAGEMENT_CONFIG.sheets;
+  Object.keys(ACCESS_MANAGEMENT_FIELDS).forEach(key => {
+    if (key === 'audit') return;
+    const source = key === 'people'
+      ? _accessDirectorySource_(sheets[key])
+      : _accessSecuritySource_(sheets[key]);
     const info = SUNARPCore.getSourceInfoCached(source, 300);
-
-    const missing = required[key].filter(header =>
-      !info.headers.includes(header)
-    );
-
+    const missing = ACCESS_MANAGEMENT_FIELDS[key].filter(header => !info.headers.includes(header));
     if (missing.length) {
-      throw new Error(
-        `La pestaña "${s[key]}" no tiene los encabezados requeridos: ${missing.join(', ')}.`
-      );
+      throw new Error('La pestaña "' + sheets[key] + '" no contiene los encabezados requeridos: ' + missing.join(', ') + '.');
     }
   });
 }
 
 
-/**
- * Detecta claves duplicadas en los catálogos de seguridad.
- */
 function _accessValidateUnique_(records, fields, label) {
   const seen = new Set();
 
@@ -242,171 +213,151 @@ function _accessValidateUnique_(records, fields, label) {
  * Comprueba integridad referencial básica.
  */
 function _accessValidateSnapshot_(data) {
-  _accessValidateUnique_(
-    data.usuarios,
-    ['correo_institucional'],
-    'Usuarios'
+  const unique = [
+    ['personas', ['persona_id'], 'personas.persona_id'],
+    ['usuarios', ['persona_id'], 'Usuarios.persona_id'],
+    ['modulos', ['modulo_id'], 'Modulos.modulo_id'],
+    ['modulos', ['codigo'], 'Modulos.codigo'],
+    ['roles', ['rol_id'], 'Roles.rol_id'],
+    ['permisos', ['permiso_id'], 'Permisos.permiso_id'],
+    ['permisos', ['codigo'], 'Permisos.codigo'],
+    ['usuarioRol', ['persona_id', 'modulo_id'], 'UsuarioRol.persona_id+modulo_id'],
+    ['rolPermiso', ['rol_id', 'permiso_id'], 'RolPermiso.rol_id+permiso_id'],
+    ['ambitosAcceso', ['persona_id', 'modulo_id', 'tipo_ambito', 'referencia_id'], 'AmbitosAcceso']
+  ];
+
+  unique.forEach(([collection, fields, label]) =>
+    _accessValidateUnique_(data[collection] || [], fields, label)
   );
 
-  _accessValidateUnique_(
-    data.roles,
-    ['rol_id'],
-    'Roles'
-  );
-
-  _accessValidateUnique_(
-    data.permisos,
-    ['permiso_id'],
-    'Permisos'
-  );
-
-  _accessValidateUnique_(
-    data.permisos,
-    ['codigo'],
-    'Permisos.codigo'
-  );
-
-  _accessValidateUnique_(
-    data.rolPermiso,
-    ['rol_id', 'permiso_id'],
-    'RolPermiso'
-  );
-
-  _accessValidateUnique_(
-    data.ambitosAcceso,
-    [
-      'correo_institucional',
-      'modulo',
-      'tipo_ambito',
-      'referencia_id'
-    ],
-    'AmbitosAcceso'
-  );
-
-  const roleIds = new Set(
-    data.roles.map(row => _accessText_(row.rol_id))
-  );
-
-  const permissionIds = new Set(
-    data.permisos.map(row => _accessText_(row.permiso_id))
-  );
+  const personIds = new Set(data.personas.map(row => _accessText_(row.persona_id)));
+  const moduleIds = new Set(data.modulos.map(row => _accessText_(row.modulo_id)));
+  const roleIds = new Set(data.roles.map(row => _accessText_(row.rol_id)));
+  const permissionIds = new Set(data.permisos.map(row => _accessText_(row.permiso_id)));
+  const userIds = new Set(data.usuarios.map(row => _accessText_(row.persona_id)));
 
   data.usuarios.forEach(user => {
-    if (
-      _accessText_(user.rol_id) &&
-      !roleIds.has(_accessText_(user.rol_id))
-    ) {
-      throw new Error(
-        `El usuario ${user.correo_institucional} referencia un rol inexistente.`
-      );
+    if (!personIds.has(_accessText_(user.persona_id))) {
+      throw new Error('Usuarios referencia una persona inexistente: ' + _accessText_(user.persona_id) + '.');
+    }
+  });
+
+  data.usuarioRol.forEach(item => {
+    if (!personIds.has(_accessText_(item.persona_id))) throw new Error('UsuarioRol referencia una persona inexistente.');
+    if (!userIds.has(_accessText_(item.persona_id))) throw new Error('UsuarioRol referencia una cuenta inexistente en Usuarios.');
+    if (!moduleIds.has(_accessText_(item.modulo_id))) throw new Error('UsuarioRol referencia un módulo inexistente.');
+    if (!roleIds.has(_accessText_(item.rol_id))) throw new Error('UsuarioRol referencia un rol inexistente.');
+  });
+
+  data.permisos.forEach(permission => {
+    if (!moduleIds.has(_accessText_(permission.modulo_id))) {
+      throw new Error('El permiso ' + _accessText_(permission.permiso_id) + ' referencia un modulo_id inexistente.');
     }
   });
 
   data.rolPermiso.forEach(item => {
-    if (!roleIds.has(_accessText_(item.rol_id))) {
-      throw new Error(
-        `RolPermiso referencia el rol inexistente ${item.rol_id}.`
-      );
-    }
+    if (!roleIds.has(_accessText_(item.rol_id))) throw new Error('RolPermiso referencia un rol inexistente.');
+    if (!permissionIds.has(_accessText_(item.permiso_id))) throw new Error('RolPermiso referencia un permiso inexistente.');
+  });
 
-    if (!permissionIds.has(_accessText_(item.permiso_id))) {
-      throw new Error(
-        `RolPermiso referencia el permiso inexistente ${item.permiso_id}.`
-      );
-    }
+  data.ambitosAcceso.forEach(item => {
+    if (!personIds.has(_accessText_(item.persona_id))) throw new Error('AmbitosAcceso referencia una persona inexistente.');
+    if (!moduleIds.has(_accessText_(item.modulo_id))) throw new Error('AmbitosAcceso referencia un módulo inexistente.');
+  });
+
+  const codes = new Set();
+  data.modulos.filter(row => _accessIsActive_(row.active)).forEach(module => {
+    const code = _accessUpper_(module.codigo);
+    if (!code) throw new Error('Existe un módulo activo sin código.');
+    if (codes.has(code)) throw new Error('Existe un código duplicado en Modulos: ' + code + '.');
+    codes.add(code);
   });
 }
 
 
-/**
- * Lee los catálogos espejo de Global parameters.
- * No consulta Directorios telefónicos para estos datos.
- */
 function _accessOrgCatalog_() {
   const requests = [
-    {
-      key: 'sedes',
-      source: getIntranetDataSource('SECURITY', 'Sedes', 1)
-    },
-    {
-      key: 'estructuraOrg',
-      source: getIntranetDataSource('SECURITY', 'EstructuraOrg', 1)
-    }
+    { key: 'sedes', source: getIntranetDataSource('SECURITY', 'Sedes', 1) },
+    { key: 'estructuraOrg', source: getIntranetDataSource('SECURITY', 'EstructuraOrg', 1) },
+    { key: 'locales', source: getIntranetDataSource('DIRECTORY', 'locales', 1) }
   ];
-
-  // Catálogos organizacionales compartidos: se invalidan automáticamente
-  // cuando SUNARP Core escribe en la pestaña correspondiente.
   return SUNARPCore.listRecordsFromSourcesCached(requests, 30);
 }
 
 
-/**
- * Obtiene la identidad y resuelve su contexto de autorización.
- */
 function _accessGetAuthContext_() {
   const email = SUNARPCore.getCurrentUserEmail();
-
   if (!email) {
-    throw new Error(
-      'No se pudo identificar tu cuenta institucional. Verifica la implementación de la aplicación web.'
-    );
+    throw new Error('No se pudo identificar tu cuenta institucional. Verifica la implementación de la aplicación web.');
   }
 
   const data = _accessLoadSecurityData_();
+  const matchingPeople = data.personas.filter(person =>
+    _accessText_(person.correo_institucional).toLowerCase() === email
+  );
 
+  if (matchingPeople.length !== 1) {
+    _accessWriteAudit_({ email, name: '' }, {
+      accion: 'IDENTIDAD_NO_RESUELTA',
+      modulo: 'ACCESOS',
+      tipo_entidad: 'PERSONA',
+      registro_id: email,
+      registro_nombre: email,
+      resultado: 'DENEGADO',
+      detalle: matchingPeople.length
+        ? 'El correo institucional aparece asociado a más de una persona.'
+        : 'El correo institucional no está registrado en personas.'
+    });
+    throw new Error(matchingPeople.length
+      ? 'Tu correo institucional está asociado a más de una persona. Debe corregirse el registro de identidad.'
+      : 'Tu persona no tiene un correo institucional registrado en el directorio.');
+  }
+
+  const person = matchingPeople[0];
+  if (Object.prototype.hasOwnProperty.call(person, 'active') && !_accessIsActive_(person.active)) {
+    throw new Error('La persona vinculada a tu correo institucional está inactiva.');
+  }
+
+  const personaId = _accessText_(person.persona_id);
   const context = SUNARPCore.resolveAuthorizationContext({
-    email,
+    personaId,
     users: data.usuarios,
+    modules: data.modulos,
     roles: data.roles,
+    userRoles: data.usuarioRol,
     permissions: data.permisos,
     rolePermissions: data.rolPermiso,
     scopes: data.ambitosAcceso
   });
 
   if (!context.authenticated) {
-    _accessWriteAudit_(
-      {
-        email,
-        name: ''
-      },
-      {
-        accion: 'AUTENTICACION_DENEGADA',
-        modulo: 'ACCESOS',
-        tipo_entidad: 'USUARIO',
-        registro_id: email,
-        registro_nombre: email,
-        resultado: 'DENEGADO',
-        detalle: 'La cuenta no está registrada como usuario activo o no tiene un rol activo.'
-      }
-    );
-
-    throw new Error(
-      'Tu cuenta no está habilitada para utilizar el gestor de intranet.'
-    );
+    _accessWriteAudit_({
+      email,
+      name: [person.nombres, person.apellidos].map(_accessText_).filter(Boolean).join(' ')
+    }, {
+      accion: 'AUTENTICACION_DENEGADA',
+      modulo: 'ACCESOS',
+      tipo_entidad: 'USUARIO',
+      registro_id: personaId,
+      registro_nombre: email,
+      resultado: 'DENEGADO',
+      detalle: 'La persona no tiene una cuenta activa en Usuarios.'
+    });
+    throw new Error('Tu cuenta no está habilitada para utilizar el gestor de intranet.');
   }
 
-  const user = context.user;
-
-  const name = [
-    user.nombres,
-    user.apellidos
-  ]
-    .map(_accessText_)
-    .filter(Boolean)
-    .join(' ');
-
   return Object.assign({}, context, {
-    name,
-    roleId: _accessText_(user.rol_id),
-    roleName: _accessText_(context.role.nombre),
-    structureOrgId: _accessText_(user.estructura_org_id)
+    email,
+    name: [person.nombres, person.apellidos].map(_accessText_).filter(Boolean).join(' '),
+    person,
+    personasCatalog: data.personas,
+    modules: data.modulos,
+    permissionsCatalog: data.permisos,
+    rolesCatalog: data.roles
   });
 }
 
 
-/**
- * Contexto de autenticación reutilizable dentro de la aplicación.
- */
 function getAuthContext_() {
   return _accessGetAuthContext_();
 }
