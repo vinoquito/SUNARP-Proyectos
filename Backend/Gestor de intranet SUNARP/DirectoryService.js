@@ -871,7 +871,7 @@ function getDirectoryInitialData() {
         _directoryIsActive_(item) && allowedSedeIds.has(_directoryKey_(item.id))
       ),
       tiposLocal: context.tiposLocal.filter(item =>
-        _directoryIsActive_(item) && allowedLocalTypes.has(_directoryKey_(item.tipo_local_id || item.id))
+        _directoryIsActive_(item) && allowedLocalTypes.has(_directoryKey_(item.id))
       ),
       locales: catalogLocals,
       tiposEstructura: context.tiposEstructura.filter(item =>
