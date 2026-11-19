@@ -3162,17 +3162,7 @@ function _accessMigrationEnsureScopeTypes_(spreadsheet) {
 }
 
 function _accessMigrationInvalidateSource_(source) {
-  ['records', 'info'].forEach(kind => {
-    const identity = [
-      source.spreadsheetId,
-      source.sheetName,
-      source.headerRow || 1,
-      kind
-    ].join('|');
-    const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, identity);
-    const hash = Utilities.base64EncodeWebSafe(digest).replace(/=+$/g, '');
-    SUNARPCore.removeCachedValue('source-data:v1:' + hash);
-  });
+  return SUNARPCore.invalidateSourceCache(source);
 }
 
 /**

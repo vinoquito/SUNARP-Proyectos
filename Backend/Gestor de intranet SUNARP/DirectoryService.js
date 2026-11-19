@@ -36,11 +36,7 @@ const DIRECTORY_SERVICE_CONFIG = Object.freeze({
   })
 });
 
-const DIRECTORY_CACHE_KEY = 'gestor-intranet:directory-context:v5';
-const DIRECTORY_CACHE_TTL = 300;
-const DIRECTORY_CACHE_CHUNK_CHARS = 80 * 1024;
-const DIRECTORY_CACHE_MANIFEST_SUFFIX = ':manifest';
-const DIRECTORY_CACHE_PART_SUFFIX = ':part:';
+const DIRECTORY_DATA_CACHE_TTL = 300;
 
 const DIRECTORY_REQUIRED_HEADERS = Object.freeze({
   personas: ['persona_id', 'nombres', 'apellidos', 'correo_institucional'],
@@ -491,152 +487,30 @@ function _directoryLoadContextFromSheets_() {
 
   // Core agrupa la lectura por libro aunque el catálogo documental
   // se encuentre en Global parameters o en Directorios telefónicos.
-  const context = SUNARPCore.listRecordsFromSources(requests);
+  const context = SUNARPCore.listRecordsFromSourcesCached(requests, DIRECTORY_DATA_CACHE_TTL);
 
   _directoryValidateSnapshot_(context);
 
   return context;
 }
 
-function _directoryCacheManifestKey_() {
-  return DIRECTORY_CACHE_KEY + DIRECTORY_CACHE_MANIFEST_SUFFIX;
-}
-
-function _directoryCachePartKey_(token, index) {
-  return DIRECTORY_CACHE_KEY + DIRECTORY_CACHE_PART_SUFFIX + token + ':' + index;
-}
-
-function _directoryReadCachedContext_() {
-  const manifestKey = _directoryCacheManifestKey_();
-  const manifest = SUNARPCore.getCachedValue(manifestKey);
-  if (!manifest || manifest.version !== 1 || !manifest.token ||
-      !Number.isInteger(manifest.parts) || manifest.parts < 1) {
-    return null;
-  }
-
-  const chunks = [];
-  for (let index = 0; index < manifest.parts; index++) {
-    const chunk = SUNARPCore.getCachedValue(
-      _directoryCachePartKey_(manifest.token, index)
-    );
-    if (typeof chunk !== 'string') {
-      SUNARPCore.removeCachedValue(manifestKey);
-      return null;
-    }
-    chunks.push(chunk);
-  }
-
-  const compressedBytes = Utilities.base64Decode(chunks.join(''));
-  const json = Utilities.ungzip(
-    Utilities.newBlob(compressedBytes, 'application/gzip')
-  ).getDataAsString('UTF-8');
-
-  return JSON.parse(json);
-}
-
-function _directoryWriteCachedContext_(context) {
-  const json = JSON.stringify(context);
-  const compressed = Utilities.gzip(
-    Utilities.newBlob(json, 'application/json')
-  );
-  const encoded = Utilities.base64Encode(compressed.getBytes());
-  const token = Utilities.getUuid();
-  const chunks = [];
-
-  for (let offset = 0; offset < encoded.length; offset += DIRECTORY_CACHE_CHUNK_CHARS) {
-    chunks.push(encoded.slice(offset, offset + DIRECTORY_CACHE_CHUNK_CHARS));
-  }
-
-  if (!chunks.length) chunks.push('');
-
-  const manifestKey = _directoryCacheManifestKey_();
-  const partKeys = chunks.map((chunk, index) => {
-    const key = _directoryCachePartKey_(token, index);
-    SUNARPCore.putCachedValue(key, chunk, DIRECTORY_CACHE_TTL);
-    return key;
-  });
-
-  // El manifiesto se publica al final: una lectura nunca debe considerar
-  // completa una generación cuyos fragmentos aún no se hayan almacenado.
-  SUNARPCore.putCachedValue(manifestKey, {
-    version: 1,
-    token: token,
-    parts: chunks.length
-  }, DIRECTORY_CACHE_TTL);
-
-  return {
-    parts: chunks.length,
-    sizeBytes: compressed.getBytes().length,
-    encodedBytes: encoded.length,
-    keys: partKeys
-  };
-}
-
 function _directoryLoadContext_() {
   const started = Date.now();
-
-  try {
-    const cached = _directoryReadCachedContext_();
-    if (cached !== null) {
-      console.log(
-        '[DirectoryService] Contexto recuperado de caché:',
-        Date.now() - started,
-        'ms.'
-      );
-      return cached;
-    }
-  } catch (error) {
-    console.warn('[DirectoryService] Error al consultar caché:', error.message);
-    try {
-      SUNARPCore.removeCachedValue(_directoryCacheManifestKey_());
-    } catch (removeError) {
-      console.warn('[DirectoryService] No se pudo descartar el manifiesto de caché:', removeError.message);
-    }
-  }
-
-  console.log('[DirectoryService] Caché no disponible; se inicia la carga completa desde las hojas.');
-
   const context = _directoryLoadContextFromSheets_();
-
-  try {
-    const result = _directoryWriteCachedContext_(context);
-    console.log(
-      '[DirectoryService] Contexto comprimido almacenado en caché:',
-      result.sizeBytes,
-      'bytes en',
-      result.parts,
-      'fragmentos.'
-    );
-  } catch (error) {
-    console.warn('[DirectoryService] No se pudo almacenar caché:', error.message);
-  }
-
-  console.log(
-    '[DirectoryService] Contexto reconstruido desde hojas:',
-    Date.now() - started,
-    'ms.'
-  );
-
+  console.log('[DirectoryService] Contexto recuperado mediante caché central de SUNARP Core:', Date.now() - started, 'ms.');
   return context;
 }
 
 function _directoryInvalidateCache_() {
-  try {
-    const manifestKey = _directoryCacheManifestKey_();
-    const manifest = SUNARPCore.getCachedValue(manifestKey);
-    const keys = [manifestKey];
-
-    if (manifest && manifest.token && Number.isInteger(manifest.parts)) {
-      for (let index = 0; index < manifest.parts; index++) {
-        keys.push(_directoryCachePartKey_(manifest.token, index));
-      }
-    }
-
-    SUNARPCore.removeCachedValues(keys);
-  } catch (error) {
-    console.warn('[DirectoryService] No se pudo invalidar la caché:', error.message);
-  }
+  const results = Object.values(DIRECTORY_SERVICE_CONFIG.sheets).map(sheetName =>
+    SUNARPCore.invalidateSourceCache(_directorySource_(sheetName))
+  );
+  return {
+    success: results.every(result => result && result.success !== false),
+    sources: results.length
+  };
 }
+
 
 function _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap) {
   const location = _directoryResolveAssignmentLocation_(assignment, context, false);
@@ -1179,8 +1053,6 @@ function _saveDirectoryPerson_(payload) {
           schema: schema
         });
 
-    _directoryInvalidateCache_();
-
     return {
       value: Object.assign({}, result, { person: record }),
       auditAfter: record
@@ -1336,7 +1208,7 @@ function _saveDirectoryPersonalData_(payload, allowUnassigned) {
           idField: 'servidor_id',
           uniqueFields: ['tipo_documento', 'numero_documento']
         });
-    _directoryInvalidateCache_();
+
     return { value: Object.assign({}, result, { personalData: record }), auditAfter: record };
   });
 }
@@ -1470,7 +1342,7 @@ function saveDirectoryEntry(payload) {
         try { _saveDirectoryPerson_({ persona_id: personaId, nombres: previousPerson.nombres, apellidos: previousPerson.apellidos, correo_institucional: previousPerson.correo_institucional }); }
         catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
       }
-      _directoryInvalidateCache_();
+
       if (rollbackErrors.length) {
         throw new Error(error.message + ' La reversión requiere revisión: ' + rollbackErrors.join(' | '));
       }
@@ -1536,7 +1408,7 @@ function saveDirectoryEntry(payload) {
         SUNARPCore.deleteRecord(_directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas), 'persona_id', createdPersonId);
       }
     } catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
-    _directoryInvalidateCache_();
+
     if (rollbackErrors.length) {
       throw new Error(error.message + ' Además, la compensación requiere revisión: ' + rollbackErrors.join(' | '));
     }
@@ -1689,8 +1561,6 @@ function saveDirectoryAssignment(payload) {
           schema: schema
         });
 
-    _directoryInvalidateCache_();
-
     return {
       value: Object.assign({}, result, {
         assignment: _directoryEnrichAssignment_(record, context, relationMap, peopleMap)
@@ -1746,8 +1616,6 @@ function setDirectoryAssignmentActive(asignacionId, active) {
       active
     );
 
-    _directoryInvalidateCache_();
-
     return {
       value: Object.assign({}, result, {
         assignment: Object.assign({}, enriched, { active: active })
@@ -1798,8 +1666,6 @@ function deleteDirectoryAssignment(asignacionId) {
       'asignacion_id',
       id
     );
-
-    _directoryInvalidateCache_();
 
     return {
       value: Object.assign({}, result, {
@@ -1874,8 +1740,6 @@ function deleteDirectoryPerson(personaId) {
       id
     );
 
-    _directoryInvalidateCache_();
-
     return {
       value: Object.assign({}, result, {
         success: true,
@@ -1892,10 +1756,12 @@ function deleteDirectoryPerson(personaId) {
  */
 function clearDirectoryCache() {
   requirePermission_('INFORMACION_PERSONAL_VER', 'MOD_INFO_PERSONAL');
-  _directoryInvalidateCache_();
-
+  const result = _directoryInvalidateCache_();
   return {
-    success: true,
-    message: 'Caché del directorio eliminada correctamente.'
+    success: result.success,
+    message: result.success
+      ? 'Caché de las fuentes del directorio invalidada correctamente.'
+      : 'No se pudo invalidar una o más fuentes del directorio.',
+    sources: result.sources
   };
 }

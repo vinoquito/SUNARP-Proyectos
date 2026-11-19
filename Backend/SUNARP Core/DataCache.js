@@ -48,7 +48,16 @@ function _coreBuildSourceCacheKey_(source, kind) {
 function _coreInvalidateSourceCache_(source) {
   const recordsKey = _coreBuildSourceCacheKey_(source, 'records');
   const infoKey = _coreBuildSourceCacheKey_(source, 'info');
-  return removeCachedValues([recordsKey, infoKey]);
+  try {
+    return removeCachedValues([recordsKey, infoKey]);
+  } catch (error) {
+    console.warn('[SUNARP Core] No se pudo invalidar la fuente:', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+function invalidateSourceCache(source) {
+  return _coreInvalidateSourceCache_(source);
 }
 
 

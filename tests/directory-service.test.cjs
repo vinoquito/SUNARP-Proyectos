@@ -283,16 +283,6 @@ test('el formulario permite registrar y actualizar observaciones de cada asignac
 });
 
 
-test('un fallo al invalidar caché no convierte una escritura exitosa en error', () => {
-  const context = createDirectorySandbox();
-  context.SUNARPCore = {
-    removeCachedValue: () => { throw new Error('caché no disponible'); }
-  };
-  context.console = { warn: () => {} };
-  assert.doesNotThrow(() => context._directoryInvalidateCache_());
-});
-
-
 function assignmentContext() {
   return {
     personas: [{ persona_id: 'PER_001', nombres: 'Ana', apellidos: 'Pérez' }],
@@ -540,89 +530,14 @@ test('la edición permite pasar de ambos identificadores a local-only vaciando l
 });
 
 
-test('el contexto del directorio se almacena comprimido en fragmentos y se reconstruye íntegro', () => {
-  const zlib = require('node:zlib');
-  const context = vm.createContext({});
-  vm.runInContext(serviceSource, context, { filename: 'DirectoryService.js' });
-
-  const cache = new Map();
-  context.SUNARPCore = {
-    putCachedValue: (key, value) => {
-      const serialized = JSON.stringify({ format: 1, value });
-      assert.ok(Buffer.byteLength(serialized, 'utf8') <= 95 * 1024);
-      cache.set(key, JSON.parse(serialized).value);
-      return { success: true, sizeBytes: Buffer.byteLength(serialized, 'utf8') };
-    },
-    getCachedValue: key => cache.has(key) ? cache.get(key) : null,
-    removeCachedValue: key => cache.delete(key),
-    removeCachedValues: keys => keys.forEach(key => cache.delete(key))
-  };
-  context.Utilities = {
-    newBlob: data => {
-      const bytes = Buffer.isBuffer(data) || data instanceof Uint8Array || Array.isArray(data)
-        ? Buffer.from(data)
-        : Buffer.from(String(data), 'utf8');
-      return {
-        getBytes: () => Array.from(bytes),
-        getDataAsString: encoding => bytes.toString(encoding || 'utf8')
-      };
-    },
-    gzip: blob => {
-      const bytes = zlib.gzipSync(Buffer.from(blob.getBytes()));
-      return { getBytes: () => Array.from(bytes) };
-    },
-    ungzip: blob => {
-      const bytes = zlib.gunzipSync(Buffer.from(blob.getBytes()));
-      return { getDataAsString: encoding => bytes.toString(encoding || 'utf8') };
-    },
-    base64Encode: bytes => Buffer.from(bytes).toString('base64'),
-    base64Decode: value => Array.from(Buffer.from(value, 'base64')),
-    getUuid: () => 'test-cache-token'
-  };
-
-  // Datos suficientemente grandes y poco comprimibles para exigir varios fragmentos.
-  let seed = 987654321;
-  let payload = '';
-  for (let index = 0; index < 190000; index++) {
-    seed = (seed * 1664525 + 1013904223) >>> 0;
-    payload += String.fromCharCode(32 + (seed % 95));
-  }
-  const original = {
-    personas: [{ persona_id: 'PER_001', nombres: payload }],
-    datosPersonales: [{ servidor_id: 'PER_001', numero_documento: '12345678' }],
-    asignaciones: [{ asignacion_id: 'ASG_001', local_id: '' }],
-    catalogos: { sedes: [{ id: 'SEDE_1' }] }
-  };
-
-  const stored = context._directoryWriteCachedContext_(original);
-  assert.ok(stored.parts > 1, 'el contenido grande debe dividirse en más de un fragmento');
-  assert.ok(stored.encodedBytes > 80 * 1024);
-
-  const restored = context._directoryReadCachedContext_();
-  assert.equal(JSON.stringify(restored), JSON.stringify(original));
-  assert.equal(restored.datosPersonales[0].numero_documento, '12345678');
+test('el Directorio utiliza exclusivamente la caché central de SUNARP Core', () => {
+  assert.match(serviceSource, /listRecordsFromSourcesCached\(requests, DIRECTORY_DATA_CACHE_TTL\)/);
+  assert.doesNotMatch(serviceSource, /function _directoryWriteCachedContext_/);
+  assert.doesNotMatch(serviceSource, /function _directoryReadCachedContext_/);
+  assert.doesNotMatch(serviceSource, /DIRECTORY_CACHE_PART_SUFFIX/);
+  assert.match(serviceSource, /SUNARPCore\.invalidateSourceCache\(_directorySource_\(sheetName\)\)/);
+  assert.match(serviceSource, /function clearDirectoryCache\(\)/);
 });
-
-test('la invalidación elimina el manifiesto y todos los fragmentos de caché', () => {
-  const context = vm.createContext({});
-  vm.runInContext(serviceSource, context, { filename: 'DirectoryService.js' });
-  const removed = [];
-  context.SUNARPCore = {
-    getCachedValue: key => key.endsWith(':manifest')
-      ? { version: 1, token: 'old-token', parts: 2 }
-      : null,
-    removeCachedValues: keys => removed.push(...keys)
-  };
-
-  context._directoryInvalidateCache_();
-
-  assert.equal(removed.length, 3);
-  assert.ok(removed.some(key => key.endsWith(':manifest')));
-  assert.ok(removed.some(key => key.endsWith(':part:old-token:0')));
-  assert.ok(removed.some(key => key.endsWith(':part:old-token:1')));
-});
-
-
 
 test('la carga inicial indexa fichas personales y evita una búsqueda lineal por asignación', () => {
   const records = [
