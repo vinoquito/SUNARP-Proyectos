@@ -57,7 +57,7 @@ function _coreInvalidateSourceCache_(source) {
 }
 
 function invalidateSourceCache(source) {
-  return _coreInvalidateSourceCache_(source);
+  return _coreWithWriteLock_(() => _coreInvalidateSourceCache_(source));
 }
 
 
