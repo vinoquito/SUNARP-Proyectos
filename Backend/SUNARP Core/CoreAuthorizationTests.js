@@ -118,7 +118,8 @@ function runAuthorizationSelfTests_() {
 
   const locals = [
     { id: 'LOCAL_001', sede_id: 'SEDE_CENTRAL' },
-    { id: 'LOCAL_002', sede_id: 'ZR_I' }
+    { id: 'LOCAL_002', sede_id: 'ZR_I' },
+    { id: 'LOCAL_INACTIVO', sede_id: 'SEDE_CENTRAL', active: false }
   ];
 
   const baseData = {
@@ -293,6 +294,12 @@ function runAuthorizationSelfTests_() {
       id: 'ZR_I_UNIDAD',
       parent_id: '',
       sede_id: 'ZR_I'
+    },
+    {
+      id: 'SC_ESTRUCTURA_INACTIVA',
+      parent_id: '',
+      sede_id: 'SEDE_CENTRAL',
+      active: false
     }
   ];
 
@@ -522,6 +529,38 @@ function runAuthorizationSelfTests_() {
       locals
     ),
     'Rechaza local_id que no existe en el catálogo.'
+  );
+
+  assert(
+    !authorizationIsRecordInScope(
+      context,
+      'MOD_DOCUMENTOS',
+      { local_id: 'LOCAL_INACTIVO', sede_id: 'SEDE_CENTRAL' },
+      structures,
+      undefined,
+      locals
+    ),
+    'Rechaza locales inactivos aunque pertenezcan a la sede permitida.'
+  );
+
+  assert(
+    !authorizationIsRecordInScope(
+      context,
+      'MOD_INFO_PERSONAL',
+      { estructura_id: 'SC_ESTRUCTURA_INACTIVA' },
+      structures
+    ),
+    'Rechaza estructuras orgánicas inactivas.'
+  );
+
+  assert(
+    !authorizationIsRecordInScope(
+      context,
+      'MOD_DOCUMENTOS',
+      { local_id: 'LOCAL_001', sede_id: 'SEDE_CENTRAL' },
+      structures
+    ),
+    'Falla de forma segura cuando no recibe el catálogo necesario para validar local_id.'
   );
 
   assert(
