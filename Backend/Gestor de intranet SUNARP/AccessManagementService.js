@@ -826,11 +826,9 @@ function _accessFindDocumentMatches_(documentType, documentNumber, records) {
 
 
 /**
- * Devuelve los tipos documentales realmente utilizados en el registro
- * de datos personales. No expone datos personales ni números de documento.
- *
- * Mientras se incorpora el catálogo maestro acordado, las opciones se
- * derivan de los tipos ya registrados para evitar valores codificados.
+ * Devuelve el catálogo oficial de tipos de documento de identidad.
+ * El navegador recibe id y nombre; el identificador se conserva en los
+ * registros de datos personales y se utiliza para las búsquedas.
  */
 function getAccessDocumentTypes() {
   _accessRequirePermission_('USUARIOS_ADMINISTRAR');
@@ -974,8 +972,19 @@ function _accessRecordUser_(auth, payload, action) {
   // La creación debe corresponder exactamente a la búsqueda documental
   // realizada en el servidor; no basta con enviar persona_id desde el cliente.
   if (action === 'create') {
-    const documentMatches = _accessFindDocumentMatches_(
+    const documentTypeId = _accessNormalizeDocumentValue_(
       payload.tipo_documento,
+      'Tipo de documento'
+    );
+    const documentTypeExists = _accessLoadDocumentTypeRecords_().some(item =>
+      _accessText_(item.id).toUpperCase() === documentTypeId
+    );
+    if (!documentTypeExists) {
+      throw new Error('Selecciona un tipo de documento vigente del catálogo institucional.');
+    }
+
+    const documentMatches = _accessFindDocumentMatches_(
+      documentTypeId,
       payload.numero_documento,
       _accessLoadPersonalDocumentRecords_()
     );
