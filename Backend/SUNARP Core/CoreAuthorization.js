@@ -611,21 +611,21 @@ function authorizationHasPermission(context, permissionCode, moduleIdOrCode) {
 
   if (context.model === 'persona') {
     const requestedModule = _coreAuthText_(moduleIdOrCode);
-    let expectedModuleId = '';
 
-    if (requestedModule) {
-      const module = _coreAuthFindModuleEntry_(
-        context.moduleEntries,
-        requestedModule
-      );
+    // En el nuevo modelo el permiso siempre debe validarse dentro de
+    // su módulo. Sin este dato la comprobación falla de forma segura.
+    if (!requestedModule) return false;
 
-      if (!module) return false;
-      expectedModuleId = module.id;
-    }
+    const module = _coreAuthFindModuleEntry_(
+      context.moduleEntries,
+      requestedModule
+    );
+
+    if (!module) return false;
 
     return (context.permissionEntries || []).some(entry =>
       entry.permissionCode === expectedCode &&
-      (!expectedModuleId || entry.moduleId === expectedModuleId)
+      entry.moduleId === module.id
     );
   }
 
