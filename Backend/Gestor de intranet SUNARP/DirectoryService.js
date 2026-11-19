@@ -42,7 +42,7 @@ const DIRECTORY_CACHE_MANIFEST_SUFFIX = ':manifest';
 const DIRECTORY_CACHE_PART_SUFFIX = ':part:';
 
 const DIRECTORY_REQUIRED_HEADERS = Object.freeze({
-  personas: ['persona_id', 'nombres', 'apellidos'],
+  personas: ['persona_id', 'nombres', 'apellidos', 'correo_institucional'],
   datosPersonales: ['servidor_id', 'tipo_documento', 'numero_documento', 'fecha_nacimiento', 'fecha_inicio_servicios', 'fecha_cese'],
   asignaciones: [
     'asignacion_id',
@@ -154,14 +154,20 @@ function _directorySource_(sheetName) {
 }
 
 function _directoryAuthorizationContext_(permissionCode) {
-  const auth = requirePermission_(permissionCode || 'DIRECTORIOS_VER');
+  const moduleId = 'MOD_INFO_PERSONAL';
+  const auth = requirePermission_(
+    permissionCode || 'INFORMACION_PERSONAL_VER',
+    moduleId
+  );
   const catalog = _accessOrgCatalog_();
 
   return {
     auth: auth,
+    moduleId: moduleId,
     structures: catalog.estructuraOrg || []
   };
 }
+
 
 function _directoryAssertScope_(authorization, record, actionLabel) {
   const allowed = _accessRecordIsAllowed_(
@@ -175,7 +181,7 @@ function _directoryAssertScope_(authorization, record, actionLabel) {
 
   _accessWriteAudit_(authorization.auth, {
     accion: 'AUTORIZACION_DENEGADA',
-    modulo: 'DIRECTORIOS',
+    modulo: 'INFORMACION_PERSONAL',
     tipo_entidad: record && record.asignacion_id ? 'ASIGNACION' : 'REGISTRO',
     registro_id: _directoryKey_(
       record && (record.asignacion_id || record.persona_id || record.id)
@@ -585,15 +591,23 @@ function _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap
   const person = peopleMap.get(_directoryKey_(assignment.persona_id));
   const cargo = maps.cargos.get(_directoryKey_(assignment.cargo_id));
   const sede = maps.sedes.get(_directoryKey_(location.sede_id));
+
   return Object.assign({}, assignment, {
-    nombres: person ? person.nombres : '', apellidos: person ? person.apellidos : '', cargo_name: cargo ? cargo.name : '',
-    estructura_id: location.estructura_id, estructura_name: relation ? relation.estructura_name : '',
-    estructura_path: relation ? relation.estructura_path : '', sede_id: location.sede_id,
+    nombres: person ? person.nombres : '',
+    apellidos: person ? person.apellidos : '',
+    correo_institucional: person ? person.correo_institucional : '',
+    cargo_name: cargo ? cargo.name : '',
+    estructura_id: location.estructura_id,
+    estructura_name: relation ? relation.estructura_name : '',
+    estructura_path: relation ? relation.estructura_path : '',
+    sede_id: location.sede_id,
     sede_name: relation ? relation.sede_name : (sede ? sede.name : ''),
-    local_name: local ? local.name : '', referencia: relation ? relation.referencia : '',
+    local_name: local ? local.name : '',
+    referencia: relation ? relation.referencia : '',
     display_location: relation ? relation.display_name : (local ? local.name : '')
   });
 }
+
 
 function _directoryBuildView_(context, authorization) {
   const relations = _directoryBuildRelations_(context, false), relationMap = _directoryCreateMap_(relations);
@@ -639,19 +653,12 @@ function _directoryGetPersonSchema_() {
   return {
     persona_id: { label: 'Identificador de persona', required: true, type: 'string', maxLength: 30 },
     nombres: { label: 'Nombres', required: true, type: 'string', minLength: 2, maxLength: 100 },
-    apellidos: { label: 'Apellidos', required: true, type: 'string', minLength: 2, maxLength: 150 }
+    apellidos: { label: 'Apellidos', required: true, type: 'string', minLength: 2, maxLength: 150 },
+    correo_institucional: { label: 'Correo institucional', type: 'string', maxLength: 150 }
   };
 }
 
-/**
- * Aplica el mismo criterio de identidad utilizado en la migración:
- * coincidencia exacta de nombres + apellidos.
- *
- * No compara cargo, anexo, estructura ni local, porque esas diferencias
- * corresponden a asignaciones distintas de una misma persona.
- * No fusiona registros automáticamente.
- */
-/** Los nombres no son una clave de identidad: se permiten homónimos. */
+
 function _directoryAssertNoDuplicatePerson_() { return true; }
 
 function _directoryGetAssignmentSchema_() {
@@ -710,7 +717,7 @@ function _directoryAssertAllowedFields_(payload, allowedFields, label) {
  * Las personas se devuelven una sola vez, aunque tengan varias asignaciones.
  */
 function getDirectoryInitialData() {
-  const authorization = _directoryAuthorizationContext_('DIRECTORIOS_VER');
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
   const context = _directoryLoadContext_();
   const view = _directoryBuildView_(context, authorization);
 
@@ -799,7 +806,7 @@ function getDirectoryInitialData() {
 
 function listDirectoryPeople(options) {
   options = options || {};
-  const authorization = _directoryAuthorizationContext_('DIRECTORIOS_VER');
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
   const context = _directoryLoadContext_();
   const view = _directoryBuildView_(context, authorization);
 
@@ -857,7 +864,7 @@ function listDirectoryPeople(options) {
 
 function listDirectoryAssignments(options) {
   options = options || {};
-  const authorization = _directoryAuthorizationContext_('DIRECTORIOS_VER');
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
   const context = _directoryLoadContext_();
   const view = _directoryBuildView_(context, authorization);
 
@@ -933,7 +940,7 @@ function listDirectoryAssignments(options) {
 }
 
 function getDirectoryPersonById(personaId) {
-  const authorization = _directoryAuthorizationContext_('DIRECTORIOS_VER');
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
   const context = _directoryLoadContext_();
   const person = context.personas.find(item =>
     _directoryKey_(item.persona_id) === _directoryKey_(personaId)
@@ -962,7 +969,7 @@ function getDirectoryAssignmentsByPersonId(personaId, options) {
 }
 
 function getDirectoryAssignmentById(asignacionId) {
-  const authorization = _directoryAuthorizationContext_('DIRECTORIOS_VER');
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
   const context = _directoryLoadContext_();
   const assignment = context.asignaciones.find(item =>
     _directoryKey_(item.asignacion_id) === _directoryKey_(asignacionId)
@@ -998,14 +1005,14 @@ function _saveDirectoryPerson_(payload) {
 
   _directoryAssertAllowedFields_(
     payload,
-    ['persona_id', 'nombres', 'apellidos'],
+    ['persona_id', 'nombres', 'apellidos', 'correo_institucional'],
     'personas'
   );
 
   const personaId = _directoryText_(payload.persona_id);
   const isUpdate = Boolean(personaId);
   const authorization = _directoryAuthorizationContext_(
-    isUpdate ? 'DIRECTORIOS_EDITAR' : 'DIRECTORIOS_CREAR'
+    isUpdate ? 'INFORMACION_PERSONAL_EDITAR' : 'INFORMACION_PERSONAL_CREAR'
   );
   const context = _directoryLoadContext_();
 
@@ -1013,34 +1020,36 @@ function _saveDirectoryPerson_(payload) {
     ? context.personas.find(item => _directoryKey_(item.persona_id) === personaId)
     : null;
 
-  if (isUpdate && !existing) {
-    throw new Error('No se encontró la persona "' + personaId + '".');
-  }
+  if (isUpdate && !existing) throw new Error('No se encontró la persona "' + personaId + '".');
 
   if (isUpdate) {
     _directoryAssertPersonMutationScope_(authorization, existing, context.asignaciones, context);
   }
 
+  const email = _directoryText_(
+    payload.correo_institucional !== undefined
+      ? payload.correo_institucional
+      : existing && existing.correo_institucional
+  ).toLowerCase();
+
+  if (email) _accessValidateEmail_(email);
+
   const record = {
     persona_id: isUpdate
       ? personaId
       : _directoryGenerateId_(context.personas, DIRECTORY_SERVICE_CONFIG.ids.persona),
-    nombres: _directoryText_(
-      payload.nombres !== undefined ? payload.nombres : existing && existing.nombres
-    ),
-    apellidos: _directoryText_(
-      payload.apellidos !== undefined ? payload.apellidos : existing && existing.apellidos
-    )
+    nombres: _directoryText_(payload.nombres !== undefined ? payload.nombres : existing && existing.nombres),
+    apellidos: _directoryText_(payload.apellidos !== undefined ? payload.apellidos : existing && existing.apellidos),
+    correo_institucional: email
   };
 
   const schema = _directoryGetPersonSchema_();
   SUNARPCore.assertValidRecord(record, schema);
-  // La identidad se valida por documento en la ficha personal, no por nombres.
 
   const source = _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas);
   const event = {
     accion: isUpdate ? 'EDITAR_PERSONA_DIRECTORIO' : 'CREAR_PERSONA_DIRECTORIO',
-    modulo: 'DIRECTORIOS',
+    modulo: 'INFORMACION_PERSONAL',
     tipo_entidad: 'PERSONA',
     registro_id: record.persona_id,
     registro_nombre: [record.nombres, record.apellidos].filter(Boolean).join(' '),
@@ -1052,7 +1061,8 @@ function _saveDirectoryPerson_(payload) {
     const result = isUpdate
       ? SUNARPCore.updateRecord(source, 'persona_id', record.persona_id, {
           nombres: record.nombres,
-          apellidos: record.apellidos
+          apellidos: record.apellidos,
+          correo_institucional: record.correo_institucional
         }, { schema: schema })
       : SUNARPCore.insertRecord(source, record, {
           idField: 'persona_id',
@@ -1068,10 +1078,6 @@ function _saveDirectoryPerson_(payload) {
   });
 }
 
-/**
- * Crea o actualiza una asignación. La identidad nunca se actualiza aquí.
- * local_id se obtiene de estructura_local y se valida contra el valor recibido.
- */
 
 function _directoryNormalizeDocument_(value, label) {
   const normalized = _directoryText_(value).replace(/\s+/g, '').toUpperCase();
@@ -1166,7 +1172,7 @@ function _saveDirectoryPersonalData_(payload, allowUnassigned) {
 
   const linkedAssignments = context.asignaciones.filter(item => _directoryKey_(item.persona_id) === personaId);
   const createWithoutAssignment = allowUnassigned === true && !linkedAssignments.length;
-  const authorization = _directoryAuthorizationContext_(createWithoutAssignment ? 'DIRECTORIOS_CREAR' : 'DIRECTORIOS_EDITAR');
+  const authorization = _directoryAuthorizationContext_(createWithoutAssignment ? 'INFORMACION_PERSONAL_CREAR' : 'INFORMACION_PERSONAL_EDITAR');
   if (!createWithoutAssignment) {
     _directoryAssertPersonMutationScope_(authorization, person, context.asignaciones, context);
   }
@@ -1190,7 +1196,7 @@ function _saveDirectoryPersonalData_(payload, allowUnassigned) {
   const before = existing || null;
   const event = {
     accion: existing ? 'EDITAR_DATOS_PERSONALES_DIRECTORIO' : 'CREAR_DATOS_PERSONALES_DIRECTORIO',
-    modulo: 'DIRECTORIOS',
+    modulo: 'INFORMACION_PERSONAL',
     tipo_entidad: 'DATOS_PERSONALES',
     registro_id: personaId,
     registro_nombre: [person.nombres, person.apellidos].filter(Boolean).join(' '),
@@ -1226,7 +1232,7 @@ function saveDirectoryEntry(payload) {
     throw new Error('Debes proporcionar los datos del registro.');
   }
   _directoryAssertAllowedFields_(payload, [
-    'persona_id', 'asignacion_id', 'nombres', 'apellidos',
+    'persona_id', 'asignacion_id', 'nombres', 'apellidos', 'correo_institucional',
     'tipo_documento', 'numero_documento', 'fecha_nacimiento',
     'fecha_inicio_servicios', 'fecha_cese', 'cargo_id',
     'condicion_cargo', 'anexo', 'estructura_local_id',
@@ -1259,7 +1265,8 @@ function saveDirectoryEntry(payload) {
 
   const personPayload = {
     nombres: payload.nombres,
-    apellidos: payload.apellidos
+    apellidos: payload.apellidos,
+    correo_institucional: payload.correo_institucional
   };
   if (personaId) personPayload.persona_id = personaId;
 
@@ -1341,7 +1348,7 @@ function saveDirectoryEntry(payload) {
         } catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
       }
       if (personUpdated) {
-        try { _saveDirectoryPerson_({ persona_id: personaId, nombres: previousPerson.nombres, apellidos: previousPerson.apellidos }); }
+        try { _saveDirectoryPerson_({ persona_id: personaId, nombres: previousPerson.nombres, apellidos: previousPerson.apellidos, correo_institucional: previousPerson.correo_institucional }); }
         catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
       }
       _directoryInvalidateCache_();
@@ -1440,7 +1447,7 @@ function saveDirectoryAssignment(payload) {
   const assignmentId = _directoryText_(payload.asignacion_id);
   const isUpdate = Boolean(assignmentId);
   const authorization = _directoryAuthorizationContext_(
-    isUpdate ? 'DIRECTORIOS_EDITAR' : 'DIRECTORIOS_CREAR'
+    isUpdate ? 'INFORMACION_PERSONAL_EDITAR' : 'INFORMACION_PERSONAL_CREAR'
   );
   const context = _directoryLoadContext_();
 
@@ -1536,7 +1543,7 @@ function saveDirectoryAssignment(payload) {
   const person = peopleMap.get(record.persona_id);
   const event = {
     accion: isUpdate ? 'EDITAR_ASIGNACION_DIRECTORIO' : 'CREAR_ASIGNACION_DIRECTORIO',
-    modulo: 'DIRECTORIOS',
+    modulo: 'INFORMACION_PERSONAL',
     tipo_entidad: 'ASIGNACION',
     registro_id: record.asignacion_id,
     registro_nombre: [person && person.nombres, person && person.apellidos].filter(Boolean).join(' '),
@@ -1578,7 +1585,7 @@ function setDirectoryAssignmentActive(asignacionId, active) {
     throw new Error('El nuevo estado debe ser true o false.');
   }
 
-  const authorization = _directoryAuthorizationContext_('DIRECTORIOS_CAMBIAR_ESTADO');
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_CAMBIAR_ESTADO');
   const context = _directoryLoadContext_();
   const id = _directoryText_(asignacionId);
 
@@ -1604,7 +1611,7 @@ function setDirectoryAssignmentActive(asignacionId, active) {
 
   return _accessRunAudited_(authorization.auth, {
     accion: active ? 'ACTIVAR_ASIGNACION_DIRECTORIO' : 'DESACTIVAR_ASIGNACION_DIRECTORIO',
-    modulo: 'DIRECTORIOS',
+    modulo: 'INFORMACION_PERSONAL',
     tipo_entidad: 'ASIGNACION',
     registro_id: id,
     registro_nombre: [person && person.nombres, person && person.apellidos].filter(Boolean).join(' '),
@@ -1634,7 +1641,7 @@ function deleteDirectoryAssignment(asignacionId) {
   const id = _directoryText_(asignacionId);
   if (!id) throw new Error('Debes proporcionar el identificador de la asignación.');
 
-  const authorization = _directoryAuthorizationContext_('DIRECTORIOS_ELIMINAR');
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_ELIMINAR');
   const context = _directoryLoadContext_();
 
   const existing = context.asignaciones.find(item =>
@@ -1659,7 +1666,7 @@ function deleteDirectoryAssignment(asignacionId) {
 
   return _accessRunAudited_(authorization.auth, {
     accion: 'ELIMINAR_ASIGNACION_DIRECTORIO',
-    modulo: 'DIRECTORIOS',
+    modulo: 'INFORMACION_PERSONAL',
     tipo_entidad: 'ASIGNACION',
     registro_id: id,
     registro_nombre: [person && person.nombres, person && person.apellidos].filter(Boolean).join(' '),
@@ -1693,7 +1700,7 @@ function deleteDirectoryPerson(personaId) {
   const id = _directoryText_(personaId);
   if (!id) throw new Error('Debes proporcionar el identificador de la persona.');
 
-  const authorization = _directoryAuthorizationContext_('DIRECTORIOS_ELIMINAR');
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_ELIMINAR');
   const context = _directoryLoadContext_();
 
   const person = context.personas.find(item =>
@@ -1734,7 +1741,7 @@ function deleteDirectoryPerson(personaId) {
 
   return _accessRunAudited_(authorization.auth, {
     accion: 'ELIMINAR_PERSONA_DIRECTORIO',
-    modulo: 'DIRECTORIOS',
+    modulo: 'INFORMACION_PERSONAL',
     tipo_entidad: 'PERSONA',
     registro_id: id,
     registro_nombre: [person.nombres, person.apellidos].filter(Boolean).join(' '),
@@ -1764,7 +1771,7 @@ function deleteDirectoryPerson(personaId) {
  * Invalida manualmente la caché del directorio.
  */
 function clearDirectoryCache() {
-  requirePermission_('DIRECTORIOS_VER');
+  requirePermission_('INFORMACION_PERSONAL_VER');
   _directoryInvalidateCache_();
 
   return {
