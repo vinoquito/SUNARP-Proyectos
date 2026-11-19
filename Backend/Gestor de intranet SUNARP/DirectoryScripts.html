@@ -292,12 +292,14 @@ const DirectoryPage = (() => {
     if (!select || !state.catalogs) return;
 
     const sedes = (state.catalogs.sedes || []).slice().sort(sortByName);
+    updateFilterOptions(select, 'Todas las sedes', sedes);
 
-    updateFilterOptions(
-      select,
-      'Todas las sedes',
-      sedes
-    );
+    const visible = state.catalogs.filterVisibility
+      ? state.catalogs.filterVisibility.sede === true
+      : sedes.length > 1;
+    const wrapper = select.closest('.sunarp-filter');
+    if (wrapper) wrapper.hidden = !visible;
+    if (!visible) select.value = '';
   }
 
 
@@ -311,12 +313,14 @@ const DirectoryPage = (() => {
     if (!select || !state.catalogs) return;
 
     const cargos = (state.catalogs.cargos || []).slice().sort(sortByName);
+    updateFilterOptions(select, 'Todos los cargos', cargos);
 
-    updateFilterOptions(
-      select,
-      'Todos los cargos',
-      cargos
-    );
+    const visible = state.catalogs.filterVisibility
+      ? state.catalogs.filterVisibility.cargo === true
+      : cargos.length > 1;
+    const wrapper = select.closest('.sunarp-filter');
+    if (wrapper) wrapper.hidden = !visible;
+    if (!visible) select.value = '';
   }
 
 
@@ -468,7 +472,16 @@ const DirectoryPage = (() => {
 
     if (!container || !state.catalogs) return;
 
+    const visible = state.catalogs.filterVisibility
+      ? state.catalogs.filterVisibility.hierarchy === true
+      : (state.catalogs.estructuraOrg || []).length > 1;
+    container.hidden = !visible;
     container.replaceChildren();
+
+    if (!visible) {
+      state.hierarchyPath = [];
+      return;
+    }
 
     appendHierarchyLevel('', 0);
   }
