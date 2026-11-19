@@ -489,203 +489,155 @@ function _accessRunAudited_(auth, event, callback) {
 /**
  * Exige un permiso y, opcionalmente, valida el ámbito de un registro.
  */
-function _accessRequirePermission_(permissionCode, moduleCode, record) {
+function _accessRequirePermission_(permissionCode, moduleIdOrCode, record) {
   const auth = _accessGetAuthContext_();
+  const moduleId = _accessResolveModuleId_(auth, moduleIdOrCode || ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses);
+  const accessModuleId = _accessResolveModuleId_(auth, ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses);
   const code = _accessUpper_(permissionCode);
 
-  if (!SUNARPCore.authorizationHasPermission(auth, code)) {
+  if (moduleId === accessModuleId && !_accessIsGlobalAdministrator_(auth)) {
     _accessWriteAudit_(auth, {
       accion: 'AUTORIZACION_DENEGADA',
-      modulo: moduleCode || 'ACCESOS',
+      modulo: ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses,
+      tipo_entidad: 'ADMINISTRACION',
+      registro_id: code,
+      registro_nombre: code,
+      resultado: 'DENEGADO',
+      detalle: 'La administración de accesos exige ROL_ADMIN y ámbito TOTAL en el módulo ACCESOS.'
+    });
+    throw new Error('La administración de accesos requiere ROL_ADMIN y ámbito TOTAL en el módulo Accesos.');
+  }
+
+  if (!SUNARPCore.authorizationHasPermission(auth, code, moduleId)) {
+    _accessWriteAudit_(auth, {
+      accion: 'AUTORIZACION_DENEGADA',
+      modulo: moduleId,
       tipo_entidad: 'PERMISO',
       registro_id: code,
       registro_nombre: code,
       resultado: 'DENEGADO',
-      detalle: `La cuenta no tiene el permiso ${code}.`
+      detalle: 'La cuenta no tiene el permiso ' + code + ' en el módulo indicado.'
     });
-
-    throw new Error(
-      'No tienes autorización para realizar esta operación.'
-    );
+    throw new Error('No tienes autorización para realizar esta operación.');
   }
 
-  if (moduleCode && record) {
+  if (record) {
     const catalogs = _accessOrgCatalog_();
-
-    const allowed = SUNARPCore.authorizationIsRecordInScope(
-      auth,
-      moduleCode,
-      record,
-      catalogs.estructuraOrg
-    );
-
+    const allowed = SUNARPCore.authorizationIsRecordInScope(auth, moduleId, record, catalogs.estructuraOrg);
     if (!allowed) {
       _accessWriteAudit_(auth, {
         accion: 'AUTORIZACION_DENEGADA',
-        modulo: moduleCode,
+        modulo: moduleId,
         tipo_entidad: 'REGISTRO',
-        registro_id: _accessText_(record.id),
+        registro_id: _accessText_(record.id || record.persona_id),
         registro_nombre: _accessText_(record.nombre),
         resultado: 'DENEGADO',
         detalle: 'El registro se encuentra fuera de los ámbitos de acceso asignados.'
       });
-
-      throw new Error(
-        'No tienes ámbito de acceso para operar sobre este registro.'
-      );
+      throw new Error('No tienes ámbito de acceso para operar sobre este registro.');
     }
   }
-
   return auth;
 }
 
 
-/**
- * Función pública para que otros servicios de la aplicación
- * comprueben permisos y ámbitos.
- */
-function requirePermission_(permissionCode, moduleCode, record) {
-  return _accessRequirePermission_(
-    permissionCode,
-    moduleCode,
-    record
-  );
+function requirePermission_(permissionCode, moduleId, record) {
+  if (!moduleId) throw new Error('requirePermission_ necesita el modulo_id explícito del módulo que protege la operación.');
+  return _accessRequirePermission_(permissionCode, moduleId, record);
 }
 
 
-function _accessRecordIsAllowed_(auth, moduleCode, record, structures) {
-  return SUNARPCore.authorizationIsRecordInScope(
-    auth,
-    moduleCode,
-    record,
-    structures || []
-  );
+function _accessRecordIsAllowed_(auth, moduleId, record, structures) {
+  const resolvedModuleId = _accessResolveModuleId_(auth, moduleId);
+  return SUNARPCore.authorizationIsRecordInScope(auth, resolvedModuleId, record, structures || []);
 }
 
 
-/**
- * Comprueba si un rol tiene al menos una capacidad privilegiada.
- */
 function _accessRoleHasPrivilegedPermissions_(data, roleId) {
-  const privilegedCodes = new Set(
-    ACCESS_MANAGEMENT_CONFIG.privilegedRolePermissionCodes
+  const accessModule = data.modulos.find(module =>
+    _accessUpper_(module.codigo) === ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses &&
+    _accessIsActive_(module.active)
   );
-
-  const permissionCodesById = new Map(
-    data.permisos
-      .filter(permission => _accessIsActive_(permission.estado))
-      .map(permission => [
-        _accessText_(permission.permiso_id),
-        _accessUpper_(permission.codigo)
-      ])
+  if (!accessModule) return false;
+  const permissionCodesById = new Map(data.permisos
+    .filter(permission =>
+      _accessIsActive_(permission.active) &&
+      _accessText_(permission.modulo_id) === _accessText_(accessModule.modulo_id)
+    )
+    .map(permission => [_accessText_(permission.permiso_id), _accessUpper_(permission.codigo)]));
+  return data.rolPermiso.some(assignment =>
+    _accessIsActive_(assignment.active) &&
+    _accessText_(assignment.rol_id) === _accessText_(roleId) &&
+    ACCESS_MANAGEMENT_CONFIG.privilegedRolePermissionCodes.includes(
+      permissionCodesById.get(_accessText_(assignment.permiso_id))
+    )
   );
-
-  return data.rolPermiso.some(assignment => {
-    if (
-      !_accessIsActive_(assignment.estado) ||
-      _accessText_(assignment.rol_id) !== _accessText_(roleId)
-    ) {
-      return false;
-    }
-
-    return privilegedCodes.has(
-      permissionCodesById.get(
-        _accessText_(assignment.permiso_id)
-      )
-    );
-  });
 }
 
 
-/**
- * Cuenta los usuarios activos cuyo rol conserva todos
- * los permisos administrativos requeridos.
- */
 function _accessCountAdministrators_(data) {
-  const activeRoles = new Set(
-    data.roles
-      .filter(row => _accessIsActive_(row.estado))
-      .map(row => _accessText_(row.rol_id))
+  const accessModule = data.modulos.find(module =>
+    _accessUpper_(module.codigo) === ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses &&
+    _accessIsActive_(module.active)
   );
-
-  const activePermissionsById = new Map(
-    data.permisos
-      .filter(row => _accessIsActive_(row.estado))
-      .map(row => [
-        _accessText_(row.permiso_id),
-        _accessUpper_(row.codigo)
-      ])
-  );
-
-  const codesByRole = new Map();
-
-  data.rolPermiso.forEach(item => {
-    if (!_accessIsActive_(item.estado)) return;
-
-    const roleId = _accessText_(item.rol_id);
-
-    const code = activePermissionsById.get(
-      _accessText_(item.permiso_id)
-    );
-
-    if (!code || !activeRoles.has(roleId)) return;
-
-    if (!codesByRole.has(roleId)) {
-      codesByRole.set(roleId, new Set());
-    }
-
-    codesByRole.get(roleId).add(code);
+  if (!accessModule) return 0;
+  const moduleId = _accessText_(accessModule.modulo_id);
+  const activeRoles = new Set(data.roles.filter(role => _accessIsActive_(role.active)).map(role => _accessText_(role.rol_id)));
+  const activePermissionsById = new Map(data.permisos
+    .filter(permission => _accessIsActive_(permission.active) && _accessText_(permission.modulo_id) === moduleId)
+    .map(permission => [_accessText_(permission.permiso_id), _accessUpper_(permission.codigo)]));
+  const permissionsByRole = new Map();
+  data.rolPermiso.forEach(assignment => {
+    if (!_accessIsActive_(assignment.active)) return;
+    const roleId = _accessText_(assignment.rol_id);
+    if (!activeRoles.has(roleId)) return;
+    const code = activePermissionsById.get(_accessText_(assignment.permiso_id));
+    if (!code) return;
+    if (!permissionsByRole.has(roleId)) permissionsByRole.set(roleId, new Set());
+    permissionsByRole.get(roleId).add(code);
   });
-
-  return data.usuarios.filter(user => {
-    if (!_accessIsActive_(user.estado)) return false;
-
-    const roleId = _accessText_(user.rol_id);
-
-    if (!activeRoles.has(roleId)) return false;
-
-    const codes = codesByRole.get(roleId) || new Set();
-
-    return ACCESS_MANAGEMENT_CONFIG.adminPermissionCodes.every(
-      code => codes.has(code)
-    );
+  const activeUserIds = new Set(data.usuarios.filter(user => _accessIsActive_(user.active)).map(user => _accessText_(user.persona_id)));
+  const activeTotalScopeIds = new Set(data.ambitosAcceso
+    .filter(scope => _accessIsActive_(scope.active) && _accessText_(scope.modulo_id) === moduleId && _accessUpper_(scope.tipo_ambito) === 'TOTAL')
+    .map(scope => _accessText_(scope.persona_id)));
+  return data.usuarioRol.filter(assignment => {
+    const personaId = _accessText_(assignment.persona_id);
+    const roleId = _accessText_(assignment.rol_id);
+    if (!_accessIsActive_(assignment.active) ||
+        _accessText_(assignment.modulo_id) !== moduleId ||
+        roleId !== ACCESS_MANAGEMENT_CONFIG.adminRoleId ||
+        !activeUserIds.has(personaId) ||
+        !activeTotalScopeIds.has(personaId) ||
+        !activeRoles.has(roleId)) return false;
+    const codes = permissionsByRole.get(roleId) || new Set();
+    return ACCESS_MANAGEMENT_CONFIG.adminPermissionCodes.every(code => codes.has(code));
   }).length;
 }
 
 
-/**
- * Impide que una operación elimine al último administrador de seguridad.
- */
 function _accessAssertAdministratorContinuity_(before, after) {
   const currentCount = _accessCountAdministrators_(before);
   const nextCount = _accessCountAdministrators_(after);
-
   if (currentCount > 0 && nextCount === 0) {
-    throw new Error(
-      'La operación dejaría el gestor sin administradores de seguridad activos. Conserva al menos una cuenta con todos los permisos administrativos.'
-    );
+    throw new Error('La operación dejaría el gestor sin administradores globales activos. Conserva una persona con ROL_ADMIN, ámbito TOTAL y todos los permisos administrativos en ACCESOS.');
   }
 }
 
 
-/**
- * Copia las colecciones de seguridad para simular el estado posterior
- * antes de aplicar una modificación.
- */
 function _accessCopyData_(data) {
   return {
-    usuarios: data.usuarios.map(row => Object.assign({}, row)),
-    roles: data.roles.map(row => Object.assign({}, row)),
-    permisos: data.permisos.map(row => Object.assign({}, row)),
-    rolPermiso: data.rolPermiso.map(row => Object.assign({}, row)),
-    ambitosAcceso: data.ambitosAcceso.map(row => Object.assign({}, row))
+    personas: (data.personas || []).map(row => Object.assign({}, row)),
+    usuarios: (data.usuarios || []).map(row => Object.assign({}, row)),
+    modulos: (data.modulos || []).map(row => Object.assign({}, row)),
+    roles: (data.roles || []).map(row => Object.assign({}, row)),
+    usuarioRol: (data.usuarioRol || []).map(row => Object.assign({}, row)),
+    permisos: (data.permisos || []).map(row => Object.assign({}, row)),
+    rolPermiso: (data.rolPermiso || []).map(row => Object.assign({}, row)),
+    ambitosAcceso: (data.ambitosAcceso || []).map(row => Object.assign({}, row))
   };
 }
 
 
-/**
- * Devuelve metadatos de una pestaña de seguridad.
- */
 function _accessSourceInfo_(sheetName) {
   return SUNARPCore.getSourceInfo(
     _accessSecuritySource_(sheetName)
@@ -795,747 +747,299 @@ function _accessValidateOrgStructure_(structureId, catalogs) {
  * Crea o actualiza un usuario.
  */
 function _accessRecordUser_(auth, payload, action) {
-  const source = _accessSecuritySource_(
-    ACCESS_MANAGEMENT_CONFIG.sheets.users
-  );
-
-  const email = _accessText_(
-    payload.correo_institucional
-  ).toLowerCase();
-
-  const names = _accessText_(payload.nombres);
-  const surnames = _accessText_(payload.apellidos);
-  const roleId = _accessText_(payload.rol_id).toUpperCase();
-  const status = _accessUpper_(payload.estado);
-  const structureId = _accessText_(payload.estructura_org_id);
-
-  const originalEmail = _accessText_(
-    payload.correo_original ||
-    payload.originalEmail ||
-    email
-  ).toLowerCase();
-
-  _accessValidateEmail_(email);
-
-  if (!names) {
-    throw new Error('Ingresa los nombres del usuario.');
-  }
-
-  if (!roleId) {
-    throw new Error('Selecciona un rol.');
-  }
-
-  if (!['ACTIVO', 'INACTIVO'].includes(status)) {
-    throw new Error('El estado del usuario no es válido.');
-  }
-
-  if (
-    email === _accessText_(auth.email).toLowerCase() &&
-    status === 'INACTIVO'
-  ) {
-    throw new Error(
-      'No puedes desactivar tu propia cuenta mientras administras el gestor.'
-    );
+  const source = _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.users);
+  const personaId = _accessText_(payload.persona_id);
+  const active = _accessNormalizeActive_(payload.active, 'El estado de la cuenta');
+  if (!personaId) throw new Error('Selecciona una persona del directorio.');
+  const person = _accessFindBy_(auth.personasCatalog, 'persona_id', personaId);
+  if (!person) throw new Error('La persona seleccionada no existe en personas.');
+  _accessValidateEmail_(person.correo_institucional);
+  if (personaId === _accessText_(auth.personaId) && !active) {
+    throw new Error('No puedes desactivar tu propia cuenta mientras administras el gestor.');
   }
 
   const data = _accessLoadSecurityData_();
+  const existing = _accessFindBy_(data.usuarios, 'persona_id', personaId);
+  if (action === 'create' && existing) throw new Error('La persona ya tiene una cuenta registrada.');
+  if (action === 'edit' && !existing) throw new Error('No se encontró la cuenta que deseas actualizar.');
 
-  const role = data.roles.find(row =>
-    _accessText_(row.rol_id) === roleId &&
-    _accessIsActive_(row.estado)
-  );
-
-  if (!role) {
-    throw new Error('El rol seleccionado no existe o está inactivo.');
-  }
-
-  if (
-    _accessRoleHasPrivilegedPermissions_(data, roleId) &&
-    !SUNARPCore.authorizationHasPermission(auth, 'ROLES_ADMINISTRAR')
-  ) {
-    throw new Error(
-      'Para asignar un rol con capacidades de administración o auditoría también necesitas el permiso ROLES_ADMINISTRAR.'
-    );
-  }
-
-  const catalogs = _accessOrgCatalog_();
-
-  _accessValidateOrgStructure_(
-    structureId,
-    catalogs
-  );
-
-  const existing = _accessFindBy_(
-    data.usuarios,
-    'correo_institucional',
-    originalEmail
-  );
-
-  const existingEmailKey = existing
-    ? _accessText_(existing.correo_institucional)
-    : originalEmail;
-
-  if (
-    action === 'create' &&
-    _accessFindBy_(data.usuarios, 'correo_institucional', email)
-  ) {
-    throw new Error(
-      'Ya existe un usuario registrado con ese correo institucional.'
-    );
-  }
-
-  if (action === 'edit' && !existing) {
-    throw new Error(
-      'No se encontró el usuario que deseas actualizar.'
-    );
-  }
-
-  if (action === 'edit' && email !== originalEmail) {
-    throw new Error(
-      'El correo institucional es la clave de la cuenta y no puede modificarse. Registra una nueva cuenta, reasigna sus ámbitos y luego desactiva la anterior.'
-    );
-  }
-
+  const nextUser = { persona_id: personaId, active };
   const after = _accessCopyData_(data);
-
-  const afterUser = {
-    correo_institucional: email,
-    nombres: names,
-    apellidos: surnames,
-    estado: status,
-    rol_id: roleId,
-    estructura_org_id: structureId
-  };
-
   if (action === 'edit') {
-    const index = after.usuarios.findIndex(row =>
-      _accessText_(row.correo_institucional).toLowerCase() === originalEmail
-    );
+    const index = after.usuarios.findIndex(row => _accessText_(row.persona_id) === personaId);
+    after.usuarios[index] = nextUser;
+  } else after.usuarios.push(nextUser);
+  _accessAssertAdministratorContinuity_(data, after);
 
-    after.usuarios[index] = Object.assign(
-      {},
-      after.usuarios[index],
-      afterUser
-    );
-
-  } else {
-    after.usuarios.push(afterUser);
-  }
-
-  _accessAssertAdministratorContinuity_(
-    data,
-    after
-  );
-
-  const event = {
-    accion: action === 'create'
-      ? 'CREAR_USUARIO'
-      : 'EDITAR_USUARIO',
-
-    modulo: 'ACCESOS',
+  const name = [person.nombres, person.apellidos].map(_accessText_).filter(Boolean).join(' ');
+  return _accessRunAudited_(auth, {
+    accion: action === 'create' ? 'CREAR_USUARIO' : 'EDITAR_USUARIO',
+    modulo: ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses,
     tipo_entidad: 'USUARIO',
-    registro_id: email,
-
-    registro_nombre: [
-      names,
-      surnames
-    ].filter(Boolean).join(' '),
-
-    detalle: 'Administración de cuenta institucional.',
+    registro_id: personaId,
+    registro_nombre: name,
+    detalle: 'Administración de habilitación de cuenta institucional.',
     datos_antes: existing || null
-  };
-
-  return _accessRunAudited_(auth, event, () => {
-    const payloadRecord = _accessAddMetadata_(
-      ACCESS_MANAGEMENT_CONFIG.sheets.users,
-      afterUser,
-      action === 'create',
-      auth
-    );
-
-    let result;
-
+  }, () => {
+    const record = _accessAddMetadata_(ACCESS_MANAGEMENT_CONFIG.sheets.users, nextUser, action === 'create', auth);
     if (action === 'create') {
-      result = SUNARPCore.insertRecord(
-        source,
-        payloadRecord,
-        {
-          idField: 'correo_institucional'
-        }
-      );
-
+      SUNARPCore.insertRecord(source, record, { idField: 'persona_id' });
     } else {
-      const updates = Object.assign({}, payloadRecord);
-
-      delete updates.correo_institucional;
-
-      result = SUNARPCore.updateRecord(
-        source,
-        'correo_institucional',
-        existingEmailKey,
-        updates
-      );
+      const updates = Object.assign({}, record);
+      delete updates.persona_id;
+      SUNARPCore.updateRecord(source, 'persona_id', personaId, updates);
     }
-
     return {
-      value: {
-        success: true,
-        message: action === 'create'
-          ? 'Usuario registrado correctamente.'
-          : 'Usuario actualizado correctamente.'
-      },
-
-      auditAfter: afterUser
+      value: { success: true, message: action === 'create' ? 'Cuenta habilitada correctamente.' : 'Cuenta actualizada correctamente.' },
+      auditAfter: nextUser
     };
   });
 }
 
 
-/**
- * Punto de entrada para crear o editar usuarios.
- */
 function saveAccessUser(payload) {
-  const auth = _accessRequirePermission_(
-    'USUARIOS_ADMINISTRAR'
-  );
-
-  if (
-    !payload ||
-    typeof payload !== 'object' ||
-    Array.isArray(payload)
-  ) {
-    throw new Error('No se recibieron los datos del usuario.');
-  }
-
+  const auth = _accessRequirePermission_('USUARIOS_ADMINISTRAR');
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('No se recibieron los datos de la cuenta.');
   const action = _accessText_(payload.action).toLowerCase();
-
-  if (!['create', 'edit'].includes(action)) {
-    throw new Error('La operación del usuario no es válida.');
-  }
-
-  return _accessRecordUser_(
-    auth,
-    payload,
-    action
-  );
+  if (!['create', 'edit'].includes(action)) throw new Error('La operación de la cuenta no es válida.');
+  return _accessRecordUser_(auth, payload, action);
 }
 
 
-/**
- * Crea o actualiza roles.
- */
-function saveAccessRole(payload) {
-  const auth = _accessRequirePermission_(
-    'ROLES_ADMINISTRAR'
-  );
-
-  if (
-    !payload ||
-    typeof payload !== 'object' ||
-    Array.isArray(payload)
-  ) {
-    throw new Error('No se recibieron los datos del rol.');
-  }
-
-  const action = _accessText_(payload.action).toLowerCase();
-
-  const roleId = _accessUpper_(
-    payload.rol_id || payload.roleId
-  );
-
-  const name = _accessText_(
-    payload.nombre || payload.name
-  );
-
-  const description = _accessText_(
-    payload.descripcion || payload.description
-  );
-
-  const status = _accessUpper_(
-    payload.estado || payload.status
-  );
-
-  const originalId = _accessUpper_(
-    payload.rol_id_original ||
-    payload.originalRoleId ||
-    roleId
-  );
-
-  if (!['create', 'edit'].includes(action)) {
-    throw new Error('La operación del rol no es válida.');
-  }
-
-  if (!/^[A-Z0-9_-]{2,50}$/.test(roleId)) {
-    throw new Error(
-      'El ID del rol solo admite letras, números, guion y guion bajo.'
-    );
-  }
-
-  if (!name) {
-    throw new Error('Ingresa el nombre del rol.');
-  }
-
-  if (!['ACTIVO', 'INACTIVO'].includes(status)) {
-    throw new Error('El estado del rol no es válido.');
-  }
-
-  if (action === 'edit' && roleId !== originalId) {
-    throw new Error(
-      'No está permitido cambiar el ID de un rol existente.'
-    );
-  }
+function saveAccessUserRole(payload) {
+  const auth = _accessRequirePermission_('ROLES_ADMINISTRAR');
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('No se recibieron los datos de la asignación de rol.');
+  const personaId = _accessText_(payload.persona_id);
+  const moduleId = _accessText_(payload.modulo_id);
+  const roleId = _accessText_(payload.rol_id);
+  const active = roleId ? _accessNormalizeActive_(payload.active === undefined ? true : payload.active, 'El estado de la asignación') : false;
+  if (!personaId || !moduleId) throw new Error('Debes indicar persona_id y modulo_id.');
 
   const data = _accessLoadSecurityData_();
-
-  const existing = _accessFindBy_(
-    data.roles,
-    'rol_id',
-    action === 'edit' ? originalId : roleId
-  );
-
-  if (action === 'create' && existing) {
-    throw new Error('Ya existe un rol con ese ID.');
+  if (!data.usuarios.some(row => _accessText_(row.persona_id) === personaId && _accessIsActive_(row.active))) {
+    throw new Error('La persona no tiene una cuenta activa.');
   }
+  const module = data.modulos.find(row => _accessText_(row.modulo_id) === moduleId && _accessIsActive_(row.active));
+  if (!module) throw new Error('El módulo no existe o está inactivo.');
 
-  if (action === 'edit' && !existing) {
-    throw new Error('No se encontró el rol que deseas actualizar.');
-  }
-
-  const duplicateName = data.roles.some(row =>
-    _accessText_(row.rol_id) !== originalId &&
-    _accessText_(row.nombre).toLocaleLowerCase() ===
-    name.toLocaleLowerCase()
-  );
-
-  if (duplicateName) {
-    throw new Error('Ya existe un rol con ese nombre.');
-  }
-
-  if (
-    action === 'edit' &&
-    status === 'INACTIVO' &&
-    data.usuarios.some(user =>
-      _accessText_(user.rol_id) === originalId &&
-      _accessIsActive_(user.estado)
-    )
-  ) {
-    throw new Error(
-      'No puedes desactivar un rol asignado a usuarios activos. Reasigna primero esas cuentas.'
-    );
+  if (active) {
+    const role = data.roles.find(row => _accessText_(row.rol_id) === roleId && _accessIsActive_(row.active));
+    if (!role) throw new Error('El rol seleccionado no existe o está inactivo.');
+    if (_accessRoleHasPrivilegedPermissions_(data, roleId)) {
+      const accessModule = data.modulos.find(row => _accessUpper_(row.codigo) === ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses);
+      if (_accessText_(module.modulo_id) !== _accessText_(accessModule && accessModule.modulo_id) ||
+          roleId !== ACCESS_MANAGEMENT_CONFIG.adminRoleId) {
+        throw new Error('Los permisos administrativos solo pueden asignarse mediante ROL_ADMIN dentro del módulo ACCESOS.');
+      }
+    }
   }
 
   const after = _accessCopyData_(data);
+  const previous = after.usuarioRol.filter(item => _accessText_(item.persona_id) === personaId && _accessText_(item.modulo_id) === moduleId);
+  after.usuarioRol = after.usuarioRol.filter(item => !(_accessText_(item.persona_id) === personaId && _accessText_(item.modulo_id) === moduleId));
+  if (active) after.usuarioRol.push({ persona_id: personaId, modulo_id: moduleId, rol_id: roleId, active: true });
+  _accessAssertAdministratorContinuity_(data, after);
 
-  const nextRole = {
-    rol_id: roleId,
-    nombre: name,
-    descripcion: description,
-    estado: status
-  };
-
-  if (action === 'edit') {
-    const index = after.roles.findIndex(row =>
-      _accessText_(row.rol_id) === originalId
+  const person = _accessFindBy_(data.personas, 'persona_id', personaId);
+  return _accessRunAudited_(auth, {
+    accion: 'ACTUALIZAR_ROL_USUARIO',
+    modulo: ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses,
+    tipo_entidad: 'USUARIO_ROL',
+    registro_id: personaId,
+    registro_nombre: [person && person.nombres, person && person.apellidos].filter(Boolean).join(' '),
+    detalle: 'Actualización de rol asignado en el módulo ' + _accessText_(module.nombre || module.codigo) + '.',
+    datos_antes: previous
+  }, () => {
+    const result = SUNARPCore.syncRecordsByKey(
+      _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.userRoles),
+      { persona_id: personaId, modulo_id: moduleId },
+      ['rol_id'],
+      active ? [{ rol_id: roleId }] : [],
+      'active', true, false
     );
+    return {
+      value: { success: true, message: active ? 'Rol asignado al módulo correctamente.' : 'Asignación de rol retirada correctamente.', ...result },
+      auditAfter: active ? [{ persona_id: personaId, modulo_id: moduleId, rol_id: roleId, active: true }] : []
+    };
+  });
+}
 
-    after.roles[index] = Object.assign(
-      {},
-      after.roles[index],
-      nextRole
-    );
 
-  } else {
-    after.roles.push(nextRole);
+function saveAccessRole(payload) {
+  const auth = _accessRequirePermission_('ROLES_ADMINISTRAR');
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('No se recibieron los datos del rol.');
+  const action = _accessText_(payload.action).toLowerCase();
+  const roleId = _accessUpper_(payload.rol_id || payload.roleId);
+  const name = _accessText_(payload.nombre || payload.name);
+  const description = _accessText_(payload.descripcion || payload.description);
+  const active = _accessNormalizeActive_(payload.active === undefined ? true : payload.active, 'El estado del rol');
+  const originalId = _accessUpper_(payload.rol_id_original || payload.originalRoleId || roleId);
+
+  if (!['create', 'edit'].includes(action)) throw new Error('La operación del rol no es válida.');
+  if (!/^[A-Z0-9_-]{2,50}$/.test(roleId)) throw new Error('El ID del rol solo admite letras, números, guion y guion bajo.');
+  if (!name) throw new Error('Ingresa el nombre del rol.');
+  if (action === 'edit' && roleId !== originalId) throw new Error('No está permitido cambiar el ID de un rol existente.');
+
+  const data = _accessLoadSecurityData_();
+  const existing = _accessFindBy_(data.roles, 'rol_id', action === 'edit' ? originalId : roleId);
+  if (action === 'create' && existing) throw new Error('Ya existe un rol con ese ID.');
+  if (action === 'edit' && !existing) throw new Error('No se encontró el rol que deseas actualizar.');
+  if (data.roles.some(row => _accessText_(row.rol_id) !== originalId &&
+      _accessText_(row.nombre).toLowerCase() === name.toLowerCase())) {
+    throw new Error('Ya existe un rol con ese nombre.');
+  }
+  if (action === 'edit' && !active && data.usuarioRol.some(item =>
+      _accessText_(item.rol_id) === originalId && _accessIsActive_(item.active))) {
+    throw new Error('No puedes desactivar un rol asignado a personas. Retira primero esas asignaciones.');
   }
 
-  _accessAssertAdministratorContinuity_(
-    data,
-    after
-  );
+  const nextRole = { rol_id: roleId, nombre: name, descripcion: description, active };
+  const after = _accessCopyData_(data);
+  if (action === 'edit') {
+    const index = after.roles.findIndex(row => _accessText_(row.rol_id) === originalId);
+    after.roles[index] = Object.assign({}, after.roles[index], nextRole);
+  } else after.roles.push(nextRole);
+  _accessAssertAdministratorContinuity_(data, after);
 
   return _accessRunAudited_(auth, {
-    accion: action === 'create'
-      ? 'CREAR_ROL'
-      : 'EDITAR_ROL',
-
-    modulo: 'ACCESOS',
+    accion: action === 'create' ? 'CREAR_ROL' : 'EDITAR_ROL',
+    modulo: ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses,
     tipo_entidad: 'ROL',
     registro_id: roleId,
     registro_nombre: name,
     detalle: 'Administración de rol.',
     datos_antes: existing || null
-
   }, () => {
-    const source = _accessSecuritySource_(
-      ACCESS_MANAGEMENT_CONFIG.sheets.roles
-    );
-
-    const record = _accessAddMetadata_(
-      ACCESS_MANAGEMENT_CONFIG.sheets.roles,
-      nextRole,
-      action === 'create',
-      auth
-    );
-
-    if (action === 'create') {
-      SUNARPCore.insertRecord(
-        source,
-        record,
-        { idField: 'rol_id' }
-      );
-
-    } else {
+    const sheet = ACCESS_MANAGEMENT_CONFIG.sheets.roles;
+    const source = _accessSecuritySource_(sheet);
+    const record = _accessAddMetadata_(sheet, nextRole, action === 'create', auth);
+    if (action === 'create') SUNARPCore.insertRecord(source, record, { idField: 'rol_id' });
+    else {
       const updates = Object.assign({}, record);
-
       delete updates.rol_id;
-
-      SUNARPCore.updateRecord(
-        source,
-        'rol_id',
-        originalId,
-        updates
-      );
+      SUNARPCore.updateRecord(source, 'rol_id', originalId, updates);
     }
-
     return {
-      value: {
-        success: true,
-        message: action === 'create'
-          ? 'Rol creado correctamente.'
-          : 'Rol actualizado correctamente.'
-      },
-
+      value: { success: true, message: action === 'create' ? 'Rol creado correctamente.' : 'Rol actualizado correctamente.' },
       auditAfter: nextRole
     };
   });
 }
 
 
-/**
- * Crea o actualiza permisos.
- */
 function saveAccessPermission(payload) {
-  const auth = _accessRequirePermission_(
-    'PERMISOS_ADMINISTRAR'
-  );
-
-  if (
-    !payload ||
-    typeof payload !== 'object' ||
-    Array.isArray(payload)
-  ) {
-    throw new Error('No se recibieron los datos del permiso.');
-  }
+  const auth = _accessRequirePermission_('PERMISOS_ADMINISTRAR');
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('No se recibieron los datos del permiso.');
 
   const action = _accessText_(payload.action).toLowerCase();
+  const permissionId = _accessUpper_(payload.permiso_id || payload.permissionId);
+  const code = _accessUpper_(payload.codigo || payload.code);
+  const moduleId = _accessText_(payload.modulo_id || payload.moduleId);
+  const operation = _accessUpper_(payload.operacion || payload.operation);
+  const description = _accessText_(payload.descripcion || payload.description);
+  const active = _accessNormalizeActive_(payload.active === undefined ? true : payload.active, 'El estado del permiso');
 
-  const permissionId = _accessUpper_(
-    payload.permiso_id || payload.permissionId
-  );
-
-  const code = _accessUpper_(
-    payload.codigo || payload.code
-  );
-
-  const moduleCode = _accessUpper_(
-    payload.modulo || payload.module
-  );
-
-  const operation = _accessUpper_(
-    payload.operacion || payload.operation
-  );
-
-  const description = _accessText_(
-    payload.descripcion ||
-    payload.description ||
-    payload.nombre ||
-    payload.name
-  );
-
-  const status = _accessUpper_(
-    payload.estado || payload.status
-  );
-
-  if (!['create', 'edit'].includes(action)) {
-    throw new Error('La operación del permiso no es válida.');
-  }
-
-  if (!/^[A-Z0-9_]{3,80}$/.test(code)) {
-    throw new Error(
-      'El código del permiso no tiene un formato válido.'
-    );
-  }
-
-  if (!permissionId) {
-    throw new Error('Ingresa el ID del permiso.');
-  }
-
-  if (!moduleCode || !operation || !description) {
-    throw new Error(
-      'Completa módulo, operación y descripción del permiso.'
-    );
-  }
-
-  if (!['ACTIVO', 'INACTIVO'].includes(status)) {
-    throw new Error('El estado del permiso no es válido.');
-  }
+  if (!['create', 'edit'].includes(action)) throw new Error('La operación del permiso no es válida.');
+  if (!/^[A-Z0-9_]{3,80}$/.test(code)) throw new Error('El código del permiso no tiene un formato válido.');
+  if (!permissionId) throw new Error('Ingresa el ID del permiso.');
+  if (!moduleId || !operation || !description) throw new Error('Completa modulo_id, operación y descripción del permiso.');
 
   const data = _accessLoadSecurityData_();
+  const module = data.modulos.find(item => _accessText_(item.modulo_id) === moduleId && _accessIsActive_(item.active));
+  if (!module) throw new Error('El módulo no existe o está inactivo.');
 
-  const existing = _accessFindBy_(
-    data.permisos,
-    'permiso_id',
-    permissionId
-  );
-
-  if (action === 'create' && existing) {
-    throw new Error('Ya existe un permiso con ese ID.');
-  }
-
-  if (action === 'edit' && !existing) {
-    throw new Error('No se encontró el permiso que deseas actualizar.');
-  }
-
-  if (
-    action === 'edit' &&
-    code !== _accessUpper_(existing.codigo)
-  ) {
-    throw new Error(
-      'El código de un permiso existente es inmutable. Crea otro permiso si necesitas un código distinto.'
-    );
-  }
-
-  if (data.permisos.some(row =>
-    _accessUpper_(row.codigo) === code &&
-    _accessText_(row.permiso_id) !== permissionId
-  )) {
+  const existing = _accessFindBy_(data.permisos, 'permiso_id', permissionId);
+  if (action === 'create' && existing) throw new Error('Ya existe un permiso con ese ID.');
+  if (action === 'edit' && !existing) throw new Error('No se encontró el permiso que deseas actualizar.');
+  if (existing && code !== _accessUpper_(existing.codigo)) throw new Error('El código de un permiso existente es inmutable.');
+  if (existing && moduleId !== _accessText_(existing.modulo_id)) throw new Error('El modulo_id de un permiso existente es inmutable. Crea otro permiso y reasigna sus relaciones.');
+  if (data.permisos.some(row => _accessUpper_(row.codigo) === code && _accessText_(row.permiso_id) !== permissionId)) {
     throw new Error('Ya existe un permiso con ese código.');
   }
 
-  const nextPermission = {
-    permiso_id: permissionId,
-    codigo: code,
-    modulo: moduleCode,
-    operacion: operation,
-    descripcion: description,
-    estado: status
-  };
-
+  const nextPermission = { permiso_id: permissionId, codigo: code, modulo_id: moduleId, operacion: operation, descripcion: description, active };
   const after = _accessCopyData_(data);
-
   if (action === 'edit') {
-    const index = after.permisos.findIndex(row =>
-      _accessText_(row.permiso_id) === permissionId
-    );
-
-    after.permisos[index] = Object.assign(
-      {},
-      after.permisos[index],
-      nextPermission
-    );
-
-  } else {
-    after.permisos.push(nextPermission);
-  }
-
-  _accessAssertAdministratorContinuity_(
-    data,
-    after
-  );
+    const index = after.permisos.findIndex(row => _accessText_(row.permiso_id) === permissionId);
+    after.permisos[index] = Object.assign({}, after.permisos[index], nextPermission);
+  } else after.permisos.push(nextPermission);
+  _accessAssertAdministratorContinuity_(data, after);
 
   return _accessRunAudited_(auth, {
-    accion: action === 'create'
-      ? 'CREAR_PERMISO'
-      : 'EDITAR_PERMISO',
-
-    modulo: 'ACCESOS',
+    accion: action === 'create' ? 'CREAR_PERMISO' : 'EDITAR_PERMISO',
+    modulo: ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses,
     tipo_entidad: 'PERMISO',
     registro_id: permissionId,
     registro_nombre: code,
     detalle: 'Administración de permiso.',
     datos_antes: existing || null
-
   }, () => {
-    const source = _accessSecuritySource_(
-      ACCESS_MANAGEMENT_CONFIG.sheets.permissions
-    );
-
-    const record = _accessFilterPayload_(
-      ACCESS_MANAGEMENT_CONFIG.sheets.permissions,
-      nextPermission,
-      [
-        'permiso_id',
-        'codigo',
-        'modulo',
-        'operacion',
-        'estado'
-      ]
-    );
-
-    if (action === 'create') {
-      SUNARPCore.insertRecord(
-        source,
-        record,
-        { idField: 'permiso_id' }
-      );
-
-    } else {
+    const sheet = ACCESS_MANAGEMENT_CONFIG.sheets.permissions;
+    const source = _accessSecuritySource_(sheet);
+    const record = _accessFilterPayload_(sheet, nextPermission, [
+      'permiso_id', 'codigo', 'modulo_id', 'operacion', 'descripcion', 'active'
+    ]);
+    if (action === 'create') SUNARPCore.insertRecord(source, record, { idField: 'permiso_id' });
+    else {
       const updates = Object.assign({}, record);
-
       delete updates.permiso_id;
-
-      SUNARPCore.updateRecord(
-        source,
-        'permiso_id',
-        permissionId,
-        updates
-      );
+      SUNARPCore.updateRecord(source, 'permiso_id', permissionId, updates);
     }
-
     return {
-      value: {
-        success: true,
-        message: action === 'create'
-          ? 'Permiso creado correctamente.'
-          : 'Permiso actualizado correctamente.'
-      },
-
+      value: { success: true, message: action === 'create' ? 'Permiso creado correctamente.' : 'Permiso actualizado correctamente.' },
       auditAfter: nextPermission
     };
   });
 }
 
 
-/**
- * Actualiza las asignaciones de permisos de un rol.
- * Los permisos retirados quedan INACTIVOS en lugar de eliminarse.
- */
 function saveRolePermissions(payload) {
-  const auth = _accessRequirePermission_(
-    'ROLES_ADMINISTRAR'
-  );
+  const auth = _accessRequirePermission_('ROLES_ADMINISTRAR');
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('No se recibieron las asignaciones.');
 
-  if (
-    !SUNARPCore.authorizationHasPermission(
-      auth,
-      'PERMISOS_ADMINISTRAR'
-    )
-  ) {
-    throw new Error(
-      'También necesitas el permiso PERMISOS_ADMINISTRAR para asignar permisos a roles.'
-    );
-  }
+  const roleId = _accessUpper_(payload.rol_id || payload.roleId);
+  const selected = Array.isArray(payload.permiso_ids) ? payload.permiso_ids :
+    Array.isArray(payload.permissionIds) ? payload.permissionIds : [];
+  if (!roleId) throw new Error('Selecciona un rol.');
 
-  const roleId = _accessUpper_(
-    payload && (payload.rol_id || payload.roleId)
-  );
-
-  const selected = Array.isArray(payload && payload.permiso_ids)
-    ? payload.permiso_ids
-    : Array.isArray(payload && payload.permissionIds)
-      ? payload.permissionIds
-      : [];
-
-  if (!roleId) {
-    throw new Error('Selecciona un rol.');
-  }
-
+  const permissionIds = [...new Set(selected.map(_accessText_).filter(Boolean))];
   const data = _accessLoadSecurityData_();
+  const role = data.roles.find(row => _accessText_(row.rol_id) === roleId && _accessIsActive_(row.active));
+  if (!role) throw new Error('El rol no existe o está inactivo.');
 
-  const role = data.roles.find(row =>
-    _accessText_(row.rol_id) === roleId &&
-    _accessIsActive_(row.estado)
-  );
-
-  if (!role) {
-    throw new Error('El rol no existe o está inactivo.');
-  }
-
-  const permissionIds = [
-    ...new Set(
-      selected.map(_accessUpper_).filter(Boolean)
-    )
-  ];
-
-  const activePermissions = new Set(
-    data.permisos
-      .filter(row => _accessIsActive_(row.estado))
-      .map(row => _accessText_(row.permiso_id))
-  );
-
-  const invalid = permissionIds.filter(id =>
-    !activePermissions.has(id)
-  );
-
-  if (invalid.length) {
-    throw new Error(
-      `Hay permisos inexistentes o inactivos: ${invalid.join(', ')}.`
-    );
-  }
+  const activePermissionIds = new Set(data.permisos.filter(row => _accessIsActive_(row.active)).map(row => _accessText_(row.permiso_id)));
+  const invalid = permissionIds.filter(id => !activePermissionIds.has(id));
+  if (invalid.length) throw new Error('Hay permisos inexistentes o inactivos: ' + invalid.join(', ') + '.');
 
   const after = _accessCopyData_(data);
-
-  after.rolPermiso = after.rolPermiso.filter(row =>
-    _accessText_(row.rol_id) !== roleId
-  );
-
-  permissionIds.forEach(id => {
-    after.rolPermiso.push({
-      rol_id: roleId,
-      permiso_id: id,
-      estado: 'ACTIVO'
-    });
-  });
-
-  _accessAssertAdministratorContinuity_(
-    data,
-    after
-  );
+  after.rolPermiso = after.rolPermiso.filter(row => _accessText_(row.rol_id) !== roleId);
+  permissionIds.forEach(id => after.rolPermiso.push({ rol_id: roleId, permiso_id: id, active: true }));
+  _accessAssertAdministratorContinuity_(data, after);
 
   return _accessRunAudited_(auth, {
     accion: 'ACTUALIZAR_ASIGNACION_PERMISOS',
-    modulo: 'ACCESOS',
+    modulo: ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses,
     tipo_entidad: 'ROL_PERMISO',
     registro_id: roleId,
     registro_nombre: _accessText_(role.nombre),
     detalle: 'Actualización de permisos asignados al rol.',
-
-    datos_antes: data.rolPermiso.filter(row =>
-      _accessText_(row.rol_id) === roleId
-    )
-
+    datos_antes: data.rolPermiso.filter(row => _accessText_(row.rol_id) === roleId)
   }, () => {
     const result = SUNARPCore.syncRecordsByKey(
-      _accessSecuritySource_(
-        ACCESS_MANAGEMENT_CONFIG.sheets.rolePermissions
-      ),
+      _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.rolePermissions),
       { rol_id: roleId },
       ['permiso_id'],
-      permissionIds.map(id => ({
-        permiso_id: id
-      })),
-      'estado',
-      'ACTIVO',
-      'INACTIVO'
+      permissionIds.map(id => ({ permiso_id: id })),
+      'active', true, false
     );
-
     return {
-      value: {
-        success: true,
-        message: 'Asignaciones actualizadas correctamente.',
-        ...result
-      },
-
-      auditAfter: permissionIds
+      value: { success: true, message: 'Asignaciones actualizadas correctamente.', ...result },
+      auditAfter: permissionIds.map(id => ({ permiso_id: id, active: true }))
     };
   });
 }
 
 
-/**
- * Actualiza los ámbitos de acceso de un usuario para un módulo.
- * El conjunto de ámbitos activos se interpreta como unión.
- */
 function saveAccessScopes(payload) {
   const auth = _accessRequirePermission_(
     'AMBITOS_ACCESO_ADMINISTRAR'
