@@ -17,6 +17,8 @@ const accessSource = fs.readFileSync(accessPath, 'utf8');
 const directorySource = fs.readFileSync(directoryPath, 'utf8');
 const appSource = fs.readFileSync(appPath, 'utf8');
 const accessUiSource = fs.readFileSync(accessUiPath, 'utf8');
+const viewPath = path.join(root, 'Backend/Gestor de intranet SUNARP/ViewAccesos.html');
+const viewSource = fs.readFileSync(viewPath, 'utf8');
 const directoryUiSource = fs.readFileSync(directoryUiPath, 'utf8');
 
 function extractInlineScripts(html) {
@@ -43,14 +45,14 @@ function makeSecurityData(overrides = {}) {
     permiso_id: 'PERM_A' + (index + 1),
     codigo: code,
     modulo_id: 'MOD_ACCESOS',
-    operacion: 'ADMINISTRAR',
+    operacion_id: 'ADMINISTRAR',
     descripcion: code,
     active: true
   })).concat([{
     permiso_id: 'PERM_INFO_001',
     codigo: 'INFORMACION_PERSONAL_VER',
     modulo_id: 'MOD_INFO_PERSONAL',
-    operacion: 'VER',
+    operacion_id: 'VER',
     descripcion: 'Ver información de personal',
     active: true
   }]);
@@ -79,12 +81,27 @@ function makeSecurityData(overrides = {}) {
       { persona_id: 'PER_117', modulo_id: 'MOD_INFO_PERSONAL', rol_id: 'ROL_EDITOR', active: true }
     ],
     permisos: permissions,
+    operaciones: [
+      { operacion_id: 'VER', nombre: 'Ver' },
+      { operacion_id: 'CREAR', nombre: 'Crear' },
+      { operacion_id: 'EDITAR', nombre: 'Editar' },
+      { operacion_id: 'CAMBIAR_ESTADO', nombre: 'Cambiar estado' },
+      { operacion_id: 'PUBLICAR', nombre: 'Publicar' },
+      { operacion_id: 'ELIMINAR', nombre: 'Eliminar' },
+      { operacion_id: 'ADMINISTRAR', nombre: 'Administrar' }
+    ],
+    tiposAmbito: [
+      { tipo_ambito_id: 'TOTAL', nombre: 'Total', descripcion: 'Todos los registros del módulo', entidad_referencia: 'NINGUNA', requiere_referencia: false, permite_descendientes: false, active: true },
+      { tipo_ambito_id: 'SEDE', nombre: 'Sede', descripcion: 'Registros de una sede', entidad_referencia: 'SEDE', requiere_referencia: true, permite_descendientes: false, active: true },
+      { tipo_ambito_id: 'ESTRUCTURA_ORG', nombre: 'Unidad orgánica', descripcion: 'Unidad orgánica y descendientes', entidad_referencia: 'ESTRUCTURA_ORG', requiere_referencia: true, permite_descendientes: true, active: true },
+      { tipo_ambito_id: 'LOCAL', nombre: 'Local', descripcion: 'Registros adscritos directamente a un local', entidad_referencia: 'LOCAL', requiere_referencia: true, permite_descendientes: false, active: true }
+    ],
     rolPermiso: rolePermissions,
     ambitosAcceso: [
       {
         persona_id: 'PER_117',
         modulo_id: 'MOD_ACCESOS',
-        tipo_ambito: 'TOTAL',
+        tipo_ambito_id: 'TOTAL',
         referencia_id: '',
         incluir_descendientes: 'NO',
         active: true
@@ -92,7 +109,7 @@ function makeSecurityData(overrides = {}) {
       {
         persona_id: 'PER_117',
         modulo_id: 'MOD_INFO_PERSONAL',
-        tipo_ambito: 'TOTAL',
+        tipo_ambito_id: 'TOTAL',
         referencia_id: '',
         incluir_descendientes: 'NO',
         active: true
@@ -181,7 +198,7 @@ test('el administrador global exige ROL_ADMIN, TOTAL y los cuatro permisos en AC
     ambitosAcceso: [{
       persona_id: 'PER_117',
       modulo_id: 'MOD_ACCESOS',
-      tipo_ambito: 'SEDE',
+      tipo_ambito_id: 'SEDE',
       referencia_id: 'SEDE_CENTRAL',
       incluir_descendientes: 'NO',
       active: true
@@ -232,7 +249,7 @@ test('AUDITORIA_VER es independiente y no concede administración de accesos', (
       permiso_id: 'PERM_AUDIT',
       codigo: 'AUDITORIA_VER',
       modulo_id: 'MOD_ACCESOS',
-      operacion: 'VER',
+      operacion_id: 'VER',
       descripcion: 'Consultar auditoría',
       active: true
     }]),
@@ -251,7 +268,7 @@ test('AUDITORIA_VER es independiente y no concede administración de accesos', (
     ambitosAcceso: [{
       persona_id: 'PER_117',
       modulo_id: 'MOD_ACCESOS',
-      tipo_ambito: 'SEDE',
+      tipo_ambito_id: 'SEDE',
       referencia_id: 'SEDE_CENTRAL',
       incluir_descendientes: 'NO',
       active: true
@@ -339,7 +356,7 @@ test('Agregar acceso incorpora directamente el ámbito seleccionado sin acción 
   assert.match(accessUiSource, /Selecciona un ámbito \(opcional\)/);
   assert.match(accessUiSource, /let collectScopes = \(\) =>/);
   assert.match(accessUiSource, /collectScopes = function \(\)/);
-  assert.match(accessUiSource, /nextScopes\.push\(\{[\s\S]*?tipo_ambito: type,[\s\S]*?referencia_id: referenceId/);
+  assert.match(accessUiSource, /nextScopes\.push\(\{[\s\S]*?tipo_ambito_id: type,[\s\S]*?referencia_id: referenceId/);
   assert.match(accessUiSource, /const scopeResult = collectScopes\(\);/);
   assert.match(accessUiSource, /ambitos: scopeResult\.scopes/);
   assert.match(accessUiSource, /editorHost\.replaceChildren\(\);[\s\S]*?refreshModulePicker\(\);[\s\S]*?renderTable\(\);/);
@@ -420,7 +437,10 @@ test('los identificadores de roles y permisos se normalizan y autogeneran', () =
   assert.equal(generated.roleId, 'ROL_GESTION_DE_USUARIOS');
   assert.equal(generated.collisionId, 'ROL_EDITOR_2');
   assert.equal(generated.permissionCode, 'INFORMACION_PERSONAL_VER');
-  assert.match(accessSource, /const ACCESS_PERMISSION_OPERATIONS = Object\.freeze\(\[/);
+  assert.doesNotMatch(accessSource, /ACCESS_PERMISSION_OPERATIONS/);
+  assert.match(accessSource, /ACCESS_MANAGEMENT_CONFIG\.sheets\.operations/);
+  assert.match(accessSource, /ACCESS_MANAGEMENT_FIELDS\.operations/);
+  assert.match(accessSource, /operacion_id/);
 });
 
 test('el listado de usuarios se consulta solo con filtro de sede o rol', () => {
@@ -454,17 +474,64 @@ test('la administración incluye filtro de módulo, catálogo de operaciones y s
   assert.match(accessUiSource, /key: 'modulo_id',[\s\S]*?label: 'Módulo'/);
   assert.match(accessUiSource, /function renderOperations\(host\)/);
   assert.match(accessUiSource, /operations: renderOperations/);
+  assert.match(accessUiSource, /function renderScopeTypes\(host\)/);
+  assert.match(accessUiSource, /scopeTypes: renderScopeTypes/);
+  assert.match(accessUiSource, /Buscar operación/);
+  assert.match(accessSource, /function _accessScopeType_\(data, typeId\)/);
   assert.match(accessUiSource, /Seleccionar todo el bloque/);
   assert.match(accessUiSource, /groupToggle\.indeterminate/);
   assert.match(accessUiSource, /groupToggle\.checked = checkboxes\.length > 0/);
 });
 
-test('las actualizaciones se ejecutan por pestaña y usan el loader translúcido', () => {
+test('las actualizaciones usan loader local y el acceso inicial loader global blanco', () => {
   assert.match(accessUiSource, /function refreshCurrentTabData\(showNotification\)/);
   assert.match(accessUiSource, /getAccessManagementTabData', 'roles'/);
   assert.match(accessUiSource, /getAccessManagementTabData', 'permissions'/);
   assert.match(accessUiSource, /getAccessManagementTabData', 'assignments'/);
   assert.match(accessUiSource, /state\.table\.refresh\(\)/);
-  assert.match(accessUiSource, /backdrop: 'translucent'/);
+  assert.match(accessUiSource, /function beginAccessPanelLoading\(/);
+  assert.match(accessUiSource, /const finish = SUNARPUI\.beginLoading\(\)/);
+  assert.doesNotMatch(accessUiSource, /backdrop: 'translucent'/);
+  assert.doesNotMatch(viewSource, /sunarp-loader\.is-translucent/);
   assert.doesNotMatch(accessUiSource, /accessRefreshButton/);
+});
+
+
+test('TiposAmbito es un catálogo cerrado con cuatro tipos y semántica fija', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  const data = makeSecurityData();
+  assert.doesNotThrow(() => sandbox._accessValidateSnapshot_(data));
+
+  const extraType = makeSecurityData({
+    tiposAmbito: data.tiposAmbito.concat([{
+      tipo_ambito_id: 'REGIONAL', nombre: 'Regional', descripcion: 'No soportado',
+      entidad_referencia: 'SEDE', requiere_referencia: true,
+      permite_descendientes: false, active: true
+    }])
+  });
+  assert.throws(() => sandbox._accessValidateSnapshot_(extraType), /tipo no admitido/i);
+
+  const alteredSemantics = makeSecurityData({
+    tiposAmbito: data.tiposAmbito.map(item => item.tipo_ambito_id === 'TOTAL'
+      ? Object.assign({}, item, { entidad_referencia: 'SEDE', requiere_referencia: true })
+      : item
+    )
+  });
+  assert.throws(() => sandbox._accessValidateSnapshot_(alteredSemantics), /no coincide con el modelo admitido/i);
+});
+
+test('Permisos valida operacion_id contra el catálogo Operaciones', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  const data = makeSecurityData();
+  data.permisos[0].operacion_id = 'NO_EXISTE';
+  assert.throws(() => sandbox._accessValidateSnapshot_(data), /operacion_id inexistente/i);
+});
+
+test('el gestor no conserva nombres de columnas anteriores ni catálogos fijos', () => {
+  assert.doesNotMatch(accessSource, /\\.operacion\\b|\\boperacion\\s*:/);
+  assert.doesNotMatch(accessSource, /\\.tipo_ambito\\b|\\btipo_ambito\\s*:/);
+  assert.doesNotMatch(accessUiSource, /\\.operacion\\b|\\boperacion\\s*:/);
+  assert.doesNotMatch(accessUiSource, /\\.tipo_ambito\\b|\\btipo_ambito\\s*:/);
+  assert.match(accessSource, /tipo_ambito_id/);
+  assert.match(accessSource, /operacion_id/);
 });
