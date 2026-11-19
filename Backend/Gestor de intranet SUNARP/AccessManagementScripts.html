@@ -626,9 +626,43 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         const structure = (catalogs.estructuraOrg || []).find(item =>
           String(item.id) === String(scope.referencia_id)
         );
-        return structure
-          ? [sedeName(structure.sede_id), structurePathName(structure.id)].filter(Boolean).join(' / ')
-          : 'Unidad orgánica no disponible';
+        if (!structure) return 'Unidad orgánica no disponible';
+
+        const structureById = new Map((catalogs.estructuraOrg || []).map(item => [
+          String(item.id),
+          item
+        ]));
+        const relatedLocalIds = new Set();
+        const visited = new Set();
+        let current = structure;
+
+        while (current) {
+          const currentId = String(current.id);
+          if (!currentId || visited.has(currentId)) break;
+          visited.add(currentId);
+
+          (catalogs.estructuraLocal || [])
+            .filter(relation => String(relation.estructura_id) === currentId)
+            .forEach(relation => relatedLocalIds.add(String(relation.local_id)));
+
+          current = current.parent_id
+            ? structureById.get(String(current.parent_id)) || null
+            : null;
+        }
+
+        const localContext = Array.from(relatedLocalIds)
+          .map(localId => (catalogs.locales || []).find(item =>
+            String(item.id) === localId
+          ))
+          .filter(Boolean)
+          .map(local => sedeName(local.sede_id) + ' — ' + local.name)
+          .filter((value, index, all) => all.indexOf(value) === index)
+          .sort((a, b) => a.localeCompare(b, 'es'));
+
+        return [
+          localContext.length ? localContext.join(' | ') : sedeName(structure.sede_id),
+          structurePathName(structure.id)
+        ].filter(Boolean).join(' / ');
       }
 
       const local = (catalogs.locales || []).find(item =>
@@ -917,90 +951,143 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
         let selectedReferenceId = '';
 
-        function structuresForSede(sedeId) {
-          return (catalogs.estructuraOrg || []).filter(item =>
-            String(item.sede_id) === String(sedeId)
+        function structureHierarchyForLocal(localId) {
+          const structures = catalogs.estructuraOrg || [];
+          const structureById = new Map(structures.map(item => [
+            String(item.id),
+            item
+          ]));
+
+          const linkedStructureIds = new Set(
+            (catalogs.estructuraLocal || [])
+              .filter(relation => String(relation.local_id) === String(localId))
+              .map(relation => String(relation.estructura_id || ''))
+              .filter(id => id && structureById.has(id))
           );
+
+          // Si el local tiene relaciones con varios niveles de una misma rama,
+          // iniciar únicamente en el ancestro vinculado más alto evita mezclar
+          // unidades, subunidades y áreas en el primer selector.
+          const roots = Array.from(linkedStructureIds)
+            .map(id => structureById.get(id))
+            .filter(structure => {
+              let parentId = String(structure.parent_id || '');
+              const visited = new Set([String(structure.id)]);
+
+              while (parentId && !visited.has(parentId)) {
+                if (linkedStructureIds.has(parentId)) return false;
+
+                visited.add(parentId);
+                const parent = structureById.get(parentId);
+                if (!parent) break;
+
+                parentId = String(parent.parent_id || '');
+              }
+
+              return true;
+            })
+            .sort(compareStructures);
+
+          return { structures, roots };
         }
 
-        function renderStructureLevels(sedeId, levelsHost, selectedChain) {
+        function compareStructures(a, b) {
+          return (Number(a.order) || 0) - (Number(b.order) || 0) ||
+            String(a.name || '').localeCompare(String(b.name || ''), 'es');
+        }
+
+        function structureTypeName(structure) {
+          const structureType = (catalogs.tiposEstructura || []).find(type =>
+            String(type.id) === String(structure.tipo_estructura_id)
+          );
+          return structureType ? structureType.name : '';
+        }
+
+        function structureOptionLabel(structure) {
+          const typeName = structureTypeName(structure);
+          return typeName
+            ? typeName + ' — ' + structure.name
+            : structure.name;
+        }
+
+        function renderStructureLevels(localId, levelsHost, selectedChain, type) {
           levelsHost.replaceChildren();
 
-          const structures = structuresForSede(sedeId);
-          const byId = new Map(structures.map(item => [String(item.id), item]));
-          let parentId = '';
+          const hierarchy = structureHierarchyForLocal(localId);
+          let options = hierarchy.roots;
           let level = 1;
 
-          while (level <= 20) {
-            const options = structures
-              .filter(item => {
-                const itemParentId = String(item.parent_id || '');
-                if (parentId) return itemParentId === parentId;
-                if (!itemParentId) return true;
-                const parent = byId.get(itemParentId);
-                return !parent;
-              })
-              .sort((a, b) =>
-                (Number(a.order) || 0) - (Number(b.order) || 0) ||
-                String(a.name || '').localeCompare(String(b.name || ''), 'es')
+          if (!options.length) {
+            const note = document.createElement('p');
+            note.className = 'access-muted';
+            note.textContent = type === 'LOCAL'
+              ? 'Este local no tiene unidades orgánicas vinculadas. El ámbito se aplicará directamente al local.'
+              : 'Este local no tiene unidades orgánicas vinculadas; no es posible asignar un ámbito de unidad orgánica.';
+            levelsHost.appendChild(note);
+
+            selectedReferenceId = type === 'LOCAL' ? String(localId) : '';
+            return;
+          }
+
+          while (options.length && level <= 20) {
+            const selectedId = selectedChain[level - 1] || '';
+            const levelTypeNames = Array.from(new Set(
+              options.map(structureTypeName).filter(Boolean)
+            ));
+            const fieldLabel = level === 1
+              ? 'Unidades orgánicas del local'
+              : 'Nivel ' + level + (
+                levelTypeNames.length === 1
+                  ? ' — ' + levelTypeNames[0]
+                  : ''
               );
 
-            if (!options.length) {
-              if (level === 1) {
-                const note = document.createElement('p');
-                note.className = 'access-muted';
-                note.textContent = 'La sede seleccionada no tiene unidades orgánicas disponibles.';
-                levelsHost.appendChild(note);
-              }
-              break;
-            }
-
-            const selectedId = selectedChain[level - 1] || '';
             const levelSelect = createSelect(
-              options.map(item => {
-                const structureType = (catalogs.tiposEstructura || []).find(type =>
-                  String(type.id) === String(item.tipo_estructura_id)
-                );
-                return {
-                  value: item.id,
-                  label: structureType
-                    ? structureType.name + ' — ' + item.name
-                    : item.name
-                };
-              }),
+              options.map(item => ({
+                value: item.id,
+                label: structureOptionLabel(item)
+              })),
               selectedId,
-              'Selecciona una unidad orgánica'
+              level === 1
+                ? 'Selecciona una unidad del local'
+                : 'Selecciona el nivel siguiente'
             );
-            levelSelect.required = true;
+            levelSelect.required = type === 'ESTRUCTURA_ORG';
             levelSelect.disabled = !roleSelect.value;
 
-            levelsHost.appendChild(createField('Nivel ' + level, levelSelect));
+            levelsHost.appendChild(createField(fieldLabel, levelSelect));
 
             levelSelect.addEventListener('change', () => {
               selectedChain.splice(level - 1);
               if (levelSelect.value) selectedChain.push(levelSelect.value);
-              selectedReferenceId = selectedChain.length
-                ? selectedChain[selectedChain.length - 1]
-                : '';
-              renderStructureLevels(sedeId, levelsHost, selectedChain);
+
+              selectedReferenceId = type === 'LOCAL'
+                ? String(localId)
+                : selectedChain.length
+                  ? selectedChain[selectedChain.length - 1]
+                  : '';
+
+              renderStructureLevels(localId, levelsHost, selectedChain, type);
             });
 
-            if (!selectedId || !options.some(item => String(item.id) === String(selectedId))) {
+            if (
+              !selectedId ||
+              !options.some(item => String(item.id) === String(selectedId))
+            ) {
               break;
             }
 
-            parentId = String(selectedId);
+            options = hierarchy.structures
+              .filter(item => String(item.parent_id || '') === String(selectedId))
+              .sort(compareStructures);
             level += 1;
-
-            const hasChildren = structures.some(item =>
-              String(item.parent_id || '') === parentId
-            );
-            if (!hasChildren) break;
           }
 
-          selectedReferenceId = selectedChain.length
-            ? selectedChain[selectedChain.length - 1]
-            : '';
+          selectedReferenceId = type === 'LOCAL'
+            ? String(localId)
+            : selectedChain.length
+              ? selectedChain[selectedChain.length - 1]
+              : '';
         }
 
         function updateReferenceOptions() {
@@ -1020,52 +1107,43 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             return;
           }
 
-          const siteSelect = createSelect(
-            (catalogs.sedes || []).map(item => ({
-              value: item.id,
-              label: item.name
-            })),
-            '',
-            'Selecciona una sede'
-          );
-          siteSelect.required = true;
-          siteSelect.disabled = !canSelect;
-          scopeContextHost.appendChild(createField('Sede', siteSelect));
-
           if (type === 'SEDE') {
+            const siteSelect = createSelect(
+              (catalogs.sedes || []).map(item => ({
+                value: item.id,
+                label: item.name
+              })),
+              '',
+              'Selecciona una sede'
+            );
+            siteSelect.required = true;
+            siteSelect.disabled = !canSelect;
+            scopeContextHost.appendChild(createField('Sede', siteSelect));
+
             siteSelect.addEventListener('change', () => {
               selectedReferenceId = siteSelect.value;
             });
             return;
           }
 
-          if (type === 'ESTRUCTURA_ORG') {
-            const levelsHost = document.createElement('div');
-            levelsHost.className = 'access-user-scope-levels';
-            scopeContextHost.appendChild(levelsHost);
+          if (type === 'ESTRUCTURA_ORG' || type === 'LOCAL') {
+            const availableLocals = (catalogs.locales || [])
+              .slice()
+              .sort((a, b) =>
+                sedeName(a.sede_id).localeCompare(sedeName(b.sede_id), 'es') ||
+                String(a.name || '').localeCompare(String(b.name || ''), 'es')
+              );
 
-            let selectedChain = [];
-
-            siteSelect.addEventListener('change', () => {
-              selectedChain = [];
-              selectedReferenceId = '';
-              if (siteSelect.value) {
-                renderStructureLevels(siteSelect.value, levelsHost, selectedChain);
-              } else {
-                levelsHost.replaceChildren();
-              }
-            });
-            return;
-          }
-
-          if (type === 'LOCAL') {
             const localSelect = createSelect(
-              [],
+              availableLocals.map(item => ({
+                value: item.id,
+                label: sedeName(item.sede_id) + ' — ' + item.name
+              })),
               '',
-              'Primero selecciona una sede'
+              'Selecciona un local'
             );
             localSelect.required = true;
-            localSelect.disabled = true;
+            localSelect.disabled = !canSelect;
             scopeContextHost.appendChild(createField('Local', localSelect));
 
             const hierarchyNote = document.createElement('p');
@@ -1073,40 +1151,30 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             hierarchyNote.hidden = true;
             scopeContextHost.appendChild(hierarchyNote);
 
-            siteSelect.addEventListener('change', () => {
-              selectedReferenceId = '';
-              const availableLocals = (catalogs.locales || [])
-                .filter(item => String(item.sede_id) === String(siteSelect.value))
-                .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es'));
+            const levelsHost = document.createElement('div');
+            levelsHost.className = 'access-user-scope-levels';
+            scopeContextHost.appendChild(levelsHost);
 
-              const next = createSelect(
-                availableLocals.map(item => ({ value: item.id, label: item.name })),
-                '',
-                availableLocals.length ? 'Selecciona un local' : 'No hay locales disponibles en esta sede'
-              );
-              localSelect.replaceChildren(...Array.from(next.childNodes));
-              localSelect.value = '';
-              localSelect.selectedIndex = 0;
-              localSelect.disabled = !canSelect || !siteSelect.value || !availableLocals.length;
-              hierarchyNote.hidden = true;
-              hierarchyNote.textContent = '';
-            });
+            let selectedChain = [];
 
             localSelect.addEventListener('change', () => {
-              selectedReferenceId = localSelect.value;
-              const local = (catalogs.locales || []).find(item =>
-                String(item.id) === String(localSelect.value)
-              );
-              if (!local) {
+              const localId = String(localSelect.value || '');
+              selectedChain = [];
+              selectedReferenceId = type === 'LOCAL' ? localId : '';
+              levelsHost.replaceChildren();
+
+              if (!localId) {
                 hierarchyNote.hidden = true;
+                hierarchyNote.textContent = '';
                 return;
               }
 
-              const paths = localStructurePaths(local.id);
-              hierarchyNote.textContent = paths.length
-                ? 'Ubicación en la jerarquía orgánica: ' + paths.join(' | ')
-                : 'Este local no tiene una vinculación estructura-local registrada. El ámbito se aplicará directamente al local dentro de la sede seleccionada.';
+              hierarchyNote.textContent = type === 'LOCAL'
+                ? 'El ámbito se aplicará directamente al local. La jerarquía se muestra como contexto y se guardará únicamente el ID del local.'
+                : 'Selecciona la unidad orgánica recorriendo la jerarquía de este local. Se guardará únicamente el ID de la unidad seleccionada.';
               hierarchyNote.hidden = false;
+
+              renderStructureLevels(localId, levelsHost, selectedChain, type);
             });
           }
         }
