@@ -262,7 +262,7 @@ test('AUDITORIA_VER es independiente y no concede administración de accesos', (
   const auth = sandbox._accessGetAuthContext_();
 
   assert.equal(sandbox._accessIsGlobalAdministrator_(auth), false);
-  assert.equal(sandbox._accessRequirePermission_('AUDITORIA_VER'), auth);
+  assert.equal(sandbox._accessRequirePermission_('AUDITORIA_VER').personaId, 'PER_117');
   assert.throws(
     () => sandbox._accessRequirePermission_('USUARIOS_ADMINISTRAR'),
     /requiere ROL_ADMIN y ámbito TOTAL/i
