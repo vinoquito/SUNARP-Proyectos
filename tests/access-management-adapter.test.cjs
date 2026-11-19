@@ -346,7 +346,8 @@ test('la interfaz administra roles y ámbitos mediante persona_id y modulo_id', 
   assert.match(accessUiSource, /capabilities\.userRoles/);
   assert.match(accessUiSource, /rpc\('saveAccessUserConfiguration',\s*\{/s);
   assert.match(accessUiSource, /ambitos:\s*\(item\.ambitos \|\| \[\]\)\.map/);
-  assert.match(accessUiSource, /value:\s*'LOCAL'/);
+  assert.match(accessUiSource, /scopeTypeOptions = \(state\.data\.scopeTypes \|\| \[\]\)\.map/);
+  assert.match(accessUiSource, /type === 'LOCAL'/);
   assert.match(appSource, /_accessIsGlobalAdministrator_\(auth\)\s*\|\|\s*hasPermission_\(auth, 'AUDITORIA_VER'\)/);
   assert.doesNotMatch(accessUiSource, /row\.estado|item\.estado|correo_original|estructura_org_id/);
 });
@@ -534,4 +535,35 @@ test('el gestor no conserva nombres de columnas anteriores ni catálogos fijos',
   assert.doesNotMatch(accessUiSource, /\\.tipo_ambito\\b|\\btipo_ambito\\s*:/);
   assert.match(accessSource, /tipo_ambito_id/);
   assert.match(accessSource, /operacion_id/);
+});
+
+
+test('la migración transforma columnas antiguas sin perder referencias y no altera Operaciones', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  const scopeRows = [
+    { rowNumber: 2, get: field => ({ tipo_ambito: 'TOTAL' }[field] || '') },
+    { rowNumber: 3, get: field => ({ tipo_ambito: 'SEDE' }[field] || '') }
+  ];
+  const scopePlan = sandbox._accessMigrationPrepareColumn_({
+    sheet: {}, sheetName: 'AmbitosAcceso', headers: ['persona_id', 'tipo_ambito'],
+    lastColumn: 2, records: scopeRows
+  }, 'tipo_ambito_id', 'tipo_ambito', value => {
+    const id = String(value || '').trim().toUpperCase();
+    if (!['TOTAL', 'SEDE', 'ESTRUCTURA_ORG', 'LOCAL'].includes(id)) throw new Error('invalid type');
+    return id;
+  });
+  assert.equal(scopePlan.createHeader, true);
+  assert.equal(scopePlan.targetColumn, 3);
+  assert.deepEqual(scopePlan.updates.map(item => item.value), ['TOTAL', 'SEDE']);
+
+  assert.match(accessSource, /function migrateAccessManagementSchema\(\)/);
+  assert.match(accessSource, /function _accessMigrationAssertAdministrator_/);
+  assert.match(accessSource, /_accessMigrationEnsureScopeTypes_\(spreadsheet\)/);
+  assert.match(accessSource, /ACCESS_SCHEMA_MIGRATION_SCOPE_ROWS/);
+  assert.match(accessSource, /operacion_id.*nombre/);
+  assert.doesNotMatch(
+    accessSource.slice(accessSource.indexOf('function migrateAccessManagementSchema()')),
+    /getSheetByName\(['"]Operaciones['"]\)[\s\S]{0,500}\.setValue\(/,
+    'la migración no debe escribir valores ni modificar el catálogo Operaciones'
+  );
 });
