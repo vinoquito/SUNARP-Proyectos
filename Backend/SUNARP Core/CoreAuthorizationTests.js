@@ -116,6 +116,11 @@ function runAuthorizationSelfTests_() {
     }
   ];
 
+  const locals = [
+    { id: 'LOCAL_001', sede_id: 'SEDE_CENTRAL' },
+    { id: 'LOCAL_002', sede_id: 'ZR_I' }
+  ];
+
   const baseData = {
     personaId: 'PER_117',
     users: [
@@ -484,6 +489,42 @@ function runAuthorizationSelfTests_() {
   );
 
   assert(
+    authorizationIsRecordInScope(
+      context,
+      'MOD_DOCUMENTOS',
+      { local_id: 'LOCAL_001', sede_id: 'ZR_I' },
+      structures,
+      undefined,
+      locals
+    ),
+    'Deriva la sede de un registro local desde el catálogo de locales.'
+  );
+
+  assert(
+    !authorizationIsRecordInScope(
+      context,
+      'MOD_DOCUMENTOS',
+      { local_id: 'LOCAL_002', sede_id: 'SEDE_CENTRAL' },
+      structures,
+      undefined,
+      locals
+    ),
+    'Rechaza un registro local de otra sede aunque indique una sede permitida.'
+  );
+
+  assert(
+    !authorizationIsRecordInScope(
+      context,
+      'MOD_DOCUMENTOS',
+      { local_id: 'LOCAL_DESCONOCIDO', sede_id: 'SEDE_CENTRAL' },
+      structures,
+      undefined,
+      locals
+    ),
+    'Rechaza local_id que no existe en el catálogo.'
+  );
+
+  assert(
     !authorizationIsRecordInScope(
       context,
       'MOD_DOCUMENTOS',
@@ -498,7 +539,9 @@ function runAuthorizationSelfTests_() {
       context,
       'MOD_LOCAL',
       { local_id: 'LOCAL_001' },
-      structures
+      structures,
+      undefined,
+      locals
     ),
     'Permite LOCAL para una asignación vinculada directamente al local.'
   );
@@ -508,7 +551,9 @@ function runAuthorizationSelfTests_() {
       context,
       'MOD_LOCAL',
       { local_id: 'LOCAL_002' },
-      structures
+      structures,
+      undefined,
+      locals
     ),
     'Rechaza un local distinto del asignado.'
   );
@@ -521,7 +566,9 @@ function runAuthorizationSelfTests_() {
         local_id: 'LOCAL_001',
         estructura_id: 'SC_OFICINA_ADMINISTRACION'
       },
-      structures
+      structures,
+      undefined,
+      locals
     ),
     'Rechaza LOCAL si el registro también pertenece a una estructura orgánica.'
   );
@@ -531,7 +578,9 @@ function runAuthorizationSelfTests_() {
       context,
       'MOD_INFO_PERSONAL',
       { local_id: 'LOCAL_001' },
-      structures
+      structures,
+      undefined,
+      locals
     ),
     'No transfiere el ámbito LOCAL a Información de personal.'
   );
