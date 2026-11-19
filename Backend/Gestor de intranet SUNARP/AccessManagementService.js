@@ -300,9 +300,7 @@ function _accessOrgCatalog_() {
   const requests = [
     { key: 'sedes', source: getIntranetDataSource('SECURITY', 'Sedes', 1) },
     { key: 'estructuraOrg', source: getIntranetDataSource('SECURITY', 'EstructuraOrg', 1) },
-    { key: 'locales', source: getIntranetDataSource('DIRECTORY', 'locales', 1) },
-    { key: 'tiposEstructura', source: getIntranetDataSource('DIRECTORY', 'tipos_estructura', 1) },
-    { key: 'estructuraLocal', source: getIntranetDataSource('DIRECTORY', 'estructura_local', 1) }
+    { key: 'locales', source: getIntranetDataSource('DIRECTORY', 'locales', 1) }
   ];
 
   const catalogs = SUNARPCore.listRecordsFromSourcesCached(requests, 30);
@@ -310,10 +308,22 @@ function _accessOrgCatalog_() {
   return {
     sedes: (catalogs.sedes || []).filter(_accessCatalogIsActive_),
     estructuraOrg: (catalogs.estructuraOrg || []).filter(_accessCatalogIsActive_),
-    locales: (catalogs.locales || []).filter(_accessCatalogIsActive_),
-    tiposEstructura: (catalogs.tiposEstructura || []).filter(_accessCatalogIsActive_),
-    estructuraLocal: (catalogs.estructuraLocal || []).filter(_accessCatalogIsActive_)
+    locales: (catalogs.locales || []).filter(_accessCatalogIsActive_)
   };
+}
+
+function _accessOrgManagementCatalog_() {
+  const base = _accessOrgCatalog_();
+  const requests = [
+    { key: 'tiposEstructura', source: getIntranetDataSource('DIRECTORY', 'tipos_estructura', 1) },
+    { key: 'estructuraLocal', source: getIntranetDataSource('DIRECTORY', 'estructura_local', 1) }
+  ];
+  const extra = SUNARPCore.listRecordsFromSourcesCached(requests, 30);
+
+  return Object.assign({}, base, {
+    tiposEstructura: (extra.tiposEstructura || []).filter(_accessCatalogIsActive_),
+    estructuraLocal: (extra.estructuraLocal || []).filter(_accessCatalogIsActive_)
+  });
 }
 
 
@@ -2051,8 +2061,8 @@ function getAccessManagementData() {
 
   const needsCatalogs = capabilities.users || capabilities.scopes;
   const catalogs = needsCatalogs
-    ? _accessOrgCatalog_()
-    : { sedes: [], estructuraOrg: [], locales: [] };
+    ? _accessOrgManagementCatalog_()
+    : { sedes: [], estructuraOrg: [], locales: [], tiposEstructura: [], estructuraLocal: [] };
 
   const personById = new Map(data.personas.map(person => [
     _accessText_(person.persona_id),
