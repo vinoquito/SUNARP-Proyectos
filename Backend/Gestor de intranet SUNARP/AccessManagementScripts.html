@@ -819,7 +819,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     panel.className = 'access-scopes-editor';
 
     const userSelect = createSelect(
-      (state.data.users || []).map(user => ({
+      (state.data.users || []).filter(user => user.active === true).map(user => ({
         value: user.persona_id,
         label: user.nombre_completo + ' — ' + user.correo_institucional
       })),
@@ -1465,7 +1465,7 @@ window.SUNARPAccessHistory = Object.freeze({
     panel.className = 'access-assignment';
 
     const personSelect = createSelect(
-      (state.data.users || []).map(user => ({
+      (state.data.users || []).filter(user => user.active === true).map(user => ({
         value: user.persona_id,
         label: user.nombre_completo + ' — ' + user.correo_institucional
       })),
