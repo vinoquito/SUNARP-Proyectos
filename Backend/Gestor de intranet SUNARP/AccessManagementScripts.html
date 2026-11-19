@@ -558,7 +558,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       'primary',
       () => {
         if (!modulePicker.value) {
-          modulePicker.reportValidity();
+          SUNARPUI.notify('warning', 'Selecciona el módulo que deseas agregar.');
           return;
         }
         openModuleEditor(modulePicker.value, null);
@@ -720,6 +720,14 @@ function createAccessStatusCell(row, method, id, entityLabel) {
                 return;
               }
 
+              if (editorHost.childElementCount) {
+                SUNARPUI.notify(
+                  'warning',
+                  'Termina o cancela la edición actual antes de eliminar otra asignación.'
+                );
+                return;
+              }
+
               draft.delete(assignment.modulo_id);
               refreshModulePicker();
               renderTable();
@@ -740,6 +748,17 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
     function openModuleEditor(moduleId, existingAssignment) {
       if (disabled) return;
+
+      if (editorHost.childElementCount) {
+        SUNARPUI.notify(
+          'warning',
+          'Termina o cancela la edición actual antes de abrir otra asignación.'
+        );
+        return;
+      }
+
+      modulePicker.disabled = true;
+      addModuleButton.disabled = true;
 
       const module = modules.find(item =>
         item.modulo_id === moduleId
@@ -998,7 +1017,10 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       const cancelButton = createButton(
         'Cancelar',
         'outline',
-        () => editorHost.replaceChildren()
+        () => {
+          editorHost.replaceChildren();
+          refreshModulePicker();
+        }
       );
 
       const confirmButton = createButton(
@@ -1044,6 +1066,9 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     }
 
     if (disabled) {
+      modulePicker.disabled = true;
+      addModuleButton.disabled = true;
+
       const note = document.createElement('p');
       note.className = 'access-muted';
       note.textContent = 'La cuenta está inactiva. Actívala desde el listado para modificar sus accesos.';
@@ -1355,18 +1380,6 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         row.persona_id,
         row.active !== true
       );
-
-      if (!row.active) {
-        const alert = document.createElement('div');
-        alert.id = 'accessUserInactiveConfigurationAlert';
-        configHost.appendChild(alert);
-        SUNARPUI.showAlert({
-          containerId: alert.id,
-          type: 'warning',
-          title: 'Cuenta inactiva',
-          message: 'Activa la cuenta desde el listado de usuarios para modificar sus roles y ámbitos.'
-        });
-      }
 
       configHost.appendChild(selectedConfiguration.element);
       form.append(identity, configHost);
