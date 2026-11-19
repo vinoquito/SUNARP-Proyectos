@@ -2033,11 +2033,12 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     const canManage = state.data.capabilities.permissions;
     const section = makeTabPanel(
       'Permisos',
-      'Catálogo de operaciones vinculadas mediante modulo_id.',
+      'Define las operaciones habilitadas por módulo. Los identificadores y códigos se generan automáticamente.',
       canManage ? 'Nuevo permiso' : '',
       canManage ? () => openPermissionModal(null) : null
     );
     host.appendChild(section);
+
     renderTable(host, {
       data: state.data.permissions || [],
       columns: [
@@ -2065,8 +2066,35 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           onClick: row => openEntityHistory('PERMISO', row.permiso_id, row.codigo)
         }] : [])
       ],
-      searchPlaceholder: 'Buscar por módulo, operación o descripción...',
+      filters: [{
+        key: 'modulo_id',
+        label: 'Módulo',
+        allLabel: 'Todos los módulos',
+        options: (state.data.modules || [])
+          .filter(item => item.active)
+          .map(item => ({ value: item.modulo_id, label: item.nombre }))
+      }],
+      searchPlaceholder: 'Buscar permiso...',
       emptyMessage: 'No hay permisos registrados.'
+    });
+  }
+
+
+  function renderOperations(host) {
+    const section = makeTabPanel(
+      'Operaciones',
+      'Catálogo controlado de operaciones disponibles para construir permisos sin variaciones de escritura.'
+    );
+    host.appendChild(section);
+
+    renderTable(host, {
+      data: state.data.operations || [],
+      columns: [
+        { key: 'codigo', label: 'Código de operación' },
+        { key: 'nombre', label: 'Nombre' }
+      ],
+      search: false,
+      emptyMessage: 'No hay operaciones disponibles.'
     });
   }
 
