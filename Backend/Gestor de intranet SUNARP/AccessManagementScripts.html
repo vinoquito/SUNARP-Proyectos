@@ -501,6 +501,11 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       ? user.roles
       : [];
 
+    const persistedModuleIds = new Set([
+      ...roleAssignments.map(item => item.modulo_id),
+      ...fallbackRoles.map(item => item.modulo_id)
+    ]);
+
     const scopeAssignments = (state.data.scopes || []).filter(item =>
       item.persona_id === personaId && item.active === true
     );
@@ -687,9 +692,11 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
           const scopesCell = document.createElement('td');
           const scopes = assignment.ambitos || [];
-          scopesCell.textContent = scopes.length
-            ? scopes.map(scopeLabel).join(' · ')
-            : 'Sin ámbitos asignados';
+          scopesCell.textContent = canManageScopes
+            ? scopes.length
+              ? scopes.map(scopeLabel).join(' · ')
+              : 'Sin ámbitos asignados'
+            : 'No disponibles para esta cuenta';
 
           const actionsCell = document.createElement('td');
           actionsCell.className = 'access-user-assignment-actions';
@@ -709,9 +716,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             () => {
               if (
                 !canManageScopes &&
-                (scopeAssignments.some(scope =>
-                  scope.modulo_id === assignment.modulo_id
-                ))
+                persistedModuleIds.has(assignment.modulo_id)
               ) {
                 SUNARPUI.notify(
                   'warning',
@@ -1328,19 +1333,12 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     alertHost.id = 'accessUserDocumentSearchAlert';
 
     function showSearchAlert(type, title, message, details) {
-      const detailLines = Array.isArray(details)
-        ? details.map(value => String(value || '').trim()).filter(Boolean)
-        : [];
-
-      const combinedMessage = detailLines.length
-        ? detailLines.concat(message ? ['', String(message)] : []).join('\n')
-        : String(message || '');
-
       SUNARPUI.showAlert({
         containerId: alertHost.id,
         type,
         title,
-        message: combinedMessage,
+        details,
+        message,
         dismissible: false,
         replace: true
       });
