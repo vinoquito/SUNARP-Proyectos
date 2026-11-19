@@ -158,7 +158,7 @@ test('la identidad de sesión se resuelve en personas y Core recibe persona_id',
 
 test('rechaza correos no registrados y correos duplicados en personas', () => {
   const missing = createAdapterSandbox(makeSecurityData(), 'noexiste@sunarp.gob.pe');
-  assert.throws(() => missing._accessGetAuthContext_(), /no está registrado en personas/i);
+  assert.throws(() => missing._accessGetAuthContext_(), /no tiene un correo institucional registrado en el directorio/i);
 
   const duplicateData = makeSecurityData();
   duplicateData.personas.push({
@@ -271,7 +271,7 @@ test('el contrato del Gestor no busca usuarios por correo ni lee rol_id desde Us
 });
 
 test('Directorio exige modulo_id explícito y pasa local_id para ámbitos LOCAL', () => {
-  assert.match(directorySource, /requirePermission_\(\s*permissionCode[^;]+MOD_INFO_PERSONAL/s);
+  assert.match(directorySource, /const moduleId = 'MOD_INFO_PERSONAL';[\s\S]*?requirePermission_\([\s\S]*?permissionCode \|\| 'INFORMACION_PERSONAL_VER',[\s\S]*?moduleId/s);
   assert.match(directorySource, /_accessRecordIsAllowed_\(authorization\.auth, 'MOD_INFO_PERSONAL',\s*\{\s*estructura_id:[^}]*local_id:/s);
   assert.match(directorySource, /{ sede_id: _directoryKey_\(local\.sede_id\), local_id: _directoryKey_\(local\.id\) }/);
 });
