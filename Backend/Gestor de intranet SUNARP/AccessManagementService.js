@@ -311,6 +311,11 @@ function _accessValidateSnapshot_(data) {
   const permissionIds = new Set(data.permisos.map(row => _accessText_(row.permiso_id)));
   const userIds = new Set(data.usuarios.map(row => _accessText_(row.persona_id)));
   const operationIds = new Set(data.operaciones.map(row => _accessUpper_(row.operacion_id)));
+  data.operaciones.forEach(item => {
+    if (!_accessUpper_(item.operacion_id) || !_accessText_(item.nombre)) {
+      throw new Error('Operaciones contiene un registro sin operacion_id o nombre.');
+    }
+  });
   const scopeTypeIds = new Set(data.tiposAmbito.map(row => _accessUpper_(row.tipo_ambito_id)));
   const allowedScopeTypeIds = new Set(ACCESS_SCOPE_TYPE_IDS);
   data.tiposAmbito.forEach(item => {
@@ -375,7 +380,21 @@ function _accessValidateSnapshot_(data) {
   data.ambitosAcceso.forEach(item => {
     if (!personIds.has(_accessText_(item.persona_id))) throw new Error('AmbitosAcceso referencia una persona inexistente.');
     if (!moduleIds.has(_accessText_(item.modulo_id))) throw new Error('AmbitosAcceso referencia un módulo inexistente.');
-    if (!scopeTypeIds.has(_accessUpper_(item.tipo_ambito_id))) throw new Error('AmbitosAcceso referencia un tipo_ambito_id inexistente.');
+    const typeId = _accessUpper_(item.tipo_ambito_id);
+    if (!scopeTypeIds.has(typeId)) throw new Error('AmbitosAcceso referencia un tipo_ambito_id inexistente.');
+    const typeConfig = _accessScopeType_(data, typeId);
+    const referenceId = _accessText_(item.referencia_id);
+    const requiresReference = _accessFlag_(typeConfig.requiere_referencia);
+    if (requiresReference && !referenceId) {
+      throw new Error('AmbitosAcceso contiene un ' + typeId + ' sin referencia_id.');
+    }
+    if (!requiresReference && referenceId) {
+      throw new Error('AmbitosAcceso contiene un ' + typeId + ' con referencia_id; debe estar vacío.');
+    }
+    const includesDescendants = _accessFlag_(item.incluir_descendientes);
+    if (includesDescendants && !_accessFlag_(typeConfig.permite_descendientes)) {
+      throw new Error('AmbitosAcceso contiene descendientes en un tipo que no los admite: ' + typeId + '.');
+    }
   });
 
   const codes = new Set();
@@ -3208,10 +3227,22 @@ function migrateAccessManagementSchema() {
       scopes,
       'tipo_ambito_id',
       'tipo_ambito',
-      value => {
+      (value, row) => {
         const token = _accessUpper_(value);
         if (!ACCESS_SCOPE_TYPE_IDS.includes(token)) {
           throw new Error('El tipo de ámbito "' + value + '" no pertenece al catálogo cerrado.');
+        }
+        const referenceId = row.get('referencia_id');
+        const includesDescendants = _accessFlag_(row.get('incluir_descendientes'));
+        const requiresReference = token !== 'TOTAL';
+        if (requiresReference && !referenceId) {
+          throw new Error('La fila ' + row.rowNumber + ' de AmbitosAcceso requiere referencia_id para ' + token + '.');
+        }
+        if (!requiresReference && referenceId) {
+          throw new Error('La fila ' + row.rowNumber + ' de AmbitosAcceso tiene referencia_id en TOTAL.');
+        }
+        if (includesDescendants && token !== 'ESTRUCTURA_ORG') {
+          throw new Error('La fila ' + row.rowNumber + ' de AmbitosAcceso intenta incluir descendientes en ' + token + '.');
         }
         return token;
       }
