@@ -762,7 +762,7 @@ function getDirectoryInitialData() {
   );
 
   const allowedSedeIds = new Set([
-    ...scopedStructures.map(item => _directoryKey_(item.sede_id)),
+    ...permittedStructures.map(item => _directoryKey_(item.sede_id)),
     ...catalogLocals.map(item => _directoryKey_(item.sede_id))
   ]);
   const allowedLocalTypes = new Set(
