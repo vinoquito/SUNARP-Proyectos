@@ -433,16 +433,21 @@ function authorizationHasPermission(context, permissionCode, moduloId) {
  *
  * La lista structures contiene nodos del catálogo organizacional:
  * { id, parent_id, sede_id }.
+ * locals contiene nodos del catálogo de locales: { id, sede_id }.
  *
- * fields permite adaptar únicamente los campos del registro de negocio
- * y del catálogo organizacional, sin alterar el contrato de seguridad.
+ * Cuando un registro tiene local_id, Core exige el catálogo de locales y
+ * deriva la sede desde él; no confía en record.sede_id.
+ *
+ * fields permite adaptar los campos del registro de negocio y de ambos
+ * catálogos, sin alterar el contrato de seguridad.
  */
 function authorizationIsRecordInScope(
   context,
   moduloId,
   record,
   structures,
-  fields
+  fields,
+  locals
 ) {
   const moduleAccess = _coreAuthGetModuleAccess_(context, moduloId);
 
@@ -466,11 +471,15 @@ function authorizationIsRecordInScope(
     recordSiteId: 'sede_id',
     structureId: 'id',
     structureParentId: 'parent_id',
-    structureSiteId: 'sede_id'
+    structureSiteId: 'sede_id',
+    localId: 'id',
+    localSiteId: 'sede_id'
   }, fields);
 
   const nodes = Array.isArray(structures) ? structures : [];
+  const localNodes = Array.isArray(locals) ? locals : [];
   const structureMap = new Map();
+  const localMap = new Map();
 
   nodes.forEach(node => {
     const id = _coreAuthText_(node[f.structureId]);
@@ -487,18 +496,34 @@ function authorizationIsRecordInScope(
     structureMap.set(id, node);
   });
 
+  localNodes.forEach(local => {
+    const id = _coreAuthText_(local[f.localId]);
+
+    if (!id) return;
+
+    if (localMap.has(id)) {
+      throw new Error(
+        'SUNARP Core: identificador duplicado en el catálogo de locales: ' +
+        id + '.'
+      );
+    }
+
+    localMap.set(id, local);
+  });
+
   const structureId = _coreAuthText_(
     record[f.recordOrganizationStructureId] ||
     record[f.recordStructureId]
   );
 
   const localId = _coreAuthText_(record[f.recordLocalId]);
+  const local = localId ? localMap.get(localId) : null;
 
-  /*
-   * Si el registro declara una estructura orgánica, esa estructura debe
-   * existir en el catálogo. No se confía en un sede_id enviado por el registro
-   * cuando no se puede verificar su estructura.
-   */
+  // Cualquier local_id declarado debe existir en el catálogo maestro.
+  // Así se evita que un registro manipule sede_id para aparentar pertenecer
+  // a una sede distinta de la que realmente tiene su local.
+  if (localId && !local) return false;
+
   let siteId = '';
 
   if (structureId) {
@@ -507,6 +532,17 @@ function authorizationIsRecordInScope(
     if (!structure) return false;
 
     siteId = _coreAuthText_(structure[f.structureSiteId]);
+
+    // Cuando existe estructura y local, ambos catálogos deben concordar.
+    const localSiteId = local
+      ? _coreAuthText_(local[f.localSiteId])
+      : '';
+
+    if (local && localSiteId && siteId && localSiteId !== siteId) {
+      return false;
+    }
+  } else if (local) {
+    siteId = _coreAuthText_(local[f.localSiteId]);
   } else {
     siteId = _coreAuthText_(record[f.recordSiteId]);
   }
@@ -524,6 +560,7 @@ function authorizationIsRecordInScope(
       // sin estructura orgánica.
       return Boolean(
         referenceId &&
+        local &&
         localId &&
         referenceId === localId &&
         !structureId
