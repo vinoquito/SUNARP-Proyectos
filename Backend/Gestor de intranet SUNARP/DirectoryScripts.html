@@ -291,15 +291,7 @@ const DirectoryPage = (() => {
 
     if (!select || !state.catalogs) return;
 
-    const records = getRecordsForFilters(
-      new Set(['sede'])
-    );
-
-    const sedes = getUsedCatalogItems(
-      records,
-      'sede_id',
-      state.catalogs.sedes
-    );
+    const sedes = (state.catalogs.sedes || []).slice().sort(sortByName);
 
     updateFilterOptions(
       select,
@@ -318,15 +310,7 @@ const DirectoryPage = (() => {
 
     if (!select || !state.catalogs) return;
 
-    const records = getRecordsForFilters(
-      new Set(['cargo'])
-    );
-
-    const cargos = getUsedCatalogItems(
-      records,
-      'cargo_id',
-      state.catalogs.cargos
-    );
+    const cargos = (state.catalogs.cargos || []).slice().sort(sortByName);
 
     updateFilterOptions(
       select,
@@ -348,44 +332,16 @@ const DirectoryPage = (() => {
    * Incluye los órganos superiores necesarios para llegar
    * a las unidades que sí tienen servidores registrados.
    */
-  function getHierarchyNodes(parentId, level, records) {
-    const nodesMap = new Map();
-
-    records.forEach(record => {
-      const path = getRecordStructurePath(record);
-
-      if (path.length <= level) return;
-
-      const matchesParentPath = state.hierarchyPath
-        .slice(0, level)
-        .every((selectedId, index) =>
-          key(path[index].id) === key(selectedId)
-        );
-
-      if (!matchesParentPath) return;
-
-      if (
-        level > 0 &&
-        key(path[level - 1].id) !== key(parentId)
-      ) {
-        return;
-      }
-
-      const node = path[level];
-
-      nodesMap.set(
-        key(node.id),
-        node
-      );
-    });
-
-    return Array.from(nodesMap.values()).sort((a, b) => {
-      const orderA = Number(a.order) || 0;
-      const orderB = Number(b.order) || 0;
-
-      return orderA - orderB ||
-        String(a.name).localeCompare(String(b.name), 'es');
-    });
+  function getHierarchyNodes(parentId) {
+    return (state.catalogs.estructuraOrg || [])
+      .filter(node => key(node.parent_id) === key(parentId))
+      .slice()
+      .sort((a, b) => {
+        const orderA = Number(a.order) || 0;
+        const orderB = Number(b.order) || 0;
+        return orderA - orderB ||
+          String(a.name).localeCompare(String(b.name), 'es');
+      });
   }
 
 
@@ -416,16 +372,12 @@ const DirectoryPage = (() => {
   /**
    * Construye un selector para cada nivel jerárquico.
    */
-  function appendHierarchyLevel(parentId, level, records) {
+  function appendHierarchyLevel(parentId, level) {
     const container = getElements().hierarchyFilters;
 
     if (!container) return;
 
-    const nodes = getHierarchyNodes(
-      parentId,
-      level,
-      records
-    );
+    const nodes = getHierarchyNodes(parentId);
 
     if (!nodes.length) return;
 
@@ -500,11 +452,7 @@ const DirectoryPage = (() => {
     container.appendChild(wrapper);
 
     if (selectedValue) {
-      appendHierarchyLevel(
-        selectedValue,
-        level + 1,
-        records
-      );
+      appendHierarchyLevel(selectedValue, level + 1);
     }
   }
 
@@ -522,11 +470,7 @@ const DirectoryPage = (() => {
 
     container.replaceChildren();
 
-    const records = getRecordsForFilters(
-      new Set(['hierarchy'])
-    );
-
-    appendHierarchyLevel('', 0, records);
+    appendHierarchyLevel('', 0);
   }
 
 
@@ -535,40 +479,24 @@ const DirectoryPage = (() => {
    * registros compatibles con los demás filtros.
    */
   function hasAvailableFilterSelection(filter) {
-    const records = getRecordsForFilters(
-      new Set([filter])
-    );
-
+    const elements = getElements();
     if (filter === 'sede') {
-      const selectedId = key(
-        getElements().sedeFilter.value
-      );
-
-      return !selectedId || records.some(record =>
-        key(record.sede_id) === selectedId
-      );
+      const selected = key(elements.sedeFilter && elements.sedeFilter.value);
+      return !selected || (state.catalogs.sedes || []).some(item => key(item.id) === selected);
     }
-
     if (filter === 'cargo') {
-      const selectedId = key(
-        getElements().cargoFilter.value
-      );
-
-      return !selectedId || records.some(record =>
-        key(record.cargo_id) === selectedId
-      );
+      const selected = key(elements.cargoFilter && elements.cargoFilter.value);
+      return !selected || (state.catalogs.cargos || []).some(item => key(item.id) === selected);
     }
-
     if (filter === 'hierarchy') {
-      return !state.hierarchyPath.length ||
-        records.some(record =>
-          recordMatchesHierarchyPath(
-            record,
-            state.hierarchyPath
-          )
-        );
+      const structures = new Map((state.catalogs.estructuraOrg || []).map(item => [key(item.id), item]));
+      return state.hierarchyPath.every((id, index) => {
+        const node = structures.get(key(id));
+        if (!node) return false;
+        const expectedParent = index ? key(state.hierarchyPath[index - 1]) : '';
+        return key(node.parent_id) === expectedParent;
+      });
     }
-
     return true;
   }
 
@@ -582,50 +510,13 @@ const DirectoryPage = (() => {
    * compatibles con las nuevas selecciones.
    */
   function refreshDependentFilters(changedFilter) {
-    const elements = getElements();
-
-    if (!elements.sedeFilter || !elements.cargoFilter) {
-      return;
-    }
-
-    // Cambiar de sede implica reiniciar la jerarquía.
     if (changedFilter === 'sede') {
       state.hierarchyPath = [];
     }
 
-    const validationOrder = {
-      sede: ['cargo', 'hierarchy'],
-      cargo: ['sede', 'hierarchy'],
-      hierarchy: ['sede', 'cargo']
-    };
-
-    const filtersToValidate =
-      validationOrder[changedFilter] || [];
-
-    filtersToValidate.forEach(filter => {
-      if (hasAvailableFilterSelection(filter)) {
-        return;
-      }
-
-      if (filter === 'sede') {
-        elements.sedeFilter.value = '';
-      }
-
-      if (filter === 'cargo') {
-        elements.cargoFilter.value = '';
-      }
-
-      if (filter === 'hierarchy') {
-        state.hierarchyPath = [];
-      }
-    });
-
-    // Reconstruir las opciones disponibles.
     populateSedeFilter();
     populateCargoFilter();
     renderHierarchyFilters();
-
-    // Actualizar los registros mostrados.
     renderTable();
   }
 
@@ -681,10 +572,6 @@ const DirectoryPage = (() => {
 
     if (!container) return;
 
-    const records = prepareRows(
-      getFilteredRecords()
-    );
-
     if (
       !window.SUNARPUI ||
       typeof SUNARPUI.createDataTable !== 'function'
@@ -698,7 +585,26 @@ const DirectoryPage = (() => {
 
       containerId: 'directoryTableContainer',
 
-      mode: 'client',
+      mode: 'server',
+
+      loadData: async params => {
+        const elements = getElements();
+        const result = await callServer('listDirectoryAssignments', {
+          active: 'all',
+          page: params.page,
+          pageSize: params.pageSize,
+          search: params.search,
+          sedeId: elements.sedeFilter ? elements.sedeFilter.value : '',
+          cargoId: elements.cargoFilter ? elements.cargoFilter.value : '',
+          estructuraId: state.hierarchyPath.length
+            ? state.hierarchyPath[state.hierarchyPath.length - 1]
+            : ''
+        });
+        return {
+          items: prepareRows(result.records || []),
+          total: Number(result.total) || 0
+        };
+      },
 
       columns: [
 
@@ -809,8 +715,6 @@ const DirectoryPage = (() => {
 
       ],
 
-      data: records,
-
       pageSize: 10,
 
       pageSizeOptions: [10, 25, 50],
@@ -883,7 +787,7 @@ const DirectoryPage = (() => {
 
     } else {
 
-      state.table.setData(records);
+      state.table.refresh();
 
     }
 
