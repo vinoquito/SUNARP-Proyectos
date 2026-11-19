@@ -134,6 +134,15 @@ function runCoreSelfTests_() {
       exactLookup.records[0].id === 'TST_001',
       'La búsqueda exacta recupera únicamente las filas coincidentes sin cargar la tabla completa.'
     );
+    const exactMany = findRecordsByFields(
+      source,
+      { id: ['TST_001', 'TST_002'] },
+      { searchField: 'id' }
+    );
+    assert(
+      exactMany.total === 2,
+      'La búsqueda exacta por múltiples identificadores resuelve el subconjunto en lotes.'
+    );
 
 
     // 4.2. Probar almacenamiento centralizado de valores que superan 95 KiB.

@@ -223,15 +223,6 @@ function _accessLoadSecurityData_() {
   return data;
 }
 
-function _accessLoadPeople_() {
-  const result = SUNARPCore.listRecordsFromSourcesCached([{
-    key: 'personas',
-    source: _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
-    requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people
-  }], 300);
-  return result.personas || [];
-}
-
 function _accessFindPersonById_(personaId) {
   const id = _accessText_(personaId);
   if (!id) return null;
@@ -2336,8 +2327,15 @@ function getAccessUsers(filters) {
       sitesByPerson.get(personaId).add(assignedSiteId);
     });
   }
-  // El catálogo de personas se carga solo al solicitar el listado de usuarios.
-  const people = new Map(_accessLoadPeople_().map(person => [_accessText_(person.persona_id), person]));
+  const accountPersonaIds = [...new Set(accounts.map(user => _accessText_(user.persona_id)).filter(Boolean))];
+  const peopleResult = accountPersonaIds.length
+    ? SUNARPCore.findRecordsByFields(
+        _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
+        { persona_id: accountPersonaIds },
+        { searchField: 'persona_id', requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people }
+      )
+    : { records: [] };
+  const people = new Map(peopleResult.records.map(person => [_accessText_(person.persona_id), person]));
   const rows = accounts.map(user => {
     const personaId = _accessText_(user.persona_id);
     const person = people.get(personaId) || {};

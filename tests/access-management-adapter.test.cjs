@@ -130,8 +130,10 @@ function createAdapterSandbox(data, email = 'prueba@sunarp.gob.pe') {
     findRecordsByFields: (source, filters, options) => {
       const rows = (data.personas || []).filter(person => Object.keys(filters).every(field => {
         const actual = String(person[field] === undefined || person[field] === null ? '' : person[field]);
-        const expected = String(filters[field] === undefined || filters[field] === null ? '' : filters[field]);
-        return options && options.matchCase === false ? actual.toLowerCase() === expected.toLowerCase() : actual === expected;
+        const expectedValues = Array.isArray(filters[field]) ? filters[field].map(String) : [String(filters[field] === undefined || filters[field] === null ? '' : filters[field])];
+        return expectedValues.some(expected => options && options.matchCase === false
+          ? actual.toLowerCase() === expected.toLowerCase()
+          : actual === expected);
       }));
       return { records: rows, total: rows.length };
     },
