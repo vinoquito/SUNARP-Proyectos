@@ -2126,7 +2126,8 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       data: state.data.operations || [],
       columns: [
         { key: 'operacion_id', label: 'ID de operación' },
-        { key: 'nombre', label: 'Nombre' }
+        { key: 'nombre', label: 'Nombre' },
+        { key: 'active', label: 'Estado', render: value => value ? 'Activa' : 'Inactiva' }
       ],
       searchPlaceholder: 'Buscar operación...',
       emptyMessage: 'No hay operaciones registradas.'
@@ -2188,6 +2189,13 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       value: item.operacion_id,
       label: item.nombre + ' (' + item.operacion_id + ')'
     }));
+
+    if (editing && row.operacion_id && !operationOptions.some(item => item.value === row.operacion_id)) {
+      operationOptions.unshift({
+        value: row.operacion_id,
+        label: (row.operacion_nombre || row.operacion_id) + ' (' + row.operacion_id + ') — inactiva'
+      });
+    }
 
     const operation = createSelect(
       operationOptions,
