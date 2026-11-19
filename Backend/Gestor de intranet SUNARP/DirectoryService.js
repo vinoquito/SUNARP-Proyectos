@@ -1306,7 +1306,8 @@ function _directoryAssertDocumentAvailable_(type, number, records, excludedPerso
         {
           searchField: 'numero_documento',
           requiredHeaders: DIRECTORY_REQUIRED_HEADERS.datosPersonales,
-          matchCase: false
+          matchCase: false,
+          ignoreWhitespace: true
         }
       );
   const duplicate = matches.records.find(item =>

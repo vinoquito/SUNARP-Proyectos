@@ -143,6 +143,16 @@ function runCoreSelfTests_() {
       exactMany.total === 2,
       'La búsqueda exacta por múltiples identificadores resuelve el subconjunto en lotes.'
     );
+    const whitespaceLookup = findRecordsByFields(
+      source,
+      { nombre: 'AnaTorres' },
+      { searchField: 'nombre', ignoreWhitespace: true }
+    );
+    assert(
+      whitespaceLookup.total === 1 &&
+      whitespaceLookup.records[0].id === 'TST_001',
+      'La búsqueda exacta puede normalizar espacios sin cargar la tabla completa.'
+    );
     const partialSearch = searchRecordsByFields(
       source,
       'ana',
