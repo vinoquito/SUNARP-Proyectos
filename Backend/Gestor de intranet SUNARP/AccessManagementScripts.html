@@ -11,13 +11,49 @@
     activeTab: '',
     tabs: null,
     table: null,
-    userListController: null
+    userListController: null,
+    localLoadingCount: 0,
+    localLoadingElement: null
   };
 
   const $ = (selector, root = document) => root.querySelector(selector);
 
-  const $$ = (selector, root = document) =>
+  const $ = (selector, root = document) =>
     Array.from(root.querySelectorAll(selector));
+
+
+  function beginAccessPanelLoading(message) {
+    const card = $('.access-card');
+    if (!card) return () => {};
+    state.localLoadingCount += 1;
+    if (!state.localLoadingElement) {
+      const overlay = document.createElement('div');
+      overlay.className = 'access-local-loader';
+      overlay.setAttribute('role', 'status');
+      overlay.setAttribute('aria-live', 'polite');
+      const spinner = document.createElement('span');
+      spinner.className = 'access-local-loader-spinner';
+      spinner.setAttribute('aria-hidden', 'true');
+      const label = document.createElement('span');
+      label.className = 'access-local-loader-message';
+      label.textContent = message || 'Actualizando información...';
+      overlay.append(spinner, label);
+      card.appendChild(overlay);
+      card.setAttribute('aria-busy', 'true');
+      state.localLoadingElement = overlay;
+    }
+    let finished = false;
+    return function finishAccessPanelLoading() {
+      if (finished) return;
+      finished = true;
+      state.localLoadingCount = Math.max(0, state.localLoadingCount - 1);
+      if (!state.localLoadingCount && state.localLoadingElement) {
+        state.localLoadingElement.remove();
+        state.localLoadingElement = null;
+        card.removeAttribute('aria-busy');
+      }
+    };
+  }
 
 
   function rpc(method, ...args) {
@@ -226,7 +262,7 @@
         if (save.disabled || !form.reportValidity() || !canSave()) return;
 
         save.disabled = true;
-        const finishLoading = SUNARPUI.beginLoading({ backdrop: 'translucent' });
+        const finishLoading = beginAccessPanelLoading();
 
         try {
           await onSave();
@@ -406,7 +442,7 @@ async function changeAccessStatus(method, id, row, entityLabel) {
   const action = isActive ? 'desactivar' : 'activar';
   const confirmed = window.confirm('¿Deseas ' + action + ' ' + entityLabel + '?\n\n' + id);
   if (!confirmed) return;
-  const finishLoading = SUNARPUI.beginLoading({ backdrop: 'translucent' });
+  const finishLoading = beginAccessPanelLoading();
   let result;
   try {
     result = await rpc(method, id, nextActive);
@@ -497,12 +533,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       .sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es'));
 
     const catalogs = state.data.catalogs || {};
-    const typeLabels = {
-      TOTAL: 'Total',
-      SEDE: 'Sede',
-      ESTRUCTURA_ORG: 'Unidad orgánica',
-      LOCAL: 'Local'
-    };
+    const typeLabels = Object.fromEntries((state.data.scopeTypes || []).map(item => [item.tipo_ambito_id, item.nombre]));
 
     const roleAssignments = (state.data.userRoles || []).filter(item =>
       item.persona_id === personaId && item.active === true
@@ -535,7 +566,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         ambitos: scopeAssignments
           .filter(scope => scope.modulo_id === item.modulo_id)
           .map(scope => ({
-            tipo_ambito: scope.tipo_ambito,
+            tipo_ambito_id: scope.tipo_ambito_id,
             referencia_id: scope.referencia_id,
             incluir_descendientes: scope.incluir_descendientes || 'NO'
           }))
@@ -559,7 +590,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         ambitos: scopeAssignments
           .filter(scope => scope.modulo_id === item.modulo_id)
           .map(scope => ({
-            tipo_ambito: scope.tipo_ambito,
+            tipo_ambito_id: scope.tipo_ambito_id,
             referencia_id: scope.referencia_id,
             incluir_descendientes: scope.incluir_descendientes || 'NO'
           }))
@@ -645,15 +676,15 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     }
 
     function scopeReferenceName(scope) {
-      if (scope.tipo_ambito === 'TOTAL') {
+      if (scope.tipo_ambito_id === 'TOTAL') {
         return 'Todos los registros del módulo';
       }
 
-      if (scope.tipo_ambito === 'SEDE') {
+      if (scope.tipo_ambito_id === 'SEDE') {
         return sedeName(scope.referencia_id);
       }
 
-      if (scope.tipo_ambito === 'ESTRUCTURA_ORG') {
+      if (scope.tipo_ambito_id === 'ESTRUCTURA_ORG') {
         const structure = (catalogs.estructuraOrg || []).find(item =>
           String(item.id) === String(scope.referencia_id)
         );
@@ -707,11 +738,11 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     }
 
     function scopeLabel(scope) {
-      const label = typeLabels[scope.tipo_ambito] || 'Ámbito';
+      const label = typeLabels[scope.tipo_ambito_id] || 'Ámbito';
       const reference = scopeReferenceName(scope);
 
       return label + ': ' + reference +
-        (scope.tipo_ambito === 'ESTRUCTURA_ORG' &&
+        (scope.tipo_ambito_id === 'ESTRUCTURA_ORG' &&
           scope.incluir_descendientes === 'SI'
           ? ' (incluye descendientes)'
           : '');
@@ -928,7 +959,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       panel.append(panelHeading, fields);
 
       let scopeDraft = (original.ambitos || []).map(item => ({
-        tipo_ambito: item.tipo_ambito,
+        tipo_ambito_id: item.tipo_ambito_id,
         referencia_id: item.referencia_id,
         incluir_descendientes: item.incluir_descendientes || 'NO'
       }));
@@ -950,12 +981,11 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           ? 'Ámbitos actualmente asignados'
           : 'Ámbito del acceso';
 
-        const scopeType = createSelect([
-          { value: 'TOTAL', label: 'Total — todos los registros del módulo' },
-          { value: 'SEDE', label: 'Sede' },
-          { value: 'ESTRUCTURA_ORG', label: 'Unidad orgánica' },
-          { value: 'LOCAL', label: 'Local directamente asignado' }
-        ], '', 'Selecciona un ámbito (opcional)');
+        const scopeTypeOptions = (state.data.scopeTypes || []).map(item => ({
+          value: item.tipo_ambito_id,
+          label: item.nombre
+        }));
+        const scopeType = createSelect(scopeTypeOptions, '', 'Selecciona un ámbito (opcional)');
 
         const descendants = createInput('checkbox', '', {});
         descendants.className = 'access-checkbox';
@@ -1130,7 +1160,8 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
           selectedReferenceId = '';
           scopeContextHost.replaceChildren();
-          descendantsLabel.hidden = type !== 'ESTRUCTURA_ORG';
+          const selectedScopeType = (state.data.scopeTypes || []).find(item => item.tipo_ambito_id === type);
+          descendantsLabel.hidden = !(selectedScopeType && selectedScopeType.permite_descendientes === true);
           descendants.checked = false;
 
           if (!type) {
@@ -1293,7 +1324,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           }
 
           if (type !== 'TOTAL' && nextScopes.some(item =>
-            item.tipo_ambito === 'TOTAL'
+            item.tipo_ambito_id === 'TOTAL'
           )) {
             SUNARPUI.notify(
               'warning',
@@ -1303,7 +1334,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           }
 
           if (nextScopes.some(item =>
-            item.tipo_ambito === type &&
+            item.tipo_ambito_id === type &&
             String(item.referencia_id || '') === String(referenceId || '')
           )) {
             SUNARPUI.notify(
@@ -1314,7 +1345,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           }
 
           nextScopes.push({
-            tipo_ambito: type,
+            tipo_ambito_id: type,
             referencia_id: referenceId,
             incluir_descendientes:
               type === 'ESTRUCTURA_ORG' && descendants.checked
@@ -1532,7 +1563,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
       const finishLoading = showLoading === false
         ? () => {}
-        : SUNARPUI.beginLoading({ backdrop: 'translucent' });
+        : beginAccessPanelLoading();
 
       applyButton.disabled = true;
 
@@ -1733,9 +1764,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           documentNumber.disabled = true;
 
           resultHost.appendChild(alertHost);
-          const finishLoading = SUNARPUI.beginLoading({
-            backdrop: 'translucent'
-          });
+          const finishLoading = beginAccessPanelLoading();
 
           showSearchAlert(
             'info',
@@ -2049,7 +2078,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       data: state.data.permissions || [],
       columns: [
         { key: 'modulo_nombre', label: 'Módulo' },
-        { key: 'operacion', label: 'Operación' },
+        { key: 'operacion_nombre', label: 'Operación' },
         { key: 'descripcion', label: 'Descripción' },
         {
           key: 'active',
@@ -2096,14 +2125,35 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     renderTable(host, {
       data: state.data.operations || [],
       columns: [
-        { key: 'codigo', label: 'Código de operación' },
+        { key: 'operacion_id', label: 'ID de operación' },
         { key: 'nombre', label: 'Nombre' }
       ],
-      search: false,
-      emptyMessage: 'No hay operaciones disponibles.'
+      searchPlaceholder: 'Buscar operación...',
+      emptyMessage: 'No hay operaciones registradas.'
     });
   }
 
+
+  function renderScopeTypes(host) {
+    const section = makeTabPanel(
+      'Tipos de ámbito',
+      'Catálogo cerrado de los cuatro tipos admitidos. Define la referencia y si permite incluir unidades orgánicas descendientes; esta pantalla es de solo lectura.'
+    );
+    host.appendChild(section);
+    renderTable(host, {
+      data: state.data.scopeTypes || [],
+      columns: [
+        { key: 'tipo_ambito_id', label: 'ID' },
+        { key: 'nombre', label: 'Nombre' },
+        { key: 'descripcion', label: 'Descripción' },
+        { key: 'entidad_referencia', label: 'Referencia' },
+        { key: 'requiere_referencia', label: 'Requiere referencia', render: value => value ? 'Sí' : 'No' },
+        { key: 'permite_descendientes', label: 'Permite descendientes', render: value => value ? 'Sí' : 'No' }
+      ],
+      searchPlaceholder: 'Buscar tipo de ámbito...',
+      emptyMessage: 'No hay tipos de ámbito registrados.'
+    });
+  }
 
   function openPermissionModal(row) {
     const editing = Boolean(row);
@@ -2134,21 +2184,14 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     );
     if (editing) module.disabled = true;
 
-    const operationOptions = (state.data.operations || []).map(item => ({
-      value: item.codigo,
-      label: item.nombre + ' (' + item.codigo + ')'
+    const operationOptions = (state.data.operations || []).filter(item => item.active !== false).map(item => ({
+      value: item.operacion_id,
+      label: item.nombre + ' (' + item.operacion_id + ')'
     }));
-
-    if (editing && row.operacion && !operationOptions.some(item => item.value === row.operacion)) {
-      operationOptions.unshift({
-        value: row.operacion,
-        label: row.operacion + ' (valor existente)'
-      });
-    }
 
     const operation = createSelect(
       operationOptions,
-      row && row.operacion,
+      row && row.operacion_id,
       'Selecciona una operación'
     );
     if (editing) operation.disabled = true;
@@ -2196,7 +2239,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         permiso_id: editing ? row.permiso_id : '',
         codigo: editing ? row.codigo : '',
         modulo_id: editing ? row.modulo_id : module.value,
-        operacion: operation.value.trim().toUpperCase(),
+        operacion_id: operation.value.trim().toUpperCase(),
         descripcion: description.value.trim(),
         active: editing ? row.active : true
       }),
@@ -2237,7 +2280,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       const selected = $$('input[type="checkbox"][data-permission-id]:checked', checklist)
         .map(input => input.dataset.permissionId);
       save.disabled = true;
-      const finishLoading = SUNARPUI.beginLoading({ backdrop: 'translucent' });
+      const finishLoading = beginAccessPanelLoading();
       try {
         await rpc('saveRolePermissions', {
           rol_id: roleSelect.value,
@@ -2677,7 +2720,7 @@ window.SUNARPAccessHistory = Object.freeze({
       mode: 'server',
 
       loadData: async params => {
-        const finishLoading = SUNARPUI.beginLoading({ backdrop: 'translucent' });
+        const finishLoading = beginAccessPanelLoading();
         try {
           return await rpc(
             'getAccessAuditHistory',
@@ -2818,6 +2861,10 @@ window.SUNARPAccessHistory = Object.freeze({
       });
     }
 
+    if (caps.scopes) {
+      tabs.push({ id: 'scopeTypes', label: 'Tipos de ámbito' });
+    }
+
     if (caps.audit) {
       tabs.push({
         id: 'audit',
@@ -2843,6 +2890,7 @@ window.SUNARPAccessHistory = Object.freeze({
       roles: renderRoles,
       permissions: renderPermissions,
       operations: renderOperations,
+      scopeTypes: renderScopeTypes,
       assignments: renderAssignments,
       audit: renderAudit
     };
@@ -2901,7 +2949,7 @@ window.SUNARPAccessHistory = Object.freeze({
     if (!state.data || state.tabRefreshing) return;
 
     state.tabRefreshing = true;
-    const finishLoading = SUNARPUI.beginLoading({ backdrop: 'translucent' });
+    const finishLoading = beginAccessPanelLoading();
 
     try {
       const tab = state.activeTab;
@@ -2923,6 +2971,10 @@ window.SUNARPAccessHistory = Object.freeze({
         const result = await rpc('getAccessManagementTabData', 'operations');
         state.data.operations = result.operations || [];
         renderActiveTab('operations');
+      } else if (tab === 'scopeTypes') {
+        const result = await rpc('getAccessManagementTabData', 'scopeTypes');
+        state.data.scopeTypes = result.scopeTypes || [];
+        renderActiveTab('scopeTypes');
       } else if (tab === 'assignments') {
         const result = await rpc('getAccessManagementTabData', 'assignments');
         state.data.roles = result.roles || [];
@@ -2958,7 +3010,7 @@ window.SUNARPAccessHistory = Object.freeze({
 
     state.loading = true;
 
-    const finish = SUNARPUI.beginLoading({ backdrop: 'translucent' });
+    const finish = SUNARPUI.beginLoading();
 
     setMessage('Consultando información de seguridad...');
 
