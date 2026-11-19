@@ -427,18 +427,6 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
 
 
-  function _accessScopeSignature(scopes) {
-    return (scopes || [])
-      .map(scope => [
-        String(scope.tipo_ambito || ''),
-        String(scope.referencia_id || ''),
-        String(scope.incluir_descendientes || 'NO')
-      ].join('\u0000'))
-      .sort()
-      .join('\u0001');
-  }
-
-
   /**
    * Editor unificado de roles por módulo y ámbitos de acceso.
    * Reutiliza los catálogos y asignaciones que ya entrega getAccessManagementData().
