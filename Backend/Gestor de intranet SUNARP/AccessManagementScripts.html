@@ -421,210 +421,94 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
   function renderUsers(host) {
     const canManage = state.data.capabilities.users;
-
     const section = makeTabPanel(
       'Usuarios',
-      'Cuentas institucionales habilitadas para acceder al gestor.',
-      canManage ? 'Nuevo usuario' : '',
+      'Cuentas institucionales vinculadas a personas del directorio. Los roles se asignan por módulo.',
+      canManage ? 'Nueva cuenta' : '',
       canManage ? () => openUserModal(null) : null
     );
-
     host.appendChild(section);
 
-    const rows = state.data.users || [];
-
     renderTable(host, {
-      data: rows,
-
+      data: state.data.users || [],
       columns: [
+        { key: 'persona_id', label: 'Persona' },
+        { key: 'nombre_completo', label: 'Nombre' },
+        { key: 'correo_institucional', label: 'Correo institucional' },
         {
-          key: 'nombre_completo',
-          label: 'Usuario'
+          key: 'roles',
+          label: 'Roles por módulo',
+          render: roles => (roles || []).map(item => {
+            const module = (state.data.modules || []).find(m => m.modulo_id === item.modulo_id);
+            return (module ? module.nombre : item.modulo_id) + ': ' + roleName(item.rol_id);
+          }).join(' · ') || 'Sin roles asignados'
         },
         {
-          key: 'correo_institucional',
-          label: 'Correo institucional'
-        },
-        {
-          key: 'rol_id',
-          label: 'Rol',
-          render: value => roleName(value)
-        },
-        {
-          key: 'sede_name',
-          label: 'Sede',
-          render: value => value || '—'
-        },
-        {
-          key: 'estructura_org_id',
-          label: 'Unidad orgánica',
-          render: value => structureName(value)
-        },
-        {
-          key: 'estado',
+          key: 'active',
           label: 'Estado',
           align: 'center',
-          render: (value, row) => createAccessStatusCell(
-            row,
-            'setAccessUserStatus',
-            row.correo_institucional,
-            'el usuario'
-          )
+          render: (value, row) => createAccessStatusCell(row, 'setAccessUserStatus', row.persona_id, 'la cuenta')
         }
       ],
-
       rowActions: [
-
         ...(canManage ? [{
-          label: 'Editar usuario',
+          label: 'Editar cuenta',
           icon: 'edit',
           variant: 'outline',
           onClick: row => openUserModal(row)
         }] : []),
-
         ...(state.data.capabilities.audit ? [{
           label: 'Historial',
           icon: 'history',
           variant: 'outline',
-
-          onClick: row => openEntityHistory(
-            'USUARIO',
-            row.correo_institucional,
-            row.nombre_completo
-          )
+          onClick: row => openEntityHistory('USUARIO', row.persona_id, row.nombre_completo)
         }] : [])
-
       ],
-
-      searchPlaceholder:
-        'Buscar por nombre, correo, rol o unidad...',
-
-      emptyMessage: 'No hay usuarios registrados.'
+      searchPlaceholder: 'Buscar por persona, nombre o correo...',
+      emptyMessage: 'No hay cuentas registradas.'
     });
   }
 
 
   function openUserModal(row) {
     const editing = Boolean(row);
-
     const form = document.createElement('form');
-
     form.className = 'access-form';
-
-    form.addEventListener(
-      'submit',
-      event => event.preventDefault()
-    );
-
+    form.addEventListener('submit', event => event.preventDefault());
     const grid = createFormGrid();
 
-    const email = createInput(
-      'email',
-      row && row.correo_institucional,
-      {
-        required: true,
-        readOnly: editing,
-        maxlength: 150,
-        placeholder: 'usuario@sunarp.gob.pe',
-        pattern: '[^\\s@]+@sunarp\\.gob\\.pe'
-      }
-    );
+    const people = editing
+      ? [{ value: row.persona_id, label: row.nombre_completo + ' — ' + row.correo_institucional }]
+      : (state.data.availablePeople || []).map(person => ({
+          value: person.persona_id,
+          label: person.nombre_completo + ' — ' + person.correo_institucional
+        }));
+    const personSelect = createSelect(people, row && row.persona_id, editing ? null : 'Selecciona una persona');
+    personSelect.disabled = editing;
 
-    const names = createInput(
-      'text',
-      row && row.nombres,
-      {
-        required: true,
-        maxlength: 100
-      }
-    );
-
-    const surnames = createInput(
-      'text',
-      row && row.apellidos,
-      {
-        maxlength: 120
-      }
-    );
-
-    const roles = createSelect(
-      activeRoles().map(item => ({
-        value: item.rol_id,
-        label: `${item.nombre} (${item.rol_id})`
-      })),
-      row && row.rol_id,
-      'Selecciona un rol'
-    );
-
-    const structures = createSelect(
-      [{
-        value: '',
-        label: 'Sin unidad orgánica asignada'
-      }].concat(
-        (
-          (state.data.catalogs || {}).estructuraOrg || []
-        ).map(item => ({
-          value: item.id,
-          label: item.name
-        }))
-      ),
-      row && row.estructura_org_id,
-      null
-    );
-
-    const status = createSelect(
+    const active = createSelect(
       [
-        {
-          value: 'ACTIVO',
-          label: 'Activo'
-        },
-        {
-          value: 'INACTIVO',
-          label: 'Inactivo'
-        }
+        { value: 'true', label: 'Activa' },
+        { value: 'false', label: 'Inactiva' }
       ],
-      row ? row.estado : 'ACTIVO'
+      row ? String(Boolean(row.active)) : 'true'
     );
 
     grid.append(
-      createField('Correo institucional', email),
-      createField('Nombres', names),
-      createField('Apellidos', surnames),
-      createField('Rol', roles),
-
-      createField(
-        'Unidad orgánica',
-        structures,
-        'Es la adscripción orgánica del usuario; no concede ámbitos de acceso.'
-      ),
-
-      createField('Estado', status)
+      createField('Persona', personSelect),
+      createField('Estado de la cuenta', active)
     );
-
     form.appendChild(grid);
 
     openFormModal(
-      editing ? 'Editar usuario' : 'Registrar usuario',
+      editing ? 'Editar cuenta' : 'Habilitar cuenta',
       form,
-
       () => rpc('saveAccessUser', {
         action: editing ? 'edit' : 'create',
-
-        correo_original: editing
-          ? row.correo_institucional
-          : '',
-
-        correo_institucional:
-          email.value.trim().toLowerCase(),
-
-        nombres: names.value.trim(),
-        apellidos: surnames.value.trim(),
-        rol_id: roles.value,
-        estructura_org_id: structures.value,
-        estado: status.value
+        persona_id: editing ? row.persona_id : personSelect.value,
+        active: active.value === 'true'
       }),
-
-      editing ? 'Guardar cambios' : 'Registrar usuario'
+      editing ? 'Guardar cambios' : 'Habilitar cuenta'
     );
   }
 
