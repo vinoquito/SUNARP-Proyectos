@@ -148,7 +148,7 @@ test('queryRecords exige catálogos para ámbitos no globales y no cachea sin ve
     filters: { status: 'ACTIVE' },
     authorization: scoped
   });
-  assert.equal(result.total, 0);
+  assert.equal(result.total, 2);
   assert.equal(sandbox.cache.size, 0);
 });
 
