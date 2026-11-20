@@ -40,7 +40,7 @@ Las respuestas de lectura suelen utilizar `{ records, total }`; las lecturas pag
 
 ## 2. Inventario de la API pública
 
-En el HEAD auditado se identificaron **30 funciones globales públicas**, incluida la entrada de desarrollo `runCoreTests()`. La lista siguiente se ha obtenido de las declaraciones de los archivos de Core, excluyendo los auxiliares privados.
+En el HEAD auditado se identificaron **29 funciones globales públicas**. La lista siguiente se ha obtenido de las declaraciones de los archivos de Core, excluyendo los auxiliares privados.
 
 | Módulo | Función pública | Firma |
 |---|---|---|
@@ -52,7 +52,6 @@ En el HEAD auditado se identificaron **30 funciones globales públicas**, inclui
 | Repositorio compuesto | `updateRecordByFields` | `(source, criteria, updates, options)` |
 | Repositorio compuesto | `syncRecordsByKey` | `(source, parentMatch, keyFields, desiredRecords, statusField, activeValue, inactiveValue, options)` |
 | Repositorio compuesto | `appendAuditEvent` | `(source, record, idField)` |
-| Pruebas del núcleo | `runCoreTests` | `()` — ejecutor de pruebas de desarrollo; no es una operación funcional del Gestor |
 | Caché | `invalidateSourceCache` | `(source)` |
 | Caché | `getCachedValue` | `(key)` |
 | Caché | `putCachedValue` | `(key, value, expirationSeconds)` |
@@ -203,13 +202,12 @@ Respuesta: `{ records, total, offset, limit }`. `total` se calcula antes de pagi
 
 ### 4.2 `listTailRecords(source, options)`
 
-Lee una ventana física desde el final de una fuente de tipo append-only, con `offset` contado desde la última fila de datos y `limit` entre 1 y 1000 (por defecto 25). Devuelve registros en orden descendente de fila:
+Tiene dos modos compatibles:
 
-```js
-{ records, total, offset, limit, hasMore }
-```
+- **Modo legado**, sin `idField`: lee una ventana física desde el final de la hoja. `offset` se cuenta desde la última fila y `limit` admite 1..1000 (por defecto 25). Respuesta: `{ records, total, offset, limit, hasMore }`. En este modo `total` cuenta filas físicas; una fuente con huecos no representa necesariamente un total exacto de registros.
+- **Modo indexado**, con `idField`: escanea la columna del identificador y, cuando se declara, la columna de fecha; conserva como máximo `offset + limit` referencias ordenadas y recupera las filas completas en ventanas pequeñas para la página pedida. Opciones adicionales: `dateField`, `sortBy` (fecha, descendente), `fromDate` y `toDate` (límites inclusivos, valores Date o parseables). Para rango temporal se exige `dateField` o `sortBy`. `total` cuenta únicamente filas con ID no vacío que pasan el rango. Respuesta: `{ records, total, offset, limit, hasMore }`.
 
-**Limitación del código actual:** `total` se calcula como el número de posiciones de fila desde el encabezado hasta `getLastRow()`, y la ventana se define por filas físicas. Filas vacías intercaladas pueden hacer que el número devuelto sea menor que `limit` y que el total no coincida con el número real de eventos. Para auditoría, la fuente debe mantenerse append-only y sin huecos; el servicio de historial debe verificar total, orden cronológico y páginas vacías.
+El modo indexado reduce la lectura de datos completos a las filas de las ventanas que contienen la página y evita que el historial confunda filas vacías con eventos. No evita el barrido de las columnas de índice/fecha: su costo de exploración sigue siendo O(n), aunque el volumen de lectura de columnas y la memoria de resultados se mantienen acotados. El modo legado se mantiene para no romper consumidores que todavía no declaran identificadores.
 
 ### 4.3 `getRecordById(source, idField, id)`
 
@@ -478,10 +476,6 @@ Devuelve `{ valid, errors, messages }`. Cada error contiene `field` y `message`.
 ### 8.2 `assertValidRecord(record, schema, options)`
 
 Ejecuta la misma validación y lanza un error agregado si `valid` es falso. Devuelve `true` si la validación pasa.
-
-### 8.3 `runCoreTests()` — ejecutor de desarrollo
-
-Ejecuta las suites `runCoreSelfTests_()`, `runAuthorizationSelfTests_()` y `runCompositeRepositorySelfTests_()`. La primera crea una hoja de cálculo temporal y al finalizar intenta enviarla a la papelera. Es una herramienta de desarrollo que debe ejecutarse manualmente desde el proyecto de Core con los permisos necesarios; no forma parte de las operaciones RPC funcionales de Gestor y no debe invocarse desde una aplicación de producción.
 
 ## 9. Semántica de caché, consistencia y límites
 

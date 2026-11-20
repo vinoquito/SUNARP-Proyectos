@@ -2798,68 +2798,113 @@ function getAccessUsers(filters) {
 }
 
 
+function _accessAuditTimestamp_(record) {
+  const value = record && record.fecha_hora;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? NaN : date.getTime();
+}
+
+function _accessInsertAuditPageRecord_(records, record, maxRecords) {
+  if (maxRecords < 1) return;
+  const compare = (left, right) => {
+    const leftTime = _accessAuditTimestamp_(left);
+    const rightTime = _accessAuditTimestamp_(right);
+    if (leftTime !== rightTime) {
+      if (Number.isNaN(leftTime)) return 1;
+      if (Number.isNaN(rightTime)) return -1;
+      return rightTime - leftTime;
+    }
+    return _accessText_(right.evento_id).localeCompare(
+      _accessText_(left.evento_id), 'es'
+    );
+  };
+
+  let low = 0;
+  let high = records.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (compare(record, records[middle]) < 0) high = middle;
+    else low = middle + 1;
+  }
+  if (low >= maxRecords && records.length >= maxRecords) return;
+  records.splice(low, 0, record);
+  if (records.length > maxRecords) records.pop();
+}
+
+function _accessAuditDateBound_(value, endOfDay) {
+  const text = _accessText_(value);
+  if (!text) return null;
+  const date = new Date(text + (endOfDay ? 'T23:59:59.999' : 'T00:00:00'));
+  if (Number.isNaN(date.getTime())) {
+    throw new Error('El filtro de fecha de auditoría no es válido: ' + text + '.');
+  }
+  return date;
+}
+
 function getAccessAuditHistory(filters) {
   _accessRequirePermission_('AUDITORIA_VER');
+  filters = filters && typeof filters === 'object' ? filters : {};
 
-  filters = filters && typeof filters === 'object'
-    ? filters
-    : {};
+  const source = _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.audit);
+  const actor = _accessText_(filters.actor || filters.actorEmail).toLowerCase();
+  const moduleCode = _accessUpper_(filters.modulo || filters.module);
+  const action = _accessUpper_(filters.accion || filters.action);
+  const outcome = _accessUpper_(filters.resultado || filters.result);
+  const recordId = _accessText_(filters.registro_id || filters.recordId).toLowerCase();
+  const query = _accessText_(filters.search || filters.query).toLocaleLowerCase();
+  const from = _accessText_(filters.desde || filters.from);
+  const to = _accessText_(filters.hasta || filters.to);
 
-  const source = _accessSecuritySource_(
-    ACCESS_MANAGEMENT_CONFIG.sheets.audit
-  );
-
-  let records = [];
-  let total = 0;
-
-  const actor = _accessText_(
-    filters.actor || filters.actorEmail
-  ).toLowerCase();
-
-  const moduleCode = _accessUpper_(
-    filters.modulo || filters.module
-  );
-
-  const action = _accessUpper_(
-    filters.accion || filters.action
-  );
-
-  const outcome = _accessUpper_(
-    filters.resultado || filters.result
-  );
-
-  const recordId = _accessText_(
-    filters.registro_id || filters.recordId
-  ).toLowerCase();
-
-  const query = _accessText_(
-    filters.search || filters.query
-  ).toLocaleLowerCase();
-
-  const from = _accessText_(
-    filters.desde || filters.from
-  );
-
-  const to = _accessText_(
-    filters.hasta || filters.to
-  );
-
-  const page = Math.max(
-    1,
-    Number.parseInt(filters.page, 10) || 1
-  );
-  const pageSize = Math.min(
-    100,
-    Math.max(1, Number.parseInt(filters.pageSize, 10) || 25)
-  );
+  const page = Math.max(1, Number.parseInt(filters.page, 10) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number.parseInt(filters.pageSize, 10) || 25));
   const offset = (page - 1) * pageSize;
-  const hasFilters = Boolean(
-    actor || moduleCode || action || outcome || recordId || query || from || to
-  );
+  const maxRetained = offset + pageSize;
+  const hasNonDateFilters = Boolean(actor || moduleCode || action || outcome || recordId || query);
+  const fromDate = _accessAuditDateBound_(from, false);
+  const toDate = _accessAuditDateBound_(to, true);
+  if (fromDate && toDate && fromDate > toDate) {
+    throw new Error('La fecha desde no puede ser posterior a la fecha hasta.');
+  }
 
-  if (hasFilters) {
+  let total = 0;
+  let records = [];
+  const requiredHeaders = ACCESS_MANAGEMENT_FIELDS.audit;
+  const hasIndexedTail = typeof SUNARPCore.listTailRecords === 'function';
+
+  // Sin filtros de texto, la consulta indexada resuelve tanto el historial
+  // reciente como los rangos temporales sin descargar el contenido de toda la hoja.
+  if (!hasNonDateFilters && hasIndexedTail) {
+    const recent = SUNARPCore.listTailRecords(source, {
+      idField: 'evento_id',
+      dateField: 'fecha_hora',
+      sortBy: 'fecha_hora',
+      fromDate,
+      toDate,
+      offset,
+      limit: pageSize,
+      requiredHeaders
+    });
+    records = recent.records || [];
+    total = recent.total;
+  } else if (!hasNonDateFilters) {
+    // Compatibilidad explícita con Core v9 mientras Gestor no consuma v10.
+    // Esta rama seguirá siendo integral hasta que la biblioteca actualice el contrato.
+    const cached = SUNARPCore.listRecordsFromSourcesCached([{
+      key: 'audit',
+      source,
+      requiredHeaders
+    }], 60);
+    const all = (cached.audit || []).filter(row => {
+      const timestamp = _accessAuditTimestamp_(row);
+      if (Number.isNaN(timestamp)) return false;
+      if (fromDate && timestamp < fromDate.getTime()) return false;
+      if (toDate && timestamp > toDate.getTime()) return false;
+      return true;
+    }).sort((a, b) => _accessAuditTimestamp_(b) - _accessAuditTimestamp_(a));
+    total = all.length;
+    records = all.slice(offset, offset + pageSize);
+  } else {
     let candidates = null;
-    const requiredHeaders = ACCESS_MANAGEMENT_FIELDS.audit;
     if (actor) {
       candidates = SUNARPCore.searchRecordsByFields(
         source, actor, ['actor_correo'], { matchCase: false }
@@ -2883,7 +2928,7 @@ function getAccessAuditHistory(filters) {
         source, { resultado: outcome },
         { searchField: 'resultado', matchCase: false, requiredHeaders }
       );
-    } else if (query) {
+    } else {
       candidates = SUNARPCore.searchRecordsByFields(
         source,
         query,
@@ -2896,144 +2941,46 @@ function getAccessAuditHistory(filters) {
       );
     }
 
-    // Un filtro exclusivamente temporal todavía requiere una lectura amplia:
-    // Core aún no expone una consulta por rango de fechas.
-    if (candidates) {
-      records = (candidates.records || []).slice();
-    } else {
-      const cached = SUNARPCore.listRecordsFromSourcesCached([{
-        key: 'audit',
-        source,
-        requiredHeaders
-      }], 60);
-      records = (cached.audit || []).slice();
-    }
-    records.sort((a, b) =>
-      new Date(b.fecha_hora).getTime() - new Date(a.fecha_hora).getTime()
-    );
-  } else {
-    if (typeof SUNARPCore.listTailRecords === 'function') {
-      const recent = SUNARPCore.listTailRecords(source, {
-        offset,
-        limit: pageSize,
-        requiredHeaders: ACCESS_MANAGEMENT_FIELDS.audit
-      });
-      records = recent.records.sort((a, b) =>
-        new Date(b.fecha_hora).getTime() - new Date(a.fecha_hora).getTime()
-      );
-      total = recent.total;
-    } else {
-      // Compatibilidad temporal con la versión 9 de SUNARP Core.
-      const cached = SUNARPCore.listRecordsFromSourcesCached([{
-        key: 'audit',
-        source,
-        requiredHeaders: ACCESS_MANAGEMENT_FIELDS.audit
-      }], 60);
-      records = (cached.audit || []).slice().sort((a, b) =>
-        new Date(b.fecha_hora).getTime() - new Date(a.fecha_hora).getTime()
-      );
-      total = records.length;
-      records = records.slice(offset, offset + pageSize);
-    }
-  }
+    const candidateRows = candidates && Array.isArray(candidates.records)
+      ? candidates.records
+      : [];
+    candidateRows.forEach(row => {
+      if (actor && !_accessText_(row.actor_correo).toLowerCase().includes(actor)) return;
+      if (moduleCode && _accessUpper_(row.modulo) !== moduleCode) return;
+      if (action && _accessUpper_(row.accion) !== action) return;
+      if (outcome && _accessUpper_(row.resultado) !== outcome) return;
+      if (recordId && !_accessText_(row.registro_id).toLowerCase().includes(recordId)) return;
 
-  records = records.filter(row => {
-    if (
-      actor &&
-      !_accessText_(row.actor_correo).toLowerCase().includes(actor)
-    ) {
-      return false;
-    }
+      const timestamp = _accessAuditTimestamp_(row);
+      if (fromDate && (Number.isNaN(timestamp) || timestamp < fromDate.getTime())) return;
+      if (toDate && (Number.isNaN(timestamp) || timestamp > toDate.getTime())) return;
 
-    if (
-      moduleCode &&
-      _accessUpper_(row.modulo) !== moduleCode
-    ) {
-      return false;
-    }
-
-    if (
-      action &&
-      _accessUpper_(row.accion) !== action
-    ) {
-      return false;
-    }
-
-    if (
-      outcome &&
-      _accessUpper_(row.resultado) !== outcome
-    ) {
-      return false;
-    }
-
-    if (
-      recordId &&
-      !_accessText_(row.registro_id).toLowerCase().includes(recordId)
-    ) {
-      return false;
-    }
-
-    if (from || to) {
-      const date = row.fecha_hora instanceof Date
-        ? row.fecha_hora
-        : new Date(row.fecha_hora);
-
-      if (Number.isNaN(date.getTime())) {
-        return false;
+      if (query) {
+        const haystack = [
+          row.actor_correo, row.actor_nombre, row.accion, row.modulo,
+          row.tipo_entidad, row.registro_id, row.registro_nombre,
+          row.resultado, row.detalle
+        ].map(_accessText_).join(' ').toLocaleLowerCase();
+        if (!haystack.includes(query)) return;
       }
 
-      if (from && date < new Date(`${from}T00:00:00`)) {
-        return false;
-      }
-
-      if (to && date > new Date(`${to}T23:59:59`)) {
-        return false;
-      }
-    }
-
-    if (query) {
-      const haystack = [
-        row.actor_correo,
-        row.actor_nombre,
-        row.accion,
-        row.modulo,
-        row.tipo_entidad,
-        row.registro_id,
-        row.registro_nombre,
-        row.resultado,
-        row.detalle
-      ]
-        .map(_accessText_)
-        .join(' ')
-        .toLocaleLowerCase();
-
-      if (!haystack.includes(query)) {
-        return false;
-      }
-    }
-
-    return true;
-  });
-
-  if (hasFilters) {
-    total = records.length;
+      total++;
+      _accessInsertAuditPageRecord_(records, row, maxRetained);
+    });
     records = records.slice(offset, offset + pageSize);
   }
 
   return {
     items: records.map(row => ({
       evento_id: _accessText_(row.evento_id),
-
       fecha_hora: (() => {
         const date = row.fecha_hora instanceof Date
           ? row.fecha_hora
           : new Date(row.fecha_hora);
-
         return Number.isNaN(date.getTime())
           ? _accessText_(row.fecha_hora)
           : date.toISOString();
       })(),
-
       actor_correo: _accessText_(row.actor_correo),
       actor_nombre: _accessText_(row.actor_nombre),
       accion: _accessUpper_(row.accion),
@@ -3049,22 +2996,13 @@ function getAccessAuditHistory(filters) {
       ambito_tipo: _accessText_(row.ambito_tipo),
       ambito_referencia_id: _accessText_(row.ambito_referencia_id)
     })),
-
     total,
     page,
     pageSize,
-
-    totalPages: Math.max(
-      1,
-      Math.ceil(total / pageSize)
-    )
+    totalPages: Math.max(1, Math.ceil(total / pageSize))
   };
 }
 
-/**
- * Convierte el contenido JSON de un evento de auditoría
- * en un valor utilizable para buscar sus relaciones.
- */
 function _accessParseAuditData_(value) {
   if (value === null || value === undefined || value === '') {
     return null;
@@ -3187,9 +3125,19 @@ function getAccessEntityHistory(payload) {
     });
   }
 
-  let records = [...candidates.values()].sort((a, b) =>
-    new Date(b.fecha_hora).getTime() - new Date(a.fecha_hora).getTime()
-  ).filter(event => {
+  const page = Math.max(
+    1,
+    Number.parseInt(payload.page, 10) || 1
+  );
+  const pageSize = Math.min(
+    100,
+    Math.max(1, Number.parseInt(payload.pageSize, 10) || 20)
+  );
+  const offset = (page - 1) * pageSize;
+  const retained = [];
+  let total = 0;
+
+  candidates.forEach(event => {
     const eventType = _accessUpper_(event.tipo_entidad);
     const eventId = _accessText_(event.registro_id);
     const eventModule = _accessUpper_(event.modulo);
@@ -3200,55 +3148,24 @@ function getAccessEntityHistory(payload) {
       entityType === 'SERVIDOR' &&
       !['DIRECTORIOS', 'INFORMACION_PERSONAL'].includes(eventModule)
     ) {
-      return false;
+      return;
     }
 
-    // Coincidencia directa por tipo e identificador.
-    if (
-      relatedTypes[entityType].includes(eventType) &&
-      eventId === recordId
-    ) {
-      return true;
-    }
+    let matches = relatedTypes[entityType].includes(eventType) &&
+      eventId === recordId;
 
-    // Las asignaciones de permisos guardan el rol
-    // como registro_id. Se comprueba el permiso dentro
-    // de los datos anteriores y posteriores.
-    if (
-      entityType === 'PERMISO' &&
-      eventType === 'ROL_PERMISO'
-    ) {
-      return _accessAuditContainsPermission_(
-        event,
-        recordId
-      );
+    // Los cambios de permisos pueden guardar el permiso dentro de los
+    // snapshots JSON del evento de relación rol-permiso.
+    if (!matches && entityType === 'PERMISO' && eventType === 'ROL_PERMISO') {
+      matches = _accessAuditContainsPermission_(event, recordId);
     }
+    if (!matches) return;
 
-    return false;
+    total++;
+    _accessInsertAuditPageRecord_(retained, event, offset + pageSize);
   });
 
-  const total = records.length;
-
-  const page = Math.max(
-    1,
-    Number.parseInt(payload.page, 10) || 1
-  );
-
-  const pageSize = Math.min(
-    100,
-    Math.max(
-      1,
-      Number.parseInt(payload.pageSize, 10) || 20
-    )
-  );
-
-  const offset = (page - 1) * pageSize;
-
-  records = records.slice(
-    offset,
-    offset + pageSize
-  );
-
+  const records = retained.slice(offset, offset + pageSize);
   return {
     items: records.map(event => {
       const date = event.fecha_hora instanceof Date

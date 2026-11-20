@@ -223,6 +223,84 @@ test('la actualización independiente de Tipos de ámbito compara el identificad
   assert.doesNotMatch(implementation, /tab === 'scopeTypes'/);
 });
 
+test('el historial sin filtros y por rango temporal usa la cola indexada con total exacto y orden por fecha', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  sandbox._accessRequirePermission_ = () => ({ authenticated: true });
+  sandbox._accessSecuritySource_ = sheet => ({ sheetName: sheet });
+  const indexedRecords = [
+    { evento_id: 'EVT_004', fecha_hora: new Date('2026-11-20T12:00:00Z'), actor_correo: 'a@sunarp.gob.pe' },
+    { evento_id: 'EVT_002', fecha_hora: new Date('2026-11-20T11:00:00Z'), actor_correo: 'b@sunarp.gob.pe' }
+  ];
+  let optionsSeen = null;
+  sandbox.SUNARPCore.listTailRecords = (_source, options) => {
+    optionsSeen = options;
+    return { records: indexedRecords, total: 23, offset: options.offset, limit: options.limit };
+  };
+  sandbox.SUNARPCore.listRecordsFromSourcesCached = () => {
+    throw new Error('No debe cargar Auditoria completa si Core ofrece cola indexada.');
+  };
+
+  const result = sandbox.getAccessAuditHistory({
+    desde: '2026-11-20',
+    hasta: '2026-11-20',
+    page: 2,
+    pageSize: 10
+  });
+  assert.equal(result.total, 23);
+  assert.equal(result.page, 2);
+  assert.equal(result.pageSize, 10);
+  assert.equal(result.totalPages, 3);
+  assert.equal(result.items.length, 2);
+  assert.equal(result.items[0].evento_id, 'EVT_004');
+  assert.equal(optionsSeen.idField, 'evento_id');
+  assert.equal(optionsSeen.dateField, 'fecha_hora');
+  assert.equal(optionsSeen.sortBy, 'fecha_hora');
+  assert.equal(optionsSeen.offset, 10);
+  assert.equal(optionsSeen.limit, 10);
+  assert.equal(optionsSeen.fromDate.getDate(), 20);
+  assert.equal(optionsSeen.fromDate.getHours(), 0);
+  assert.equal(optionsSeen.toDate.getDate(), 20);
+  assert.equal(optionsSeen.toDate.getHours(), 23);
+});
+
+test('el historial indexado conserva total y página vacía cuando el offset supera los eventos', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  sandbox._accessRequirePermission_ = () => ({ authenticated: true });
+  sandbox._accessSecuritySource_ = sheet => ({ sheetName: sheet });
+  sandbox.SUNARPCore.listTailRecords = (_source, options) => ({
+    records: [], total: 4, offset: options.offset, limit: options.limit
+  });
+  const result = sandbox.getAccessAuditHistory({ page: 3, pageSize: 2 });
+  assert.equal(result.total, 4);
+  assert.equal(result.totalPages, 2);
+  assert.equal(result.items.length, 0);
+  assert.equal(result.page, 3);
+});
+
+test('los filtros combinados de auditoría retienen solo la página cronológica y cuentan todos los candidatos válidos', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  sandbox._accessRequirePermission_ = () => ({ authenticated: true });
+  sandbox._accessSecuritySource_ = sheet => ({ sheetName: sheet });
+  const rows = [
+    { evento_id: 'EVT_001', fecha_hora: new Date('2026-11-20T09:00:00Z'), actor_correo: 'ana@sunarp.gob.pe', modulo: 'ACCESOS', accion: 'CREAR', resultado: 'OK' },
+    { evento_id: 'EVT_002', fecha_hora: new Date('2026-11-20T11:00:00Z'), actor_correo: 'ana@sunarp.gob.pe', modulo: 'ACCESOS', accion: 'CREAR', resultado: 'OK' },
+    { evento_id: 'EVT_003', fecha_hora: new Date('2026-11-20T10:00:00Z'), actor_correo: 'ana@sunarp.gob.pe', modulo: 'ACCESOS', accion: 'CREAR', resultado: 'OK' },
+    { evento_id: 'EVT_004', fecha_hora: new Date('2026-11-20T12:00:00Z'), actor_correo: 'otra@sunarp.gob.pe', modulo: 'ACCESOS', accion: 'CREAR', resultado: 'OK' }
+  ];
+  sandbox.SUNARPCore.searchRecordsByFields = () => ({ records: rows, total: rows.length });
+  const result = sandbox.getAccessAuditHistory({
+    actor: 'ana@sunarp.gob.pe',
+    desde: '2026-11-20',
+    hasta: '2026-11-20',
+    page: 2,
+    pageSize: 1
+  });
+  assert.equal(result.total, 3);
+  assert.equal(result.totalPages, 3);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].evento_id, 'EVT_003');
+});
+
 test('el historial conserva compatibilidad con SUNARP Core v9 mientras admite lectura de cola', () => {
   const start = accessSource.indexOf('function getAccessAuditHistory(filters) {');
   const end = accessSource.indexOf('function _accessParseAuditData_(', start);
@@ -405,7 +483,8 @@ test('el historial general evita leer la tabla completa cuando no hay filtros', 
   const end = accessSource.indexOf('function _accessParseAuditData_(', start);
   const implementation = accessSource.slice(start, end);
   assert.ok(implementation.includes('listTailRecords'));
-  assert.ok(implementation.includes('if (hasFilters)'));
+  assert.ok(implementation.includes("idField: 'evento_id'"));
+  assert.ok(implementation.includes('if (!hasNonDateFilters && hasIndexedTail)'));
 });
 test('el historial por entidad consulta candidatos mediante SUNARP Core sin leer toda Auditoria', () => {
   const start = accessSource.indexOf('function getAccessEntityHistory(payload) {');

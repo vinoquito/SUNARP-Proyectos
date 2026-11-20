@@ -37,6 +37,96 @@ test('getRecordById usa una búsqueda exacta y no carga la tabla completa', () =
   );
 });
 
+test('listTailRecords pagina por identificador y fecha, excluye filas vacías y lee solo dos columnas antes de la página', () => {
+  const headers = ['evento_id', 'fecha_hora', 'detalle'];
+  const values = [
+    ['EVT_001', new Date('2026-11-20T09:00:00Z'), 'primero'],
+    ['', new Date('2026-11-20T10:00:00Z'), 'fila sin id'],
+    ['EVT_002', new Date('2026-11-20T11:00:00Z'), 'segundo'],
+    ['EVT_003', new Date('2026-11-20T08:00:00Z'), 'tercero'],
+    ['EVT_004', new Date('2026-11-20T12:00:00Z'), 'cuarto']
+  ];
+  const reads = [];
+  const sheet = {
+    getLastRow: () => 6,
+    getLastColumn: () => 3,
+    getRange(row, column, numRows, numColumns) {
+      reads.push({ row, column, numRows, numColumns });
+      if (row === 1) return { getDisplayValues: () => [headers] };
+      const sourceRows = values.slice(row - 2, row - 2 + numRows);
+      return {
+        getValues: () => sourceRows.map(item => item.slice(column - 1, column - 1 + numColumns))
+      };
+    }
+  };
+  const sandbox = vm.createContext({
+    _coreOpenSource_: () => ({ config: { headerRow: 1, sheetName: 'Auditoria' }, sheet })
+  });
+  vm.runInContext(repositorySource, sandbox, { filename: 'DataRepository.js' });
+
+  const page = sandbox.listTailRecords(
+    { spreadsheetId: 'SECURITY', sheetName: 'Auditoria' },
+    {
+      idField: 'evento_id',
+      dateField: 'fecha_hora',
+      sortBy: 'fecha_hora',
+      offset: 0,
+      limit: 2,
+      requiredHeaders: ['evento_id', 'fecha_hora']
+    }
+  );
+  assert.equal(page.total, 4);
+  assert.equal(page.records.length, 2);
+  assert.deepEqual(Array.from(page.records, item => item.evento_id), ['EVT_004', 'EVT_002']);
+  assert.equal(page.hasMore, true);
+  const dataReads = reads.filter(item => item.row > 1);
+  assert.equal(dataReads.filter(item => item.numColumns === 1).length, 2);
+  assert.ok(dataReads.filter(item => item.numColumns === 1).every(item => item.numRows === 5));
+  // La lectura de filas completas se agrupa en ventanas de máximo 25 filas.
+  assert.ok(dataReads.filter(item => item.numColumns === 3).every(item => item.numRows <= 25));
+  assert.ok(dataReads.some(item => item.numColumns === 3));
+});
+
+test('listTailRecords permite filtros temporales exactos sin leer filas completas fuera de la página', () => {
+  const headers = ['evento_id', 'fecha_hora', 'detalle'];
+  const values = [
+    ['EVT_001', new Date('2026-11-19T23:59:59Z'), 'antes'],
+    ['EVT_002', new Date('2026-11-20T00:00:00Z'), 'inicio'],
+    ['EVT_003', new Date('2026-11-20T12:00:00Z'), 'medio'],
+    ['EVT_004', new Date('2026-11-21T00:00:00Z'), 'fin']
+  ];
+  const sheet = {
+    getLastRow: () => 5,
+    getLastColumn: () => 3,
+    getRange(row, column, numRows, numColumns) {
+      if (row === 1) return { getDisplayValues: () => [headers] };
+      return {
+        getValues: () => values.slice(row - 2, row - 2 + numRows)
+          .map(item => item.slice(column - 1, column - 1 + numColumns))
+      };
+    }
+  };
+  const sandbox = vm.createContext({
+    _coreOpenSource_: () => ({ config: { headerRow: 1, sheetName: 'Auditoria' }, sheet })
+  });
+  vm.runInContext(repositorySource, sandbox, { filename: 'DataRepository.js' });
+  const result = sandbox.listTailRecords(
+    { spreadsheetId: 'SECURITY', sheetName: 'Auditoria' },
+    {
+      idField: 'evento_id',
+      dateField: 'fecha_hora',
+      sortBy: 'fecha_hora',
+      fromDate: new Date('2026-11-20T00:00:00Z'),
+      toDate: new Date('2026-11-20T23:59:59Z'),
+      offset: 0,
+      limit: 10
+    }
+  );
+  assert.equal(result.total, 2);
+  assert.deepEqual(Array.from(result.records, item => item.evento_id), ['EVT_003', 'EVT_002']);
+  assert.equal(result.hasMore, false);
+});
+
 test('findRecordsByFields respeta matchCase=false al validar filas candidatas', () => {
   const headers = ['persona_id', 'correo_institucional'];
   const rows = [

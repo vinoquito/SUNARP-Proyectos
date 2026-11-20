@@ -141,6 +141,167 @@ function _coreIsEmptyRow_(row) {
 
 
 /**
+ * Recupera una página desde una fuente append-only usando únicamente las
+ * columnas de identificador/fecha durante el barrido. Lee las filas completas
+ * solamente para los registros que corresponden a la página solicitada.
+ *
+ * Se activa al declarar idField; el modo antiguo por filas físicas se conserva
+ * para no cambiar consumidores existentes que aún no declaran una clave.
+ */
+function _coreListTailByIndex_(context, options) {
+  const { config, sheet } = context;
+  const lastRow = sheet.getLastRow();
+  const lastColumn = sheet.getLastColumn();
+  if (!lastColumn || lastRow < config.headerRow) {
+    throw new Error('SUNARP Core: la fuente no contiene encabezados.');
+  }
+
+  const headers = sheet.getRange(
+    config.headerRow, 1, 1, lastColumn
+  ).getDisplayValues()[0].map(value => String(value).trim());
+  const headerMap = {};
+  headers.forEach((header, index) => {
+    if (!header || Object.prototype.hasOwnProperty.call(headerMap, header)) {
+      throw new Error(
+        'SUNARP Core: existen encabezados vacíos o duplicados en "' +
+        config.sheetName + '".'
+      );
+    }
+    headerMap[header] = index + 1;
+  });
+
+  const idField = String(options.idField || '').trim();
+  const dateField = String(options.dateField || options.sortBy || '').trim();
+  const sortBy = String(options.sortBy || dateField || '').trim();
+  const requiredHeaders = Array.isArray(options.requiredHeaders)
+    ? options.requiredHeaders
+    : [];
+  const needed = [idField, dateField, sortBy].filter(Boolean);
+  const missing = [...new Set(requiredHeaders.concat(needed))].filter(field =>
+    !Object.prototype.hasOwnProperty.call(headerMap, field)
+  );
+  if (missing.length) {
+    throw new Error(
+      'SUNARP Core: la fuente "' + config.sheetName +
+      '" no contiene las columnas requeridas: ' + missing.join(', ') + '.'
+    );
+  }
+  if (!idField) throw new Error('SUNARP Core: idField es obligatorio para la lectura de cola indexada.');
+
+  const offset = options.offset === undefined ? 0 : Number(options.offset);
+  const limit = options.limit === undefined ? 25 : Number(options.limit);
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error('SUNARP Core: offset debe ser un entero mayor o igual a cero.');
+  }
+  if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+    throw new Error('SUNARP Core: limit debe ser un entero entre 1 y 1000.');
+  }
+
+  const fromDate = options.fromDate === undefined || options.fromDate === null
+    ? null
+    : new Date(options.fromDate);
+  const toDate = options.toDate === undefined || options.toDate === null
+    ? null
+    : new Date(options.toDate);
+  if (fromDate && Number.isNaN(fromDate.getTime())) {
+    throw new Error('SUNARP Core: fromDate no contiene una fecha válida.');
+  }
+  if (toDate && Number.isNaN(toDate.getTime())) {
+    throw new Error('SUNARP Core: toDate no contiene una fecha válida.');
+  }
+  if ((fromDate || toDate) && !dateField) {
+    throw new Error('SUNARP Core: dateField es obligatorio para filtrar por rango temporal.');
+  }
+  if (fromDate && toDate && fromDate > toDate) {
+    throw new Error('SUNARP Core: fromDate no puede ser posterior a toDate.');
+  }
+
+  const dataStartRow = config.headerRow + 1;
+  const rowCount = Math.max(0, lastRow - config.headerRow);
+  if (!rowCount) {
+    return { records: [], total: 0, offset, limit, hasMore: false };
+  }
+
+  const idValues = sheet.getRange(
+    dataStartRow, headerMap[idField], rowCount, 1
+  ).getValues();
+  const dateColumn = dateField ? headerMap[dateField] : 0;
+  const dateValues = dateColumn
+    ? sheet.getRange(dataStartRow, dateColumn, rowCount, 1).getValues()
+    : null;
+
+  const maxRetained = offset + limit;
+  const selected = [];
+  let total = 0;
+  const sortTimestamp = value => {
+    if (value instanceof Date) return value.getTime();
+    if (value === null || value === undefined || value === '') return NaN;
+    const parsed = new Date(value).getTime();
+    return Number.isNaN(parsed) ? NaN : parsed;
+  };
+  const compare = (left, right) => {
+    const leftTime = left.sortTimestamp;
+    const rightTime = right.sortTimestamp;
+    if (leftTime !== rightTime) {
+      if (Number.isNaN(leftTime)) return 1;
+      if (Number.isNaN(rightTime)) return -1;
+      return rightTime - leftTime;
+    }
+    return right.rowNumber - left.rowNumber;
+  };
+
+  for (let index = 0; index < rowCount; index++) {
+    const id = idValues[index] && idValues[index][0];
+    if (id === null || id === undefined || String(id).trim() === '') continue;
+
+    const dateValue = dateValues ? dateValues[index][0] : null;
+    const timestamp = dateField ? sortTimestamp(dateValue) : NaN;
+    if ((fromDate || toDate) && Number.isNaN(timestamp)) continue;
+    if (fromDate && timestamp < fromDate.getTime()) continue;
+    if (toDate && timestamp > toDate.getTime()) continue;
+
+    total++;
+    const candidate = {
+      rowNumber: dataStartRow + index,
+      sortTimestamp: sortBy ? timestamp : NaN
+    };
+    if (!sortBy) candidate.sortTimestamp = candidate.rowNumber;
+
+    let low = 0;
+    let high = selected.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (compare(candidate, selected[middle]) < 0) high = middle;
+      else low = middle + 1;
+    }
+    if (low >= maxRetained && selected.length >= maxRetained) continue;
+    selected.splice(low, 0, candidate);
+    if (selected.length > maxRetained) selected.pop();
+  }
+
+  const pagePointers = selected.slice(offset, offset + limit);
+  const rowNumbers = pagePointers.map(item => item.rowNumber);
+  const rowsByNumber = rowNumbers.length
+    ? _coreReadCandidateRows_(
+        sheet, rowNumbers, lastColumn, dataStartRow, 25
+      )
+    : new Map();
+  const records = rowNumbers.map(rowNumber => {
+    const values = rowsByNumber.get(rowNumber);
+    if (!values) return null;
+    return _coreRowToRecord_(headers, values);
+  }).filter(Boolean);
+
+  return {
+    records,
+    total,
+    offset,
+    limit,
+    hasMore: total > offset + records.length
+  };
+}
+
+/**
  * Compara dos valores de una columna.
  */
 
@@ -477,12 +638,18 @@ function listRecords(source, options) {
 
 
 /**
- * Lee una ventana desde el final de una fuente append-only.
- * offset se cuenta desde la última fila de datos (0 = más recientes).
+ * Lee una página de una fuente append-only.
+ *
+ * Modo legado (sin idField): usa filas físicas desde el final de la hoja.
+ * Modo indexado (con idField): cuenta solo registros con identificador,
+ * puede filtrar por fromDate/toDate usando dateField, ordena por fecha
+ * descendente y recupera filas completas en ventanas pequeñas solo para la
+ * página solicitada. El barrido inicial lee las columnas de índice y fecha.
  */
 function listTailRecords(source, options) {
   options = options || {};
   const context = _coreOpenSource_(source);
+  if (options.idField) return _coreListTailByIndex_(context, options);
   const config = context.config;
   const sheet = context.sheet;
   const lastRow = sheet.getLastRow();

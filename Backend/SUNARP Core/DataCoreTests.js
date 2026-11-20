@@ -505,6 +505,64 @@ function runCoreSelfTests_() {
       'La lectura de cola pagina hacia registros anteriores sin leer la tabla completa.'
     );
 
+    // 8.4. Consulta indexada de Auditoria: el total excluye filas vacías y el
+    // orden corresponde a fecha_hora, no a asumir que el append fue cronológico.
+    const auditSheet = testSpreadsheet.insertSheet('auditoria');
+    auditSheet.getRange(1, 1, 1, 3).setValues([[
+      'evento_id', 'fecha_hora', 'detalle'
+    ]]);
+    auditSheet.getRange(2, 1, 5, 3).setValues([
+      ['EVT_001', new Date('2026-11-20T09:00:00Z'), 'primero'],
+      ['', new Date('2026-11-20T10:00:00Z'), 'sin identificador'],
+      ['EVT_002', new Date('2026-11-20T11:00:00Z'), 'segundo'],
+      ['EVT_003', new Date('2026-11-20T08:00:00Z'), 'tercero'],
+      ['EVT_004', new Date('2026-11-20T12:00:00Z'), 'cuarto']
+    ]);
+    SpreadsheetApp.flush();
+    const auditSource = Object.assign({}, source, { sheetName: 'auditoria' });
+    const indexedTail = listTailRecords(auditSource, {
+      idField: 'evento_id',
+      dateField: 'fecha_hora',
+      sortBy: 'fecha_hora',
+      offset: 0,
+      limit: 2,
+      requiredHeaders: ['evento_id', 'fecha_hora']
+    });
+    assert(
+      indexedTail.total === 4 &&
+      indexedTail.records.length === 2 &&
+      indexedTail.records[0].evento_id === 'EVT_004' &&
+      indexedTail.records[1].evento_id === 'EVT_002' &&
+      indexedTail.hasMore,
+      'La cola indexada cuenta solo eventos con ID y ordena por fecha descendente.'
+    );
+    const indexedDateRange = listTailRecords(auditSource, {
+      idField: 'evento_id',
+      dateField: 'fecha_hora',
+      sortBy: 'fecha_hora',
+      fromDate: new Date('2026-11-20T08:30:00Z'),
+      toDate: new Date('2026-11-20T11:30:00Z'),
+      offset: 0,
+      limit: 10
+    });
+    assert(
+      indexedDateRange.total === 2 &&
+      indexedDateRange.records[0].evento_id === 'EVT_002' &&
+      indexedDateRange.records[1].evento_id === 'EVT_001',
+      'La consulta por rango temporal aplica límites inclusivos y conserva orden cronológico.'
+    );
+
+    const invalidTailDateRange = () => listTailRecords(auditSource, {
+      idField: 'evento_id',
+      fromDate: new Date('2026-11-20T00:00:00Z'),
+      offset: 0,
+      limit: 10
+    });
+    expectError(
+      invalidTailDateRange,
+      'La consulta temporal indexada exige dateField explícito o sortBy como fecha.'
+    );
+
     // 9. Probar duplicidad de identificadores.
     expectError(() => {
       insertRecord(
