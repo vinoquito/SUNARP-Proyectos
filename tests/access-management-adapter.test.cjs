@@ -1474,12 +1474,12 @@ test('el historial por rango temporal devuelve página vacía y total cero sin r
   });
 
   assert.equal(request.sheet, 'Auditoria');
-  assert.ok(request.options.fromDate instanceof Date);
-  assert.ok(request.options.toDate instanceof Date);
+  assert.ok(Number.isFinite(request.options.fromDate.getTime()));
+  assert.ok(Number.isFinite(request.options.toDate.getTime()));
   assert.equal(request.options.offset, 20);
   assert.equal(request.options.limit, 10);
   assert.equal(result.total, 0);
   assert.equal(result.totalPages, 1);
-  assert.deepEqual(result.items, []);
+  assert.equal(result.items.length, 0);
   assert.equal(fullReads, 0);
 });
