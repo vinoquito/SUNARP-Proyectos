@@ -994,6 +994,8 @@ function createAssignmentWriteSandbox(context) {
   const writes = [];
   vmContext._directoryAuthorizationContext_ = () => ({ auth: {}, structures: [] });
   vmContext._directoryLoadContext_ = () => context;
+  vmContext._directoryFindAuthorizedAssignmentById_ = (_context, _authorization, id) =>
+    (context.asignaciones || []).find(item => String(item.asignacion_id) === String(id)) || null;
   vmContext._directorySource_ = name => name;
   vmContext._directoryInvalidateCache_ = () => {};
   vmContext._accessRecordIsAllowed_ = () => true;
