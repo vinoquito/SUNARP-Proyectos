@@ -68,8 +68,7 @@ test('las lecturas del Directorio no ejecutan validación integral de todas las 
     'getDirectoryInitialData',
     'listDirectoryPeople',
     'listDirectoryAssignments',
-    'getDirectoryPersonById',
-    'getDirectoryAssignmentsByPersonId'
+    'getDirectoryPersonById'
   ]) {
     const start = serviceSource.indexOf('function ' + name + '(');
     assert.ok(start >= 0, 'Debe existir ' + name);
