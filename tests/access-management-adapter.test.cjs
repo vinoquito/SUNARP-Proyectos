@@ -157,6 +157,7 @@ function createAdapterSandbox(data, email = 'prueba@sunarp.gob.pe') {
       result[request.key] = data[key] || [];
       return result;
     }, {}),
+    getSourceInfoCached: () => ({ headers: ['id', 'name'] }),
     resolveAuthorizationContext: value => sandbox.resolveAuthorizationContext(value),
     authorizationHasPermission: (...args) => sandbox.authorizationHasPermission(...args),
     authorizationIsRecordInScope: (...args) => sandbox.authorizationIsRecordInScope(...args)
