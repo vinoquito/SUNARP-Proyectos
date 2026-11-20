@@ -1382,3 +1382,104 @@ test('la autorización ordinaria consulta solo relaciones activas y proyecta los
   );
   assert.equal(calls.some(item => item.sheet === 'Usuarios' && item.filters.active === true), false);
 });
+
+
+test('el historial de auditoría combina actor, módulo, acción, resultado, registro y fechas con total y orden exactos', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  sandbox._accessRequirePermission_ = () => ({ authenticated: true });
+  sandbox._accessSecuritySource_ = sheet => ({ sheetName: sheet });
+  const event = (id, date, actor, action, result, module, recordId, detail) => ({
+    evento_id: id,
+    fecha_hora: new Date(date),
+    actor_correo: actor,
+    actor_nombre: actor === 'ana@sunarp.gob.pe' ? 'Ana' : 'Bruno',
+    accion: action,
+    modulo: module,
+    tipo_entidad: 'USUARIO',
+    registro_id: recordId,
+    registro_nombre: 'Persona',
+    resultado: result,
+    detalle,
+    datos_antes: '',
+    datos_despues: '',
+    ambito_modulo: '',
+    ambito_tipo: '',
+    ambito_referencia_id: ''
+  });
+  const candidates = [
+    event('EVT_10', '2026-11-19T10:00:00Z', 'ana@sunarp.gob.pe', 'ACTUALIZAR', 'OK', 'ACCESOS', 'PER_117', 'Actualización correcta'),
+    event('EVT_11', '2026-11-19T12:00:00Z', 'ana@sunarp.gob.pe', 'ACTUALIZAR', 'OK', 'ACCESOS', 'PER_117', 'Actualización correcta'),
+    event('EVT_12', '2026-11-19T13:00:00Z', 'ana@sunarp.gob.pe', 'CREAR', 'OK', 'ACCESOS', 'PER_117', 'Actualización correcta'),
+    event('EVT_13', '2026-11-18T13:00:00Z', 'ana@sunarp.gob.pe', 'ACTUALIZAR', 'OK', 'ACCESOS', 'PER_117', 'Actualización correcta'),
+    event('EVT_14', '2026-11-19T14:00:00Z', 'ana@sunarp.gob.pe', 'ACTUALIZAR', 'ERROR', 'ACCESOS', 'PER_117', 'Actualización fallida'),
+    event('EVT_15', '2026-11-19T15:00:00Z', 'bruno@sunarp.gob.pe', 'ACTUALIZAR', 'OK', 'ACCESOS', 'PER_117', 'Actualización correcta'),
+    event('EVT_16', '2026-11-19T16:00:00Z', 'ana@sunarp.gob.pe', 'ACTUALIZAR', 'OK', 'DIRECTORIOS', 'PER_117', 'Actualización correcta'),
+    event('EVT_17', '2026-11-19T17:00:00Z', 'ana@sunarp.gob.pe', 'ACTUALIZAR', 'OK', 'ACCESOS', 'PER_999', 'Actualización correcta')
+  ];
+  let search = null;
+  let fullReads = 0;
+  sandbox.SUNARPCore.searchRecordsByFields = (source, query, fields, options) => {
+    search = { source: source.sheetName, query, fields: Array.from(fields), matchCase: options.matchCase };
+    return { records: candidates, total: candidates.length };
+  };
+  sandbox.SUNARPCore.listRecordsFromSourcesCached = () => {
+    fullReads++;
+    throw new Error('No debe leerse toda Auditoria para filtros combinados.');
+  };
+
+  const result = sandbox.getAccessAuditHistory({
+    actor: 'ana@sunarp.gob.pe',
+    modulo: 'ACCESOS',
+    accion: 'ACTUALIZAR',
+    resultado: 'OK',
+    registro_id: 'PER_',
+    search: 'actualización',
+    desde: '2026-11-19',
+    hasta: '2026-11-19',
+    page: 2,
+    pageSize: 1
+  });
+
+  assert.equal(search.source, 'Auditoria');
+  assert.equal(search.query, 'ana@sunarp.gob.pe');
+  assert.equal(search.fields.join(','), 'actor_correo');
+  assert.equal(search.matchCase, false);
+  assert.equal(result.total, 2);
+  assert.equal(result.totalPages, 2);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].evento_id, 'EVT_10');
+  assert.equal(fullReads, 0);
+});
+
+test('el historial por rango temporal devuelve página vacía y total cero sin recurrir a lectura integral', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  sandbox._accessRequirePermission_ = () => ({ authenticated: true });
+  sandbox._accessSecuritySource_ = sheet => ({ sheetName: sheet });
+  let request = null;
+  let fullReads = 0;
+  sandbox.SUNARPCore.listTailRecords = (source, options) => {
+    request = { sheet: source.sheetName, options };
+    return { records: [], total: 0 };
+  };
+  sandbox.SUNARPCore.listRecordsFromSourcesCached = () => {
+    fullReads++;
+    throw new Error('No debe leerse toda Auditoria para un rango temporal.');
+  };
+
+  const result = sandbox.getAccessAuditHistory({
+    desde: '2026-11-19',
+    hasta: '2026-11-19',
+    page: 3,
+    pageSize: 10
+  });
+
+  assert.equal(request.sheet, 'Auditoria');
+  assert.ok(request.options.fromDate instanceof Date);
+  assert.ok(request.options.toDate instanceof Date);
+  assert.equal(request.options.offset, 20);
+  assert.equal(request.options.limit, 10);
+  assert.equal(result.total, 0);
+  assert.equal(result.totalPages, 1);
+  assert.deepEqual(result.items, []);
+  assert.equal(fullReads, 0);
+});
