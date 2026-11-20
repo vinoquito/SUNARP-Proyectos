@@ -180,6 +180,7 @@ function _coreQueryAssertHeaders_(source, requiredHeaders) {
  * a cada candidato antes de calcular el total y la página.
  */
 function queryRecords(source, options) {
+  const queryStartedAt = Date.now();
   options = options || {};
   const authorization = options.authorization;
   const validated = _coreQueryValidateAuthorization_(authorization);
@@ -251,7 +252,18 @@ function queryRecords(source, options) {
   if (cacheKey) {
     const cached = getCachedValue(cacheKey);
     if (cached && cached.version === 1 && Array.isArray(cached.records)) {
-      return Object.assign({}, cached, { cacheHit: true });
+      const cacheResult = Object.assign({}, cached, {
+        cacheHit: true,
+        durationMs: Date.now() - queryStartedAt
+      });
+      console.log('[SUNARP Core] Consulta autorizada: resultado en caché', {
+        sheet: _coreNormalizeSourceConfig_(source).sheetName,
+        durationMs: cacheResult.durationMs,
+        total: cacheResult.total,
+        offset: cacheResult.offset,
+        limit: cacheResult.limit
+      });
+      return cacheResult;
     }
   }
 
@@ -267,8 +279,9 @@ function queryRecords(source, options) {
       )
     : null;
   let candidateRows = candidateCacheKey ? getCachedValue(candidateCacheKey) : null;
+  const candidateCacheHit = Array.isArray(candidateRows);
 
-  if (!Array.isArray(candidateRows)) {
+  if (!candidateCacheHit) {
     const candidateMap = new Map();
     groups.forEach(group => {
       const fields = Object.keys(group);
@@ -353,6 +366,7 @@ function queryRecords(source, options) {
     records.push(record);
   });
 
+  const authorizedCount = records.length;
   records.sort((a, b) => {
     const compared = _coreCompareValues_(a[sortBy], b[sortBy]) ||
       _coreCompareValues_(a[idField], b[idField]);
@@ -375,7 +389,11 @@ function queryRecords(source, options) {
   const result = {
     version: 1, records: page, total, offset, limit,
     hasMore: offset + page.length < total,
-    cacheHit: false
+    cacheHit: false,
+    candidateCacheHit,
+    candidateCount: candidateRows.length,
+    authorizedCount,
+    durationMs: Date.now() - queryStartedAt
   };
   if (cacheKey) {
     try {
@@ -384,5 +402,15 @@ function queryRecords(source, options) {
       console.warn('[SUNARP Core] No se pudo almacenar el resultado de consulta:', error.message);
     }
   }
+  console.log('[SUNARP Core] Consulta autorizada:', {
+    sheet: _coreNormalizeSourceConfig_(source).sheetName,
+    candidateCacheHit,
+    candidateCount: result.candidateCount,
+    authorizedCount,
+    total,
+    offset,
+    limit,
+    durationMs: result.durationMs
+  });
   return result;
 }
