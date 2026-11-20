@@ -546,3 +546,9 @@ Para cerrar el paso a v10 es necesario:
 7. Solo después preparar el cambio de `appsscript.json` del Gestor de 9 a 10 y probarlo mediante el mecanismo de pruebas de Gestor, sin actualizar el despliegue productivo.
 
 No publicar ni desplegar automáticamente aplicaciones de producción. El conector GitHub utilizado para esta auditoría no expone el historial de versiones ni los despliegues del proyecto Apps Script; por tanto, no permite afirmar el contenido efectivo de la versión publicada 9, la versión más alta de Core ni que v10 ya exista. También debe comprobarse en Apps Script si los triggers que eventualmente invalidan hojas están realmente instalados, quién es su propietario y qué eventos/archivos cubren; los triggers no se heredan automáticamente de la biblioteca. Esas comprobaciones deben hacerse antes de cambiar el manifiesto del Gestor.
+
+## 12. Referencias oficiales de Apps Script
+
+- [Bibliotecas de Apps Script](https://developers.google.com/apps-script/guides/libraries): acceso por ID y versión, creación/compartición de bibliotecas, recursos compartidos/no compartidos, alcance de `Cache`/`Lock`/`Triggers` y advertencia de sobrecarga de ejecución de bibliotecas.
+- [CacheService](https://developers.google.com/apps-script/reference/cache/cache-service?hl=es): alcance de `getScriptCache()` y advertencia de que los datos pueden ser desalojados antes de su expiración.
+- [Versiones de Apps Script](https://developers.google.com/apps-script/guides/versions?hl=es-419): diferencia entre versión inmutable e implementación, creación y consulta del historial de versiones.
