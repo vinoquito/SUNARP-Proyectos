@@ -180,6 +180,16 @@ test('el historial conserva compatibilidad con SUNARP Core v9 mientras admite le
   assert.ok(implementation.includes('listTailRecords'));
 });
 
+test('la tabla de usuarios usa filtros aplicados y reinicia su página al actualizar', () => {
+  const start = accessUiSource.indexOf('function renderUsers(host) {');
+  const end = accessUiSource.indexOf('function openUserModal(row) {', start);
+  const implementation = accessUiSource.slice(start, end);
+  assert.ok(implementation.includes('appliedSedeId = siteSelect.value'));
+  assert.ok(implementation.includes('appliedRoleId = roleSelect.value'));
+  assert.ok(implementation.includes('const sedeId = appliedSedeId'));
+  assert.ok(implementation.includes('updateApplyState();\\n      // Recrear'));
+});
+
 test('la consulta de usuarios aplica paginación en servidor y limita el payload', () => {
   const start = accessSource.indexOf('function getAccessUsers(filters) {');
   const end = accessSource.indexOf('function getAccessAuditHistory(', start);
