@@ -304,23 +304,6 @@ const DirectoryPage = (() => {
   }
 
 
-
-    const select = getElements().sedeFilter;
-
-    if (!select || !state.catalogs) return;
-
-    const sedes = (state.catalogs.sedes || []).slice().sort(sortByName);
-    updateFilterOptions(select, 'Todas las sedes', sedes);
-
-    const visible = state.catalogs.filterVisibility
-      ? state.catalogs.filterVisibility.sede === true
-      : sedes.length > 1;
-    const wrapper = select.closest('.sunarp-filter');
-    if (wrapper) wrapper.hidden = !visible;
-    if (!visible) select.value = '';
-  }
-
-
   /**
    * Cargos utilizados por los registros que cumplen
    * los filtros de sede y jerarquía.
@@ -337,23 +320,6 @@ const DirectoryPage = (() => {
     updateFilterOptions(select, 'Todos los cargos', cargos);
 
     const visible = cargos.length > 1;
-    const wrapper = select.closest('.sunarp-filter');
-    if (wrapper) wrapper.hidden = !visible;
-    if (!visible) select.value = '';
-  }
-
-
-
-    const select = getElements().cargoFilter;
-
-    if (!select || !state.catalogs) return;
-
-    const cargos = (state.catalogs.cargos || []).slice().sort(sortByName);
-    updateFilterOptions(select, 'Todos los cargos', cargos);
-
-    const visible = state.catalogs.filterVisibility
-      ? state.catalogs.filterVisibility.cargo === true
-      : cargos.length > 1;
     const wrapper = select.closest('.sunarp-filter');
     if (wrapper) wrapper.hidden = !visible;
     if (!visible) select.value = '';
