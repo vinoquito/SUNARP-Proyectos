@@ -510,10 +510,14 @@ function _accessGetAuthContext_() {
     throw new Error('No se pudo identificar tu cuenta institucional. Verifica la implementación de la aplicación web.');
   }
 
-  const identityResult = SUNARPCore.findRecordsByFields(
+  const identityResult = SUNARPCore.resolveIdentity(
     _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
-    { correo_institucional: email },
-    { searchField: 'correo_institucional', matchCase: false, requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people }
+    email,
+    {
+      emailField: 'correo_institucional',
+      idField: 'persona_id',
+      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people
+    }
   );
   const matchingPeople = identityResult.records;
 
