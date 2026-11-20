@@ -724,3 +724,92 @@ function removeCachedValues(keys) {
     removedChunks: removalKeys.length - fullKeys.length
   };
 }
+
+
+/**
+ * Recupera o construye un valor derivado de varias fuentes.
+ * La clave incorpora la generación efectiva de cada fuente y sus dependencias.
+ * El builder solo se ejecuta cuando no existe una entrada vigente.
+ * El consumidor debe comprobar su autorización antes de invocar esta función.
+ */
+function getOrBuildCachedValue(key, sources, builder, expirationSeconds) {
+  const logicalKey = String(key || '').trim();
+  if (!logicalKey || logicalKey.length > 180) {
+    throw new Error('SUNARP Core: la clave lógica del valor derivado debe tener entre 1 y 180 caracteres.');
+  }
+  if (!Array.isArray(sources) || !sources.length) {
+    throw new Error('SUNARP Core: debes indicar las fuentes que determinan el valor derivado.');
+  }
+  if (typeof builder !== 'function') {
+    throw new Error('SUNARP Core: builder debe ser una función.');
+  }
+
+  const ttl = expirationSeconds === undefined ? 300 : Number(expirationSeconds);
+  if (!Number.isInteger(ttl) || ttl < 1 || ttl > _CORE_CACHE_MAX_TTL_) {
+    throw new Error('SUNARP Core: el TTL del valor derivado debe estar entre 1 y 21600 segundos.');
+  }
+
+  const sourceConfigs = sources.map(source => _coreNormalizeSourceConfig_(source));
+  const readGenerations = () => sourceConfigs.map((config, index) => {
+    const generation = _coreGetSourceGeneration_(sources[index]);
+    if (!generation) return null;
+    return {
+      spreadsheetId: config.spreadsheetId,
+      sheetName: config.sheetName,
+      headerRow: config.headerRow,
+      generation
+    };
+  });
+
+  const before = readGenerations();
+  const cacheable = before.every(Boolean);
+  const cacheKey = cacheable
+    ? 'derived:v1:' + _coreCacheDigest_(logicalKey + '|' + JSON.stringify(before))
+    : null;
+
+  if (cacheKey) {
+    const cached = getCachedValue(cacheKey);
+    if (cached && cached.version === 1 &&
+        Object.prototype.hasOwnProperty.call(cached, 'value')) {
+      return { value: cached.value, cacheHit: true, cacheStored: true };
+    }
+  }
+
+  const value = builder();
+  if (value === undefined) {
+    throw new Error('SUNARP Core: builder no puede devolver undefined.');
+  }
+  if (!cacheable) {
+    return {
+      value,
+      cacheHit: false,
+      cacheStored: false,
+      cacheReason: 'source-generation-unavailable'
+    };
+  }
+
+  const after = readGenerations();
+  if (JSON.stringify(before) !== JSON.stringify(after)) {
+    throw new Error(
+      'SUNARP Core: una de las fuentes cambió durante la construcción del valor derivado; vuelve a solicitarlo.'
+    );
+  }
+
+  try {
+    const stored = putCachedValue(cacheKey, { version: 1, value }, ttl);
+    return {
+      value,
+      cacheHit: false,
+      cacheStored: Boolean(stored && stored.success === true),
+      cacheReason: stored && stored.success === true ? '' : stored && stored.reason || 'cache-unavailable'
+    };
+  } catch (error) {
+    console.warn('[SUNARP Core] No se pudo conservar el valor derivado en caché:', error.message);
+    return {
+      value,
+      cacheHit: false,
+      cacheStored: false,
+      cacheReason: 'cache-write-failed'
+    };
+  }
+}

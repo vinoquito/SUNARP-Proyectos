@@ -1,4 +1,4 @@
-# Contrato público de SUNARP Core — base para v10
+# Contrato público de SUNARP Core — extensión de fuente para v11 (base v10)
 
 **Estado:** Fase 1 completada para la arquitectura integrada de SUNARP Core y Gestor de intranet SUNARP. Core v10 está publicada como biblioteca, las pruebas de Core y las 192 pruebas de regresión del repositorio fueron satisfactorias, el Gestor fue sincronizado con la versión 10 y la validación funcional inicial confirmó autenticación y carga de Información de personal. La auditoría confirmó que no hay activadores instalados en Core ni en Gestor; las ediciones manuales requieren invalidación explícita y esta limitación queda aceptada/documentada. Los demás proyectos Backend aún no unificados quedan fuera del alcance de esta fase.  
 **Biblioteca:** `1mDzO7uTarQCKYpS5U7pMv5go0Wh76k3JoIh5GvxWPfU0zoUG7Jfp17tD`  
@@ -41,7 +41,7 @@ Las respuestas de lectura suelen utilizar `{ records, total }`; las lecturas pag
 
 ## 2. Inventario de la API pública
 
-En el HEAD auditado se identificaron **31 funciones globales públicas**. La lista siguiente se ha obtenido de las declaraciones de los archivos de Core, excluyendo los auxiliares privados.
+En el HEAD auditado se identificaron **32 funciones globales públicas**. La lista siguiente se ha obtenido de las declaraciones de los archivos de Core, excluyendo los auxiliares privados.
 
 | Módulo | Función pública | Firma |
 |---|---|---|
@@ -56,6 +56,7 @@ En el HEAD auditado se identificaron **31 funciones globales públicas**. La lis
 | Repositorio compuesto | `runSourceWriteBatch` | `(sources, writer)` |
 | Caché | `invalidateSourceCache` | `(source)` |
 | Caché | `getCachedValue` | `(key)` |
+| Caché | `getOrBuildCachedValue` | `(key, sources, builder, expirationSeconds)` |
 | Caché | `putCachedValue` | `(key, value, expirationSeconds)` |
 | Caché | `removeCachedValue` | `(key)` |
 | Caché | `removeCachedValues` | `(keys)` |
@@ -455,6 +456,20 @@ Bajo bloqueo, genera una nueva generación de la fuente e invalida metadatos/ins
 
 Los consumidores deben comprobar `success` en tareas administrativas críticas. Las escrituras implementadas por Core llaman a la invalidación internamente y propagan un error explícito si esta falla después de que la escritura pudo haberse aplicado; en ese caso no se debe repetir la escritura a ciegas, sino comprobar el registro y ejecutar `invalidateSourceCache(source)`. La propia invalidación intenta retirar la generación anterior cuando no puede publicar una nueva, pero esta limpieza es best-effort si CacheService está indisponible.
 
+
+### 7.5 `getOrBuildCachedValue(key, sources, builder, expirationSeconds)`
+
+Obtiene un valor derivado de varias fuentes o ejecuta `builder` cuando no existe una entrada vigente.
+
+- `key`: clave lógica estable del conjunto derivado (1..180 caracteres).
+- `sources`: arreglo no vacío de descriptores de fuente. La clave efectiva incorpora la identidad de cada fuente y su generación, incluidas las dependencias declaradas.
+- `builder`: función sin argumentos que devuelve el valor derivado. Solo se ejecuta cuando hay un fallo de caché o no se pueden obtener generaciones.
+- `expirationSeconds`: TTL opcional entre 1 y 21600 segundos; por defecto 300.
+
+Respuesta: `{ value, cacheHit, cacheStored, cacheReason? }`. Si una fuente cambia durante la construcción, la función descarta el resultado y lanza un error para que el consumidor vuelva a solicitarlo. Si no puede obtener una generación, ejecuta el builder sin almacenar el resultado. Un fallo de escritura de caché no invalida el valor recién construido.
+
+La función no ejecuta consultas ni aplica permisos por sí misma. El consumidor debe comprobar su autorización antes de invocarla y declarar todas las fuentes de las que depende el valor. La invalidación de cualquiera de ellas vuelve inaccesible la entrada derivada.
+
 ## 8. Validación genérica
 
 ### 8.1 `validateRecord(record, schema, options)`
@@ -564,3 +579,8 @@ No se actualizó ningún despliegue productivo. Core v10 permanece como bibliote
 - [Bibliotecas de Apps Script](https://developers.google.com/apps-script/guides/libraries): acceso por ID y versión, creación/compartición de bibliotecas, recursos compartidos/no compartidos, alcance de `Cache`/`Lock`/`Triggers` y advertencia de sobrecarga de ejecución de bibliotecas.
 - [CacheService](https://developers.google.com/apps-script/reference/cache/cache-service?hl=es): alcance de `getScriptCache()` y advertencia de que los datos pueden ser desalojados antes de su expiración.
 - [Versiones de Apps Script](https://developers.google.com/apps-script/guides/versions?hl=es-419): diferencia entre versión inmutable e implementación, creación y consulta del historial de versiones.
+
+
+## Nota de publicación de la extensión
+
+`getOrBuildCachedValue` forma parte de la fuente de esta rama, pero no de la biblioteca v10 ya publicada. Para habilitar el nuevo listado de usuarios se requiere publicar una nueva versión de SUNARP Core que incluya esta función y actualizar después la dependencia del Gestor a esa versión. La referencia del manifiesto se mantiene en v10 hasta que la nueva versión exista realmente.

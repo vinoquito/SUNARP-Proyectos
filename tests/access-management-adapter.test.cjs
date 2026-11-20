@@ -183,6 +183,7 @@ function createAdapterSandbox(data, email = 'prueba@sunarp.gob.pe') {
       );
       return { records, total: records.length };
     },
+    getOrBuildCachedValue: (_key, _sources, builder) => ({ value: builder(), cacheHit: false, cacheStored: false }),
     listRecordsFromSourcesCached: requests => requests.reduce((result, request) => {
       const key = dataKeyBySheet[request.source.sheetName] || request.source.sheetName;
       result[request.key] = data[key] || [];
@@ -315,7 +316,7 @@ test('los filtros combinados de auditoría retienen solo la página cronológica
   assert.equal(result.items[0].evento_id, 'EVT_003');
 });
 
-test('getAccessUsers calcula total exacto y devuelve páginas ordenadas sin construir un array global ordenado', () => {
+test('getAccessUsers reutiliza un índice ordenado por generación y conserva total exacto por página', () => {
   const sandbox = createAdapterSandbox(makeSecurityData());
   sandbox._accessRequirePermission_ = () => ({ authenticated: true });
   const accounts = [];
@@ -337,6 +338,15 @@ test('getAccessUsers calcula total exacto y devuelve páginas ordenadas sin cons
       correo_institucional: 'persona' + index + '@sunarp.gob.pe'
     });
   }
+  const materialized = new Map();
+  let materializationCount = 0;
+  sandbox.SUNARPCore.getOrBuildCachedValue = (key, sources, builder) => {
+    if (materialized.has(key)) return { value: materialized.get(key), cacheHit: true, cacheStored: true };
+    materializationCount++;
+    const value = builder();
+    materialized.set(key, value);
+    return { value, cacheHit: false, cacheStored: true };
+  };
   sandbox._accessFindSecurityRecords_ = (sheet, field, values) => {
     if (sheet === 'Usuarios') return accounts;
     if (sheet === 'UsuarioRol' && field === 'rol_id') return assignments;
@@ -361,6 +371,10 @@ test('getAccessUsers calcula total exacto y devuelve páginas ordenadas sin cons
   assert.equal(result.items[0].persona_id, 'PER_011');
   assert.equal(result.items[0].nombre_completo, 'Persona 011');
   assert.equal(result.items[9].persona_id, 'PER_020');
+  const filtered = sandbox.getAccessUsers({ rol_id: 'ROL_EDITOR', search: 'Persona 01', page: 1, pageSize: 10 });
+  assert.equal(filtered.total, 10);
+  assert.equal(filtered.items[0].persona_id, 'PER_010');
+  assert.equal(materializationCount, 1, 'Cambiar página o búsqueda no debe reconstruir las relaciones.');
 });
 
 test('la autorización ordinaria no expone getters de snapshots completos y la integridad global es explícita', () => {

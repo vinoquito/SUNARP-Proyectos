@@ -2769,6 +2769,215 @@ function getAccessUserConfiguration(personaId) {
 
 
 /** Lista usuarios bajo demanda después de seleccionar sede o rol. */
+/**
+ * Construye una vista derivada del listado de usuarios. Se materializa una
+ * vez por combinación de filtros estructurales y generación de las fuentes.
+ * Las búsquedas y páginas posteriores reutilizan el índice ya enriquecido.
+ */
+function _accessBuildUserListingIndex_(sedeId, roleId) {
+  if (typeof SUNARPCore.getOrBuildCachedValue !== 'function') {
+    throw new Error(
+      'El listado de usuarios requiere la versión de SUNARP Core que incorpora getOrBuildCachedValue.'
+    );
+  }
+
+  const sources = [
+    _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.users),
+    _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.userRoles),
+    _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people)
+  ];
+  const locationRequests = [];
+  if (sedeId) {
+    const assignmentSource = _directorySource_('asignaciones');
+    const relationSource = _directorySource_('estructura_local');
+    const structureSource = _directorySource_('estructura_org');
+    const localSource = _directorySource_('locales');
+    const siteSource = _directorySource_('sede');
+    sources.push(assignmentSource, relationSource, structureSource, localSource, siteSource);
+    locationRequests.push(
+      { key: 'relations', source: relationSource, requiredHeaders: ['id', 'estructura_id', 'local_id'] },
+      { key: 'structures', source: structureSource, requiredHeaders: ['id', 'sede_id'] },
+      { key: 'locals', source: localSource, requiredHeaders: ['id', 'sede_id'] },
+      { key: 'sites', source: siteSource, requiredHeaders: ['id', 'name'] }
+    );
+  }
+
+  const cacheKey = ['access-users-index-v1', sedeId || '*', roleId || '*'].join(':');
+  const cached = SUNARPCore.getOrBuildCachedValue(cacheKey, sources, () => {
+    const candidateSets = [];
+    if (roleId) {
+      const roleAssignments = _accessFindSecurityRecords_(
+        ACCESS_MANAGEMENT_CONFIG.sheets.userRoles,
+        'rol_id',
+        [roleId],
+        ACCESS_MANAGEMENT_FIELDS.userRoles,
+        { projectionFields: ['persona_id', 'active'] }
+      ).filter(item => _accessIsActive_(item.active));
+      candidateSets.push(new Set(
+        roleAssignments.map(item => _accessText_(item.persona_id)).filter(Boolean)
+      ));
+    }
+
+    const sitesByPerson = new Map();
+    const siteNames = new Map();
+    if (sedeId) {
+      const locationData = SUNARPCore.listRecordsFromSourcesCached(locationRequests, 300);
+      const relations = new Map((locationData.relations || []).map(item => [
+        _accessText_(item.id), item
+      ]));
+      const structures = new Map((locationData.structures || []).map(item => [
+        _accessText_(item.id), item
+      ]));
+      const locals = new Map((locationData.locals || []).map(item => [
+        _accessText_(item.id), item
+      ]));
+      (locationData.sites || []).forEach(item =>
+        siteNames.set(_accessText_(item.id), _accessText_(item.name))
+      );
+
+      const relationIds = (locationData.relations || []).filter(relation => {
+        const structure = structures.get(_accessText_(relation.estructura_id));
+        return structure && _accessText_(structure.sede_id) === sedeId;
+      }).map(item => _accessText_(item.id)).filter(Boolean);
+      const localIds = (locationData.locals || []).filter(local =>
+        _accessText_(local.sede_id) === sedeId
+      ).map(item => _accessText_(item.id)).filter(Boolean);
+
+      const assignmentHeaders = [
+        'asignacion_id', 'persona_id', 'estructura_local_id', 'local_id', 'active'
+      ];
+      const collectAssignments = records => {
+        (records || []).forEach(assignment => {
+          if (!_accessIsActive_(assignment.active)) return;
+          const personaId = _accessText_(assignment.persona_id);
+          const relationId = _accessText_(assignment.estructura_local_id);
+          const localId = _accessText_(assignment.local_id);
+          let assignedSiteId = '';
+
+          if (relationId) {
+            const relation = relations.get(relationId);
+            const structure = relation && structures.get(_accessText_(relation.estructura_id));
+            if (!relation || !structure ||
+                (localId && localId !== _accessText_(relation.local_id))) return;
+            assignedSiteId = _accessText_(structure.sede_id);
+          } else if (localId) {
+            const local = locals.get(localId);
+            assignedSiteId = local ? _accessText_(local.sede_id) : '';
+          }
+
+          if (!personaId || assignedSiteId !== sedeId) return;
+          if (!sitesByPerson.has(personaId)) sitesByPerson.set(personaId, new Set());
+          sitesByPerson.get(personaId).add(assignedSiteId);
+        });
+      };
+
+      if (relationIds.length) {
+        const result = SUNARPCore.findRecordsByFields(
+          _directorySource_('asignaciones'),
+          { estructura_local_id: relationIds },
+          {
+            searchField: 'estructura_local_id',
+            requiredHeaders: assignmentHeaders,
+            projectionFields: assignmentHeaders
+          }
+        );
+        collectAssignments(result.records);
+      }
+      if (localIds.length) {
+        const result = SUNARPCore.findRecordsByFields(
+          _directorySource_('asignaciones'),
+          { local_id: localIds, estructura_local_id: '' },
+          {
+            searchField: 'local_id',
+            requiredHeaders: assignmentHeaders,
+            projectionFields: assignmentHeaders
+          }
+        );
+        collectAssignments(result.records);
+      }
+      candidateSets.push(new Set(sitesByPerson.keys()));
+    }
+
+    let candidateIds = candidateSets.length ? new Set(candidateSets[0]) : new Set();
+    candidateSets.slice(1).forEach(set => {
+      candidateIds = new Set(Array.from(candidateIds).filter(id => set.has(id)));
+    });
+    const personaIds = Array.from(candidateIds).filter(Boolean);
+    if (!personaIds.length) return [];
+
+    const accounts = _accessFindSecurityRecords_(
+      ACCESS_MANAGEMENT_CONFIG.sheets.users,
+      'persona_id',
+      personaIds,
+      ACCESS_MANAGEMENT_FIELDS.users,
+      { projectionFields: ['persona_id', 'active'] }
+    );
+    const accountPersonaIds = [...new Set(
+      accounts.map(item => _accessText_(item.persona_id)).filter(Boolean)
+    )];
+    if (!accountPersonaIds.length) return [];
+
+    const peopleResult = SUNARPCore.findRecordsByFields(
+      _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
+      { persona_id: accountPersonaIds },
+      {
+        searchField: 'persona_id',
+        requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people,
+        projectionFields: ['persona_id', 'correo_institucional', 'nombres', 'apellidos']
+      }
+    );
+    const people = new Map((peopleResult.records || []).map(person => [
+      _accessText_(person.persona_id), person
+    ]));
+
+    const userRoles = _accessFindSecurityRecords_(
+      ACCESS_MANAGEMENT_CONFIG.sheets.userRoles,
+      'persona_id',
+      accountPersonaIds,
+      ACCESS_MANAGEMENT_FIELDS.userRoles,
+      { projectionFields: ['persona_id', 'modulo_id', 'rol_id', 'active'] }
+    );
+    const rolesByPerson = new Map();
+    userRoles.filter(item => _accessIsActive_(item.active)).forEach(item => {
+      const id = _accessText_(item.persona_id);
+      if (!rolesByPerson.has(id)) rolesByPerson.set(id, []);
+      rolesByPerson.get(id).push({
+        modulo_id: _accessText_(item.modulo_id),
+        rol_id: _accessUpper_(item.rol_id)
+      });
+    });
+
+    const rows = accounts.map(user => {
+      const personaId = _accessText_(user.persona_id);
+      const person = people.get(personaId) || {};
+      const sedeIds = Array.from(sitesByPerson.get(personaId) || []);
+      return {
+        persona_id: personaId,
+        correo_institucional: _accessText_(person.correo_institucional),
+        nombres: _accessText_(person.nombres),
+        apellidos: _accessText_(person.apellidos),
+        nombre_completo: [_accessText_(person.nombres), _accessText_(person.apellidos)]
+          .filter(Boolean).join(' '),
+        sede_ids: sedeIds,
+        sede_nombre: sedeIds.map(id => siteNames.get(id) || id).join(' · '),
+        active: _accessIsActive_(user.active),
+        roles: rolesByPerson.get(personaId) || []
+      };
+    });
+    rows.sort((left, right) =>
+      left.nombre_completo.localeCompare(right.nombre_completo, 'es') ||
+      left.persona_id.localeCompare(right.persona_id, 'es')
+    );
+    return rows;
+  }, 300);
+
+  if (!cached || !Array.isArray(cached.value)) {
+    throw new Error('SUNARP Core no devolvió un índice válido para el listado de usuarios.');
+  }
+  return cached;
+}
+
+
 function getAccessUsers(filters) {
   _accessRequirePermission_('USUARIOS_ADMINISTRAR');
   filters = filters && typeof filters === 'object' ? filters : {};
@@ -2777,190 +2986,25 @@ function getAccessUsers(filters) {
   const query = _accessText_(filters.search).toLocaleLowerCase();
   if (!sedeId && !roleId) return { items: [], total: 0 };
 
-  const candidateSets = [];
-  if (roleId) {
-    const roleAssignments = _accessFindSecurityRecords_(
-      ACCESS_MANAGEMENT_CONFIG.sheets.userRoles,
-      'rol_id',
-      [roleId],
-      ACCESS_MANAGEMENT_FIELDS.userRoles,
-      { projectionFields: ['persona_id', 'active'] }
-    ).filter(item => _accessIsActive_(item.active));
-    candidateSets.push(new Set(roleAssignments.map(item => _accessText_(item.persona_id)).filter(Boolean)));
-  }
-
-  const sitesByPerson = new Map();
-  const siteNames = new Map();
-  if (sedeId) {
-    const locationData = SUNARPCore.listRecordsFromSourcesCached([
-      { key: 'relations', source: _directorySource_('estructura_local'), requiredHeaders: ['id', 'estructura_id', 'local_id'] },
-      { key: 'structures', source: _directorySource_('estructura_org'), requiredHeaders: ['id', 'sede_id'] },
-      { key: 'locals', source: _directorySource_('locales'), requiredHeaders: ['id', 'sede_id'] },
-      { key: 'sites', source: _directorySource_('sede'), requiredHeaders: ['id', 'name'] }
-    ], 300);
-
-    const relations = new Map((locationData.relations || []).map(item => [_accessText_(item.id), item]));
-    const structures = new Map((locationData.structures || []).map(item => [_accessText_(item.id), item]));
-    const locals = new Map((locationData.locals || []).map(item => [_accessText_(item.id), item]));
-    (locationData.sites || []).forEach(item => siteNames.set(_accessText_(item.id), _accessText_(item.name)));
-
-    const relationIds = (locationData.relations || []).filter(relation => {
-      const structure = structures.get(_accessText_(relation.estructura_id));
-      return structure && _accessText_(structure.sede_id) === sedeId;
-    }).map(item => _accessText_(item.id)).filter(Boolean);
-    const localIds = (locationData.locals || []).filter(local =>
-      _accessText_(local.sede_id) === sedeId
-    ).map(item => _accessText_(item.id)).filter(Boolean);
-
-    const assignmentSource = _directorySource_('asignaciones');
-    const assignmentHeaders = [
-      'asignacion_id', 'persona_id', 'estructura_local_id', 'local_id', 'active'
-    ];
-    // Consume cada conjunto inmediatamente: no se construye un Map
-    // intermedio que retenga todos los registros de asignación coincidentes.
-    const collectAssignments = records => {
-      (records || []).forEach(assignment => {
-        if (!_accessIsActive_(assignment.active)) return;
-        const personaId = _accessText_(assignment.persona_id);
-        const relationId = _accessText_(assignment.estructura_local_id);
-        const localId = _accessText_(assignment.local_id);
-        let assignedSiteId = '';
-
-        if (relationId) {
-          const relation = relations.get(relationId);
-          const structure = relation && structures.get(_accessText_(relation.estructura_id));
-          if (!relation || !structure ||
-              (localId && localId !== _accessText_(relation.local_id))) return;
-          assignedSiteId = _accessText_(structure.sede_id);
-        } else if (localId) {
-          const local = locals.get(localId);
-          assignedSiteId = local ? _accessText_(local.sede_id) : '';
-        }
-
-        if (!personaId || assignedSiteId !== sedeId) return;
-        if (!sitesByPerson.has(personaId)) sitesByPerson.set(personaId, new Set());
-        sitesByPerson.get(personaId).add(assignedSiteId);
-      });
-    };
-
-    if (relationIds.length) {
-      const result = SUNARPCore.findRecordsByFields(
-        assignmentSource,
-        { estructura_local_id: relationIds },
-        {
-          searchField: 'estructura_local_id',
-          requiredHeaders: assignmentHeaders,
-          projectionFields: assignmentHeaders
-        }
-      );
-      collectAssignments(result.records);
-    }
-
-    if (localIds.length) {
-      const result = SUNARPCore.findRecordsByFields(
-        assignmentSource,
-        { local_id: localIds, estructura_local_id: '' },
-        {
-          searchField: 'local_id',
-          requiredHeaders: assignmentHeaders,
-          projectionFields: assignmentHeaders
-        }
-      );
-      collectAssignments(result.records);
-    }
-
-    candidateSets.push(new Set(sitesByPerson.keys()));
-  }
-
-  let candidateIds = candidateSets.length ? new Set(candidateSets[0]) : new Set();
-  candidateSets.slice(1).forEach(set => {
-    candidateIds = new Set(Array.from(candidateIds).filter(id => set.has(id)));
-  });
-  const personaIds = Array.from(candidateIds).filter(Boolean);
-  if (!personaIds.length) return { items: [], total: 0 };
-
-  const accounts = _accessFindSecurityRecords_(
-    ACCESS_MANAGEMENT_CONFIG.sheets.users,
-    'persona_id',
-    personaIds,
-    ACCESS_MANAGEMENT_FIELDS.users,
-    { projectionFields: ['persona_id', 'active'] }
-  );
-  const accountPersonaIds = [...new Set(accounts.map(item => _accessText_(item.persona_id)).filter(Boolean))];
-  if (!accountPersonaIds.length) return { items: [], total: 0 };
-
-  const peopleResult = SUNARPCore.findRecordsByFields(
-    _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
-    { persona_id: accountPersonaIds },
-    {
-      searchField: 'persona_id',
-      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people,
-      projectionFields: ['persona_id', 'correo_institucional', 'nombres', 'apellidos']
-    }
-  );
-  const people = new Map((peopleResult.records || []).map(person => [_accessText_(person.persona_id), person]));
-
-  const userRoles = _accessFindSecurityRecords_(
-    ACCESS_MANAGEMENT_CONFIG.sheets.userRoles,
-    'persona_id',
-    accountPersonaIds,
-    ACCESS_MANAGEMENT_FIELDS.userRoles,
-    { projectionFields: ['persona_id', 'modulo_id', 'rol_id', 'active'] }
-  );
-  const rolesByPerson = new Map();
-  userRoles.filter(item => _accessIsActive_(item.active)).forEach(item => {
-    const id = _accessText_(item.persona_id);
-    if (!rolesByPerson.has(id)) rolesByPerson.set(id, []);
-    rolesByPerson.get(id).push({
-      modulo_id: _accessText_(item.modulo_id),
-      rol_id: _accessUpper_(item.rol_id)
-    });
-  });
-
   const page = Math.max(1, Number.parseInt(filters.page, 10) || 1);
   const pageSize = Math.min(100, Math.max(1, Number.parseInt(filters.pageSize, 10) || 10));
   const offset = (page - 1) * pageSize;
-  const maxRetained = offset + pageSize;
-  const rows = [];
+  const indexed = _accessBuildUserListingIndex_(sedeId, roleId);
+  const items = [];
   let total = 0;
 
-  accounts.forEach(user => {
-    const personaId = _accessText_(user.persona_id);
-    const person = people.get(personaId) || {};
-    const sedeIds = Array.from(sitesByPerson.get(personaId) || []);
-    const row = {
-      persona_id: personaId,
-      correo_institucional: _accessText_(person.correo_institucional),
-      nombres: _accessText_(person.nombres),
-      apellidos: _accessText_(person.apellidos),
-      nombre_completo: [_accessText_(person.nombres), _accessText_(person.apellidos)].filter(Boolean).join(' '),
-      sede_ids: sedeIds,
-      sede_nombre: sedeIds.map(id => siteNames.get(id) || id).join(' · '),
-      active: _accessIsActive_(user.active),
-      roles: rolesByPerson.get(personaId) || []
-    };
+  // El índice ya está enriquecido y ordenado. Solo se conservan los registros
+  // de la página pedida mientras se cuenta el total exacto de coincidencias.
+  indexed.value.forEach(row => {
     if (query && ![
       row.persona_id, row.nombre_completo, row.correo_institucional, row.sede_nombre
     ].join(' ').toLocaleLowerCase().includes(query)) return;
-
+    if (total >= offset && items.length < pageSize) items.push(row);
     total++;
-    const compare = (left, right) =>
-      left.nombre_completo.localeCompare(right.nombre_completo, 'es') ||
-      left.persona_id.localeCompare(right.persona_id, 'es');
-    let low = 0;
-    let high = rows.length;
-    while (low < high) {
-      const middle = Math.floor((low + high) / 2);
-      if (compare(rows[middle], row) <= 0) low = middle + 1;
-      else high = middle;
-    }
-    if (low >= maxRetained && rows.length >= maxRetained) return;
-    rows.splice(low, 0, row);
-    if (rows.length > maxRetained) rows.pop();
   });
 
   return {
-    items: rows.slice(offset, offset + pageSize),
+    items,
     total,
     page,
     pageSize,

@@ -26,7 +26,7 @@ function createCacheSandbox() {
     CacheService: { getScriptCache: () => cache },
     Utilities: {
       DigestAlgorithm: { SHA_256: 'SHA-256' },
-      computeDigest: (_algorithm, value) => Array.from(String(value)).map(character => character.charCodeAt(0)),
+      computeDigest: (_algorithm, value) => Array.from({ length: 32 }, (_, index) => (String(value).charCodeAt(index % String(value).length) + index) % 256),
       base64EncodeWebSafe: bytes => bytes.join('_'),
       newBlob: value => ({ getBytes: () => Array.from(String(value)).map(character => character.charCodeAt(0)) }),
       getUuid: () => 'generation-' + (++uuid)
@@ -345,4 +345,58 @@ test('runSourceWriteBatch continúa invalidando fuentes cuando falla una invalid
     'invalidate:Scopes',
     'lock:end'
   ]);
+});
+
+
+test('getOrBuildCachedValue reutiliza valores derivados y cambia la clave al invalidar cualquier fuente', () => {
+  const { sandbox } = createCacheSandbox();
+  const users = { spreadsheetId: 'SECURITY', sheetName: 'Usuarios' };
+  const roles = { spreadsheetId: 'SECURITY', sheetName: 'UsuarioRol' };
+  let builds = 0;
+  const builder = () => ({ rows: [{ persona_id: 'PER_' + (++builds) }] });
+
+  const first = sandbox.getOrBuildCachedValue('access-users:ROLE_A', [users, roles], builder, 300);
+  const second = sandbox.getOrBuildCachedValue('access-users:ROLE_A', [users, roles], builder, 300);
+  assert.equal(first.cacheHit, false);
+  assert.equal(first.cacheStored, true);
+  assert.equal(second.cacheHit, true);
+  assert.equal(second.value.rows[0].persona_id, 'PER_1');
+  assert.equal(builds, 1);
+
+  sandbox._coreInvalidateSourceCache_(roles);
+  const third = sandbox.getOrBuildCachedValue('access-users:ROLE_A', [users, roles], builder, 300);
+  assert.equal(third.cacheHit, false);
+  assert.equal(third.value.rows[0].persona_id, 'PER_2');
+  assert.equal(builds, 2);
+});
+
+test('getOrBuildCachedValue rechaza publicar un resultado si una fuente cambia durante la construcción', () => {
+  const { sandbox } = createCacheSandbox();
+  const source = { spreadsheetId: 'SECURITY', sheetName: 'Usuarios' };
+  assert.throws(() => sandbox.getOrBuildCachedValue(
+    'access-users:all',
+    [source],
+    () => {
+      sandbox._coreInvalidateSourceCache_(source);
+      return [];
+    },
+    300
+  ), /fuente cambió durante la construcción/);
+});
+
+test('getOrBuildCachedValue ejecuta el builder sin caché cuando no puede obtener generaciones', () => {
+  const { sandbox } = createCacheSandbox();
+  sandbox._coreGetSourceGeneration_ = () => null;
+  let builds = 0;
+  const result = sandbox.getOrBuildCachedValue(
+    'access-users:uncacheable',
+    [{ spreadsheetId: 'SECURITY', sheetName: 'Usuarios' }],
+    () => ++builds,
+    300
+  );
+  assert.equal(result.value, 1);
+  assert.equal(result.cacheHit, false);
+  assert.equal(result.cacheStored, false);
+  assert.equal(result.cacheReason, 'source-generation-unavailable');
+  assert.equal(builds, 1);
 });
