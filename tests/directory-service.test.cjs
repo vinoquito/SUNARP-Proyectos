@@ -485,6 +485,7 @@ test('la consulta de LOCAL solo incluye asignaciones directas sin estructura org
 
 test('listDirectoryAssignments pagina mediante Core y no carga asignaciones completas', () => {
   const context = assignmentContext();
+  const pagePerson = { persona_id: 'PER_001', nombres: 'Ana', apellidos: 'Pérez' };
   context.personas = [];
   context.asignaciones = [];
   const authorization = createDirectoryQueryAuthorization(context, [
@@ -516,8 +517,8 @@ test('listDirectoryAssignments pagina mediante Core y no carga asignaciones comp
       };
     },
     findRecordsByFields: (source, filters) => ({
-      records: context.personas.filter(item => String(item.persona_id) === String(filters.persona_id)),
-      total: 1
+      records: String(filters.persona_id) === 'PER_001' ? [pagePerson] : [],
+      total: String(filters.persona_id) === 'PER_001' ? 1 : 0
     })
   };
   const result = vmContext.listDirectoryAssignments({ page: 2, pageSize: 10 });
