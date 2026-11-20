@@ -203,6 +203,8 @@ test('el contrato conserva los límites comprobados de consulta, invalidación y
   assert.match(contract, /no equivale a paginación de origen/);
   assert.match(contract, /no convierte la lectura completa, el total ni las facetas en una transacción/);
   assert.match(contract, /no cambia automáticamente la generación/);
+  assert.ok(contract.includes('todos los proyectos que la incluyen comparten esa misma instancia'));
+  assert.ok(contract.includes('los disparadores simples definidos dentro de una biblioteca no se ejecutan'));
   assert.match(contract, /debe llamar `invalidateSourceCache\(source\)`/);
   assert.ok(contract.includes('consistencia ante ediciones externas forma parte del contrato de **Fase 1**'));
   assert.ok(contract.includes('distingue mayúsculas/minúsculas'));
