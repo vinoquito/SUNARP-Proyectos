@@ -47,7 +47,9 @@ function _coreQueryNormalizeGroups_(options) {
     if (!group || typeof group !== 'object' || Array.isArray(group)) {
       throw new Error('SUNARP Core: cada grupo anyOf debe ser un objeto.');
     }
-    const merged = Object.assign({}, base, group);
+    // El campo de alcance (grupo) va primero para que TextFinder indexe
+    // la condición más selectiva y no empiece por filtros comunes como active.
+    const merged = Object.assign({}, group, base);
     if (!Object.keys(merged).length) {
       throw new Error('SUNARP Core: la consulta autorizada requiere filtros exactos.');
     }
