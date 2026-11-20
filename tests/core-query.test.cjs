@@ -191,7 +191,7 @@ test('queryRecords exige catálogos para ámbitos no globales y no cachea sin ve
   });
   assert.equal(result.total, 2);
   assert.equal(sandbox.cache.size, 1);
-  assert.ok(Array.from(sandbox.cache.keys()).every(key => key.startsWith('query-candidates:v2:')));
+  assert.ok(Array.from(sandbox.cache.keys()).every(key => key.startsWith('query-candidates:v3:')));
 });
 
 test('queryRecords valida paginación y búsqueda', () => {
@@ -518,7 +518,8 @@ test('queryRecords reutiliza proyecciones suficientes y recarga cuando falta un 
     sortBy: 'site_id',
     authorization: sandbox.authorization()
   }));
-  assert.equal(first.total, 2);
+  assert.equal(first.total, 1);
+  assert.equal(first.records[0].site_id, 'S1');
   assert.equal(first.candidateCacheHit, false);
   assert.equal(sourceReads, 1);
 
