@@ -119,6 +119,7 @@ function createSandbox(initialRecords = []) {
     sheet
   });
   context._coreReadCandidateRows_ = (_sheet, rowNumbers) => {
+    candidateRowsRead += rowNumbers.length;
     const result = new Map();
     rowNumbers.forEach(rowNumber => {
       const entry = entries.find(item => item.rowNumber === rowNumber);
