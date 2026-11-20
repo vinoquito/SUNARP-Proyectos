@@ -84,9 +84,35 @@ function _coreNormalizeSourceConfig_(source) {
 /**
  * Abre un archivo de Google Sheets.
  */
+const _CORE_SPREADSHEET_RUNTIME_CACHE_ = new Map();
+const _CORE_SPREADSHEET_RUNTIME_CACHE_LIMIT_ = 12;
+
+/**
+ * Reutiliza objetos Spreadsheet dentro de la ejecución actual.
+ * Esta caché de manejadores no conserva datos ni sustituye CacheService.
+ */
 function _coreOpenSpreadsheet_(spreadsheetId, label) {
+  const id = String(spreadsheetId || '').trim();
+  if (!id) {
+    throw new Error(`SUNARP Core: falta el ID del archivo de la fuente "${label}".`);
+  }
+
+  if (_CORE_SPREADSHEET_RUNTIME_CACHE_.has(id)) {
+    const cached = _CORE_SPREADSHEET_RUNTIME_CACHE_.get(id);
+    // Actualiza el orden LRU para mantener los archivos usados recientemente.
+    _CORE_SPREADSHEET_RUNTIME_CACHE_.delete(id);
+    _CORE_SPREADSHEET_RUNTIME_CACHE_.set(id, cached);
+    return cached;
+  }
+
   try {
-    return SpreadsheetApp.openById(spreadsheetId);
+    const spreadsheet = SpreadsheetApp.openById(id);
+    if (_CORE_SPREADSHEET_RUNTIME_CACHE_.size >= _CORE_SPREADSHEET_RUNTIME_CACHE_LIMIT_) {
+      const oldestId = _CORE_SPREADSHEET_RUNTIME_CACHE_.keys().next().value;
+      _CORE_SPREADSHEET_RUNTIME_CACHE_.delete(oldestId);
+    }
+    _CORE_SPREADSHEET_RUNTIME_CACHE_.set(id, spreadsheet);
+    return spreadsheet;
   } catch (error) {
     throw new Error(
       `SUNARP Core: no se pudo acceder a "${label}". ` +
