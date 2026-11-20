@@ -95,6 +95,13 @@ function createSandbox(initialRecords = []) {
     invalidations++;
     return { success: true };
   };
+  context._coreInvalidateSourceCacheOrThrow_ = sourceRef => {
+    const result = context._coreInvalidateSourceCache_(sourceRef);
+    if (!result || result.success !== true) {
+      throw new Error('Falló la invalidación de caché.');
+    }
+    return result;
+  };
   vm.runInContext(source, context, { filename: 'CoreCompositeRepository.js' });
 
   return {
