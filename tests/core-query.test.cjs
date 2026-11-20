@@ -264,6 +264,34 @@ test('queryRecords excluye registros cuyas relaciones declaradas contradicen el 
   assert.equal(result.total, 0);
 });
 
+
+test('queryRecords deniega una referencia obligatoria que no existe en su catálogo', () => {
+  const sandbox = createSandbox();
+  const scoped = sandbox.authorization('P1', ['DIRECTORY_READ'], [
+    { tipo_ambito_id: 'SEDE', referencia_id: 'S1' }
+  ]);
+  scoped.structures = [];
+  scoped.locals = [];
+  scoped.scopeRecordLookups = [{
+    recordField: 'site_id',
+    values: {},
+    required: true
+  }];
+
+  const result = sandbox.context.queryRecords(
+    { spreadsheetId: 'S', sheetName: 'Assignments' },
+    {
+      idField: 'assignment_id',
+      filters: { assignment_id: 'A' },
+      authorization: scoped,
+      cacheSeconds: 0
+    }
+  );
+
+  assert.equal(result.total, 0);
+  assert.deepEqual(Array.from(result.records), []);
+});
+
 test('queryRecords reutiliza candidatos entre consultas distintas y prioriza el filtro de ámbito', () => {
   const sandbox = createSandbox();
   let sourceReads = 0;
