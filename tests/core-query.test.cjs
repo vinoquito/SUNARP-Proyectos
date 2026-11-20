@@ -205,3 +205,24 @@ test('queryRecords obtiene la versión de catálogos desde generaciones de sus f
   const second = sandbox.context.queryRecords(sourceRef, options);
   assert.equal(second.cacheHit, true);
 });
+
+test('queryRecords resuelve ámbitos mediante relaciones declaradas por campo', () => {
+  const sandbox = createSandbox();
+  const scoped = sandbox.authorization('P1', ['DIRECTORY_READ'], [
+    { tipo_ambito_id: 'SEDE', referencia_id: 'S2' }
+  ]);
+  scoped.structures = [];
+  scoped.locals = [];
+  scoped.scopeRecordLookups = [{
+    recordField: 'site_id',
+    values: { S1: { site_id: 'S2' } }
+  }];
+  const result = sandbox.context.queryRecords({ spreadsheetId: 'S', sheetName: 'Assignments' }, {
+    idField: 'assignment_id',
+    filters: { assignment_id: 'A' },
+    authorization: scoped,
+    cacheSeconds: 0
+  });
+  assert.equal(result.total, 1);
+  assert.equal(result.records[0].assignment_id, 'A');
+});
