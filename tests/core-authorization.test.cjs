@@ -40,12 +40,14 @@ test('el contrato único de autorización supera todas las pruebas unitarias', (
   assert.ok(result.results.every(item => item.startsWith('OK: ')));
 });
 
-test('la autorización no contiene resolución de identidad por correo ni rol directo en Usuarios', () => {
-  assert.doesNotMatch(coreSource, /correo_institucional/);
-  assert.doesNotMatch(coreSource, /userRoleId/);
-  assert.doesNotMatch(coreSource, /scopeEmail/);
-  assert.match(coreSource, /data\.personaId/);
-  assert.match(coreSource, /item\.modulo_id/);
+test('Core separa la resolución genérica de identidad del motor de permisos y ámbitos', () => {
+  assert.match(coreSource, /function resolveIdentity\(source, email, options\)/);
+  const authorizationEngine = coreSource.slice(coreSource.indexOf('function _coreAuthText_'));
+  assert.doesNotMatch(authorizationEngine, /correo_institucional/);
+  assert.doesNotMatch(authorizationEngine, /userRoleId/);
+  assert.doesNotMatch(authorizationEngine, /scopeEmail/);
+  assert.match(authorizationEngine, /data\.personaId/);
+  assert.match(authorizationEngine, /item\.modulo_id/);
 });
 
 test('las comprobaciones de permisos y ámbitos exigen modulo_id', () => {
@@ -68,6 +70,37 @@ test('CoreAuthorization consume tipo_ambito_id y mantiene compatibilidad con dat
   assert.equal(sandbox._coreAuthScopeType_({ tipo_ambito: 'TOTAL' }), 'TOTAL');
 });
 
+
+test('resolveIdentity usa campos declarados y compara el correo sin distinguir mayúsculas', () => {
+  let lookup = null;
+  const sandbox = vm.createContext({
+    findRecordsByFields: (source, filters, options) => {
+      lookup = { source, filters, options };
+      return {
+        records: [
+          { persona_id: 'PER_001', correo_institucional: 'ANA@SUNARP.GOB.PE' },
+          { persona_id: '', correo_institucional: 'ana@sunarp.gob.pe' }
+        ],
+        total: 2
+      };
+    }
+  });
+  vm.runInContext(coreSource, sandbox);
+  const result = sandbox.resolveIdentity(
+    { spreadsheetId: 'DIRECTORY', sheetName: 'personas' },
+    'ana@sunarp.gob.pe',
+    {
+      emailField: 'correo_institucional',
+      idField: 'persona_id',
+      requiredHeaders: ['nombres', 'apellidos']
+    }
+  );
+  assert.equal(result.total, 1);
+  assert.equal(result.records[0].persona_id, 'PER_001');
+  assert.equal(lookup.filters.correo_institucional, 'ana@sunarp.gob.pe');
+  assert.equal(lookup.options.matchCase, false);
+  assert.ok(lookup.options.requiredHeaders.includes('persona_id'));
+});
 
 test('Core deniega TOTAL cuando está combinado con ámbitos específicos', () => {
   const sandbox = vm.createContext({ console: { log: () => {}, warn: () => {} } });
