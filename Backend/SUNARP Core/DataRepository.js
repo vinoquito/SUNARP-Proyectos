@@ -1417,8 +1417,10 @@ function deleteRecord(source, idField, id) {
  * Lectura agrupada con caché reutilizable por fuente.
  *
  * Cada pestaña mantiene una instantánea independiente. Así, varios
- * módulos pueden compartir los mismos datos y una escritura invalida
- * automáticamente la instantánea de la pestaña afectada.
+ * módulos pueden compartir los mismos datos y una escritura ejecutada por
+ * Core invalida la instantánea de la pestaña afectada. En un miss que espera
+ * el bloqueo, la generación se vuelve a comprobar antes de leer o reutilizar
+ * la instantánea.
  *
  * expirationSeconds: 1..21600 (por defecto 300).
  */
