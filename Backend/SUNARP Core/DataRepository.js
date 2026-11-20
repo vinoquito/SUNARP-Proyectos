@@ -1205,7 +1205,7 @@ function insertRecord(source, record, options) {
       .setValues([row]);
 
     SpreadsheetApp.flush();
-    _coreInvalidateSourceCache_(source);
+    _coreInvalidateSourceCacheOrThrow_(source);
 
     const insertedRecord = _coreRowToRecord_(
       table.headers,
@@ -1298,7 +1298,7 @@ function updateRecord(source, idField, id, updates, options) {
     });
 
     SpreadsheetApp.flush();
-    _coreInvalidateSourceCache_(source);
+    _coreInvalidateSourceCacheOrThrow_(source);
 
     const updatedRecord = table.headers.reduce((record, header, index) => {
       record[header] = entry.values[index];
@@ -1374,7 +1374,7 @@ function deleteRecord(source, idField, id) {
     table.sheet.deleteRow(entry.rowNumber);
 
     SpreadsheetApp.flush();
-    _coreInvalidateSourceCache_(source);
+    _coreInvalidateSourceCacheOrThrow_(source);
 
     return {
       success: true,
