@@ -2653,14 +2653,37 @@ function getAccessEntityHistory(payload) {
     ACCESS_MANAGEMENT_CONFIG.sheets.audit
   );
 
-  // Comparte la misma instantánea central que el historial general.
-  // Evita una lectura completa adicional de Auditoria por cada entidad.
-  const cached = SUNARPCore.listRecordsFromSourcesCached([{
-    key: 'audit',
+  // Busca por identificador en Core para no descargar la hoja completa.
+  const directMatches = SUNARPCore.findRecordsByFields(
     source,
-    requiredHeaders: ACCESS_MANAGEMENT_FIELDS.audit
-  }], 60);
-  let records = (cached.audit || []).slice().sort((a, b) =>
+    { registro_id: recordId },
+    {
+      searchField: 'registro_id',
+      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.audit
+    }
+  );
+  const candidates = new Map(
+    (directMatches.records || []).map(event => [
+      _accessText_(event.evento_id),
+      event
+    ])
+  );
+
+  // Los cambios de permisos guardan el permiso dentro de los snapshots
+  // JSON del evento de relación rol-permiso, no siempre en registro_id.
+  if (entityType === 'PERMISO') {
+    const relatedMatches = SUNARPCore.searchRecordsByFields(
+      source,
+      recordId,
+      ['datos_antes', 'datos_despues'],
+      { matchCase: false }
+    );
+    (relatedMatches.records || []).forEach(event => {
+      candidates.set(_accessText_(event.evento_id), event);
+    });
+  }
+
+  let records = [...candidates.values()].sort((a, b) =>
     new Date(b.fecha_hora).getTime() - new Date(a.fecha_hora).getTime()
   ).filter(event => {
     const eventType = _accessUpper_(event.tipo_entidad);
