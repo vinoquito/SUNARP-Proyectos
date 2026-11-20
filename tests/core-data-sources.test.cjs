@@ -43,13 +43,13 @@ test('Core reutiliza el objeto Spreadsheet por ID dentro de la misma ejecución'
 test('la caché de manejadores mantiene un límite LRU y reabre un archivo desalojado', () => {
   const { sandbox, opened } = createSandbox();
 
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 13; i++) {
     sandbox._coreOpenSpreadsheet_('BOOK_' + i, 'archivo ' + i);
   }
   sandbox._coreOpenSpreadsheet_('BOOK_0', 'archivo inicial');
 
-  assert.equal(opened.length, 13);
-  assert.equal(opened[12], 'BOOK_0');
+  assert.equal(opened.length, 14);
+  assert.equal(opened[13], 'BOOK_0');
 });
 
 test('abrir varias pestañas del mismo archivo reutiliza el manejador y resuelve cada pestaña', () => {
