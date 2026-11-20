@@ -1089,9 +1089,16 @@ function searchAccessPersonByDocument(payload) {
   ].filter(Boolean).join(' ');
   const email = _accessText_(person.correo_institucional);
   const emailIsValid = /^[^\s@]+@sunarp\.gob\.pe$/i.test(email);
-  const existingUser = (auth.userAccountsCatalog || []).find(user =>
-    _accessText_(user.persona_id) === personaId
-  ) || null;
+  const existingUsers = _accessFindSecurityRecords_(
+    ACCESS_MANAGEMENT_CONFIG.sheets.users,
+    'persona_id',
+    [personaId],
+    ACCESS_MANAGEMENT_FIELDS.users
+  );
+  if (existingUsers.length > 1) {
+    throw new Error('La persona tiene más de una cuenta registrada en Usuarios.');
+  }
+  const existingUser = existingUsers[0] || null;
   const personIsActive =
     !Object.prototype.hasOwnProperty.call(person, 'active') ||
     _accessIsActive_(person.active);
