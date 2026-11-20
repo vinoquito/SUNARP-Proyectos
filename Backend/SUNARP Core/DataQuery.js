@@ -257,7 +257,7 @@ function queryRecords(source, options) {
         durationMs: Date.now() - queryStartedAt
       });
       console.log('[SUNARP Core] Consulta autorizada: resultado en caché', {
-        sheet: _coreNormalizeSourceConfig_(source).sheetName,
+        sheet: (source && (source.sheetName || source.label)) || 'fuente',
         durationMs: cacheResult.durationMs,
         total: cacheResult.total,
         offset: cacheResult.offset,
@@ -403,7 +403,7 @@ function queryRecords(source, options) {
     }
   }
   console.log('[SUNARP Core] Consulta autorizada:', {
-    sheet: _coreNormalizeSourceConfig_(source).sheetName,
+    sheet: (source && (source.sheetName || source.label)) || 'fuente',
     candidateCacheHit,
     candidateCount: result.candidateCount,
     authorizedCount,
