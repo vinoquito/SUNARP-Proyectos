@@ -35,7 +35,8 @@ vm.runInContext(
     'enrichAssignment: _directoryEnrichAssignment_,' +
     'buildView: _directoryBuildView_,' +
     'createPersonalDataMap: _directoryCreatePersonalDataMap_,' +
-    'resolveDocumentTypesSource: _directoryResolveDocumentTypesSource_' +
+    'resolveDocumentTypesSource: _directoryResolveDocumentTypesSource_,
+    buildFilterContract: _directoryBuildFilterContract_' +
   '};',
   sandbox,
   { filename: 'DirectoryService.js' }
@@ -710,4 +711,50 @@ test('la interfaz conserva la instantánea anterior cuando falla una actualizaci
   assert.ok(loadSource.includes('state.loaded = hadLoadedSnapshot'));
   assert.ok(loadSource.includes('if (!hadLoadedSnapshot && container)'));
   assert.ok(loadSource.includes('Se conserva la última información cargada.'));
+});
+
+test('el contrato de filtros separa ámbitos fijos, opciones autorizadas y ancestros contextuales', () => {
+  const authorization = {
+    moduleId: 'MOD_INFO_PERSONAL',
+    auth: { moduleAccess: [{
+      modulo_id: 'MOD_INFO_PERSONAL',
+      scopes: [
+        { tipo_ambito: 'ESTRUCTURA_ORG', referencia_id: 'EST_1', incluir_descendientes: true },
+        { tipo_ambito: 'LOCAL', referencia_id: 'LOC_9', incluir_descendientes: false }
+      ]
+    }] }
+  };
+  const structures = [
+    { id: 'EST_ROOT', parent_id: '' },
+    { id: 'EST_1', parent_id: 'EST_ROOT' },
+    { id: 'EST_CHILD', parent_id: 'EST_1' }
+  ];
+  const contract = api.buildFilterContract(authorization, [
+    { estructura_id: 'EST_CHILD', sede_id: 'SEDE_1', local_id: 'LOC_1', cargo_id: 'CAR_1' },
+    { estructura_id: '', sede_id: 'SEDE_2', local_id: 'LOC_9', cargo_id: 'CAR_2' }
+  ], structures);
+
+  assert.deepEqual(contract.scopes, [
+    { type: 'ESTRUCTURA_ORG', referenceId: 'EST_1', includeDescendants: true },
+    { type: 'LOCAL', referenceId: 'LOC_9', includeDescendants: false }
+  ]);
+  assert.deepEqual(contract.fixed.structureIds, ['EST_1']);
+  assert.deepEqual(contract.fixed.localIds, ['LOC_9']);
+  assert.deepEqual(contract.selectable.sedeIds, ['SEDE_1', 'SEDE_2']);
+  assert.deepEqual(contract.selectable.cargoIds, ['CAR_1', 'CAR_2']);
+  assert.deepEqual(contract.selectable.structureIds, ['EST_CHILD']);
+  assert.deepEqual(contract.contextStructureIds, ['EST_1', 'EST_ROOT']);
+});
+
+test('el contrato de filtros reconoce TOTAL sin convertirlo en una selección restrictiva', () => {
+  const contract = api.buildFilterContract({
+    moduleId: 'MOD_INFO_PERSONAL',
+    auth: { moduleAccess: [{
+      modulo_id: 'MOD_INFO_PERSONAL',
+      scopes: [{ tipo_ambito: 'TOTAL', referencia_id: '', incluir_descendientes: false }]
+    }] }
+  }, [{ sede_id: 'SEDE_1', cargo_id: 'CAR_1', estructura_id: 'EST_1', local_id: 'LOC_1' }], []);
+  assert.equal(contract.fixed.total, true);
+  assert.deepEqual(contract.fixed.sedeIds, []);
+  assert.deepEqual(contract.selectable.sedeIds, ['SEDE_1']);
 });
