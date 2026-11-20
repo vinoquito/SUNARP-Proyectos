@@ -588,6 +588,80 @@ test('getDirectoryInitialData carga solo catálogos y una página, reutilizando 
   assert.deepEqual(Array.from(result.catalogs.filterContract.selectable.cargoIds), ['CAR_001']);
 });
 
+test('getDirectoryPersonById consulta solo asignaciones autorizadas de la persona solicitada', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  const assignment = {
+    asignacion_id: 'ASG_007',
+    persona_id: 'PER_007',
+    cargo_id: 'CAR_001',
+    active: true,
+    order: 1
+  };
+  const person = {
+    persona_id: 'PER_007',
+    nombres: 'Ana',
+    apellidos: 'Pérez',
+    correo_institucional: 'ana@sunarp.gob.pe'
+  };
+  const personalData = {
+    servidor_id: 'PER_007',
+    tipo_documento: 'DNI',
+    numero_documento: '12345678'
+  };
+  vmContext._directoryAuthorizationContext_ = () => ({ auth: {}, moduleId: 'MOD_INFO_PERSONAL' });
+  vmContext._directoryLoadContext_ = options => {
+    assert.equal(options.includeAssignments, false);
+    assert.equal(options.includePeople, false);
+    assert.equal(options.includePersonalData, false);
+    return { asignaciones: [], personas: [], datosPersonales: [] };
+  };
+  let queryOptions = null;
+  vmContext._directoryExecuteAssignmentQuery_ = (_context, _authorization, options) => {
+    queryOptions = options;
+    return { records: [assignment], total: 1 };
+  };
+  vmContext._directorySource_ = name => name;
+  const lookups = [];
+  vmContext.SUNARPCore = {
+    findRecordsByFields: (source, filters) => {
+      lookups.push({ source, filters });
+      if (source === 'personas') return { records: [person], total: 1 };
+      if (source === 'servidores datos personales') return { records: [personalData], total: 1 };
+      return { records: [], total: 0 };
+    }
+  };
+
+  const result = vmContext.getDirectoryPersonById('PER_007');
+  assert.equal(queryOptions.personaId, 'PER_007');
+  assert.equal(queryOptions.active, 'all');
+  assert.equal(result.persona_id, 'PER_007');
+  assert.equal(result.assignments.length, 1);
+  assert.equal(result.assignments[0].nombres, 'Ana');
+  assert.equal(result.personalData.servidor_id, 'PER_007');
+  assert.deepEqual(lookups, [
+    { source: 'personas', filters: { persona_id: 'PER_007' } },
+    { source: 'servidores datos personales', filters: { servidor_id: 'PER_007' } }
+  ]);
+});
+
+test('las consultas puntuales de asignaciones comprueban permiso y ámbito en Core', () => {
+  const start = serviceSource.indexOf('function _directoryBuildAssignmentQuery_(');
+  const end = serviceSource.indexOf('function _directoryExecuteAssignmentQuery_(', start);
+  const builder = serviceSource.slice(start, end);
+  assert.match(builder, /if \(options\.asignacionId\) baseFilters\.asignacion_id/);
+  assert.match(builder, /permissionCode: authorization\.permissionCode/);
+
+  for (const name of ['getDirectoryAssignmentById', 'setDirectoryAssignmentActive', 'deleteDirectoryAssignment']) {
+    const begin = serviceSource.indexOf('function ' + name + '(');
+    const next = serviceSource.indexOf('\nfunction ', begin + 10);
+    const implementation = serviceSource.slice(begin, next);
+    assert.match(implementation, /includeAssignments:\s*false/);
+    assert.match(implementation, /_directoryFindAuthorizedAssignmentById_\(/);
+  }
+  assert.match(serviceSource, /function _directoryFindAuthorizedAssignmentById_\([\s\S]*?\{ asignacionId: id, active: 'all' \}/);
+});
+
 test('la validación de contexto parcial conserva las relaciones sin exigir cargar todas las personas', () => {
   const context = assignmentContext();
   context.personas = [];
