@@ -481,6 +481,89 @@ function listRecords(source, options) {
  *
  * Devuelve null cuando no encuentra coincidencias.
  */
+/**
+ * Lee una ventana desde el final de una fuente append-only.
+ * offset se cuenta desde la última fila de datos (0 = más recientes).
+ */
+function listTailRecords(source, options) {
+  options = options || {};
+  const context = _coreOpenSource_(source);
+  const config = context.config;
+  const sheet = context.sheet;
+  const lastRow = sheet.getLastRow();
+  const lastColumn = sheet.getLastColumn();
+
+  if (!lastColumn || lastRow < config.headerRow) {
+    throw new Error('SUNARP Core: la fuente no contiene encabezados.');
+  }
+
+  const headers = sheet.getRange(
+    config.headerRow, 1, 1, lastColumn
+  ).getDisplayValues()[0].map(value => String(value).trim());
+  const headerMap = {};
+
+  headers.forEach((header, index) => {
+    if (!header || Object.prototype.hasOwnProperty.call(headerMap, header)) {
+      throw new Error(
+        'SUNARP Core: existen encabezados vacíos o duplicados en "' +
+        config.sheetName + '".'
+      );
+    }
+    headerMap[header] = index;
+  });
+
+  const requiredHeaders = Array.isArray(options.requiredHeaders)
+    ? options.requiredHeaders
+    : [];
+  const missing = requiredHeaders.filter(field =>
+    !Object.prototype.hasOwnProperty.call(headerMap, field)
+  );
+  if (missing.length) {
+    throw new Error(
+      'SUNARP Core: la fuente "' + config.sheetName +
+      '" no contiene las columnas requeridas: ' + missing.join(', ') + '.'
+    );
+  }
+
+  const offset = options.offset === undefined ? 0 : Number(options.offset);
+  const limit = options.limit === undefined ? 25 : Number(options.limit);
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error('SUNARP Core: offset debe ser un entero mayor o igual a cero.');
+  }
+  if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+    throw new Error('SUNARP Core: limit debe ser un entero entre 1 y 1000.');
+  }
+
+  const dataStartRow = config.headerRow + 1;
+  const total = Math.max(0, lastRow - config.headerRow);
+  const endRow = lastRow - offset;
+  if (endRow < dataStartRow) {
+    return { records: [], total, offset, limit, hasMore: false };
+  }
+
+  const startRow = Math.max(dataStartRow, endRow - limit + 1);
+  const numberOfRows = endRow - startRow + 1;
+  const values = _coreReadRange_(
+    sheet, startRow, 1, numberOfRows, lastColumn
+  );
+  const records = [];
+
+  for (let index = values.length - 1; index >= 0; index--) {
+    const row = values[index];
+    if (_coreIsEmptyRow_(row)) continue;
+    records.push(_coreRowToRecord_(headers, row));
+  }
+
+  return {
+    records,
+    total,
+    offset,
+    limit,
+    hasMore: startRow > dataStartRow
+  };
+}
+
+
 function getRecordById(source, idField, id) {
   const table = _coreGetTable_(source);
 
