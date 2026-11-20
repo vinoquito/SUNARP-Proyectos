@@ -399,7 +399,7 @@ Es una lectura integral de todas las filas de las pestañas solicitadas; la agru
 
 Mismo formato de entrada que la lectura agrupada, con `key` única por solicitud. Por defecto usa TTL de 300 segundos; rango permitido 1..21600. Mantiene una instantánea por fuente y reutiliza entradas de CacheService. Las fuentes faltantes se agrupan para abrir cada archivo una vez y leer sus pestañas.
 
-Una escritura Core cambia la generación efectiva de la fuente; las dependencias declaradas participan en esa generación. La caché puede ser desalojada antes del TTL y la función debe reconstruir la fuente completa al producirse un miss. No representa almacenamiento persistente.
+Una escritura Core cambia la generación efectiva de la fuente; las dependencias declaradas participan en esa generación. Si una solicitud produce un miss y espera el bloqueo de escritura, Core vuelve a calcular la generación dentro del bloqueo antes de reconsultar la caché; así no reutiliza una instantánea de la generación anterior después de una escritura Core concurrente. La caché puede ser desalojada antes del TTL y la función debe reconstruir la fuente completa al producirse un miss. No representa almacenamiento persistente.
 
 ### 6.3 `getSourceInfo(source)` y `getSourceInfoCached(source, expirationSeconds)`
 
