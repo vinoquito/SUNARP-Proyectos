@@ -452,6 +452,14 @@ test('AUDITORIA_VER es independiente y no concede administración de accesos', (
   assert.equal(view.users.length, 0);
 });
 
+test('el editor puede consultar accesos existentes aunque la cuenta esté inactiva', () => {
+  const data = makeSecurityData({ usuarios: [{ persona_id: 'PER_117', active: false }] });
+  const sandbox = createAdapterSandbox(data);
+  const configuration = sandbox.getAccessUserConfiguration('PER_117');
+  assert.equal(configuration.userRoles.length, 2);
+  assert.equal(configuration.scopes.length, 2);
+});
+
 test('el contador de administradores globales ignora cuentas, roles o ámbitos incompletos', () => {
   const sandbox = createAdapterSandbox(makeSecurityData());
   const data = makeSecurityData();
