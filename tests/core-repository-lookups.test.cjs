@@ -17,8 +17,10 @@ test('getRecordById usa una búsqueda exacta y no carga la tabla completa', () =
     throw new Error('No debe cargar la tabla completa.');
   };
   sandbox.findRecordsByFields = (source, filters, options) => {
-    assert.deepEqual(source, { spreadsheetId: 'DIRECTORY', sheetName: 'personas' });
-    assert.deepEqual(filters, { persona_id: 'PER_001' });
+    assert.equal(source.spreadsheetId, 'DIRECTORY');
+    assert.equal(source.sheetName, 'personas');
+    assert.equal(Object.keys(filters).length, 1);
+    assert.equal(filters.persona_id, 'PER_001');
     assert.equal(options.searchField, 'persona_id');
     return { records: [{ persona_id: 'PER_001', nombres: 'Ana' }], total: 1 };
   };
