@@ -226,3 +226,39 @@ test('queryRecords resuelve ámbitos mediante relaciones declaradas por campo', 
   assert.equal(result.total, 1);
   assert.equal(result.records[0].assignment_id, 'A');
 });
+
+test('queryRecords combina búsqueda textual con coincidencias de entidades relacionadas', () => {
+  const sandbox = createSandbox();
+  const result = sandbox.context.queryRecords({ spreadsheetId: 'S', sheetName: 'Assignments' }, {
+    idField: 'assignment_id',
+    filters: { status: 'ACTIVE' },
+    search: 'ana',
+    searchFields: [],
+    searchAny: [{ field: 'site_id', values: ['S1'] }],
+    authorization: sandbox.authorization(),
+    cacheSeconds: 0
+  });
+  assert.equal(result.total, 2);
+  assert.deepEqual(result.records.map(item => item.assignment_id).sort(), ['A', 'D']);
+});
+
+test('queryRecords excluye registros cuyas relaciones declaradas contradicen el registro', () => {
+  const sandbox = createSandbox();
+  const scoped = sandbox.authorization('P1', ['DIRECTORY_READ'], [
+    { tipo_ambito_id: 'SEDE', referencia_id: 'S1' }
+  ]);
+  scoped.structures = [];
+  scoped.locals = [];
+  scoped.scopeRecordLookups = [{
+    recordField: 'site_id',
+    values: { S2: { site_id: 'S1' } },
+    requireEqualFields: ['site_id']
+  }];
+  const result = sandbox.context.queryRecords({ spreadsheetId: 'S', sheetName: 'Assignments' }, {
+    idField: 'assignment_id',
+    filters: { assignment_id: 'B' },
+    authorization: scoped,
+    cacheSeconds: 0
+  });
+  assert.equal(result.total, 0);
+});
