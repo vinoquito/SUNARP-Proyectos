@@ -2016,13 +2016,30 @@ function saveAccessUserConfiguration(payload) {
   }
 
   const continuityData = _accessLoadAdministratorContinuityData_();
-  const modulesCatalog = _accessLoadSecurityRecords_(s.modules, ACCESS_MANAGEMENT_FIELDS.modules);
-  const rolesCatalog = _accessLoadSecurityRecords_(s.roles, ACCESS_MANAGEMENT_FIELDS.roles);
   const targetUserRoles = _accessFindSecurityRecords_(
     s.userRoles, 'persona_id', [personaId], ACCESS_MANAGEMENT_FIELDS.userRoles
   );
   const targetScopes = _accessFindSecurityRecords_(
     s.scopes, 'persona_id', [personaId], ACCESS_MANAGEMENT_FIELDS.scopes
+  );
+
+  // El editor solo necesita los módulos y roles vinculados a esta persona
+  // o incluidos en el envío; no requiere descargar ambos catálogos completos.
+  const moduleIds = Array.from(new Set(
+    targetUserRoles.map(item => _accessText_(item.modulo_id))
+      .concat(accessInput.map(item => _accessText_(item && item.modulo_id)))
+      .filter(Boolean)
+  ));
+  const roleIds = Array.from(new Set(
+    targetUserRoles.map(item => _accessText_(item.rol_id))
+      .concat(accessInput.map(item => _accessText_(item && item.rol_id)))
+      .filter(Boolean)
+  ));
+  const modulesCatalog = _accessFindSecurityRecords_(
+    s.modules, 'modulo_id', moduleIds, ACCESS_MANAGEMENT_FIELDS.modules
+  );
+  const rolesCatalog = _accessFindSecurityRecords_(
+    s.roles, 'rol_id', roleIds, ACCESS_MANAGEMENT_FIELDS.roles
   );
   const scopeTypesCatalog = _accessLoadSecurityRecords_(
     s.scopeTypes, ACCESS_MANAGEMENT_FIELDS.scopeTypes
@@ -2031,8 +2048,12 @@ function saveAccessUserConfiguration(payload) {
     usuarios: _accessMergeUniqueRows_(
       [continuityData.usuarios, targetUsers], ['persona_id']
     ),
-    modulos: modulesCatalog,
-    roles: rolesCatalog,
+    modulos: _accessMergeUniqueRows_(
+      [continuityData.modulos, modulesCatalog], ['modulo_id']
+    ),
+    roles: _accessMergeUniqueRows_(
+      [continuityData.roles, rolesCatalog], ['rol_id']
+    ),
     usuarioRol: _accessMergeUniqueRows_(
       [continuityData.usuarioRol, targetUserRoles],
       ['persona_id', 'modulo_id', 'rol_id', 'active']

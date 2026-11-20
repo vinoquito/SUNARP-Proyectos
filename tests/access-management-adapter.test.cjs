@@ -1625,3 +1625,16 @@ test('la generación de ID administrativo detecta colisiones mediante búsquedas
   assert.deepEqual(lookups.map(item => item.filters.rol_id), ['ROL_EDITOR', 'ROL_EDITOR_2']);
   assert.ok(lookups.every(item => item.options.matchCase === false));
 });
+
+test('la edición conjunta de accesos consulta módulos y roles por los IDs de la persona, no por catálogo completo', () => {
+  const start = accessSource.indexOf('function saveAccessUserConfiguration(');
+  const end = accessSource.indexOf('function _accessLoadSecurityRecords_(', start);
+  assert.ok(start >= 0 && end > start);
+  const implementation = accessSource.slice(start, end);
+  assert.doesNotMatch(implementation, /_accessLoadSecurityRecords_\s*\(\s*s\.modules/);
+  assert.doesNotMatch(implementation, /_accessLoadSecurityRecords_\s*\(\s*s\.roles/);
+  assert.match(implementation, /targetUserRoles\.map\(item => _accessText_\(item\.modulo_id\)\)/);
+  assert.match(implementation, /targetUserRoles\.map\(item => _accessText_\(item\.rol_id\)\)/);
+  assert.match(implementation, /_accessFindSecurityRecords_\s*\(\s*s\.modules/);
+  assert.match(implementation, /_accessFindSecurityRecords_\s*\(\s*s\.roles/);
+});
