@@ -496,7 +496,7 @@ function _directoryLoadContextFromSheets_(options) {
   if (!Array.isArray(context.personas)) context.personas = [];
   if (!Array.isArray(context.datosPersonales)) context.datosPersonales = [];
 
-  _directoryValidateSnapshot_(context, options);
+  if (options.validateSnapshot !== false) _directoryValidateSnapshot_(context, options);
 
   return context;
 }
@@ -677,7 +677,7 @@ function _directoryAssertAllowedFields_(payload, allowedFields, label) {
  */
 function getDirectoryInitialData() {
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false });
+  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false, validateSnapshot: false });
   const view = _directoryBuildView_(context, authorization);
 
   const structureMap = _directoryCreateMap_(context.estructuraOrg);
@@ -809,7 +809,7 @@ function getDirectoryInitialData() {
 function listDirectoryPeople(options) {
   options = options || {};
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_({ includePersonalData: false, includeDocumentTypes: false });
+  const context = _directoryLoadContext_({ includePersonalData: false, includeDocumentTypes: false, validateSnapshot: false });
   const view = _directoryBuildView_(context, authorization);
 
   const activeFilter = options.active === undefined ? true : options.active;
@@ -867,7 +867,7 @@ function listDirectoryPeople(options) {
 function listDirectoryAssignments(options) {
   options = options || {};
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false, includeDocumentTypes: false });
+  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false, includeDocumentTypes: false, validateSnapshot: false });
   const view = _directoryBuildView_(context, authorization);
 
   const activeFilter = options.active === undefined ? true : options.active;
@@ -1022,7 +1022,7 @@ function listDirectoryAssignments(options) {
 
 function getDirectoryPersonById(personaId) {
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false, includeDocumentTypes: false });
+  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false, includeDocumentTypes: false, validateSnapshot: false });
 
   // Primero se determina qué asignaciones de esta persona están autorizadas.
   // No se consulta su identidad ni sus datos personales antes de esta comprobación.
@@ -1084,7 +1084,7 @@ function getDirectoryAssignmentsByPersonId(personaId, options) {
 
 function getDirectoryAssignmentById(asignacionId) {
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false, includeDocumentTypes: false });
+  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false, includeDocumentTypes: false, validateSnapshot: false });
   const assignment = context.asignaciones.find(item =>
     _directoryKey_(item.asignacion_id) === _directoryKey_(asignacionId)
   );
