@@ -2600,12 +2600,57 @@ function getAccessAuditHistory(filters) {
   );
 
   if (hasFilters) {
-    const cached = SUNARPCore.listRecordsFromSourcesCached([{
-      key: 'audit',
-      source,
-      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.audit
-    }], 60);
-    records = (cached.audit || []).slice().sort((a, b) =>
+    let candidates = null;
+    const requiredHeaders = ACCESS_MANAGEMENT_FIELDS.audit;
+    if (actor) {
+      candidates = SUNARPCore.searchRecordsByFields(
+        source, actor, ['actor_correo'], { matchCase: false }
+      );
+    } else if (recordId) {
+      candidates = SUNARPCore.searchRecordsByFields(
+        source, recordId, ['registro_id'], { matchCase: false }
+      );
+    } else if (moduleCode) {
+      candidates = SUNARPCore.findRecordsByFields(
+        source, { modulo: moduleCode },
+        { searchField: 'modulo', matchCase: false, requiredHeaders }
+      );
+    } else if (action) {
+      candidates = SUNARPCore.findRecordsByFields(
+        source, { accion: action },
+        { searchField: 'accion', matchCase: false, requiredHeaders }
+      );
+    } else if (outcome) {
+      candidates = SUNARPCore.findRecordsByFields(
+        source, { resultado: outcome },
+        { searchField: 'resultado', matchCase: false, requiredHeaders }
+      );
+    } else if (query) {
+      candidates = SUNARPCore.searchRecordsByFields(
+        source,
+        query,
+        [
+          'actor_correo', 'actor_nombre', 'accion', 'modulo',
+          'tipo_entidad', 'registro_id', 'registro_nombre',
+          'resultado', 'detalle'
+        ],
+        { matchCase: false }
+      );
+    }
+
+    // Un filtro exclusivamente temporal todavía requiere una lectura amplia:
+    // Core aún no expone una consulta por rango de fechas.
+    if (candidates) {
+      records = (candidates.records || []).slice();
+    } else {
+      const cached = SUNARPCore.listRecordsFromSourcesCached([{
+        key: 'audit',
+        source,
+        requiredHeaders
+      }], 60);
+      records = (cached.audit || []).slice();
+    }
+    records.sort((a, b) =>
       new Date(b.fecha_hora).getTime() - new Date(a.fecha_hora).getTime()
     );
   } else {
