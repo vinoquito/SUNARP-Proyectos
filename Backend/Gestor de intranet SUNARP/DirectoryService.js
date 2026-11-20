@@ -549,6 +549,51 @@ function _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap
 }
 
 
+function _directoryBuildFilterContract_(authorization, assignments, structures) {
+  const moduleAccess = (authorization.auth && authorization.auth.moduleAccess || [])
+    .find(item => _directoryKey_(item.modulo_id) === _directoryKey_(authorization.moduleId));
+  const scopes = (moduleAccess && moduleAccess.scopes || []).map(scope => ({
+    type: _directoryText_(scope.tipo_ambito || scope.tipo || scope.scope_type).toUpperCase(),
+    referenceId: _directoryKey_(scope.referencia_id),
+    includeDescendants: _directoryNormalizeBoolean_(scope.incluir_descendientes === undefined ? false : scope.incluir_descendientes)
+  })).filter(scope => ['TOTAL', 'SEDE', 'ESTRUCTURA_ORG', 'LOCAL'].includes(scope.type));
+
+  const unique = field => Array.from(new Set((assignments || [])
+    .map(record => _directoryKey_(record[field])).filter(Boolean)));
+
+  const usedStructureIds = new Set(unique('estructura_id'));
+  const structureMap = _directoryCreateMap_(structures || []);
+  const contextStructureIds = new Set();
+  usedStructureIds.forEach(id => {
+    let current = structureMap.get(id);
+    const visited = new Set();
+    while (current) {
+      const parentId = _directoryKey_(current.parent_id);
+      if (!parentId || visited.has(parentId)) break;
+      visited.add(parentId);
+      if (!usedStructureIds.has(parentId)) contextStructureIds.add(parentId);
+      current = structureMap.get(parentId);
+    }
+  });
+
+  return {
+    scopes,
+    fixed: {
+      total: scopes.some(scope => scope.type === 'TOTAL'),
+      sedeIds: Array.from(new Set(scopes.filter(scope => scope.type === 'SEDE').map(scope => scope.referenceId).filter(Boolean))),
+      structureIds: Array.from(new Set(scopes.filter(scope => scope.type === 'ESTRUCTURA_ORG').map(scope => scope.referenceId).filter(Boolean))),
+      localIds: Array.from(new Set(scopes.filter(scope => scope.type === 'LOCAL').map(scope => scope.referenceId).filter(Boolean)))
+    },
+    selectable: {
+      sedeIds: unique('sede_id'),
+      cargoIds: unique('cargo_id'),
+      structureIds: unique('estructura_id'),
+      localIds: unique('local_id')
+    },
+    contextStructureIds: Array.from(contextStructureIds)
+  };
+}
+
 function _directoryBuildView_(context, authorization) {
   const relations = _directoryBuildRelations_(context, false), relationMap = _directoryCreateMap_(relations);
   const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
@@ -763,6 +808,14 @@ function getDirectoryInitialData() {
   );
 
   const assignments = view.assignments;
+  const filterContract = _directoryBuildFilterContract_(
+    authorization,
+    assignments,
+    scopedStructures
+  );
+  const selectableSedeIds = new Set(filterContract.selectable.sedeIds);
+  const selectableCargoIds = new Set(filterContract.selectable.cargoIds);
+  const selectableStructureIds = new Set(filterContract.selectable.structureIds);
   const scopedSedes = context.sedes.filter(item =>
     _directoryIsActive_(item) && allowedSedeIds.has(_directoryKey_(item.id))
   );
@@ -790,10 +843,11 @@ function getDirectoryInitialData() {
       estructuraOrg: scopedStructures,
       estructuraLocal: scopedRelations,
       cargos: scopedCargos,
+      filterContract,
       filterVisibility: {
-        sede: scopedSedes.length > 1,
-        cargo: scopedCargos.length > 1,
-        hierarchy: scopedStructures.length > 1
+        sede: selectableSedeIds.size > 1,
+        cargo: selectableCargoIds.size > 1,
+        hierarchy: selectableStructureIds.size > 1
       }
     },
     // La tabla consulta sus filas bajo demanda mediante listDirectoryAssignments.
