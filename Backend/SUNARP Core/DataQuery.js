@@ -251,6 +251,7 @@ function queryRecords(source, options) {
     if (!_coreQueryMatchesSearch_(record, search, searchFields, searchAny)) return;
     const id = String(record[idField] === null || record[idField] === undefined ? '' : record[idField]).trim();
     const scopeRecord = Object.assign({}, record, scopeRecordById[id] || {});
+    let relationConsistent = true;
     scopeRecordLookups.forEach(lookup => {
       if (!lookup || typeof lookup.recordField !== 'string' ||
           !lookup.values || typeof lookup.values !== 'object' || Array.isArray(lookup.values)) {
@@ -271,10 +272,14 @@ function queryRecords(source, options) {
           const expectedText = String(expected === null || expected === undefined ? '' : expected).trim();
           return actualText && expectedText && actualText !== expectedText;
         });
-        if (inconsistent) return;
+        if (inconsistent) {
+          relationConsistent = false;
+          return;
+        }
         Object.assign(scopeRecord, related);
       }
     });
+    if (!relationConsistent) return;
     if (!authorizationIsRecordInScope(
       validated.context,
       validated.moduleId,
