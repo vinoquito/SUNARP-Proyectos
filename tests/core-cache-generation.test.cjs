@@ -35,7 +35,8 @@ function createCacheSandbox() {
       spreadsheetId: source.spreadsheetId,
       sheetName: source.sheetName,
       headerRow: 1,
-      label: source.sheetName
+      label: source.sheetName,
+      dependencies: source.dependencies || []
     })
   });
   vm.runInContext(source, sandbox, { filename: 'DataCache.js' });
