@@ -1399,7 +1399,7 @@ test('el historial de auditoría combina actor, módulo, acción, resultado, reg
     registro_id: recordId,
     registro_nombre: 'Persona',
     resultado: result,
-    detalle,
+    detalle: detail,
     datos_antes: '',
     datos_despues: '',
     ambito_modulo: '',
