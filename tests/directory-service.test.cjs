@@ -877,8 +877,8 @@ test('la edición permite pasar de ambos identificadores a local-only vaciando l
 
 
 test('el Directorio utiliza exclusivamente la caché central de SUNARP Core', () => {
-  assert.match(serviceSource, /listRecordsFromSourcesCached\(\s*operationalRequests,\s*DIRECTORY_DATA_CACHE_TTL\)/);
-  assert.match(serviceSource, /listRecordsFromSourcesCached\(\s*catalogRequests,\s*DIRECTORY_CATALOG_CACHE_TTL\)/);
+  assert.match(serviceSource, /SUNARPCore\.listRecordsFromSourcesCached\(\s*operationalRequests,\s*DIRECTORY_DATA_CACHE_TTL\)/);
+  assert.match(serviceSource, /SUNARPCore\.listRecordsFromSourcesCached\(\s*catalogRequests,\s*DIRECTORY_CATALOG_CACHE_TTL\)/);
   assert.doesNotMatch(serviceSource, /function _directoryWriteCachedContext_/);
   assert.doesNotMatch(serviceSource, /function _directoryReadCachedContext_/);
   assert.doesNotMatch(serviceSource, /DIRECTORY_CACHE_PART_SUFFIX/);
