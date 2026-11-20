@@ -238,6 +238,78 @@ function _accessFindPersonById_(personaId) {
   return result.records[0] || null;
 }
 
+/**
+ * Recupera únicamente las relaciones de seguridad necesarias para resolver
+ * la autorización de una persona. Las colecciones completas de gestión se
+ * cargan bajo demanda cuando una operación administrativa las necesita.
+ */
+function _accessFindSecurityRecords_(sheetName, field, values, requiredHeaders) {
+  const ids = Array.from(new Set((values || []).map(_accessText_).filter(Boolean)));
+  if (!ids.length) return [];
+  const filters = {};
+  filters[field] = ids.length === 1 ? ids[0] : ids;
+  const result = SUNARPCore.findRecordsByFields(
+    _accessSecuritySource_(sheetName),
+    filters,
+    { searchField: field, requiredHeaders }
+  );
+  return result.records || [];
+}
+
+function _accessLoadAuthorizationData_(personaId) {
+  const s = ACCESS_MANAGEMENT_CONFIG.sheets;
+  const users = _accessFindSecurityRecords_(
+    s.users, 'persona_id', [personaId], ACCESS_MANAGEMENT_FIELDS.users
+  );
+  const activeUsers = users.filter(item => _accessIsActive_(item.active));
+
+  if (!activeUsers.length) {
+    return {
+      usuarios: users, modulos: [], roles: [], usuarioRol: [],
+      permisos: [], rolPermiso: [], ambitosAcceso: [],
+      operaciones: [], tiposAmbito: []
+    };
+  }
+
+  const usuarioRol = _accessFindSecurityRecords_(
+    s.userRoles, 'persona_id', [personaId], ACCESS_MANAGEMENT_FIELDS.userRoles
+  );
+  const ambitosAcceso = _accessFindSecurityRecords_(
+    s.scopes, 'persona_id', [personaId], ACCESS_MANAGEMENT_FIELDS.scopes
+  );
+  const roleIds = usuarioRol.map(item => item.rol_id);
+  const roles = _accessFindSecurityRecords_(
+    s.roles, 'rol_id', roleIds, ACCESS_MANAGEMENT_FIELDS.roles
+  );
+  const rolPermiso = _accessFindSecurityRecords_(
+    s.rolePermissions, 'rol_id', roleIds, ACCESS_MANAGEMENT_FIELDS.rolePermissions
+  );
+  const permissionIds = rolPermiso.map(item => item.permiso_id);
+  const permisos = _accessFindSecurityRecords_(
+    s.permissions, 'permiso_id', permissionIds, ACCESS_MANAGEMENT_FIELDS.permissions
+  );
+
+  // El catálogo de módulos es pequeño y permite resolver module_id incluso
+  // cuando la persona no tiene una asignación en un módulo concreto.
+  const moduleData = SUNARPCore.listRecordsFromSourcesCached([{
+    key: 'modulos',
+    source: _accessSecuritySource_(s.modules),
+    requiredHeaders: ACCESS_MANAGEMENT_FIELDS.modules
+  }], 300);
+
+  return {
+    usuarios: users,
+    modulos: moduleData.modulos || [],
+    roles,
+    usuarioRol,
+    permisos,
+    rolPermiso,
+    ambitosAcceso,
+    operaciones: [],
+    tiposAmbito: []
+  };
+}
+
 function _accessLoadDocumentTypes_() {
   const result = SUNARPCore.listRecordsFromSourcesCached([{
     key: 'documentTypes',
@@ -463,12 +535,12 @@ function _accessGetAuthContext_() {
   }
 
   const person = matchingPeople[0];
-  const data = _accessLoadSecurityData_({ validate: false });
   if (Object.prototype.hasOwnProperty.call(person, 'active') && !_accessIsActive_(person.active)) {
     throw new Error('La persona vinculada a tu correo institucional está inactiva.');
   }
 
   const personaId = _accessText_(person.persona_id);
+  const data = _accessLoadAuthorizationData_(personaId);
   const context = SUNARPCore.resolveAuthorizationContext({
     personaId,
     users: data.usuarios,
@@ -496,16 +568,31 @@ function _accessGetAuthContext_() {
     throw new Error('Tu cuenta no está habilitada para utilizar el gestor de intranet.');
   }
 
-  return Object.assign({}, context, {
+  const auth = Object.assign({}, context, {
     email,
     name: [person.nombres, person.apellidos].map(_accessText_).filter(Boolean).join(' '),
     person,
-    userAccountsCatalog: data.usuarios,
     modules: data.modulos,
     permissionsCatalog: data.permisos,
-    rolesCatalog: data.roles,
-    securityData: data
+    rolesCatalog: data.roles
   });
+
+  // Las nueve fuentes completas se leen solo al entrar a una operación
+  // administrativa que necesita sus catálogos o listados globales.
+  let fullSecurityData = null;
+  const getFullSecurityData = () => {
+    if (!fullSecurityData) fullSecurityData = _accessLoadSecurityData_({ validate: false });
+    return fullSecurityData;
+  };
+  Object.defineProperties(auth, {
+    securityData: { enumerable: false, get: getFullSecurityData },
+    userAccountsCatalog: {
+      enumerable: false,
+      get: () => getFullSecurityData().usuarios || []
+    }
+  });
+
+  return auth;
 }
 
 
