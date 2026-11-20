@@ -2240,7 +2240,7 @@ function getAccessManagementTabData(tabId) {
     const auth = _accessRequirePermission_('PERMISOS_ADMINISTRAR');
     return { operations: _accessGetOperationCatalog_(auth.securityData.operaciones) };
   }
-  if (tab === 'scopeTypes') {
+  if (tab === 'scopetypes') {
     const auth = _accessRequirePermission_('AMBITOS_ACCESO_ADMINISTRAR');
     return { scopeTypes: auth.securityData.tiposAmbito.filter(_accessCatalogIsActive_).map(item => ({
       tipo_ambito_id: _accessUpper_(item.tipo_ambito_id), nombre: _accessText_(item.nombre), descripcion: _accessText_(item.descripcion),
