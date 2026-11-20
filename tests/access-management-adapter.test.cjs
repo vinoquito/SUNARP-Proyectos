@@ -568,7 +568,7 @@ test('el listado de usuarios se consulta solo con filtro de sede o rol', () => {
   assert.doesNotMatch(accessUiSource, /siteSelect\.addEventListener\('change', \(\) => loadFilteredUsers/);
   assert.doesNotMatch(accessUiSource, /roleSelect\.addEventListener\('change', \(\) => loadFilteredUsers/);
   assert.match(accessUiSource, /searchPlaceholder: 'Buscar por nombre o correo institucional/);
-  assert.match(accessUiSource, /state\.table\.setData\(state\.data\.users\)/);
+  assert.match(accessUiSource, /mode: 'server'/);
 });
 
 test('los formularios de rol y permiso no permiten ingresar IDs, códigos ni estados manualmente', () => {
