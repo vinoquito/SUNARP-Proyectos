@@ -80,23 +80,22 @@ function updateRecordByFields(source, criteria, updates, options) {
       }
     }
 
-    updateFields.forEach(field => {
-      const value = updates[field];
+    return _coreRunSourceWrite_(source, markWriteStarted => {
+      updateFields.forEach(field => {
+        const value = updates[field];
+        markWriteStarted();
+        table.sheet.getRange(
+          entry.rowNumber,
+          _coreGetFieldIndex_(table, field) + 1
+        ).setValue(value === null || value === undefined ? '' : value);
+      });
 
-      table.sheet.getRange(
-        entry.rowNumber,
-        _coreGetFieldIndex_(table, field) + 1
-      ).setValue(value === null || value === undefined ? '' : value);
+      return {
+        success: true,
+        message: 'Registro actualizado correctamente.',
+        record: Object.assign({}, entry.record, updates)
+      };
     });
-
-    SpreadsheetApp.flush();
-    _coreInvalidateSourceCacheOrThrow_(source);
-
-    return {
-      success: true,
-      message: 'Registro actualizado correctamente.',
-      record: Object.assign({}, entry.record, updates)
-    };
   });
 }
 
@@ -227,76 +226,77 @@ function syncRecordsByKey(
     let updated = 0;
     let deactivated = 0;
 
-    existingMap.forEach((entry, key) => {
-      const desired = desiredMap.get(key);
+    return _coreRunSourceWrite_(source, markWriteStarted => {
+      existingMap.forEach((entry, key) => {
+        const desired = desiredMap.get(key);
 
-      const updates = desired
-        ? Object.assign({}, desired, { [statusField]: activeValue })
-        : { [statusField]: inactiveValue };
+        const updates = desired
+          ? Object.assign({}, desired, { [statusField]: activeValue })
+          : { [statusField]: inactiveValue };
 
-      const fields = _coreValidateRecordFields_(updates, table.headers);
+        const fields = _coreValidateRecordFields_(updates, table.headers);
+        let changed = false;
 
-      let changed = false;
+        fields.forEach(field => {
+          const nextValue =
+            updates[field] === null || updates[field] === undefined
+              ? ''
+              : updates[field];
 
-      fields.forEach(field => {
-        const nextValue =
-          updates[field] === null || updates[field] === undefined
-            ? ''
-            : updates[field];
+          if (!_coreValuesEqual_(entry.record[field], nextValue)) {
+            markWriteStarted();
+            table.sheet.getRange(
+              entry.rowNumber,
+              _coreGetFieldIndex_(table, field) + 1
+            ).setValue(nextValue);
 
-        if (!_coreValuesEqual_(entry.record[field], nextValue)) {
-          table.sheet.getRange(
-            entry.rowNumber,
-            _coreGetFieldIndex_(table, field) + 1
-          ).setValue(nextValue);
+            changed = true;
+          }
+        });
 
-          changed = true;
+        if (changed) {
+          if (desired) updated++;
+          else deactivated++;
         }
       });
 
-      if (changed) {
-        if (desired) updated++;
-        else deactivated++;
-      }
-    });
+      desiredMap.forEach((record, key) => {
+        if (existingMap.has(key)) return;
 
-    desiredMap.forEach((record, key) => {
-      if (existingMap.has(key)) return;
+        const complete = Object.assign({}, parentMatch, record, {
+          [statusField]: activeValue
+        });
+        _coreValidateRecordFields_(complete, table.headers);
 
-      const complete = Object.assign({}, parentMatch, record, {
-        [statusField]: activeValue
+        const row = table.headers.map(header => {
+          const value = complete[header];
+          return value === null || value === undefined ? '' : value;
+        });
+        const targetRow = Math.max(
+          table.config.headerRow + 1,
+          table.sheet.getLastRow() + 1
+        );
+
+        markWriteStarted();
+        table.sheet.getRange(
+          targetRow,
+          1,
+          1,
+          row.length
+        ).setValues([row]);
+
+        inserted++;
       });
 
-      _coreValidateRecordFields_(complete, table.headers);
-
-      const row = table.headers.map(header => {
-        const value = complete[header];
-        return value === null || value === undefined ? '' : value;
-      });
-
-      const targetRow = Math.max(
-        table.config.headerRow + 1,
-        table.sheet.getLastRow() + 1
-      );
-
-      table.sheet.getRange(
-        targetRow,
-        1,
-        1,
-        row.length
-      ).setValues([row]);
-
-      inserted++;
+      return {
+        success: true,
+        inserted,
+        updated,
+        deactivated,
+        totalActive: desiredMap.size
+      };
     });
 
-    SpreadsheetApp.flush();
-    if (inserted || updated || deactivated) {
-      _coreInvalidateSourceCacheOrThrow_(source);
-    }
-
-    return {
-      success: true,
-      inserted,
       updated,
       deactivated,
       totalActive: desiredMap.size
