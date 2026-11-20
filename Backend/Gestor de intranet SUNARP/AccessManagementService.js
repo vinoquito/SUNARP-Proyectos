@@ -525,7 +525,7 @@ function _accessWriteAudit_(actor, event) {
       ACCESS_MANAGEMENT_CONFIG.sheets.audit
     );
 
-    const info = SUNARPCore.getSourceInfo(source);
+    const info = SUNARPCore.getSourceInfoCached(source, 300);
     const now = new Date();
 
     const record = {
