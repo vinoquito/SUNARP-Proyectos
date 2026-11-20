@@ -52,7 +52,7 @@ test('el servicio, el frontend y las pruebas Core tienen sintaxis válida', () =
 
 
 test('SUNARP Core no contiene definiciones globales duplicadas en DataRepository', () => {
-  const declarations = [...coreRepositorySource.matchAll(/^function\\s+([A-Za-z0-9_$]+)\\s*\\(/gm)]
+  const declarations = [...coreRepositorySource.matchAll(/^function\s+([A-Za-z0-9_$]+)\s*\(/gm)]
     .map(match => match[1]);
   const counts = new Map();
   declarations.forEach(name => counts.set(name, (counts.get(name) || 0) + 1));
