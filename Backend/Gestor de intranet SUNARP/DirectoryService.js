@@ -720,6 +720,46 @@ function _directoryAssertAllowedFields_(payload, allowedFields, label) {
  * Devuelve los catálogos autorizados y las dos colecciones operativas.
  * Las personas se devuelven una sola vez, aunque tengan varias asignaciones.
  */
+function _directoryBuildInitialAssignmentPage_(view, context) {
+  const sorted = view.assignments.slice().sort((a, b) =>
+    _directoryCompare_(a.order, b.order) ||
+    _directoryCompare_(a.asignacion_id, b.asignacion_id)
+  );
+  const total = sorted.length;
+  const pageSize = 10;
+  const assignments = sorted.slice(0, pageSize);
+  const personaIds = Array.from(new Set(
+    assignments.map(item => _directoryKey_(item.persona_id)).filter(Boolean)
+  ));
+  const peopleResult = personaIds.length
+    ? SUNARPCore.findRecordsByFields(
+        _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+        { persona_id: personaIds },
+        {
+          searchField: 'persona_id',
+          requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas
+        }
+      )
+    : { records: [], total: 0 };
+  if (peopleResult.total !== personaIds.length) {
+    throw new Error('Una o más asignaciones visibles no tienen una persona válida en el directorio.');
+  }
+  const peopleById = _directoryCreateMap_(peopleResult.records, 'persona_id');
+  return {
+    records: assignments.map(item => {
+      const person = peopleById.get(_directoryKey_(item.persona_id));
+      return Object.assign({}, item, {
+        nombres: person ? person.nombres : '',
+        apellidos: person ? person.apellidos : '',
+        correo_institucional: person ? person.correo_institucional : ''
+      });
+    }),
+    total,
+    page: 1,
+    pageSize
+  };
+}
+
 function getDirectoryInitialData() {
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
   const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false, validateSnapshot: false });
@@ -808,6 +848,7 @@ function getDirectoryInitialData() {
   );
 
   const assignments = view.assignments;
+  const initialPage = _directoryBuildInitialAssignmentPage_(view, context);
   const filterContract = _directoryBuildFilterContract_(
     authorization,
     assignments,
@@ -852,7 +893,8 @@ function getDirectoryInitialData() {
     },
     // La tabla consulta sus filas bajo demanda mediante listDirectoryAssignments.
     // No se entrega la colección completa al navegador durante el bootstrap.
-    records: [],
+    records: initialPage.records,
+    page: { page: initialPage.page, pageSize: initialPage.pageSize, total: initialPage.total },
     summary: {
       people: new Set(view.assignments.map(item => _directoryKey_(item.persona_id))).size,
       assignments: assignments.length
