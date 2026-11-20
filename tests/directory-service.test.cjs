@@ -55,11 +55,11 @@ test('SUNARP Core ofrece lectura limitada desde el final de una fuente', () => {
   const start = coreRepositorySource.indexOf('function listTailRecords(source, options) {');
   const end = coreRepositorySource.indexOf('function getRecordById(', start);
   const implementation = coreRepositorySource.slice(start, end);
-  assert.match(implementation, /sheet\\.getRange\\(\\s*startRow, 1, numberOfRows, lastColumn\\)/);
-  assert.doesNotMatch(implementation, /getDataRange/);
-  assert.match(implementation, /const startRow = Math\\.max\\(dataStartRow, endRow - limit \\+ 1\\)/);
+  assert.ok(implementation.includes('sheet.getRange('));
+  assert.ok(implementation.includes('startRow, 1, numberOfRows, lastColumn'));
+  assert.ok(implementation.includes('const startRow = Math.max(dataStartRow, endRow - limit + 1)'));
+  assert.ok(!implementation.includes('getDataRange'));
 });
-
 test('SUNARP Core no contiene definiciones globales duplicadas en DataRepository', () => {
   const declarations = [...coreRepositorySource.matchAll(/^function\s+([A-Za-z0-9_$]+)\s*\(/gm)]
     .map(match => match[1]);
