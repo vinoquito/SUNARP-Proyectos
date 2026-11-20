@@ -507,6 +507,17 @@ Ejecuta la misma validación y lanza un error agregado si `valid` es falso. Devu
 - Los servicios deben rechazar relaciones inexistentes cuando las hayan declarado obligatorias. Para relaciones opcionales, omitir `required: true`.
 - Toda escritura por rutas ajenas a Core debe invalidar explícitamente cada fuente afectada conforme al contrato de consistencia externa de Fase 1. No asumir que la instalación de triggers existe o está completa; debe verificarse en Apps Script.
 
+### 10.1 Consumidores comprobados en esta rama
+
+- **Gestor de intranet SUNARP** es el único proyecto de Apps Script que declara e invoca directamente la biblioteca `SUNARPCore` en esta rama. Su manifiesto mantiene la dependencia en versión 9; no se actualiza a v10 hasta completar el procedimiento de publicación y la prueba del consumidor.
+- La resolución ordinaria de identidad del Gestor obtiene el correo de sesión, busca una coincidencia exacta en `personas.correo_institucional` mediante `resolveIdentity` y proyecta únicamente `persona_id`, correo, nombres y apellidos. Exige exactamente una coincidencia y entrega `persona_id` a `resolveAuthorizationContext`; Core no busca identidades por correo dentro del motor de autorización.
+- La autorización ordinaria del Gestor consulta las relaciones activas de la persona solicitante, sus ámbitos, roles asociados, relaciones rol-permiso y permisos correspondientes; carga el catálogo de módulos mediante la caché central. No carga las nueve tablas administrativas completas durante el login. `_accessLoadSecurityData_()`, que sí lee el snapshot integral de seguridad, se reserva para la operación explícita de mantenimiento `validateAccessManagementIntegrity()`.
+- **DirectoryService** usa `queryRecords` para listados funcionales de asignaciones sujetos a permiso y ámbito; enriquece la página devuelta mediante búsquedas exactas de las personas correspondientes. Los catálogos y las relaciones obligatorias se declaran en la consulta. Las búsquedas exactas/parciales de soporte usan `findRecordsByFields` y `searchRecordsByFields`.
+- **Gestor de contenidos Sunarp** y **Agente Sunarp** no declaran la biblioteca ni invocan `SUNARPCore` en los archivos del repositorio inspeccionados; no se consideran consumidores directos del Core en esta rama.
+- La prueba `core-public-contract.test.cjs` compara el inventario de funciones globales exportables, verifica las firmas documentadas y detecta las invocaciones de Core desde los archivos del Gestor. La prueba `access-management-adapter.test.cjs` comprueba la resolución de identidad con proyección mínima, la autorización selectiva y que la lectura integral de seguridad quede diferida a mantenimiento. `directory-service.test.cjs` comprueba el contrato de consulta y compatibilidad del Directorio.
+
+Este inventario describe los consumidores comprobados en el repositorio y la rama auditados; no afirma que no existan proyectos Apps Script externos que no estén versionados aquí.
+
 ## 11. Verificación de versión y publicación
 
 El manifiesto de Gestor sigue declarando Core versión 9. El código fuente ya contiene contratos que Gestor comprueba como v10, pero un manifiesto no demuestra qué código contiene una versión publicada.
