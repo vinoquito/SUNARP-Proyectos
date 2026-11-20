@@ -1102,8 +1102,12 @@ function _directoryBuildInitialAssignmentPage_(view, context) {
 
 function getDirectoryInitialData() {
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false, validateSnapshot: false });
-  const view = _directoryBuildView_(context, authorization);
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeAssignments: false,
+    validateSnapshot: false
+  });
 
   const structureMap = _directoryCreateMap_(context.estructuraOrg);
   const structureTypeMap = _directoryCreateMap_(context.tiposEstructura);
@@ -1125,12 +1129,7 @@ function getDirectoryInitialData() {
       authorization.structures
     )
   );
-
-  // Se incluyen los antecesores únicamente para contextualizar la cascada.
-  // La autorización de registros continúa aplicándose sobre el ámbito real.
-  const allowedStructureIds = new Set(
-    permittedStructures.map(item => _directoryKey_(item.id))
-  );
+  const allowedStructureIds = new Set(permittedStructures.map(item => _directoryKey_(item.id)));
   const hierarchyDisplayIds = new Set(allowedStructureIds);
   permittedStructures.forEach(node => {
     let current = structureMap.get(_directoryKey_(node.parent_id));
@@ -1146,12 +1145,11 @@ function getDirectoryInitialData() {
   const scopedStructures = activeStructure.filter(node =>
     hierarchyDisplayIds.has(_directoryKey_(node.id))
   );
-  const scopedRelations = view.relations.filter(item =>
+
+  const relations = _directoryBuildRelations_(context, false);
+  const scopedRelations = relations.filter(item =>
     item.active && allowedStructureIds.has(_directoryKey_(item.estructura_id))
   );
-
-  // Los locales directos se autorizan por su sede; no requieren una
-  // relación estructura_local ni se inventa una estructura orgánica.
   const scopedLocals = context.locales.filter(local =>
     _directoryIsActive_(local) &&
     _accessRecordIsAllowed_(
@@ -1162,45 +1160,83 @@ function getDirectoryInitialData() {
       authorization.locals
     )
   );
-  const relationLocalIds = new Set(
-    scopedRelations.map(item => _directoryKey_(item.local_id))
-  );
-  const scopedLocalIds = new Set(
-    scopedLocals.map(item => _directoryKey_(item.id))
-  );
+  const relationLocalIds = new Set(scopedRelations.map(item => _directoryKey_(item.local_id)));
+  const scopedLocalIds = new Set(scopedLocals.map(item => _directoryKey_(item.id)));
   const catalogLocals = context.locales.filter(local =>
     _directoryIsActive_(local) &&
-    (
-      relationLocalIds.has(_directoryKey_(local.id)) ||
-      scopedLocalIds.has(_directoryKey_(local.id))
-    )
+    (relationLocalIds.has(_directoryKey_(local.id)) || scopedLocalIds.has(_directoryKey_(local.id)))
   );
 
   const allowedSedeIds = new Set([
     ...permittedStructures.map(item => _directoryKey_(item.sede_id)),
     ...catalogLocals.map(item => _directoryKey_(item.sede_id))
   ]);
-  const allowedLocalTypes = new Set(
-    catalogLocals.map(item => _directoryKey_(item.tipo_local_id))
+  const allowedLocalTypes = new Set(catalogLocals.map(item => _directoryKey_(item.tipo_local_id)));
+  const allowedStructureTypes = new Set(scopedStructures.map(item => _directoryKey_(item.tipo_estructura_id)));
+
+  // La página inicial y los catálogos derivados consultan Core por separado.
+  // Ninguna de estas consultas carga todas las asignaciones al servicio Gestor.
+  const initialPage = _directoryExecuteAssignmentQuery_(
+    context, authorization, { active: true }, 'asignacion_id', 0, 10, true
   );
-  const allowedStructureTypes = new Set(
-    scopedStructures.map(item => _directoryKey_(item.tipo_estructura_id))
+  const cargoResult = _directoryExecuteAssignmentQuery_(
+    context, authorization, { active: true, sortBy: 'cargo_id' }, 'cargo_id', 0, 1000, false
+  );
+  const relationResult = _directoryExecuteAssignmentQuery_(
+    context, authorization, { active: true, sortBy: 'estructura_local_id' },
+    'estructura_local_id', 0, 1000, false
+  );
+  const localResult = _directoryExecuteAssignmentQuery_(
+    context, authorization, { active: true, sortBy: 'local_id' }, 'local_id', 0, 1000, false
+  );
+  const peopleResult = _directoryExecuteAssignmentQuery_(
+    context, authorization, { active: true, sortBy: 'persona_id' }, 'persona_id', 0, 1, false
   );
 
-  const assignments = view.assignments;
-  const initialPage = _directoryBuildInitialAssignmentPage_(view, context);
-  const filterContract = _directoryBuildFilterContract_(
-    authorization,
-    assignments,
-    scopedStructures
-  );
-  const selectableSedeIds = new Set(filterContract.selectable.sedeIds);
-  const selectableCargoIds = new Set(filterContract.selectable.cargoIds);
-  const selectableStructureIds = new Set(filterContract.selectable.structureIds);
+  const usedCargoIds = new Set((cargoResult.records || []).map(item => _directoryKey_(item.cargo_id)).filter(Boolean));
+  const usedRelationIds = new Set((relationResult.records || []).map(item => _directoryKey_(item.estructura_local_id)).filter(Boolean));
+  const usedLocalIds = new Set((localResult.records || []).map(item => _directoryKey_(item.local_id)).filter(Boolean));
+  const usedStructureIds = new Set();
+  usedRelationIds.forEach(id => {
+    const relation = (context.estructuraLocal || []).find(item => _directoryKey_(item.id) === id);
+    if (relation) usedStructureIds.add(_directoryKey_(relation.estructura_id));
+  });
+
+  const selectableSedeIds = new Set();
+  usedStructureIds.forEach(id => {
+    const structure = structureMap.get(id);
+    if (structure && _directoryKey_(structure.sede_id)) selectableSedeIds.add(_directoryKey_(structure.sede_id));
+  });
+  usedLocalIds.forEach(id => {
+    const local = (context.locales || []).find(item => _directoryKey_(item.id) === id);
+    if (local && _directoryKey_(local.sede_id)) selectableSedeIds.add(_directoryKey_(local.sede_id));
+  });
+
+  const contextStructureIds = new Set();
+  usedStructureIds.forEach(id => {
+    let current = structureMap.get(id);
+    const visited = new Set();
+    while (current) {
+      const parentId = _directoryKey_(current.parent_id);
+      if (!parentId || visited.has(parentId)) break;
+      visited.add(parentId);
+      if (!usedStructureIds.has(parentId)) contextStructureIds.add(parentId);
+      current = structureMap.get(parentId);
+    }
+  });
+
+  const filterContract = _directoryBuildFilterContract_(authorization, [], scopedStructures);
+  filterContract.selectable = {
+    sedeIds: Array.from(selectableSedeIds),
+    cargoIds: Array.from(usedCargoIds),
+    structureIds: Array.from(usedStructureIds),
+    localIds: Array.from(usedLocalIds)
+  };
+  filterContract.contextStructureIds = Array.from(contextStructureIds);
+
   const scopedSedes = context.sedes.filter(item =>
     _directoryIsActive_(item) && allowedSedeIds.has(_directoryKey_(item.id))
   );
-  const usedCargoIds = new Set(assignments.map(item => _directoryKey_(item.cargo_id)));
   const scopedCargos = context.cargos.filter(item =>
     _directoryIsActive_(item) && usedCargoIds.has(_directoryKey_(item.id))
   );
@@ -1217,30 +1253,26 @@ function getDirectoryInitialData() {
       ),
       tiposDocumento: (context.documentTypes || [])
         .filter(_directoryIsActive_)
-        .map(item => ({
-          id: _directoryKey_(item.id),
-          name: _directoryText_(item.name)
-        })),
+        .map(item => ({ id: _directoryKey_(item.id), name: _directoryText_(item.name) })),
       estructuraOrg: scopedStructures,
       estructuraLocal: scopedRelations,
       cargos: scopedCargos,
       filterContract,
       filterVisibility: {
         sede: selectableSedeIds.size > 1,
-        cargo: selectableCargoIds.size > 1,
-        hierarchy: selectableStructureIds.size > 1
+        cargo: usedCargoIds.size > 1,
+        hierarchy: usedStructureIds.size > 1
       }
     },
-    // La tabla consulta sus filas bajo demanda mediante listDirectoryAssignments.
-    // No se entrega la colección completa al navegador durante el bootstrap.
-    records: initialPage.records,
-    page: { page: initialPage.page, pageSize: initialPage.pageSize, total: initialPage.total },
+    records: initialPage.records || [],
+    page: { page: 1, pageSize: 10, total: Number(initialPage.total) || 0 },
     summary: {
-      people: new Set(view.assignments.map(item => _directoryKey_(item.persona_id))).size,
-      assignments: assignments.length
+      people: Number(peopleResult.total) || 0,
+      assignments: Number(initialPage.total) || 0
     }
   };
 }
+
 
 function listDirectoryPeople(options) {
   options = options || {};
