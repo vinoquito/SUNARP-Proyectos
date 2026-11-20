@@ -1655,7 +1655,7 @@ test('la continuidad del administrador global restringe las relaciones por módu
   const rolePermissionQuery = calls.find(call => call.sheet === 'RolPermiso');
   const userRoleQuery = calls.find(call => call.sheet === 'UsuarioRol');
   const scopeQuery = calls.find(call => call.sheet === 'AmbitosAcceso');
-  assert.deepEqual(permissionQuery.filters.codigo, [
+  assert.deepEqual(Array.from(permissionQuery.filters.codigo), [
     'USUARIOS_ADMINISTRAR', 'ROLES_ADMINISTRAR',
     'PERMISOS_ADMINISTRAR', 'AMBITOS_ACCESO_ADMINISTRAR'
   ]);
