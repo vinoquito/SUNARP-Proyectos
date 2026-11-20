@@ -262,3 +262,35 @@ test('queryRecords excluye registros cuyas relaciones declaradas contradicen el 
   });
   assert.equal(result.total, 0);
 });
+
+test('queryRecords reutiliza candidatos entre consultas distintas y prioriza el filtro de ámbito', () => {
+  const sandbox = createSandbox();
+  let sourceReads = 0;
+  const searchFields = [];
+  const original = sandbox.context.findRecordsByFields;
+  sandbox.context.findRecordsByFields = (source, filters, options) => {
+    sourceReads++;
+    searchFields.push(options.searchField);
+    return original(source, filters, options);
+  };
+  const sourceRef = { spreadsheetId: 'S', sheetName: 'Assignments' };
+  const base = {
+    idField: 'assignment_id',
+    filters: { status: 'ACTIVE' },
+    anyOf: [{ site_id: 'S1' }],
+    authorization: sandbox.authorization(),
+    cacheSeconds: 60
+  };
+  const first = sandbox.context.queryRecords(sourceRef, Object.assign({}, base, {
+    distinctBy: 'site_id',
+    sortBy: 'site_id'
+  }));
+  const second = sandbox.context.queryRecords(sourceRef, Object.assign({}, base, {
+    distinctBy: 'name',
+    sortBy: 'name'
+  }));
+  assert.equal(first.total, 1);
+  assert.equal(second.total, 2);
+  assert.equal(sourceReads, 1);
+  assert.equal(searchFields[0], 'site_id');
+});
