@@ -43,19 +43,64 @@ function _coreQueryNormalizeGroups_(options) {
     }
     alternatives = options.anyOf;
   }
-  const groups = alternatives.map(group => {
+
+  return alternatives.map(group => {
     if (!group || typeof group !== 'object' || Array.isArray(group)) {
       throw new Error('SUNARP Core: cada grupo anyOf debe ser un objeto.');
     }
-    // El campo de alcance (grupo) va primero para que TextFinder indexe
-    // la condición más selectiva y no empiece por filtros comunes como active.
-    const merged = Object.assign({}, group, base);
+
+    // filters es una condición AND común a todos los grupos anyOf.
+    // Cuando un campo aparece en ambos, se intersectan sus alternativas:
+    // sobrescribirlo silenciosamente cambiaría la semántica de la consulta.
+    const merged = Object.assign({}, group);
+    baseFields.forEach(field => {
+      if (!Object.prototype.hasOwnProperty.call(group, field)) {
+        merged[field] = base[field];
+        return;
+      }
+      const groupValues = Array.isArray(group[field]) ? group[field] : [group[field]];
+      const baseValues = Array.isArray(base[field]) ? base[field] : [base[field]];
+      const intersection = groupValues.filter(value =>
+        baseValues.some(baseValue => _coreValuesEqual_(value, baseValue))
+      );
+      merged[field] = intersection;
+    });
+
     if (!Object.keys(merged).length) {
       throw new Error('SUNARP Core: la consulta autorizada requiere filtros exactos.');
     }
     return merged;
   });
-  return groups;
+}
+
+/**
+ * Elige una columna segura para localizar candidatos mediante TextFinder.
+ * Los filtros secundarios pueden buscar explícitamente valores vacíos, pero
+ * la columna conductora debe tener alternativas no vacías. Un grupo con una
+ * intersección vacía es imposible y no necesita lectura de origen.
+ */
+function _coreQueryGetCandidateSearchField_(group) {
+  const fields = Object.keys(group || {});
+  if (!fields.length) {
+    throw new Error('SUNARP Core: la consulta autorizada requiere filtros exactos.');
+  }
+
+  const valuesByField = fields.map(field => ({
+    field,
+    values: Array.isArray(group[field]) ? group[field] : [group[field]]
+  }));
+  if (valuesByField.some(item => item.values.length === 0)) return null;
+
+  const driver = valuesByField.find(item =>
+    item.values.every(value =>
+      value !== null && value !== undefined && String(value) !== ''
+    )
+  );
+  if (driver) return driver.field;
+
+  throw new Error(
+    'SUNARP Core: cada grupo de filtros requiere al menos una columna conductora con valores no vacíos.'
+  );
 }
 
 function _coreQueryValidateAuthorization_(authorization) {
@@ -471,10 +516,11 @@ function queryRecords(source, options) {
       // Adaptador de prueba: simula candidatos sin fila física de Google Sheets.
       const candidateMap = new Map();
       groups.forEach(group => {
-        const fields = Object.keys(group);
+        const searchField = _coreQueryGetCandidateSearchField_(group);
+        if (!searchField) return;
         const result = findRecordsByFields(source, group, {
           requiredHeaders,
-          searchField: fields[0]
+          searchField
         });
         (result.records || []).forEach(record => {
           const id = String(record[idField] === null || record[idField] === undefined ? '' : record[idField]).trim();
@@ -702,13 +748,9 @@ function _coreQueryLoadCandidateRows_(source, groups, requiredHeaders, projectio
 
   const candidateRowNumbers = new Set();
   groups.forEach(group => {
-    const filterFields = Object.keys(group);
-    if (!filterFields.length) throw new Error('SUNARP Core: la consulta autorizada requiere filtros exactos.');
-    const searchField = filterFields[0];
+    const searchField = _coreQueryGetCandidateSearchField_(group);
+    if (!searchField) return;
     const expectedValues = Array.isArray(group[searchField]) ? group[searchField] : [group[searchField]];
-    if (expectedValues.some(value => value === null || value === undefined || String(value) === '')) {
-      throw new Error('SUNARP Core: los filtros de búsqueda exacta no admiten valores vacíos.');
-    }
     const range = sheet.getRange(dataStartRow, headerMap[searchField] + 1, dataRows, 1);
     const escapeRegex = value => String(value).replace(/[.*+?^$()|[\]\\]/g, '\\$&');
     for (let index = 0; index < expectedValues.length; index += 100) {
