@@ -790,8 +790,22 @@ function _coreQueryHydratePage_(source, candidates, context) {
   );
   return candidates.map(candidate => {
     const values = valuesByNumber.get(candidate.rowNumber);
-    if (!values) throw new Error('SUNARP Core: la fuente cambió durante la consulta; vuelve a solicitar la página.');
-    return _coreRowToRecord_(headers, values);
+    if (!values) {
+      throw new Error('SUNARP Core: la fuente cambió durante la consulta; vuelve a solicitar la página.');
+    }
+
+    const hydratedRecord = _coreRowToRecord_(headers, values);
+    const projectedRecord = _coreQueryRecordValue_(candidate);
+    const projectionStillMatches = Object.keys(projectedRecord).every(field =>
+      Object.prototype.hasOwnProperty.call(hydratedRecord, field) &&
+      _coreValuesEqual_(hydratedRecord[field], projectedRecord[field])
+    );
+    if (!projectionStillMatches) {
+      throw new Error(
+        'SUNARP Core: la fuente cambió durante la consulta; vuelve a solicitar la página.'
+      );
+    }
+    return hydratedRecord;
   });
 }
 

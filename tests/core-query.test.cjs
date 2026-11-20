@@ -672,3 +672,55 @@ test('queryRecords carga asignaciones sin exigir columnas organizacionales aport
   );
   assert.ok(projectedReads.every(read => read.numColumns < headers.length));
 });
+
+
+test('queryRecords rechaza la hidratación cuando cambió una columna usada para filtrar o autorizar', () => {
+  const sandbox = createSandbox();
+  const headers = ['asignacion_id', 'active', 'estructura_local_id', 'local_id', 'anexo'];
+  let currentValues = ['ASG_001', true, 'REL_001', 'LOC_001', 1001];
+  const sheet = {
+    getLastColumn: () => headers.length,
+    getRange: () => ({ getDisplayValues: () => [headers] })
+  };
+  sandbox.context._coreOpenSource_ = () => ({
+    config: { headerRow: 1 },
+    sheet
+  });
+  sandbox.context._coreReadCandidateRows_ = () => new Map([[2, currentValues]]);
+  sandbox.context._coreRowToRecord_ = (headerRow, values) => Object.fromEntries(
+    headerRow.map((field, index) => [field, values[index]])
+  );
+  const candidate = {
+    rowNumber: 2,
+    record: {
+      asignacion_id: 'ASG_001',
+      active: true,
+      estructura_local_id: 'REL_001',
+      local_id: 'LOC_001'
+    }
+  };
+
+  const originalPage = sandbox.context._coreQueryHydratePage_(
+    { spreadsheetId: 'S', sheetName: 'asignaciones' },
+    [candidate]
+  );
+  assert.equal(originalPage[0].anexo, 1001);
+
+  currentValues = ['ASG_001', true, 'REL_001', 'LOC_999', 1001];
+  assert.throws(
+    () => sandbox.context._coreQueryHydratePage_(
+      { spreadsheetId: 'S', sheetName: 'asignaciones' },
+      [candidate]
+    ),
+    /fuente cambió durante la consulta/
+  );
+
+  currentValues = ['ASG_999', true, 'REL_001', 'LOC_001', 1001];
+  assert.throws(
+    () => sandbox.context._coreQueryHydratePage_(
+      { spreadsheetId: 'S', sheetName: 'asignaciones' },
+      [candidate]
+    ),
+    /fuente cambió durante la consulta/
+  );
+});
