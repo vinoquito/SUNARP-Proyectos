@@ -41,6 +41,42 @@ function getCurrentUserEmail() {
   return String(email || '').trim().toLowerCase();
 }
 
+/**
+ * Resuelve identidad institucional mediante una búsqueda exacta declarada
+ * por el consumidor. Core no presupone nombres de hojas ni columnas.
+ */
+function resolveIdentity(source, email, options) {
+  options = options || {};
+  const emailField = String(options.emailField || '').trim();
+  const idField = String(options.idField || '').trim();
+  const normalizedEmail = String(email === null || email === undefined ? '' : email)
+    .trim()
+    .toLocaleLowerCase();
+  if (!emailField || !idField) {
+    throw new Error('SUNARP Core: resolveIdentity requiere emailField e idField.');
+  }
+  if (!normalizedEmail) return { records: [], total: 0 };
+  const requiredHeaders = Array.isArray(options.requiredHeaders)
+    ? options.requiredHeaders
+    : [];
+  const result = findRecordsByFields(
+    source,
+    { [emailField]: normalizedEmail },
+    {
+      searchField: emailField,
+      matchCase: false,
+      requiredHeaders: Array.from(new Set(requiredHeaders.concat([emailField, idField])))
+    }
+  );
+  const records = (result.records || []).filter(record =>
+    String(record[emailField] === null || record[emailField] === undefined ? '' : record[emailField])
+      .trim()
+      .toLocaleLowerCase() === normalizedEmail &&
+    String(record[idField] === null || record[idField] === undefined ? '' : record[idField]).trim()
+  );
+  return { records, total: records.length };
+}
+
 function _coreAuthText_(value) {
   return String(value === null || value === undefined ? '' : value).trim();
 }
