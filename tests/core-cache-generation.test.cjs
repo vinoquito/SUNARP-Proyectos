@@ -86,3 +86,62 @@ test('Core desactiva el uso de caché si detecta un ciclo de dependencias', () =
   sourceA.dependencies = [sourceB];
   assert.equal(sandbox._coreGetSourceGeneration_(sourceA), null);
 });
+
+
+test('la caché fragmentada rechaza manifiestos sin checksum', () => {
+  const { sandbox, values } = createCacheSandbox();
+  const fullKey = sandbox._coreBuildCacheKey_('test:missing-checksum');
+  const chunkKey = 'SUNARP_CORE:chunk:test:missing-checksum:0';
+  values.set(chunkKey, 'abc');
+  values.set(fullKey, JSON.stringify({
+    format: 2,
+    storage: 'gzip-chunks',
+    chunkKeys: [chunkKey],
+    payloadLength: 3
+  }));
+  sandbox._coreCacheDecodeGzip_ = () => JSON.stringify({ payload: 'decoded' });
+
+  assert.equal(sandbox.getCachedValue('test:missing-checksum'), null);
+  assert.equal(values.has(fullKey), false);
+  assert.equal(values.has(chunkKey), false);
+});
+
+test('la caché fragmentada rechaza un checksum que no corresponde al payload', () => {
+  const { sandbox, values } = createCacheSandbox();
+  const fullKey = sandbox._coreBuildCacheKey_('test:wrong-checksum');
+  const chunkKey = 'SUNARP_CORE:chunk:test:wrong-checksum:0';
+  values.set(chunkKey, 'abd');
+  values.set(fullKey, JSON.stringify({
+    format: 2,
+    storage: 'gzip-chunks',
+    chunkKeys: [chunkKey],
+    payloadLength: 3,
+    checksum: sandbox._coreCacheDigest_('abc')
+  }));
+  sandbox._coreCacheDecodeGzip_ = () => JSON.stringify({ payload: 'decoded' });
+
+  assert.equal(sandbox.getCachedValue('test:wrong-checksum'), null);
+  assert.equal(values.has(fullKey), false);
+  assert.equal(values.has(chunkKey), false);
+});
+
+test('la caché fragmentada acepta un payload con longitud y checksum válidos', () => {
+  const { sandbox, values } = createCacheSandbox();
+  const fullKey = sandbox._coreBuildCacheKey_('test:valid-checksum');
+  const chunkKey = 'SUNARP_CORE:chunk:test:valid-checksum:0';
+  const payload = 'abc';
+  values.set(chunkKey, payload);
+  values.set(fullKey, JSON.stringify({
+    format: 2,
+    storage: 'gzip-chunks',
+    chunkKeys: [chunkKey],
+    payloadLength: payload.length,
+    checksum: sandbox._coreCacheDigest_(payload)
+  }));
+  sandbox._coreCacheDecodeGzip_ = () => JSON.stringify({ payload: 'decoded' });
+
+  assert.deepEqual(
+    sandbox.getCachedValue('test:valid-checksum'),
+    { payload: 'decoded' }
+  );
+});
