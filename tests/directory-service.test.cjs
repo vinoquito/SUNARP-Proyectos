@@ -558,31 +558,27 @@ test('getDirectoryInitialData carga solo catálogos y una página, reutilizando 
   vmContext.SUNARPCore = {
     queryRecords: (source, options) => {
       queryCalls.push(options);
-      if (options.distinctBy === 'cargo_id') {
-        return { records: [{ cargo_id: 'CAR_001' }], total: 1 };
-      }
-      if (options.distinctBy === 'estructura_local_id') {
-        return { records: [{ estructura_local_id: 'REL_1' }], total: 1 };
-      }
-      if (options.distinctBy === 'local_id') {
-        return { records: [{ local_id: 'LOC_1' }], total: 1 };
-      }
-      if (options.distinctBy === 'persona_id') {
-        return { records: [{ persona_id: 'PER_001' }], total: 1 };
-      }
+      assert.deepEqual(Array.from(options.distinctFields), ['cargo_id', 'estructura_local_id', 'local_id']);
+      assert.deepEqual(Array.from(options.distinctCountFields), ['persona_id']);
       return {
         records: [{
           asignacion_id: 'ASG_001', persona_id: 'PER_001', cargo_id: 'CAR_001',
           estructura_local_id: 'REL_1', local_id: '', active: true, order: 1
         }],
-        total: 1
+        total: 1,
+        distinctValues: {
+          cargo_id: ['CAR_001'],
+          estructura_local_id: ['REL_1'],
+          local_id: ['LOC_1']
+        },
+        distinctCounts: { persona_id: 1 }
       };
     },
     findRecordsByFields: () => ({ records: [pagePerson], total: 1 })
   };
 
   const result = vmContext.getDirectoryInitialData();
-  assert.equal(queryCalls.length, 5);
+  assert.equal(queryCalls.length, 1);
   assert.equal(result.records.length, 1);
   assert.equal(result.records[0].nombres, 'Ana');
   assert.equal(result.records[0].apellidos, 'Pérez');
