@@ -666,7 +666,8 @@ test('la carga inicial entrega solo catálogos y la lista de asignaciones admite
   const initialStart = serviceSource.indexOf('function getDirectoryInitialData() {');
   const initialEnd = serviceSource.indexOf('function listDirectoryPeople(', initialStart);
   const initial = serviceSource.slice(initialStart, initialEnd);
-  assert.match(initial, /records:\s*\[\]/);
+  assert.match(initial, /records:\s*initialPage\.records/);
+  assert.match(initial, /_directoryBuildInitialAssignmentPage_\(view, context\)/);
   assert.match(serviceSource, /if \(options\.sedeId\)/);
   assert.match(serviceSource, /if \(options\.cargoId\)/);
   assert.match(serviceSource, /if \(options\.estructuraId\)/);
@@ -757,4 +758,11 @@ test('el contrato de filtros reconoce TOTAL sin convertirlo en una selección re
   assert.equal(contract.fixed.total, true);
   assert.equal(JSON.stringify(contract.fixed.sedeIds), '[]');
   assert.equal(JSON.stringify(contract.selectable.sedeIds), JSON.stringify(['SEDE_1']));
+});
+
+test('el DataTable consume la primera página entregada por el bootstrap sin repetir la consulta inicial', () => {
+  assert.match(frontendSource, /initialData:\s*state\.initialPage\s*\|\|\s*null/);
+  assert.match(frontendSource, /state\.initialPage\s*=\s*result\.page/);
+  assert.match(coreRepositorySource, /hasInitialServerData/);
+  assert.match(coreRepositorySource, /mode === 'server' && !hasInitialServerData/);
 });
