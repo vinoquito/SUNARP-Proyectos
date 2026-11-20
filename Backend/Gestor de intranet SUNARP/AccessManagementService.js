@@ -2350,16 +2350,8 @@ function getAccessAuditHistory(filters) {
     ACCESS_MANAGEMENT_CONFIG.sheets.audit
   );
 
-  const cached = SUNARPCore.listRecordsFromSourcesCached([{
-    key: 'audit',
-    source,
-    requiredHeaders: ACCESS_MANAGEMENT_FIELDS.audit
-  }], 60);
-  const result = {
-    records: (cached.audit || []).slice().sort((a, b) =>
-      new Date(b.fecha_hora).getTime() - new Date(a.fecha_hora).getTime()
-    )
-  };
+  let records = [];
+  let total = 0;
 
   const actor = _accessText_(
     filters.actor || filters.actorEmail
@@ -2393,7 +2385,39 @@ function getAccessAuditHistory(filters) {
     filters.hasta || filters.to
   );
 
-  let records = result.records.filter(row => {
+  const page = Math.max(
+    1,
+    Number.parseInt(filters.page, 10) || 1
+  );
+  const pageSize = Math.min(
+    100,
+    Math.max(1, Number.parseInt(filters.pageSize, 10) || 25)
+  );
+  const offset = (page - 1) * pageSize;
+  const hasFilters = Boolean(
+    actor || moduleCode || action || outcome || recordId || query || from || to
+  );
+
+  if (hasFilters) {
+    const cached = SUNARPCore.listRecordsFromSourcesCached([{
+      key: 'audit',
+      source,
+      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.audit
+    }], 60);
+    records = (cached.audit || []).slice().sort((a, b) =>
+      new Date(b.fecha_hora).getTime() - new Date(a.fecha_hora).getTime()
+    );
+  } else {
+    const recent = SUNARPCore.listTailRecords(source, {
+      offset,
+      limit: pageSize,
+      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.audit
+    });
+    records = recent.records;
+    total = recent.total;
+  }
+
+  records = records.filter(row => {
     if (
       actor &&
       !_accessText_(row.actor_correo).toLowerCase().includes(actor)
@@ -2471,27 +2495,10 @@ function getAccessAuditHistory(filters) {
     return true;
   });
 
-  const total = records.length;
-
-  const page = Math.max(
-    1,
-    Number.parseInt(filters.page, 10) || 1
-  );
-
-  const pageSize = Math.min(
-    100,
-    Math.max(
-      1,
-      Number.parseInt(filters.pageSize, 10) || 25
-    )
-  );
-
-  const offset = (page - 1) * pageSize;
-
-  records = records.slice(
-    offset,
-    offset + pageSize
-  );
+  if (hasFilters) {
+    total = records.length;
+    records = records.slice(offset, offset + pageSize);
+  }
 
   return {
     items: records.map(row => ({
