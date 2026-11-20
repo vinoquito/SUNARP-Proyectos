@@ -160,8 +160,8 @@ function queryRecords(source, options) {
   }
   const search = String(options.search || '').trim();
   const searchFields = options.searchFields === undefined ? [] : options.searchFields;
-  if (!Array.isArray(searchFields)) {
-    throw new Error('SUNARP Core: searchFields debe ser un arreglo.');
+  if (!Array.isArray(searchFields) || (search && !searchFields.length)) {
+    throw new Error('SUNARP Core: searchFields debe ser un arreglo no vacío cuando se indica search.');
   }
 
   const descriptor = {
