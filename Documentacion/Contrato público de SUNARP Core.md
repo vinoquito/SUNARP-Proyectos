@@ -1,8 +1,8 @@
 # Contrato público de SUNARP Core — base para v10
 
-**Estado:** SUNARP Core v10 fue creada como versión inmutable y cuenta con un despliegue versionado de biblioteca en Apps Script. La ejecución de pruebas de Core fue satisfactoria. La sincronización del manifiesto de Gestor y su validación mediante el despliegue de pruebas siguen pendientes.  
+**Estado:** Fase 1 completada para la arquitectura integrada de SUNARP Core y Gestor de intranet SUNARP. Core v10 está publicada como biblioteca, las pruebas de Core y las 192 pruebas de regresión del repositorio fueron satisfactorias, el Gestor fue sincronizado con la versión 10 y la validación funcional inicial confirmó autenticación y carga de Información de personal. La auditoría confirmó que no hay activadores instalados en Core ni en Gestor; las ediciones manuales requieren invalidación explícita y esta limitación queda aceptada/documentada. Los demás proyectos Backend aún no unificados quedan fuera del alcance de esta fase.  
 **Biblioteca:** `1mDzO7uTarQCKYpS5U7pMv5go0Wh76k3JoIh5GvxWPfU0zoUG7Jfp17tD`  
-**Consumidor del repositorio:** Gestor de intranet SUNARP. El manifiesto de esta rama se actualiza para referenciar Core versión 10; esto no demuestra que el proyecto Apps Script consumidor ni su despliegue de prueba hayan sido sincronizados.
+**Consumidor del repositorio:** Gestor de intranet SUNARP. El manifiesto del repositorio y el proyecto Apps Script consumidor están sincronizados con Core versión 10. La aplicación se probó mediante el mecanismo de pruebas existente; no se actualizó el despliegue productivo.
 
 Este documento enumera la superficie global que Apps Script expone a los proyectos consumidores, describe los parámetros y las respuestas observables en el código y diferencia expresamente las lecturas completas de las consultas selectivas. Las funciones privadas cuyos nombres empiezan y terminan con guion bajo no forman parte de la API de la biblioteca.
 
@@ -543,17 +543,21 @@ Este inventario describe los consumidores comprobados en el repositorio y la ram
 - Se creó el despliegue versionado de biblioteca **v10** con ID `AKfycbw5Sx_tBJH6zANC8IrQ4cbYSIbiYj8N2NEfBqAtNtXEylclET7XK7ns5TNemHAw9KRpCg`. El inventario confirmó que los despliegues previos `@HEAD` y `@9` permanecen intactos. El despliegue versionado anterior de Core, **versión 9**, se conserva sin modificaciones.
 - En el editor del Gestor, el usuario confirmó que la versión 10 aparece disponible en el selector de la dependencia `SUNARPCore`; el identificador de código permanece `SUNARPCore` y el ID de biblioteca está conservado en el manifiesto.
 
-### 11.2 Sincronización y validación pendientes
+### 11.2 Cierre operativo de Fase 1
 
-1. El manifiesto de esta rama pasa a declarar `SUNARPCore` versión `10`. Se conserva `SUNARP_UI` versión `0` en modo desarrollo y se respeta el acceso `DOMAIN` informado para el proyecto Apps Script de Gestor.
-2. Sincronizar el cambio del repositorio con el proyecto Apps Script de Gestor mediante `clasp push` desde su carpeta. Esta operación actualiza el código fuente del proyecto, no el despliegue productivo existente.
-3. Validar el consumidor con el mecanismo de pruebas de Gestor ya establecido. Comprobar inicio de sesión, resolución de identidad/autorización y las operaciones de Información de personal que utilizan Core. No crear ni actualizar despliegues productivos.
-4. Verificar en Apps Script los activadores instalados en Core y en cada proyecto que escriba fuentes compartidas. Registrar propietario, función, evento, archivo y cobertura real. No asumir que la biblioteca transmite activadores a los consumidores ni que `IMPORTRANGE` activa una invalidación.
+Se completaron las verificaciones de publicación, sincronización e integración del consumidor:
 
-La publicación de Core v10 y su disponibilidad como biblioteca están comprobadas. **La Fase 1 no debe declararse completamente cerrada** hasta sincronizar y probar el consumidor Gestor y completar la auditoría de activadores/invalidación externa. Los despliegues de Gestor y de otras aplicaciones de producción deben permanecer sin cambios.
+1. El manifiesto de Gestor declara `SUNARPCore` versión `10`, conserva `SUNARP_UI` versión `0` en modo desarrollo y el acceso web `DOMAIN`.
+2. El proyecto Apps Script de Gestor recibió los 15 archivos mediante `clasp push`; no se creó ni modificó ningún despliegue de Gestor.
+3. La prueba funcional inicial confirmó autenticación y navegación, y el usuario confirmó que Información de personal carga los registros. Los problemas de filtros, carga dinámica, persistencia de pestañas y tiempos iniciales observados en Administración de accesos/Información de personal quedan registrados para la fase siguiente de correcciones de los módulos consumidores; no son motivo para alterar Core v10.
+4. El responsable comprobó en Apps Script que **SUNARP Core no tiene activadores instalados** y que **Gestor de intranet SUNARP tampoco tiene activadores instalados**.
+5. La revisión del código confirma que las escrituras funcionales de Gestor pasan por Core; la migración excepcional es la única ruta directa y utiliza `runSourceWriteBatch()` para coordinar la invalidación.
+6. La arquitectura actual no automatiza la invalidación después de ediciones manuales en Sheets. Cuando se requiera consistencia inmediata, el responsable debe ejecutar `SUNARPCore.invalidateSourceCache(source)` para cada fuente física modificada. De lo contrario, la caché mantiene consistencia eventual conforme a TTL/desalojo. Esta limitación está documentada y aceptada; no se instalarán activadores en esta fase.
+7. Los demás proyectos Backend todavía no están unificados con Core/Gestor y quedan fuera del alcance de Fase 1. Cuando se integren, su diseño deberá adoptar el contrato de invalidación antes de escribir en fuentes administradas por Core.
 
-No se afirma que el despliegue productivo de Gestor utilice v10. La validación pendiente debe realizarse mediante su mecanismo de pruebas; no se debe crear, editar ni actualizar un despliegue productivo de la aplicación.
+**Estado: FASE 1 COMPLETADA para la arquitectura actualmente integrada de SUNARP Core y Gestor de intranet SUNARP.** No se debe interpretar como certificación de los proyectos Backend aún no unificados, ni como afirmación de invalidación automática para ediciones manuales.
 
+No se actualizó ningún despliegue productivo. Core v10 permanece como biblioteca versionada; el despliegue productivo de Gestor no fue modificado.
 
 ## 12. Referencias oficiales de Apps Script
 
