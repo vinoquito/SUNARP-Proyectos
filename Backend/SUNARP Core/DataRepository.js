@@ -1171,15 +1171,19 @@ function listRecordsFromSourcesCached(requests, expirationSeconds) {
     if (!request || typeof request !== 'object') {
       throw new Error('SUNARP Core: una solicitud de lectura no es válida.');
     }
-
     const key = String(request.key || '').trim();
     if (!key || seen.has(key)) {
       throw new Error('SUNARP Core: cada solicitud necesita una clave única de resultado.');
     }
     seen.add(key);
 
-    const cacheKey = _coreBuildSourceCacheKey_(request.source, 'records');
-    const cached = getCachedValue(cacheKey);
+    const generation = typeof _coreGetSourceGeneration_ === 'function'
+      ? _coreGetSourceGeneration_(request.source)
+      : null;
+    const cacheKey = generation
+      ? _coreBuildSourceCacheKey_(request.source, 'records') + ':' + generation
+      : null;
+    const cached = cacheKey ? getCachedValue(cacheKey) : null;
 
     if (Array.isArray(cached)) {
       result[key] = cached;
@@ -1194,18 +1198,13 @@ function listRecordsFromSourcesCached(requests, expirationSeconds) {
   });
 
   if (misses.length) {
-    // Evita estampidas de lecturas y escrituras de caché obsoletas:
-    // los escritores de Core usan el mismo ScriptLock.
     _coreWithWriteLock_(() => {
       const pending = [];
 
       misses.forEach(item => {
-        const cached = getCachedValue(item.cacheKey);
-        if (Array.isArray(cached)) {
-          result[item.key] = cached;
-        } else {
-          pending.push(item);
-        }
+        const cached = item.cacheKey ? getCachedValue(item.cacheKey) : null;
+        if (Array.isArray(cached)) result[item.key] = cached;
+        else pending.push(item);
       });
 
       if (!pending.length) return;
@@ -1219,6 +1218,7 @@ function listRecordsFromSourcesCached(requests, expirationSeconds) {
       pending.forEach(item => {
         const records = loaded[item.key] || [];
         result[item.key] = records;
+        if (!item.cacheKey) return;
         try {
           const cacheResult = putCachedValue(item.cacheKey, records, ttl);
           if (!cacheResult || cacheResult.success !== true) {
@@ -1241,10 +1241,8 @@ function listRecordsFromSourcesCached(requests, expirationSeconds) {
     misses.length, 'lecturas de fuente,',
     Date.now() - started, 'ms'
   );
-
   return result;
 }
-
 
 function listRecordsFromSources(requests) {
 
