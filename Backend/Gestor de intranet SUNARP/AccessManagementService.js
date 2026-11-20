@@ -2990,18 +2990,25 @@ function getAccessUsers(filters) {
   const pageSize = Math.min(100, Math.max(1, Number.parseInt(filters.pageSize, 10) || 10));
   const offset = (page - 1) * pageSize;
   const indexed = _accessBuildUserListingIndex_(sedeId, roleId);
-  const items = [];
-  let total = 0;
+  let items;
+  let total;
 
-  // El índice ya está enriquecido y ordenado. Solo se conservan los registros
-  // de la página pedida mientras se cuenta el total exacto de coincidencias.
-  indexed.value.forEach(row => {
-    if (query && ![
-      row.persona_id, row.nombre_completo, row.correo_institucional, row.sede_nombre
-    ].join(' ').toLocaleLowerCase().includes(query)) return;
-    if (total >= offset && items.length < pageSize) items.push(row);
-    total++;
-  });
+  if (!query) {
+    // Sin búsqueda, el índice ya está ordenado: obtener la página no requiere
+    // recorrer todos los candidatos ni volver a ordenarlos.
+    total = indexed.value.length;
+    items = indexed.value.slice(offset, offset + pageSize);
+  } else {
+    items = [];
+    total = 0;
+    indexed.value.forEach(row => {
+      if (![
+        row.persona_id, row.nombre_completo, row.correo_institucional, row.sede_nombre
+      ].join(' ').toLocaleLowerCase().includes(query)) return;
+      if (total >= offset && items.length < pageSize) items.push(row);
+      total++;
+    });
+  }
 
   return {
     items,
