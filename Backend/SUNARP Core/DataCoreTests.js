@@ -6,6 +6,7 @@
  * Ejecuta pruebas de los módulos:
  * - DataSources
  * - DataRepository
+ * - DataQuery
  * - DataValidation
  *
  * Crea una hoja de cálculo temporal y la envía a la papelera
