@@ -201,10 +201,10 @@ function _accessSecuritySource_(sheetName) {
 
 
 /**
- * Carga los datos de seguridad necesarios para autorización y gestión.
+ * Carga las nueve fuentes únicamente para la validación integral explícita.
+ * No debe invocarse desde la resolución de identidad/autorización ordinaria.
  */
-function _accessLoadSecurityData_(options) {
-  options = options || {};
+function _accessLoadSecurityData_() {
   const s = ACCESS_MANAGEMENT_CONFIG.sheets;
   const requests = [
     { key: 'usuarios', source: _accessSecuritySource_(s.users), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.users },
@@ -217,11 +217,31 @@ function _accessLoadSecurityData_(options) {
     { key: 'ambitosAcceso', source: _accessSecuritySource_(s.scopes), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.scopes },
     { key: 'tiposAmbito', source: _accessSecuritySource_(s.scopeTypes), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.scopeTypes }
   ];
-  // Para autorizar no se necesita cargar el contexto completo del directorio.
   const data = SUNARPCore.listRecordsFromSourcesCached(requests, 300);
-  // La identidad se resuelve con una búsqueda exacta; no se carga el directorio completo.
-  if (options.validate !== false) _accessValidateSnapshot_(data);
+  _accessValidateSnapshot_(data);
   return data;
+}
+
+/**
+ * Ejecuta la validación referencial integral de las nueve tablas de seguridad.
+ *
+ * Es una operación explícita de mantenimiento, protegida para administradores
+ * globales. No participa en el login, la navegación ni las consultas normales.
+ * Devuelve conteos y estado, nunca el contenido de las tablas.
+ */
+function validateAccessManagementIntegrity() {
+  _accessRequirePermission_('USUARIOS_ADMINISTRAR');
+  const data = _accessLoadSecurityData_();
+  const counts = {};
+  Object.keys(data).forEach(key => {
+    counts[key] = Array.isArray(data[key]) ? data[key].length : 0;
+  });
+  return {
+    success: true,
+    valid: true,
+    validatedAt: new Date().toISOString(),
+    counts
+  };
 }
 
 function _accessFindPersonById_(personaId) {
@@ -669,21 +689,8 @@ function _accessGetAuthContext_() {
     rolesCatalog: data.roles
   });
 
-  // Las nueve fuentes completas se leen solo al entrar a una operación
-  // administrativa que necesita sus catálogos o listados globales.
-  let fullSecurityData = null;
-  const getFullSecurityData = () => {
-    if (!fullSecurityData) fullSecurityData = _accessLoadSecurityData_({ validate: false });
-    return fullSecurityData;
-  };
-  Object.defineProperties(auth, {
-    securityData: { enumerable: false, get: getFullSecurityData },
-    userAccountsCatalog: {
-      enumerable: false,
-      get: () => getFullSecurityData().usuarios || []
-    }
-  });
-
+  // El contexto de autorización queda cerrado sobre las relaciones puntuales
+  // ya consultadas. No expone getters que puedan disparar lecturas globales.
   return auth;
 }
 
@@ -3003,6 +3010,10 @@ function getAccessAuditHistory(filters) {
   };
 }
 
+/**
+ * Convierte el contenido JSON guardado en los snapshots de auditoría.
+ * Se mantiene independiente de la consulta paginada del historial.
+ */
 function _accessParseAuditData_(value) {
   if (value === null || value === undefined || value === '') {
     return null;

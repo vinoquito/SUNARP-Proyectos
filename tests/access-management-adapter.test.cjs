@@ -301,6 +301,51 @@ test('los filtros combinados de auditoría retienen solo la página cronológica
   assert.equal(result.items[0].evento_id, 'EVT_003');
 });
 
+test('la autorización ordinaria no expone getters de snapshots completos y la integridad global es explícita', () => {
+  const authStart = accessSource.indexOf('function _accessGetAuthContext_() {');
+  const authEnd = accessSource.indexOf('function getAuthContext_()', authStart);
+  const authImplementation = accessSource.slice(authStart, authEnd);
+  assert.ok(authStart >= 0 && authEnd > authStart);
+  assert.doesNotMatch(authImplementation, /_accessLoadSecurityData_/);
+  assert.doesNotMatch(authImplementation, /securityData|userAccountsCatalog/);
+
+  const integrityStart = accessSource.indexOf('function validateAccessManagementIntegrity() {');
+  const integrityEnd = accessSource.indexOf('function _accessFindPersonById_(', integrityStart);
+  const integrityImplementation = accessSource.slice(integrityStart, integrityEnd);
+  assert.ok(integrityStart >= 0 && integrityEnd > integrityStart);
+  assert.ok(integrityImplementation.includes("_accessRequirePermission_('USUARIOS_ADMINISTRAR')"));
+  assert.ok(integrityImplementation.includes('_accessLoadSecurityData_()'));
+  assert.ok(integrityImplementation.includes('counts'));
+});
+
+test('el historial por entidad ordena cronológicamente, conserva el total y admite páginas vacías', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  sandbox._accessRequirePermission_ = () => ({ authenticated: true });
+  sandbox._accessSecuritySource_ = sheet => ({ sheetName: sheet });
+  const rows = [
+    { evento_id: 'EVT_001', fecha_hora: new Date('2026-11-20T09:00:00Z'), tipo_entidad: 'USUARIO', registro_id: 'PER_001', modulo: 'ACCESOS' },
+    { evento_id: 'EVT_002', fecha_hora: new Date('2026-11-20T12:00:00Z'), tipo_entidad: 'USUARIO_ROL', registro_id: 'PER_001', modulo: 'ACCESOS' },
+    { evento_id: 'EVT_003', fecha_hora: new Date('2026-11-20T10:00:00Z'), tipo_entidad: 'AMBITO_ACCESO', registro_id: 'PER_001', modulo: 'ACCESOS' },
+    { evento_id: 'EVT_004', fecha_hora: new Date('2026-11-20T11:00:00Z'), tipo_entidad: 'ROL', registro_id: 'ROL_01', modulo: 'ACCESOS' }
+  ];
+  sandbox.SUNARPCore.findRecordsByFields = () => ({ records: rows, total: rows.length });
+
+  const page = sandbox.getAccessEntityHistory({
+    tipo_entidad: 'USUARIO', registro_id: 'PER_001', page: 2, pageSize: 1
+  });
+  assert.equal(page.total, 3);
+  assert.equal(page.totalPages, 3);
+  assert.equal(page.items.length, 1);
+  assert.equal(page.items[0].evento_id, 'EVT_003');
+
+  const empty = sandbox.getAccessEntityHistory({
+    tipo_entidad: 'USUARIO', registro_id: 'PER_001', page: 4, pageSize: 1
+  });
+  assert.equal(empty.total, 3);
+  assert.equal(empty.totalPages, 3);
+  assert.equal(empty.items.length, 0);
+});
+
 test('el historial conserva compatibilidad con SUNARP Core v9 mientras admite lectura de cola', () => {
   const start = accessSource.indexOf('function getAccessAuditHistory(filters) {');
   const end = accessSource.indexOf('function _accessParseAuditData_(', start);
