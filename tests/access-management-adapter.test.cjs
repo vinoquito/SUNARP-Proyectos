@@ -187,14 +187,15 @@ test('el historial general evita leer la tabla completa cuando no hay filtros', 
   assert.ok(implementation.includes('listTailRecords'));
   assert.ok(implementation.includes('if (hasFilters)'));
 });
-test('el historial por entidad reutiliza la caché central de auditoría', () => {
+test('el historial por entidad consulta candidatos mediante SUNARP Core sin leer toda Auditoria', () => {
   const start = accessSource.indexOf('function getAccessEntityHistory(payload) {');
   const end = accessSource.indexOf('function _accessChangeStatus_(', start);
   const implementation = accessSource.slice(start, end);
-  assert.match(implementation, /listRecordsFromSourcesCached/);
-  assert.doesNotMatch(implementation, /SUNARPCore\.listRecords\(/);
+  assert.ok(implementation.includes('findRecordsByFields'));
+  assert.ok(implementation.includes('searchRecordsByFields'));
+  assert.ok(!implementation.includes('listRecordsFromSourcesCached'));
+  assert.ok(implementation.includes("entityType === 'PERMISO'"));
 });
-
 test('los servicios y scripts de interfaz tienen sintaxis válida', () => {
   for (const [label, source] of [
     ['SUNARP Core', coreSource],
