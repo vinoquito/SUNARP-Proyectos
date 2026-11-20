@@ -171,6 +171,14 @@ test('la actualización independiente de Tipos de ámbito compara el identificad
   assert.doesNotMatch(implementation, /tab === 'scopeTypes'/);
 });
 
+test('el historial general evita leer la tabla completa cuando no hay filtros', () => {
+  const start = accessSource.indexOf('function getAccessAuditHistory(filters) {');
+  const end = accessSource.indexOf('/**\\n * Convierte el contenido JSON', start);
+  const implementation = accessSource.slice(start, end);
+  assert.match(implementation, /listTailRecords/);
+  assert.match(implementation, /if \(hasFilters\)/);
+});
+
 test('el historial por entidad reutiliza la caché central de auditoría', () => {
   const start = accessSource.indexOf('function getAccessEntityHistory(payload) {');
   const end = accessSource.indexOf('function _accessChangeStatus_(', start);
