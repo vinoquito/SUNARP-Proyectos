@@ -639,10 +639,10 @@ test('getDirectoryPersonById consulta solo asignaciones autorizadas de la person
   assert.equal(result.assignments.length, 1);
   assert.equal(result.assignments[0].nombres, 'Ana');
   assert.equal(result.personalData.servidor_id, 'PER_007');
-  assert.deepEqual(lookups, [
+  assert.equal(JSON.stringify(lookups), JSON.stringify([
     { source: 'personas', filters: { persona_id: 'PER_007' } },
     { source: 'servidores datos personales', filters: { servidor_id: 'PER_007' } }
-  ]);
+  ]));
 });
 
 test('las consultas puntuales de asignaciones comprueban permiso y ámbito en Core', () => {
@@ -823,12 +823,17 @@ test('el cambio de estado funciona para una asignación vinculada directamente a
     estructura_local_id: '', local_id: 'LOC_1', active: true, order: 1
   }];
   let statusCall;
-  sandbox._directoryAuthorizationContext_ = () => ({ auth: {}, structures: [] });
+  sandbox._directoryAuthorizationContext_ = () => ({
+    auth: {}, moduleId: 'MOD_INFO_PERSONAL',
+    permissionCode: 'INFORMACION_PERSONAL_CAMBIAR_ESTADO', structures: [], locals: []
+  });
   sandbox._directoryLoadContext_ = () => context;
   sandbox._directorySource_ = name => name;
   sandbox._directoryInvalidateCache_ = () => {};
   sandbox._accessRecordIsAllowed_ = () => true;
   sandbox._accessRunAudited_ = (auth, event, callback) => callback().value;
+  sandbox._directoryFindAuthorizedAssignmentById_ = (_context, _authorization, id) =>
+    context.asignaciones.find(item => item.asignacion_id === id) || null;
   sandbox.SUNARPCore = {
     findRecordsByFields: () => ({ records: context.personas, total: context.personas.length }),
     setRecordStatus: (...args) => { statusCall = args; return { success: true }; }
@@ -845,12 +850,17 @@ test('la eliminación funciona para una asignación vinculada directamente a un 
     estructura_local_id: '', local_id: 'LOC_1', active: true, order: 1
   }];
   let deleteCall;
-  sandbox._directoryAuthorizationContext_ = () => ({ auth: {}, structures: [] });
+  sandbox._directoryAuthorizationContext_ = () => ({
+    auth: {}, moduleId: 'MOD_INFO_PERSONAL',
+    permissionCode: 'INFORMACION_PERSONAL_ELIMINAR', structures: [], locals: []
+  });
   sandbox._directoryLoadContext_ = () => context;
   sandbox._directorySource_ = name => name;
   sandbox._directoryInvalidateCache_ = () => {};
   sandbox._accessRecordIsAllowed_ = () => true;
   sandbox._accessRunAudited_ = (auth, event, callback) => callback().value;
+  sandbox._directoryFindAuthorizedAssignmentById_ = (_context, _authorization, id) =>
+    context.asignaciones.find(item => item.asignacion_id === id) || null;
   sandbox.SUNARPCore = {
     findRecordsByFields: () => ({ records: context.personas, total: context.personas.length }),
     deleteRecord: (...args) => { deleteCall = args; return { success: true }; }
