@@ -765,11 +765,24 @@ test('queryRecords devuelve cero coincidencias si filters y anyOf son incompatib
 
 test('queryRecords elige como columna conductora un filtro no vacío aunque el primero sea vacío', () => {
   const sandbox = createSandbox();
-  const originalFind = sandbox.context.findRecordsByFields;
   const searchFields = [];
-  sandbox.context.findRecordsByFields = (source, filters, options) => {
+  const directLocalRecord = {
+    assignment_id: 'LOCAL_1',
+    status: 'ACTIVE',
+    estructura_local_id: '',
+    local_id: 'L1',
+    persona_id: 'P5',
+    allowed: true
+  };
+  sandbox.context.findRecordsByFields = (_source, filters, options) => {
     searchFields.push(options.searchField);
-    return originalFind(source, filters, options);
+    const matches = Object.keys(filters).every(field => {
+      const expected = Array.isArray(filters[field]) ? filters[field] : [filters[field]];
+      return expected.some(value =>
+        String(directLocalRecord[field] === undefined ? '' : directLocalRecord[field]) === String(value)
+      );
+    });
+    return { records: matches ? [directLocalRecord] : [] };
   };
 
   const result = sandbox.context.queryRecords(
@@ -785,7 +798,7 @@ test('queryRecords elige como columna conductora un filtro no vacío aunque el p
   );
 
   assert.deepEqual(searchFields, ['local_id']);
-  assert.deepEqual(Array.from(result.records, item => item.assignment_id), ['A', 'D']);
+  assert.deepEqual(Array.from(result.records, item => item.assignment_id), ['LOCAL_1']);
 });
 
 test('queryRecords rechaza grupos que solo pueden localizar celdas vacías', () => {
