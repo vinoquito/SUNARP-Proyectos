@@ -225,11 +225,29 @@ function queryRecords(source, options) {
   if (typeof scopeRecordById !== 'object' || Array.isArray(scopeRecordById)) {
     throw new Error('SUNARP Core: scopeRecordById debe ser un objeto indexado por idField.');
   }
+  const scopeRecordLookups = authorization.scopeRecordLookups === undefined
+    ? []
+    : authorization.scopeRecordLookups;
+  if (!Array.isArray(scopeRecordLookups)) {
+    throw new Error('SUNARP Core: scopeRecordLookups debe ser un arreglo.');
+  }
   candidates.forEach(record => {
     if (!groups.some(group => _coreQueryMatchesGroup_(record, group))) return;
     if (!_coreQueryMatchesSearch_(record, search, searchFields)) return;
     const id = String(record[idField] === null || record[idField] === undefined ? '' : record[idField]).trim();
     const scopeRecord = Object.assign({}, record, scopeRecordById[id] || {});
+    scopeRecordLookups.forEach(lookup => {
+      if (!lookup || typeof lookup.recordField !== 'string' ||
+          !lookup.values || typeof lookup.values !== 'object' || Array.isArray(lookup.values)) {
+        throw new Error('SUNARP Core: cada scopeRecordLookup requiere recordField y values.');
+      }
+      const lookupId = String(record[lookup.recordField] === null ||
+        record[lookup.recordField] === undefined ? '' : record[lookup.recordField]).trim();
+      if (lookupId && lookup.values[lookupId] &&
+          typeof lookup.values[lookupId] === 'object') {
+        Object.assign(scopeRecord, lookup.values[lookupId]);
+      }
+    });
     if (!authorizationIsRecordInScope(
       validated.context,
       validated.moduleId,
