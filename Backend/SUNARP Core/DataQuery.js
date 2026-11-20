@@ -153,6 +153,27 @@ function _coreQueryCacheKey_(source, generation, authorizationFingerprint, query
   return 'query-result:v1:' + digest;
 }
 
+function _coreQueryCandidateCacheKey_(source, generation, idField, schemaVersion, groups) {
+  const digest = _coreQueryDigest_({
+    source: _coreBuildSourceCacheKey_(source, 'query-candidates'),
+    generation,
+    idField,
+    schemaVersion,
+    groups
+  });
+  return 'query-candidates:v1:' + digest;
+}
+
+function _coreQueryAssertHeaders_(source, requiredHeaders) {
+  if (typeof getSourceInfoCached !== 'function') return;
+  const info = getSourceInfoCached(source);
+  const headers = info && Array.isArray(info.headers) ? info.headers : [];
+  const missing = requiredHeaders.filter(header => !headers.includes(header));
+  if (missing.length) {
+    throw new Error('SUNARP Core: faltan encabezados requeridos: ' + missing.join(', ') + '.');
+  }
+}
+
 /**
  * Ejecuta una consulta exacta, autorizada y paginada en el servidor.
  * El permiso se valida antes de consultar la caché y el ámbito se aplica
@@ -209,6 +230,12 @@ function queryRecords(source, options) {
   if (!Number.isInteger(cacheSeconds) || cacheSeconds < 0 || cacheSeconds > 21600) {
     throw new Error('SUNARP Core: cacheSeconds debe ser un entero entre 0 y 21600.');
   }
+  const candidateCacheSeconds = options.candidateCacheSeconds === undefined
+    ? cacheSeconds
+    : Number(options.candidateCacheSeconds);
+  if (!Number.isInteger(candidateCacheSeconds) || candidateCacheSeconds < 0 || candidateCacheSeconds > 21600) {
+    throw new Error('SUNARP Core: candidateCacheSeconds debe ser un entero entre 0 y 21600.');
+  }
   const generation = typeof _coreGetSourceGeneration_ === 'function'
     ? _coreGetSourceGeneration_(source)
     : null;
@@ -219,8 +246,8 @@ function queryRecords(source, options) {
     ? _coreQueryCacheKey_(source, generation, authFingerprint, descriptor)
     : null;
 
-  // El permiso ya fue comprobado. El resultado cacheado está aislado por
-  // persona, módulo, permiso, ámbitos, filtros, página y versión de catálogo.
+  // El permiso se comprueba antes de cualquier lectura de caché. Los resultados
+  // finales quedan aislados por identidad, permiso, ámbito y versión de catálogo.
   if (cacheKey) {
     const cached = getCachedValue(cacheKey);
     if (cached && cached.version === 1 && Array.isArray(cached.records)) {
@@ -228,17 +255,46 @@ function queryRecords(source, options) {
     }
   }
 
+  const requiredHeaders = [idField, distinctBy, sortBy].filter(Boolean)
+    .concat(searchFields, searchAny.map(match => match.field));
+  _coreQueryAssertHeaders_(source, requiredHeaders);
+
+  // La caché de candidatos contiene filas aún no autorizadas y nunca se entrega
+  // directamente: cada consulta vuelve a comprobar permiso y ámbito sobre ellas.
+  const candidateCacheKey = generation && candidateCacheSeconds > 0
+    ? _coreQueryCandidateCacheKey_(
+        source, generation, idField, descriptor.schemaVersion, groups
+      )
+    : null;
+  let candidateRows = candidateCacheKey ? getCachedValue(candidateCacheKey) : null;
+
+  if (!Array.isArray(candidateRows)) {
+    const candidateMap = new Map();
+    groups.forEach(group => {
+      const fields = Object.keys(group);
+      const result = findRecordsByFields(source, group, {
+        requiredHeaders,
+        searchField: fields[0]
+      });
+      (result.records || []).forEach(record => {
+        const id = String(record[idField] === null || record[idField] === undefined ? '' : record[idField]).trim();
+        if (id) candidateMap.set(id, record);
+      });
+    });
+    candidateRows = Array.from(candidateMap.values());
+    if (candidateCacheKey) {
+      try {
+        putCachedValue(candidateCacheKey, candidateRows, candidateCacheSeconds);
+      } catch (error) {
+        console.warn('[SUNARP Core] No se pudo almacenar la caché de candidatos:', error.message);
+      }
+    }
+  }
+
   const candidates = new Map();
-  groups.forEach(group => {
-    const fields = Object.keys(group);
-    const result = findRecordsByFields(source, group, {
-      requiredHeaders: [idField, distinctBy, sortBy].filter(Boolean).concat(searchFields, searchAny.map(match => match.field)),
-      searchField: fields[0]
-    });
-    (result.records || []).forEach(record => {
-      const id = String(record[idField] === null || record[idField] === undefined ? '' : record[idField]).trim();
-      if (id) candidates.set(id, record);
-    });
+  candidateRows.forEach(record => {
+    const id = String(record[idField] === null || record[idField] === undefined ? '' : record[idField]).trim();
+    if (id) candidates.set(id, record);
   });
 
   const records = [];
