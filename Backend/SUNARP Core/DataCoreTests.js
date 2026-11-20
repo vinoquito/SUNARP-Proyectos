@@ -135,6 +135,20 @@ function runCoreSelfTests_() {
       exactLookup.records[0].id === 'TST_001',
       'La búsqueda exacta recupera únicamente las filas coincidentes sin cargar la tabla completa.'
     );
+
+    const projectedLookup = findRecordsByFields(
+      source,
+      { nombre: 'Ana Torres' },
+      { searchField: 'nombre', projectionFields: ['id', 'area'] }
+    );
+    assert(
+      projectedLookup.total === 1 &&
+      projectedLookup.records[0].id === 'TST_001' &&
+      projectedLookup.records[0].area === 'Administración' &&
+      !Object.prototype.hasOwnProperty.call(projectedLookup.records[0], 'anexo') &&
+      !Object.prototype.hasOwnProperty.call(projectedLookup.records[0], 'active'),
+      'La proyección exacta devuelve únicamente los campos declarados y los necesarios para verificar el filtro.'
+    );
     const exactMany = findRecordsByFields(
       source,
       { id: ['TST_001', 'TST_002'] },

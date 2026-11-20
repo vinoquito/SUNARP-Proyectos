@@ -92,7 +92,8 @@ test('resolveIdentity usa campos declarados y compara el correo sin distinguir m
     {
       emailField: 'correo_institucional',
       idField: 'persona_id',
-      requiredHeaders: ['nombres', 'apellidos']
+      requiredHeaders: ['nombres', 'apellidos'],
+      projectionFields: ['nombres', 'apellidos']
     }
   );
   assert.equal(result.total, 1);
@@ -100,6 +101,10 @@ test('resolveIdentity usa campos declarados y compara el correo sin distinguir m
   assert.equal(lookup.filters.correo_institucional, 'ana@sunarp.gob.pe');
   assert.equal(lookup.options.matchCase, false);
   assert.ok(lookup.options.requiredHeaders.includes('persona_id'));
+  assert.equal(
+    lookup.options.projectionFields.join(','),
+    'nombres,apellidos,correo_institucional,persona_id'
+  );
 });
 
 test('Core deniega TOTAL cuando está combinado con ámbitos específicos', () => {

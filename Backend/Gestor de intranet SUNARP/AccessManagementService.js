@@ -669,7 +669,10 @@ function _accessGetAuthContext_() {
     {
       emailField: 'correo_institucional',
       idField: 'persona_id',
-      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people
+      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people,
+      projectionFields: [
+        'persona_id', 'correo_institucional', 'nombres', 'apellidos'
+      ]
     }
   );
   const matchingPeople = identityResult.records;

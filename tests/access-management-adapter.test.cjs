@@ -167,7 +167,12 @@ function createAdapterSandbox(data, email = 'prueba@sunarp.gob.pe') {
       const result = sandbox.SUNARPCore.findRecordsByFields(
         source,
         { [options.emailField]: email },
-        { searchField: options.emailField, matchCase: false, requiredHeaders: options.requiredHeaders }
+        {
+          searchField: options.emailField,
+          matchCase: false,
+          requiredHeaders: options.requiredHeaders,
+          projectionFields: options.projectionFields
+        }
       );
       const records = (result.records || []).filter(item =>
         String(item[options.emailField] || '').trim().toLowerCase() === String(email || '').trim().toLowerCase() &&
@@ -634,8 +639,14 @@ test('los servicios y scripts de interfaz tienen sintaxis válida', () => {
   }
 });
 
-test('la identidad de sesión se resuelve en personas y Core recibe persona_id', () => {
+test('la identidad de sesión se resuelve en personas con proyección mínima y Core recibe persona_id', () => {
   const sandbox = createAdapterSandbox(makeSecurityData());
+  let identityOptions = null;
+  const resolve = sandbox.SUNARPCore.resolveIdentity;
+  sandbox.SUNARPCore.resolveIdentity = (source, email, options) => {
+    identityOptions = options;
+    return resolve(source, email, options);
+  };
   const auth = sandbox._accessGetAuthContext_();
   assert.equal(auth.authenticated, true);
   assert.equal(auth.personaId, 'PER_117');
@@ -644,6 +655,10 @@ test('la identidad de sesión se resuelve en personas y Core recibe persona_id',
   assert.equal(Object.hasOwn(auth.user, 'correo_institucional'), false);
   assert.equal(Object.hasOwn(auth.user, 'rol_id'), false);
   assert.equal(auth.email, 'prueba@sunarp.gob.pe');
+  assert.equal(
+    identityOptions.projectionFields.join(','),
+    'persona_id,correo_institucional,nombres,apellidos'
+  );
 });
 
 

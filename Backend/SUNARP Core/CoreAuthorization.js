@@ -59,15 +59,22 @@ function resolveIdentity(source, email, options) {
   const requiredHeaders = Array.isArray(options.requiredHeaders)
     ? options.requiredHeaders
     : [];
-  const result = findRecordsByFields(
-    source,
-    { [emailField]: normalizedEmail },
-    {
-      searchField: emailField,
-      matchCase: false,
-      requiredHeaders: Array.from(new Set(requiredHeaders.concat([emailField, idField])))
-    }
-  );
+  if (options.projectionFields !== undefined &&
+      (!Array.isArray(options.projectionFields) ||
+       options.projectionFields.some(field => typeof field !== 'string' || !field.trim()))) {
+    throw new Error('SUNARP Core: resolveIdentity requiere projectionFields como arreglo de nombres de columna.');
+  }
+  const queryOptions = {
+    searchField: emailField,
+    matchCase: false,
+    requiredHeaders: Array.from(new Set(requiredHeaders.concat([emailField, idField])))
+  };
+  if (Array.isArray(options.projectionFields)) {
+    queryOptions.projectionFields = Array.from(new Set(
+      options.projectionFields.concat([emailField, idField])
+    ));
+  }
+  const result = findRecordsByFields(source, { [emailField]: normalizedEmail }, queryOptions);
   const records = (result.records || []).filter(record =>
     String(record[emailField] === null || record[emailField] === undefined ? '' : record[emailField])
       .trim()

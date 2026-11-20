@@ -96,7 +96,7 @@ resolveIdentity(source, email, {
 // { records: [...], total: n }
 ```
 
-`emailField` e `idField` son obligatorios. Un correo vacío devuelve `{ records: [], total: 0 }`. La búsqueda se realiza con `findRecordsByFields` y después vuelve a comprobar la igualdad del correo normalizado y que el campo de identidad tenga contenido. La aplicación consumidora debe rechazar la ambigüedad si aparecen identidades duplicadas; esta función devuelve las coincidencias encontradas.
+`emailField` e `idField` son obligatorios. Un correo vacío devuelve `{ records: [], total: 0 }`. La búsqueda se realiza con `findRecordsByFields` y después vuelve a comprobar la igualdad del correo normalizado y que el campo de identidad tenga contenido. La aplicación consumidora debe rechazar la ambigüedad si aparecen identidades duplicadas; esta función devuelve las coincidencias encontradas. Admite `projectionFields` opcional: Core añade siempre `emailField` e `idField` para verificar la identidad y devolver `persona_id`; cuando no se declara, conserva el resultado completo por compatibilidad.
 
 ### 3.3 `resolveAuthorizationContext(data)`
 
