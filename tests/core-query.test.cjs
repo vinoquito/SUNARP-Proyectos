@@ -327,3 +327,27 @@ test('la caché de candidatos nunca omite la autorización vigente de otro usuar
   assert.equal(second.total, 0);
   assert.equal(sourceReads, 1);
 });
+
+test('la nueva generación de la fuente invalida candidatos y resultados derivados', () => {
+  const sandbox = createSandbox();
+  let sourceReads = 0;
+  let generation = 'GEN-1';
+  sandbox.context._coreGetSourceGeneration_ = () => generation;
+  const original = sandbox.context.findRecordsByFields;
+  sandbox.context.findRecordsByFields = (...args) => {
+    sourceReads++;
+    return original(...args);
+  };
+  const sourceRef = { spreadsheetId: 'S', sheetName: 'Assignments' };
+  const options = {
+    idField: 'assignment_id',
+    filters: { status: 'ACTIVE' },
+    authorization: sandbox.authorization(),
+    cacheSeconds: 60
+  };
+  sandbox.context.queryRecords(sourceRef, options);
+  generation = 'GEN-2';
+  const refreshed = sandbox.context.queryRecords(sourceRef, options);
+  assert.equal(refreshed.cacheHit, false);
+  assert.equal(sourceReads, 2);
+});
