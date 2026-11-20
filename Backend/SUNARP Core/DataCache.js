@@ -50,16 +50,47 @@ function _coreBuildSourceCacheKey_(source, kind) {
  * la clave antes de tiempo se crea un UUID nuevo: las consultas anteriores
  * quedan inaccesibles aunque sus entradas físicas todavía existan.
  */
-function _coreGetSourceGeneration_(source) {
+function _coreGetOwnSourceGeneration_(source) {
   const key = _coreBuildSourceCacheKey_(source, 'generation');
+  const current = getCachedValue(key);
+  if (typeof current === 'string' && current) return current;
+  const generation = Utilities.getUuid();
+  const stored = putCachedValue(key, generation, _CORE_CACHE_MAX_TTL_);
+  return stored && stored.success === true ? generation : null;
+}
+
+
+/**
+ * Generación efectiva de una fuente y de todas sus dependencias declaradas.
+ * Una modificación del maestro cambia la generación efectiva de sus réplicas
+ * y de los resultados derivados, sin modificar ni sustituir esas réplicas.
+ */
+function _coreGetSourceGeneration_(source, ancestry) {
   try {
-    const current = getCachedValue(key);
-    if (typeof current === 'string' && current) return current;
-    const generation = Utilities.getUuid();
-    const stored = putCachedValue(key, generation, _CORE_CACHE_MAX_TTL_);
-    return stored && stored.success === true ? generation : null;
+    const config = _coreNormalizeSourceConfig_(source);
+    const key = _coreBuildSourceCacheKey_(config, 'generation');
+    const visited = Array.isArray(ancestry) ? ancestry : [];
+    if (visited.includes(key)) {
+      console.warn('[SUNARP Core] Se detectó un ciclo en las dependencias de fuentes:', config.label);
+      return null;
+    }
+
+    const ownGeneration = _coreGetOwnSourceGeneration_(config);
+    if (!ownGeneration) return null;
+
+    const dependencies = config.dependencies || [];
+    if (!dependencies.length) return ownGeneration;
+
+    const nextAncestry = visited.concat(key);
+    const dependencyGenerations = [];
+    for (let i = 0; i < dependencies.length; i++) {
+      const generation = _coreGetSourceGeneration_(dependencies[i], nextAncestry);
+      if (!generation) return null;
+      dependencyGenerations.push(generation);
+    }
+    return _coreCacheDigest_([ownGeneration].concat(dependencyGenerations).join('|'));
   } catch (error) {
-    console.warn('[SUNARP Core] No se pudo obtener la generación de la fuente:', error.message);
+    console.warn('[SUNARP Core] No se pudo obtener la generación efectiva de la fuente:', error.message);
     return null;
   }
 }
