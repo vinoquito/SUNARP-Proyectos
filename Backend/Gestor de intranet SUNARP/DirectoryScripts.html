@@ -288,6 +288,24 @@ const DirectoryPage = (() => {
    */
   function populateSedeFilter() {
     const select = getElements().sedeFilter;
+    if (!select || !state.catalogs) return;
+
+    const contract = state.catalogs.filterContract || {};
+    const selectableIds = new Set(contract.selectable && contract.selectable.sedeIds || []);
+    const sedes = (state.catalogs.sedes || [])
+      .filter(item => !contract.selectable || selectableIds.has(key(item.id)))
+      .slice().sort(sortByName);
+    updateFilterOptions(select, 'Todas las sedes', sedes);
+
+    const visible = sedes.length > 1;
+    const wrapper = select.closest('.sunarp-filter');
+    if (wrapper) wrapper.hidden = !visible;
+    if (!visible) select.value = '';
+  }
+
+
+
+    const select = getElements().sedeFilter;
 
     if (!select || !state.catalogs) return;
 
@@ -308,6 +326,24 @@ const DirectoryPage = (() => {
    * los filtros de sede y jerarquía.
    */
   function populateCargoFilter() {
+    const select = getElements().cargoFilter;
+    if (!select || !state.catalogs) return;
+
+    const contract = state.catalogs.filterContract || {};
+    const selectableIds = new Set(contract.selectable && contract.selectable.cargoIds || []);
+    const cargos = (state.catalogs.cargos || [])
+      .filter(item => !contract.selectable || selectableIds.has(key(item.id)))
+      .slice().sort(sortByName);
+    updateFilterOptions(select, 'Todos los cargos', cargos);
+
+    const visible = cargos.length > 1;
+    const wrapper = select.closest('.sunarp-filter');
+    if (wrapper) wrapper.hidden = !visible;
+    if (!visible) select.value = '';
+  }
+
+
+
     const select = getElements().cargoFilter;
 
     if (!select || !state.catalogs) return;
@@ -337,6 +373,25 @@ const DirectoryPage = (() => {
    * a las unidades que sí tienen servidores registrados.
    */
   function getHierarchyNodes(parentId) {
+    const contract = state.catalogs && state.catalogs.filterContract || {};
+    const selectable = new Set(contract.selectable && contract.selectable.structureIds || []);
+    const contextual = new Set(contract.contextStructureIds || []);
+    return (state.catalogs.estructuraOrg || [])
+      .filter(node =>
+        key(node.parent_id) === key(parentId) &&
+        (!contract.selectable || selectable.has(key(node.id)) || contextual.has(key(node.id)))
+      )
+      .slice()
+      .sort((a, b) => {
+        const orderA = Number(a.order) || 0;
+        const orderB = Number(b.order) || 0;
+        return orderA - orderB ||
+          String(a.name).localeCompare(String(b.name), 'es');
+      });
+  }
+
+
+
     return (state.catalogs.estructuraOrg || [])
       .filter(node => key(node.parent_id) === key(parentId))
       .slice()
@@ -410,11 +465,17 @@ const DirectoryPage = (() => {
 
     select.appendChild(placeholder);
 
+    const contract = state.catalogs.filterContract || {};
+    const selectable = new Set(contract.selectable && contract.selectable.structureIds || []);
+    const contextual = new Set(contract.contextStructureIds || []);
     nodes.forEach(node => {
       const option = document.createElement('option');
 
       option.value = key(node.id);
-      option.textContent = node.name;
+      option.textContent = contextual.has(key(node.id)) && !selectable.has(key(node.id))
+        ? node.name + ' (contexto)'
+        : node.name;
+      option.disabled = contextual.has(key(node.id)) && !selectable.has(key(node.id));
 
       select.appendChild(option);
     });
@@ -457,6 +518,12 @@ const DirectoryPage = (() => {
 
     if (selectedValue) {
       appendHierarchyLevel(selectedValue, level + 1);
+    } else {
+      // Los ancestros se muestran solo como contexto: no se pueden
+      // seleccionar, pero permiten llegar a las ramas autorizadas.
+      nodes.filter(node =>
+        contextual.has(key(node.id)) && !selectable.has(key(node.id))
+      ).forEach(node => appendHierarchyLevel(key(node.id), level + 1));
     }
   }
 
