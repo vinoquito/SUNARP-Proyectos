@@ -30,9 +30,10 @@ Los registros devueltos conservan los valores de hoja convertidos a objetos cuya
 
 ### 1.2 Tipos y estados
 
-- El booleano activo es `true`; el inactivo es `false`. La autorización también admite el texto `"TRUE"` recibido desde adaptadores, pero no interpreta `ACTIVO/INACTIVO` como booleano.
+- Para usuarios, asignaciones de rol, relaciones rol-permiso, permisos y ámbitos, solo se considera activo el booleano `true` o el texto `"TRUE"` (sin distinguir mayúsculas y después de recortar espacios). `false`, `null`, `undefined` y cualquier otro valor —incluidos `1`, `"SI"` y `"ACTIVO"`— no conceden actividad. En los catálogos organizacionales de estructuras y locales, la ausencia de la propiedad `active` se interpreta como activo por compatibilidad; cuando la propiedad existe se aplica la misma regla estricta.
+- `incluir_descendientes` se interpreta como verdadero para `true`, `"TRUE"`, `"SI"`, `"SÍ"`, `"YES"` o `"1"` (sin distinguir mayúsculas y recortando espacios).
 - Los campos de fechas pueden recibirse como valores `Date` o como cadenas según el adaptador y la fuente.
-- Una coincidencia exacta compara valores normalizados por Core; no equivale a una búsqueda textual parcial.
+- El comparador exacto común considera equivalentes `''`, `null` y `undefined`; compara dos fechas `Date` por su instante; para los demás valores compara su representación textual recortada y distingue mayúsculas/minúsculas. En `findRecordsByFields`, `matchCase` e `ignoreWhitespace` modifican únicamente la comparación de la columna conductora. En `queryRecords`, `TextFinder` localiza candidatos sin distinguir mayúsculas, pero Core vuelve a comprobar los filtros exactos con el comparador sensible a mayúsculas. Una búsqueda parcial es un contrato distinto.
 
 ### 1.3 Respuestas de consulta
 
@@ -174,7 +175,7 @@ Comportamiento:
 
 - Sin ámbito activo, deniega.
 - `TOTAL` es exclusivo: se permite solo cuando es el único ámbito activo y `referencia_id` está vacío. Una mezcla de TOTAL con ámbitos específicos deniega.
-- `SEDE` compara la sede derivada de la estructura o del local. Si el registro no aporta ninguno, utiliza `record.sede_id`.
+- `SEDE` deriva la sede con esta precedencia: si el registro declara estructura, utiliza `sede_id` de esa estructura; si no declara estructura pero sí local, utiliza `sede_id` del local; si no declara ninguno, utiliza `record.sede_id`. Si declara estructura y local, ambos deben existir y, cuando ambos informan sede, estas deben coincidir. Si existe estructura pero no permite obtener su sede, Core no sustituye ese dato con la sede del local.
 - `ESTRUCTURA_ORG` exige que tanto la estructura de referencia como la del registro existan en el catálogo. Permite la coincidencia directa; admite descendientes solo cuando `incluir_descendientes` es verdadero y existe la relación `parent_id`.
 - `LOCAL` permite únicamente la adscripción directa al local: el registro debe referenciar un local existente y no tener estructura orgánica.
 - Todo `local_id` declarado debe existir en el catálogo. Cuando el registro contiene estructura y local, sus sedes deben concordar si ambas están informadas.
@@ -488,7 +489,10 @@ Ejecuta la misma validación y lanza un error agregado si `valid` es falso. Devu
 2. Las fuentes tienen claves físicas distintas por ID de archivo, pestaña, fila de encabezados y tipo de entrada.
 3. La generación efectiva incluye las generaciones de dependencias declaradas. Al invalidar el maestro, la clave efectiva de una réplica cambia en la siguiente consulta.
 4. Los resultados de `queryRecords` quedan separados por contexto de autorización y datos organizacionales/relacionales suministrados. La caché de candidatos no se entrega directamente: se revalida por solicitud.
-5. La invalidación por generaciones cubre escrituras efectuadas por Core. Una modificación manual en Google Sheets o una escritura de otra aplicación/script que no invoque la invalidación de Core **no cambia automáticamente la generación**. Las instantáneas y consultas cacheadas pueden permanecer vigentes hasta su expiración/desalojo (sus TTL están limitados a 21600 segundos; cada consumidor configura su TTL). Todo escritor externo que requiera consistencia posterior a la escritura debe llamar `invalidateSourceCache(source)` para cada fuente afectada una vez completados sus cambios, o ejecutar un mecanismo equivalente comprobado en Apps Script. Si una operación externa cambia una fuente maestra, también debe invalidarse la fuente maestra de la que dependen las réplicas. No se debe asumir que existen disparadores instalados: su existencia, propietario, evento y cobertura deben verificarse en Apps Script. El repositorio no contiene una invalidación automática de hojas basada en `onEdit`/`onChange`; la estrategia y despliegue de triggers quedan fuera de la evidencia disponible y se abordan en la fase específica de consistencia externa.
+5. La consistencia ante ediciones externas forma parte del contrato de **Fase 1**. La invalidación por generaciones cubre automáticamente las escrituras ejecutadas por Core. Una edición manual en Google Sheets o una escritura de otra aplicación/script que no invoque la invalidación **no cambia automáticamente la generación**; las instantáneas y consultas cacheadas pueden permanecer obsoletas hasta su expiración/desalojo. Los TTL configurables están limitados a 21600 segundos y CacheService puede desalojar entradas antes de ese plazo, por lo que esto es consistencia eventual acotada por TTL, no consistencia inmediata ni una transacción/snapshot.
+   - Todo escritor externo automatizado debe llamar `invalidateSourceCache(source)` para cada fuente afectada después de completar sus escrituras. Si modifica una fuente maestra, debe invalidar la fuente maestra: las réplicas que declaren esa dependencia obtendrán otra generación efectiva en la siguiente consulta. Si modifica directamente una réplica, debe invalidar también esa réplica.
+   - Para una edición manual, debe ejecutarse una invalidación explícita de la fuente afectada antes de exigir que las consultas cacheadas reflejen el cambio. El repositorio no contiene un disparador automático `onEdit`/`onChange` para estas hojas. No se debe asumir que existe un trigger instalado ni que una actualización de `IMPORTRANGE` lo activa. El propietario, evento, autorización, cobertura de archivos y comportamiento real de cualquier trigger deben comprobarse en los proyectos Apps Script correspondientes.
+   - El contrato de Fase 1 queda cerrado con esta semántica explícita y con la invalidación pública disponible. La instalación/operación de triggers, si se requiere automatización adicional para ediciones manuales, es una tarea de Apps Script externa al repositorio y no puede darse por verificada desde GitHub.
 6. La apertura de Spreadsheet reutiliza manejadores durante la ejecución mediante un LRU máximo de 12 IDs. Es una optimización del contexto de ejecución, no caché de datos.
 7. `listRecords`, `listRecordsFromSources`, `insertRecord`, `updateRecord`, `deleteRecord` y operaciones compuestas que utilizan `_coreGetTable_` procesan la tabla completa. No son consultas paginadas en origen. Las operaciones de escritura siguen necesitando proteger unicidad bajo bloqueo; su costo debe optimizarse en la fase de repositorio sin introducir carreras.
 
@@ -501,7 +505,7 @@ Ejecuta la misma validación y lanza un error agregado si `valid` es falso. Devu
 - No asumir que `offset`/`limit` en `queryRecords` equivale a paginación física/SQL en origen; revisar `candidateCount`, `authorizedCount`, `retainedForPage` y `durationMs`.
 - Mantener los catálogos organizacionales y sus réplicas declarados conforme a la fuente que cada consumidor haya decidido utilizar; no unificarlos por conveniencia.
 - Los servicios deben rechazar relaciones inexistentes cuando las hayan declarado obligatorias. Para relaciones opcionales, omitir `required: true`.
-- Toda escritura por rutas ajenas a Core debe contemplarse en la estrategia de consistencia externa de la Fase 4.
+- Toda escritura por rutas ajenas a Core debe invalidar explícitamente cada fuente afectada conforme al contrato de consistencia externa de Fase 1. No asumir que la instalación de triggers existe o está completa; debe verificarse en Apps Script.
 
 ## 11. Verificación de versión y publicación
 
