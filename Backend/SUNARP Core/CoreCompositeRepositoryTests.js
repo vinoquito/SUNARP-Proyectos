@@ -40,6 +40,7 @@ function runCompositeRepositorySelfTests_() {
       correo_institucional: 'prueba@sunarp.gob.pe',
       modulo: 'DIRECTORIOS'
     };
+    const generationBeforeSync = _coreGetSourceGeneration_(source);
 
     const total = syncRecordsByKey(
       source,
@@ -56,9 +57,12 @@ function runCompositeRepositorySelfTests_() {
       { allowEmptyKeyFields: ['referencia_id'] }
     );
 
+    const generationAfterFirstSync = _coreGetSourceGeneration_(source);
     assert(
-      total.inserted === 1 && total.totalActive === 1,
-      'Inserta una relación TOTAL con referencia vacía.'
+      total.inserted === 1 &&
+      total.totalActive === 1 &&
+      generationAfterFirstSync !== generationBeforeSync,
+      'Inserta una relación TOTAL y cambia la generación de la fuente.'
     );
 
     const second = syncRecordsByKey(
@@ -76,9 +80,29 @@ function runCompositeRepositorySelfTests_() {
       { allowEmptyKeyFields: ['referencia_id'] }
     );
 
+    const generationAfterSecondSync = _coreGetSourceGeneration_(source);
     assert(
-      second.inserted === 1 && second.deactivated === 1,
-      'Reemplaza TOTAL por SEDE y desactiva la relación anterior.'
+      second.inserted === 1 &&
+      second.deactivated === 1 &&
+      generationAfterSecondSync !== generationAfterFirstSync,
+      'Reemplaza TOTAL por SEDE, desactiva el ámbito anterior e invalida la fuente.'
+    );
+
+    const beforeUpdate = _coreGetSourceGeneration_(source);
+    const updated = updateRecordByFields(
+      source,
+      {
+        correo_institucional: parent.correo_institucional,
+        modulo: parent.modulo,
+        tipo_ambito: 'SEDE',
+        referencia_id: 'SEDE_CENTRAL'
+      },
+      { incluir_descendientes: 'SI' }
+    );
+    const afterUpdate = _coreGetSourceGeneration_(source);
+    assert(
+      updated.success && afterUpdate !== beforeUpdate,
+      'updateRecordByFields invalida la generación después de una escritura compuesta.'
     );
 
     const finalRows = listRecords(source, {}).records;
