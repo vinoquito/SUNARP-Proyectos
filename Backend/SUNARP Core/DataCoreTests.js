@@ -535,6 +535,36 @@ function runCoreSelfTests_() {
       'La inserción invalida automáticamente la instantánea de la fuente.'
     );
 
+    const generationBeforeExternalEdit = _coreGetSourceGeneration_(source);
+    const externalName = 'Edición manual de prueba';
+    sheet.getRange(sheet.getLastRow(), 2).setValue(externalName);
+    SpreadsheetApp.flush();
+    const generationAfterExternalEdit = _coreGetSourceGeneration_(source);
+    const cachedAfterExternalEdit = listRecordsFromSourcesCached([{
+      key: 'registros', source, requiredHeaders: ['id', 'nombre']
+    }], 300);
+    const cachedExternalRow = cachedAfterExternalEdit.registros.find(
+      row => row.id === 'TST_003'
+    );
+    assert(
+      generationAfterExternalEdit === generationBeforeExternalEdit &&
+      cachedExternalRow && cachedExternalRow.nombre === 'María López',
+      'Una edición directa de Sheets no cambia la generación y deja vigente la instantánea hasta invalidarla.'
+    );
+
+    const externalInvalidation = invalidateSourceCache(source);
+    const refreshedAfterExternalEdit = listRecordsFromSourcesCached([{
+      key: 'registros', source, requiredHeaders: ['id', 'nombre']
+    }], 300);
+    const refreshedExternalRow = refreshedAfterExternalEdit.registros.find(
+      row => row.id === 'TST_003'
+    );
+    assert(
+      externalInvalidation.success &&
+      refreshedExternalRow && refreshedExternalRow.nombre === externalName,
+      'La invalidación explícita de una escritura externa fuerza la lectura actualizada.'
+    );
+
     // 8.1. Probar unicidad compuesta en inserción.
     expectError(() => {
       insertRecord(
