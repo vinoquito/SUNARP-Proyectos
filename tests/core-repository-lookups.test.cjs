@@ -61,6 +61,17 @@ test('findRecordsByFields respeta matchCase=false al validar filas candidatas', 
       String(expected === null || expected === undefined ? '' : expected).trim()
   });
   vm.runInContext(repositorySource, sandbox, { filename: 'DataRepository.js' });
+  sandbox._coreReadCandidateRows_ = (_sheet, rowNumbers) => {
+    const map = new Map();
+    rowNumbers.forEach(rowNumber => map.set(rowNumber, rows[rowNumber - 2]));
+    return map;
+  };
+  sandbox._coreIsEmptyRow_ = row => !row || row.every(value => value === '' || value === null || value === undefined);
+  sandbox._coreRowToRecord_ = (headerList, row) =>
+    Object.fromEntries(headerList.map((header, index) => [header, row[index]]));
+  sandbox._coreValuesEqual_ = (actual, expected) =>
+    String(actual === null || actual === undefined ? '' : actual).trim() ===
+    String(expected === null || expected === undefined ? '' : expected).trim();
 
   const result = sandbox.findRecordsByFields(
     { spreadsheetId: 'DIRECTORY', sheetName: 'personas' },
