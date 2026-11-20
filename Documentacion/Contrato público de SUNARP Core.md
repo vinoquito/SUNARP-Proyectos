@@ -41,7 +41,7 @@ Las respuestas de lectura suelen utilizar `{ records, total }`; las lecturas pag
 
 ## 2. Inventario de la API pública
 
-En el HEAD auditado se identificaron **30 funciones globales públicas**. La lista siguiente se ha obtenido de las declaraciones de los archivos de Core, excluyendo los auxiliares privados.
+En el HEAD auditado se identificaron **31 funciones globales públicas**. La lista siguiente se ha obtenido de las declaraciones de los archivos de Core, excluyendo los auxiliares privados.
 
 | Módulo | Función pública | Firma |
 |---|---|---|
@@ -53,6 +53,7 @@ En el HEAD auditado se identificaron **30 funciones globales públicas**. La lis
 | Repositorio compuesto | `updateRecordByFields` | `(source, criteria, updates, options)` |
 | Repositorio compuesto | `syncRecordsByKey` | `(source, parentMatch, keyFields, desiredRecords, statusField, activeValue, inactiveValue, options)` |
 | Repositorio compuesto | `appendAuditEvent` | `(source, record, idField)` |
+| Repositorio compuesto | `runSourceWriteBatch` | `(sources, writer)` |
 | Caché | `invalidateSourceCache` | `(source)` |
 | Caché | `getCachedValue` | `(key)` |
 | Caché | `putCachedValue` | `(key, value, expirationSeconds)` |
@@ -387,6 +388,17 @@ Devuelve `{ success, inserted, updated, deactivated, totalActive }`. Usa un solo
 ### 5.7 `appendAuditEvent(source, record, idField)`
 
 Inserta el evento mediante `insertRecord`, indicando el campo identificador. El esquema y campos del evento son responsabilidad del consumidor. Al utilizar `insertRecord`, hereda bloqueo e invalidación.
+
+### 5.8 `runSourceWriteBatch(sources, writer)`
+
+Coordina una escritura de mantenimiento que afecta varias fuentes o pestañas y que no puede expresarse mediante las operaciones CRUD normales.
+
+- `sources` debe ser un arreglo no vacío de configuraciones Core; declara **todas** las fuentes que el callback puede modificar. Core normaliza y deduplica las fuentes físicas por archivo, pestaña y fila de encabezados.
+- `writer` es una función síncrona que recibe `markWriteStarted()`. El consumidor debe llamarla inmediatamente antes de la primera mutación de Google Sheets, incluso si la mutación es crear una pestaña o una columna.
+- Core ejecuta el callback dentro del mismo `LockService.getScriptLock()` de la biblioteca que utilizan las escrituras CRUD. Después de la ruta normal, o después de un error que ocurra tras marcar el inicio, ejecuta un único `SpreadsheetApp.flush()` y trata de invalidar **todas** las fuentes declaradas, aunque falle una invalidación.
+- Si la validación del callback falla antes de marcar una escritura, no ejecuta `flush` ni invalida. Si falla después, intenta finalizar todas las fuentes y lanza un error que advierte de cambios parciales. No existe rollback ni transacción entre pestañas; el consumidor debe inspeccionar los datos antes de repetir la operación.
+- El callback no debe invocar otros métodos públicos de escritura ni `invalidateSourceCache`, porque el lote ya mantiene el bloqueo central y esas llamadas intentarían adquirirlo de nuevo.
+- Es apropiado para migraciones de esquema o escrituras multihoja excepcionales. Las operaciones funcionales ordinarias deben seguir usando los métodos CRUD/compuestos de Core.
 
 ## 6. Lecturas agrupadas y metadatos
 
