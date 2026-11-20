@@ -457,7 +457,7 @@ test('Directorio exige modulo_id explícito y pasa local_id para ámbitos LOCAL'
   const buildViewStart = directorySource.indexOf('function _directoryBuildView_(');
   const buildViewEnd = directorySource.indexOf('function _directorySortAssignments_(', buildViewStart);
   const buildViewSource = directorySource.slice(buildViewStart, buildViewEnd);
-  assert.match(buildViewSource, /_accessRecordIsAllowed_\([\s\S]*?estructura_id:\s*record\.estructura_id[\s\S]*?local_id:\s*record\.local_id/s);
+  assert.match(buildViewSource, /const record = \{[\s\S]*?estructura_id:\s*location\.estructura_id[\s\S]*?local_id:\s*item\.local_id[\s\S]*?\};[\s\S]*?_accessRecordIsAllowed_\([\s\S]*?\n\s*record,/s);
   assert.match(directorySource, /{ sede_id: _directoryKey_\(local\.sede_id\), local_id: _directoryKey_\(local\.id\) }/);
 });
 
