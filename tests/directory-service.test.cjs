@@ -380,7 +380,7 @@ test('la edición coordinada recupera la asignación anterior por ID sin cargar 
   let lookupId = '';
 
   context._directoryLoadContext_ = options => {
-    loadOptions = options;
+    if (options) loadOptions = options;
     return {
       personas: [person],
       datosPersonales: [personalData],
