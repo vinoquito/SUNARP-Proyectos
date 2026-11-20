@@ -36,6 +36,50 @@ function runCompositeRepositorySelfTests_() {
       label: 'Prueba de relaciones compuestas'
     };
 
+    let emptyParentRejected = false;
+    try {
+      syncRecordsByKey(
+        source,
+        { correo_institucional: '', modulo: 'DIRECTORIOS' },
+        ['tipo_ambito', 'referencia_id'],
+        [],
+        'estado',
+        'ACTIVO',
+        'INACTIVO',
+        { allowEmptyKeyFields: ['referencia_id'] }
+      );
+    } catch (error) {
+      emptyParentRejected = error.message.includes('parentMatch requiere un valor no vacío');
+    }
+    assert(
+      emptyParentRejected,
+      'Rechaza sincronizaciones con identificadores de padre vacíos.'
+    );
+
+    let parentOverrideRejected = false;
+    try {
+      syncRecordsByKey(
+        source,
+        { correo_institucional: 'prueba@sunarp.gob.pe', modulo: 'DIRECTORIOS' },
+        ['tipo_ambito', 'referencia_id'],
+        [{
+          correo_institucional: 'otra@sunarp.gob.pe',
+          tipo_ambito: 'SEDE',
+          referencia_id: 'SEDE_CENTRAL'
+        }],
+        'estado',
+        'ACTIVO',
+        'INACTIVO',
+        { allowEmptyKeyFields: ['referencia_id'] }
+      );
+    } catch (error) {
+      parentOverrideRejected = error.message.includes('no puede modificar el campo padre');
+    }
+    assert(
+      parentOverrideRejected,
+      'Impide que desiredRecords cambie la identidad padre.'
+    );
+
     const parent = {
       correo_institucional: 'prueba@sunarp.gob.pe',
       modulo: 'DIRECTORIOS'
