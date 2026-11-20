@@ -496,7 +496,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
    * Reutiliza los catálogos y asignaciones que ya entrega getAccessManagementData().
    */
 
-  function createUserModuleAccessEditor(personaId, disabled) {
+  function createUserModuleAccessEditor(personaId, disabled, userConfiguration) {
     const capabilities = state.data.capabilities || {};
     const canManageRoles = capabilities.userRoles === true;
     const canManageScopes = canManageRoles && capabilities.scopes === true;
@@ -536,7 +536,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     const catalogs = state.data.catalogs || {};
     const typeLabels = Object.fromEntries((state.data.scopeTypes || []).map(item => [item.tipo_ambito_id, item.nombre]));
 
-    const roleAssignments = (state.data.userRoles || []).filter(item =>
+    const roleAssignments = ((userConfiguration && userConfiguration.userRoles) || []).filter(item =>
       item.persona_id === personaId && item.active === true
     );
 
@@ -548,7 +548,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       ? user.roles
       : [];
 
-    const scopeAssignments = (state.data.scopes || []).filter(item =>
+    const scopeAssignments = ((userConfiguration && userConfiguration.scopes) || []).filter(item =>
       item.persona_id === personaId && item.active === true
     );
 
@@ -1664,8 +1664,21 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     updateApplyState();
   }
 
-  function openUserModal(row) {
+  async function openUserModal(row) {
     const editing = Boolean(row);
+    let userConfiguration = { userRoles: [], scopes: [] };
+
+    if (editing) {
+      const finishLoading = beginAccessPanelLoading('Consultando los accesos de la persona...');
+      try {
+        userConfiguration = await rpc('getAccessUserConfiguration', row.persona_id);
+      } catch (error) {
+        SUNARPUI.notify('error', error.message || 'No se pudieron consultar los accesos de la persona.');
+        return;
+      } finally {
+        finishLoading();
+      }
+    }
     const documentTypes = (state.data.documentTypes || [])
       .filter(item => item && item.id && item.name);
 
@@ -1729,7 +1742,8 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
       selectedConfiguration = createUserModuleAccessEditor(
         row.persona_id,
-        row.active !== true
+        row.active !== true,
+        userConfiguration
       );
 
       configHost.appendChild(selectedConfiguration.element);
@@ -1863,7 +1877,8 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
               selectedConfiguration = createUserModuleAccessEditor(
                 selectedPerson.persona_id,
-                false
+                false,
+                { userRoles: [], scopes: [] }
               );
               configHost.replaceChildren(selectedConfiguration.element);
             }
