@@ -662,6 +662,50 @@ test('las consultas puntuales de asignaciones comprueban permiso y ámbito en Co
   assert.match(serviceSource, /function _directoryFindAuthorizedAssignmentById_\([\s\S]*?\{ asignacionId: id, active: 'all' \}/);
 });
 
+
+test('deleteDirectoryPerson valida el ámbito con las asignaciones puntuales, no con el contexto vacío', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  const person = {
+    persona_id: 'PER_009',
+    nombres: 'Ana',
+    apellidos: 'Pérez'
+  };
+  const linkedAssignment = {
+    asignacion_id: 'ASG_009',
+    persona_id: 'PER_009',
+    estructura_local_id: 'REL_1',
+    local_id: '',
+    active: true
+  };
+  let assignmentsChecked = null;
+
+  vmContext._directoryAuthorizationContext_ = () => ({ auth: {}, structures: [], locals: [] });
+  vmContext._directoryLoadContext_ = options => {
+    assert.equal(options.includeAssignments, false);
+    return { asignaciones: [], estructuraLocal: [], estructuraOrg: [], locales: [] };
+  };
+  vmContext._directoryFindPersonById_ = () => person;
+  vmContext._directoryAssertPersonMutationScope_ = (_authorization, _person, assignments) => {
+    assignmentsChecked = assignments;
+  };
+  vmContext._directorySource_ = name => name;
+  vmContext.SUNARPCore = {
+    findRecordsByFields: (source, filters) => {
+      assert.equal(source, 'asignaciones');
+      assert.deepEqual(JSON.parse(JSON.stringify(filters)), { persona_id: 'PER_009' });
+      return { records: [linkedAssignment], total: 1 };
+    }
+  };
+
+  assert.throws(
+    () => vmContext.deleteDirectoryPerson('PER_009'),
+    /tiene 1 asignación/
+  );
+  assert.equal(assignmentsChecked.length, 1);
+  assert.equal(assignmentsChecked[0].asignacion_id, 'ASG_009');
+});
+
 test('la validación de contexto parcial conserva las relaciones sin exigir cargar todas las personas', () => {
   const context = assignmentContext();
   context.personas = [];
