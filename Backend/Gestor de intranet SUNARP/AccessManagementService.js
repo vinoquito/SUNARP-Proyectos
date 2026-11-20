@@ -3087,19 +3087,14 @@ function getAccessEntityHistory(payload) {
   _accessRequirePermission_('AUDITORIA_VER');
 
   payload = payload || {};
-
   const entityType = _accessUpper_(
     payload.tipo_entidad || payload.entityType
   );
-
   const recordId = _accessText_(
     payload.registro_id || payload.recordId
   );
-
   if (!entityType || !recordId) {
-    throw new Error(
-      'Debes indicar el tipo y el identificador del registro.'
-    );
+    throw new Error('Debes indicar el tipo y el identificador del registro.');
   }
 
   const relatedTypes = {
@@ -3108,18 +3103,48 @@ function getAccessEntityHistory(payload) {
     PERMISO: ['PERMISO', 'ROL_PERMISO'],
     SERVIDOR: ['SERVIDOR']
   };
-
   if (!relatedTypes[entityType]) {
-    throw new Error(
-      `No está habilitada la consulta de historial para "${entityType}".`
-    );
+    throw new Error('No está habilitada la consulta de historial para ' + entityType + '.');
   }
 
-  const source = _accessSecuritySource_(
-    ACCESS_MANAGEMENT_CONFIG.sheets.audit
-  );
+  const source = _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.audit);
+  const page = Math.max(1, Number.parseInt(payload.page, 10) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number.parseInt(payload.pageSize, 10) || 20));
+  const offset = (page - 1) * pageSize;
+  const retained = [];
+  const seenEventIds = new Set();
+  let total = 0;
 
-  // Busca por identificador en Core para no descargar la hoja completa.
+  const consumeEvents = events => {
+    (events || []).forEach(event => {
+      const eventId = _accessText_(event.evento_id);
+      if (eventId && seenEventIds.has(eventId)) return;
+      if (eventId) seenEventIds.add(eventId);
+
+      const eventType = _accessUpper_(event.tipo_entidad);
+      const eventRecordId = _accessText_(event.registro_id);
+      const eventModule = _accessUpper_(event.modulo);
+
+      if (
+        entityType === 'SERVIDOR' &&
+        !['DIRECTORIOS', 'INFORMACION_PERSONAL'].includes(eventModule)
+      ) return;
+
+      let matches = relatedTypes[entityType].includes(eventType) &&
+        eventRecordId === recordId;
+
+      if (!matches && entityType === 'PERMISO' && eventType === 'ROL_PERMISO') {
+        matches = _accessAuditContainsPermission_(event, recordId);
+      }
+      if (!matches) return;
+
+      total++;
+      _accessInsertAuditPageRecord_(retained, event, offset + pageSize);
+    });
+  };
+
+  // Procesa el resultado exacto antes de la búsqueda en snapshots: si un
+  // evento aparece en ambas consultas se conserva una sola vez.
   const directMatches = SUNARPCore.findRecordsByFields(
     source,
     { registro_id: recordId },
@@ -3128,15 +3153,9 @@ function getAccessEntityHistory(payload) {
       requiredHeaders: ACCESS_MANAGEMENT_FIELDS.audit
     }
   );
-  const candidates = new Map(
-    (directMatches.records || []).map(event => [
-      _accessText_(event.evento_id),
-      event
-    ])
-  );
+  consumeEvents(directMatches.records);
+  directMatches.records = [];
 
-  // Los cambios de permisos guardan el permiso dentro de los snapshots
-  // JSON del evento de relación rol-permiso, no siempre en registro_id.
   if (entityType === 'PERMISO') {
     const relatedMatches = SUNARPCore.searchRecordsByFields(
       source,
@@ -3144,50 +3163,8 @@ function getAccessEntityHistory(payload) {
       ['datos_antes', 'datos_despues'],
       { matchCase: false }
     );
-    (relatedMatches.records || []).forEach(event => {
-      candidates.set(_accessText_(event.evento_id), event);
-    });
+    consumeEvents(relatedMatches.records);
   }
-
-  const page = Math.max(
-    1,
-    Number.parseInt(payload.page, 10) || 1
-  );
-  const pageSize = Math.min(
-    100,
-    Math.max(1, Number.parseInt(payload.pageSize, 10) || 20)
-  );
-  const offset = (page - 1) * pageSize;
-  const retained = [];
-  let total = 0;
-
-  candidates.forEach(event => {
-    const eventType = _accessUpper_(event.tipo_entidad);
-    const eventId = _accessText_(event.registro_id);
-    const eventModule = _accessUpper_(event.modulo);
-
-    // Conserva la consulta de eventos históricos DIRECTORIOS y admite
-    // los nuevos eventos del módulo INFORMACION_PERSONAL.
-    if (
-      entityType === 'SERVIDOR' &&
-      !['DIRECTORIOS', 'INFORMACION_PERSONAL'].includes(eventModule)
-    ) {
-      return;
-    }
-
-    let matches = relatedTypes[entityType].includes(eventType) &&
-      eventId === recordId;
-
-    // Los cambios de permisos pueden guardar el permiso dentro de los
-    // snapshots JSON del evento de relación rol-permiso.
-    if (!matches && entityType === 'PERMISO' && eventType === 'ROL_PERMISO') {
-      matches = _accessAuditContainsPermission_(event, recordId);
-    }
-    if (!matches) return;
-
-    total++;
-    _accessInsertAuditPageRecord_(retained, event, offset + pageSize);
-  });
 
   const records = retained.slice(offset, offset + pageSize);
   return {
@@ -3195,14 +3172,11 @@ function getAccessEntityHistory(payload) {
       const date = event.fecha_hora instanceof Date
         ? event.fecha_hora
         : new Date(event.fecha_hora);
-
       return {
         evento_id: _accessText_(event.evento_id),
-
         fecha_hora: Number.isNaN(date.getTime())
           ? _accessText_(event.fecha_hora)
           : date.toISOString(),
-
         actor_correo: _accessText_(event.actor_correo),
         actor_nombre: _accessText_(event.actor_nombre),
         accion: _accessUpper_(event.accion),
@@ -3216,27 +3190,15 @@ function getAccessEntityHistory(payload) {
         datos_despues: _accessText_(event.datos_despues),
         ambito_modulo: _accessText_(event.ambito_modulo),
         ambito_tipo: _accessText_(event.ambito_tipo),
-        ambito_referencia_id: _accessText_(
-          event.ambito_referencia_id
-        )
+        ambito_referencia_id: _accessText_(event.ambito_referencia_id)
       };
     }),
-
     total,
     page,
     pageSize,
-
-    totalPages: Math.max(
-      1,
-      Math.ceil(total / pageSize)
-    )
+    totalPages: Math.max(1, Math.ceil(total / pageSize))
   };
 }
-
-/**
- * Cambia el estado de un registro de seguridad.
- * Utiliza baja lógica y registra la operación en Auditoria.
- */
 function _accessChangeStatus_(config) {
   const auth = _accessRequirePermission_(config.permission);
   const nextActive = _accessNormalizeActive_(config.active, 'El estado solicitado');

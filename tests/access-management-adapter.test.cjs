@@ -1244,3 +1244,64 @@ test('la actualización de Asignación de permisos usa claves reales de la insta
   assert.match(endpoint, /permissions: permissions\.map/);
   assert.match(endpoint, /rolePermissions: rolePermissions\.map/);
 });
+
+
+test('el historial de un permiso deduplica eventos encontrados por ID y por snapshots sin perder el orden ni el total', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  sandbox._accessRequirePermission_ = () => ({ authenticated: true });
+  sandbox._accessSecuritySource_ = sheet => ({ sheetName: sheet });
+  const direct = [
+    {
+      evento_id: 'EVT_001',
+      fecha_hora: new Date('2026-11-20T09:00:00Z'),
+      tipo_entidad: 'PERMISO',
+      registro_id: 'PERM_001',
+      modulo: 'ACCESOS',
+      datos_antes: '',
+      datos_despues: ''
+    },
+    {
+      evento_id: 'EVT_002',
+      fecha_hora: new Date('2026-11-20T10:00:00Z'),
+      tipo_entidad: 'ROL_PERMISO',
+      registro_id: 'ROL_001',
+      modulo: 'ACCESOS',
+      datos_antes: '[]',
+      datos_despues: JSON.stringify([{ permiso_id: 'PERM_001' }])
+    }
+  ];
+  const related = [
+    direct[1],
+    {
+      evento_id: 'EVT_003',
+      fecha_hora: new Date('2026-11-20T11:00:00Z'),
+      tipo_entidad: 'ROL_PERMISO',
+      registro_id: 'ROL_002',
+      modulo: 'ACCESOS',
+      datos_antes: '[]',
+      datos_despues: JSON.stringify([{ permiso_id: 'PERM_001' }])
+    },
+    {
+      evento_id: 'EVT_004',
+      fecha_hora: new Date('2026-11-20T12:00:00Z'),
+      tipo_entidad: 'ROL_PERMISO',
+      registro_id: 'ROL_003',
+      modulo: 'ACCESOS',
+      datos_antes: '[]',
+      datos_despues: JSON.stringify([{ permiso_id: 'PERM_999' }])
+    }
+  ];
+  sandbox.SUNARPCore.findRecordsByFields = () => ({ records: direct, total: direct.length });
+  sandbox.SUNARPCore.searchRecordsByFields = () => ({ records: related, total: related.length });
+
+  const result = sandbox.getAccessEntityHistory({
+    tipo_entidad: 'PERMISO',
+    registro_id: 'PERM_001',
+    page: 2,
+    pageSize: 1
+  });
+  assert.equal(result.total, 3);
+  assert.equal(result.totalPages, 3);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].evento_id, 'EVT_002');
+});
