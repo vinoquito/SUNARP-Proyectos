@@ -1472,6 +1472,15 @@ function listRecordsFromSourcesCached(requests, expirationSeconds) {
       const pending = [];
 
       misses.forEach(item => {
+        // La generación inicial puede quedar obsoleta mientras se espera el
+        // bloqueo. Recalcularla aquí evita reutilizar una instantánea anterior
+        // después de que otra escritura Core haya invalidado la fuente.
+        const generation = typeof _coreGetSourceGeneration_ === 'function'
+          ? _coreGetSourceGeneration_(item.source)
+          : null;
+        item.cacheKey = generation
+          ? _coreBuildSourceCacheKey_(item.source, 'records') + ':' + generation
+          : null;
         const cached = item.cacheKey ? getCachedValue(item.cacheKey) : null;
         if (Array.isArray(cached)) result[item.key] = cached;
         else pending.push(item);
