@@ -720,13 +720,15 @@ test('la carga inicial no recupera ni entrega datos personales de todos los serv
   assert.match(frontendScript, /callServer\('getDirectoryPersonById', record\.persona_id\)/);
 });
 
-test('el filtro de asignaciones reutiliza la adscripción ya enriquecida', () => {
+test('la autorización y el enriquecimiento reutilizan la adscripción resuelta una sola vez', () => {
   const start = serviceSource.indexOf('function _directoryBuildView_(');
   const end = serviceSource.indexOf('function _directorySortAssignments_(', start);
   const implementation = serviceSource.slice(start, end);
-  assert.ok(implementation.includes('estructura_id: record.estructura_id'));
-  assert.ok(implementation.includes('sede_id: record.sede_id'));
-  assert.ok(!implementation.includes('_directoryResolveAssignmentLocation_(record'));
+  assert.ok(implementation.includes('_directoryResolveAssignmentLocation_(item, context, false)'));
+  assert.ok(implementation.includes('estructura_id: location.estructura_id'));
+  assert.ok(implementation.includes('sede_id: location.sede_id'));
+  assert.ok(implementation.includes('record,'));
+  assert.ok(implementation.includes('peopleMap, location'));
 });
 
 test('el ordenamiento resuelve una sola vez la adscripción de cada registro', () => {
