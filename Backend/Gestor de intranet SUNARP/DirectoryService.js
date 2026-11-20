@@ -183,15 +183,14 @@ function _directoryResolveDocumentTypesSource_() {
 
 function _directoryAuthorizationContext_(permissionCode) {
   const moduleId = 'MOD_INFO_PERSONAL';
-  const auth = requirePermission_(
-    permissionCode || 'INFORMACION_PERSONAL_VER',
-    moduleId
-  );
+  const requiredPermissionCode = permissionCode || 'INFORMACION_PERSONAL_VER';
+  const auth = requirePermission_(requiredPermissionCode, moduleId);
   const catalog = _accessOrgCatalog_();
 
   return {
     auth: auth,
     moduleId: moduleId,
+    permissionCode: requiredPermissionCode,
     structures: catalog.estructuraOrg || [],
     locals: catalog.locales || []
   };
@@ -800,6 +799,7 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
 
   const baseFilters = {};
   if (options.personaId) baseFilters.persona_id = _directoryKey_(options.personaId);
+  if (options.asignacionId) baseFilters.asignacion_id = _directoryKey_(options.asignacionId);
   if (options.estructuraLocalId) baseFilters.estructura_local_id = _directoryKey_(options.estructuraLocalId);
   const selectedLocalId = _directoryKey_(options.localId);
   if (options.cargoId) baseFilters.cargo_id = _directoryKey_(options.cargoId);
@@ -993,7 +993,7 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
   const authorizationForQuery = {
     context: authorization.auth,
     moduleId: authorization.moduleId,
-    permissionCode: 'INFORMACION_PERSONAL_VER',
+    permissionCode: authorization.permissionCode || 'INFORMACION_PERSONAL_VER',
     structures: authorization.structures || [],
     locals: authorization.locals || [],
     scopeRecordLookups: [
@@ -1092,6 +1092,25 @@ function _directoryExecuteAssignmentQuery_(context, authorization, options, idFi
     return _directoryEnrichAssignment_(item, context, relationMap, peopleMap, location);
   });
   return Object.assign({}, result, { records: enriched });
+}
+
+
+function _directoryFindAuthorizedAssignmentById_(context, authorization, asignacionId) {
+  const id = _directoryKey_(asignacionId);
+  if (!id) throw new Error('Debes proporcionar el identificador de la asignación.');
+  const result = _directoryExecuteAssignmentQuery_(
+    context,
+    authorization,
+    { asignacionId: id, active: 'all' },
+    'asignacion_id',
+    0,
+    2,
+    false
+  );
+  if (Number(result.total) > 1) {
+    throw new Error('El identificador de asignación está duplicado.');
+  }
+  return (result.records || [])[0] || null;
 }
 
 
@@ -1417,28 +1436,37 @@ function listDirectoryAssignments(options) {
 
 
 function getDirectoryPersonById(personaId) {
+  const id = _directoryKey_(personaId);
+  if (!id) throw new Error('Debes proporcionar persona_id.');
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false, includeDocumentTypes: false, validateSnapshot: false });
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeAssignments: false,
+    includeDocumentTypes: false,
+    validateSnapshot: false
+  });
 
-  // Primero se determina qué asignaciones de esta persona están autorizadas.
-  // No se consulta su identidad ni sus datos personales antes de esta comprobación.
-  const view = _directoryBuildView_(context, authorization);
-  const assignments = view.assignments.filter(item =>
-    _directoryKey_(item.persona_id) === _directoryKey_(personaId)
+  // Core consulta únicamente las asignaciones de esta persona y aplica su
+  // autorización antes de devolver cualquier fila al servicio de negocio.
+  const assignmentResult = _directoryExecuteAssignmentQuery_(
+    context,
+    authorization,
+    { personaId: id, active: 'all', sortBy: 'order' },
+    'asignacion_id',
+    0,
+    1000,
+    false
   );
-
-  if (!assignments.length) {
-    if (context.asignaciones.some(item =>
-      _directoryKey_(item.persona_id) === _directoryKey_(personaId)
-    )) {
-      throw new Error('No tienes ámbito de acceso para consultar esta persona.');
-    }
-    return null;
+  const assignments = assignmentResult.records || [];
+  if (!assignments.length) return null;
+  if (Number(assignmentResult.total) > assignments.length) {
+    throw new Error('La persona supera el límite de asignaciones recuperables en una sola consulta.');
   }
 
   const personResult = SUNARPCore.findRecordsByFields(
     _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
-    { persona_id: _directoryKey_(personaId) },
+    { persona_id: id },
     { searchField: 'persona_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas }
   );
   if (personResult.total > 1) {
@@ -1451,7 +1479,7 @@ function getDirectoryPersonById(personaId) {
 
   const personalDataResult = SUNARPCore.findRecordsByFields(
     _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
-    { servidor_id: _directoryKey_(personaId) },
+    { servidor_id: id },
     {
       searchField: 'servidor_id',
       requiredHeaders: DIRECTORY_REQUIRED_HEADERS.datosPersonales
@@ -1480,23 +1508,18 @@ function getDirectoryAssignmentsByPersonId(personaId, options) {
 
 function getDirectoryAssignmentById(asignacionId) {
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_({ includePersonalData: false, includePeople: false, includeDocumentTypes: false, validateSnapshot: false });
-  const assignment = context.asignaciones.find(item =>
-    _directoryKey_(item.asignacion_id) === _directoryKey_(asignacionId)
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeAssignments: false,
+    includeDocumentTypes: false,
+    validateSnapshot: false
+  });
+  const assignment = _directoryFindAuthorizedAssignmentById_(
+    context, authorization, asignacionId
   );
   if (!assignment) return null;
 
-  const location = _directoryResolveAssignmentLocation_(assignment, context, false);
-  _directoryAssertScope_(
-    authorization,
-    Object.assign({}, assignment, {
-      estructura_id: location.estructura_id,
-      sede_id: location.sede_id
-    }),
-    'Consulta de una asignación fuera del ámbito asignado.'
-  );
-
-  // Solo después de validar el ámbito se recupera la identidad relacionada.
   const personResult = SUNARPCore.findRecordsByFields(
     _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
     { persona_id: _directoryKey_(assignment.persona_id) },
@@ -1506,9 +1529,10 @@ function getDirectoryAssignmentById(asignacionId) {
     throw new Error('No se pudo resolver la identidad de la persona asignada.');
   }
   context.personas = personResult.records;
+  const location = _directoryResolveAssignmentLocation_(assignment, context, false);
   const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
   const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
-  return _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap);
+  return _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap, location);
 }
 
 function _saveDirectoryPerson_(payload) {
@@ -1530,13 +1554,22 @@ function _saveDirectoryPerson_(payload) {
   const context = _directoryLoadContext_({
     includePersonalData: false,
     includePeople: false,
+    includeAssignments: false,
     includeDocumentTypes: false
   });
 
   const existing = isUpdate ? _directoryFindPersonById_(personaId) : null;
   if (isUpdate && !existing) throw new Error('No se encontró la persona "' + personaId + '".');
   if (isUpdate) {
-    _directoryAssertPersonMutationScope_(authorization, existing, context.asignaciones, context);
+    const linkedResult = SUNARPCore.findRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones),
+      { persona_id: personaId },
+      {
+        searchField: 'persona_id',
+        requiredHeaders: DIRECTORY_REQUIRED_HEADERS.asignaciones
+      }
+    );
+    _directoryAssertPersonMutationScope_(authorization, existing, linkedResult.records, context);
   }
 
   const email = _directoryText_(
@@ -2194,12 +2227,12 @@ function setDirectoryAssignmentActive(asignacionId, active) {
   const context = _directoryLoadContext_({
     includePersonalData: false,
     includePeople: false,
-    includeDocumentTypes: false
+    includeAssignments: false,
+    includeDocumentTypes: false,
+    validateSnapshot: false
   });
   const id = _directoryText_(asignacionId);
-  const existing = context.asignaciones.find(item =>
-    _directoryKey_(item.asignacion_id) === id
-  );
+  const existing = _directoryFindAuthorizedAssignmentById_(context, authorization, id);
   if (!existing) throw new Error('No se encontró la asignación "' + id + '".');
 
   const location = _directoryResolveAssignmentLocation_(existing, context, false);
@@ -2252,11 +2285,11 @@ function deleteDirectoryAssignment(asignacionId) {
   const context = _directoryLoadContext_({
     includePersonalData: false,
     includePeople: false,
-    includeDocumentTypes: false
+    includeAssignments: false,
+    includeDocumentTypes: false,
+    validateSnapshot: false
   });
-  const existing = context.asignaciones.find(item =>
-    _directoryKey_(item.asignacion_id) === id
-  );
+  const existing = _directoryFindAuthorizedAssignmentById_(context, authorization, id);
   if (!existing) throw new Error('No se encontró la asignación "' + id + '".');
 
   const location = _directoryResolveAssignmentLocation_(existing, context, false);
@@ -2305,14 +2338,22 @@ function deleteDirectoryPerson(personaId) {
   const context = _directoryLoadContext_({
     includePersonalData: false,
     includePeople: false,
-    includeDocumentTypes: false
+    includeAssignments: false,
+    includeDocumentTypes: false,
+    validateSnapshot: false
   });
   const person = _directoryFindPersonById_(id);
   if (!person) throw new Error('No se encontró la persona "' + id + '".');
 
-  const linkedAssignments = context.asignaciones.filter(item =>
-    _directoryKey_(item.persona_id) === id
+  const linkedResult = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones),
+    { persona_id: id },
+    {
+      searchField: 'persona_id',
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.asignaciones
+    }
   );
+  const linkedAssignments = linkedResult.records || [];
 
   _directoryAssertPersonMutationScope_(
     authorization,
