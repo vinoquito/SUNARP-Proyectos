@@ -535,6 +535,29 @@ test('las asignaciones local-only aparecen en la vista autorizada', () => {
   assert.equal(view.assignments[0].estructura_id, '');
 });
 
+test('el Directorio autoriza cada asignación antes de construir su registro enriquecido', () => {
+  const context = assignmentContext();
+  context.locales.push({ id: 'LOC_2', name: 'Local alterno', sede_id: 'SEDE_1' });
+  context.estructuraOrg.push({ id: 'EST_2', name: 'Otra oficina', parent_id: '', sede_id: 'SEDE_1' });
+  context.estructuraLocal.push({ id: 'REL_2', estructura_id: 'EST_2', local_id: 'LOC_2' });
+  context.asignaciones = [
+    { asignacion_id: 'ASG_001', persona_id: 'PER_001', cargo_id: 'CAR_001', estructura_local_id: 'REL_1', local_id: '', active: true, order: 1 },
+    { asignacion_id: 'ASG_002', persona_id: 'PER_001', cargo_id: 'CAR_001', estructura_local_id: 'REL_2', local_id: '', active: true, order: 2 }
+  ];
+  let enrichments = 0;
+  sandbox._directoryEnrichAssignment_ = (...args) => {
+    enrichments++;
+    return api.enrichAssignment(...args);
+  };
+  sandbox._accessRecordIsAllowed_ = (auth, moduleId, record) =>
+    !record.estructura_id || record.estructura_id === 'EST_1';
+
+  const view = api.buildView(context, { auth: {}, structures: [] });
+  assert.equal(view.assignments.length, 1);
+  assert.equal(view.assignments[0].asignacion_id, 'ASG_001');
+  assert.equal(enrichments, 1);
+});
+
 test('el cambio de estado funciona para una asignación vinculada directamente a un local', () => {
   const context = assignmentContext();
   context.asignaciones = [{
