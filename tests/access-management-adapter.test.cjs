@@ -291,7 +291,9 @@ test('la autorización carga relaciones selectivas y difiere las nueve fuentes a
   const fullLoader = sandbox._accessLoadSecurityData_;
   sandbox._accessLoadSecurityData_ = () => {
     fullLoads++;
-    return fullLoader();
+    const security = Object.assign({}, fullLoader());
+    delete security.personas;
+    return security;
   };
   const calls = [];
   const find = sandbox.SUNARPCore.findRecordsByFields;
