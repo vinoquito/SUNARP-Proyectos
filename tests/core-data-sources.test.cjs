@@ -72,6 +72,7 @@ test('abrir varias pestañas del mismo archivo reutiliza el manejador y resuelve
 });
 
 
+
 test('una lectura cacheada recalcula la generación tras esperar el bloqueo', () => {
   const repositorySource = fs.readFileSync(
     path.join(root, 'Backend/SUNARP Core/DataRepository.js'),
@@ -84,34 +85,33 @@ test('una lectura cacheada recalcula la generación tras esperar el bloqueo', ()
 
   const sandbox = vm.createContext({
     Date,
-    console: { log() {}, warn() {} },
-    _coreGetSourceGeneration_: () => generation,
-    _coreBuildSourceCacheKey_: (_source, kind) => kind + ':SOURCE',
-    getCachedValue: key => {
-      if (key === 'records:SOURCE:GEN_OLD' && firstOldGenerationLookup) {
-        firstOldGenerationLookup = false;
-        return null;
-      }
-      return cache.has(key) ? cache.get(key) : null;
-    },
-    putCachedValue: (key, value) => {
-      cache.set(key, value);
-      return { success: true };
-    },
-    _coreWithWriteLock_: callback => {
-      // Simula que una escritura Core termina mientras esta lectura espera
-      // el bloqueo y que una lectura concurrente deja un valor de la
-      // generación anterior disponible en CacheService.
-      generation = 'GEN_NEW';
-      cache.set('records:SOURCE:GEN_OLD', ['STALE']);
-      return callback();
-    },
-    listRecordsFromSources: requests => {
-      sourceReads++;
-      return Object.fromEntries(requests.map(request => [request.key, ['FRESH']]));
-    }
+    console: { log() {}, warn() {} }
   });
   vm.runInContext(repositorySource, sandbox, { filename: 'DataRepository.js' });
+
+  sandbox._coreGetSourceGeneration_ = () => generation;
+  sandbox._coreBuildSourceCacheKey_ = (_source, kind) => kind + ':SOURCE';
+  sandbox.getCachedValue = key => {
+    if (key === 'records:SOURCE:GEN_OLD' && firstOldGenerationLookup) {
+      firstOldGenerationLookup = false;
+      return null;
+    }
+    return cache.has(key) ? cache.get(key) : null;
+  };
+  sandbox.putCachedValue = (key, value) => {
+    cache.set(key, value);
+    return { success: true };
+  };
+  sandbox._coreWithWriteLock_ = callback => {
+    // Simula una escritura Core mientras esta lectura espera el bloqueo.
+    generation = 'GEN_NEW';
+    cache.set('records:SOURCE:GEN_OLD', ['STALE']);
+    return callback();
+  };
+  sandbox.listRecordsFromSources = requests => {
+    sourceReads++;
+    return Object.fromEntries(requests.map(request => [request.key, ['FRESH']]));
+  };
 
   const result = sandbox.listRecordsFromSourcesCached([{
     key: 'employees',
