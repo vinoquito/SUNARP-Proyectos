@@ -156,7 +156,7 @@ test('la actualización independiente de Tipos de ámbito compara el identificad
   const start = accessSource.indexOf('function getAccessManagementTabData(tabId) {');
   const end = accessSource.indexOf('function getAccessUsers(', start);
   const implementation = accessSource.slice(start, end);
-  assert.match(implementation, /_accessText_\\(tabId\\)\\.toLowerCase\\(\\)/);
+  assert.match(implementation, /_accessText_\(tabId\)\.toLowerCase\(\)/);
   assert.match(implementation, /tab === 'scopetypes'/);
   assert.doesNotMatch(implementation, /tab === 'scopeTypes'/);
 });
