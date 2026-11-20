@@ -63,6 +63,27 @@ test('SUNARP Core no contiene definiciones globales duplicadas en DataRepository
   assert.match(coreRepositorySource, /ignoreWhitespace/);
 });
 
+test('las lecturas del Directorio no ejecutan validación integral de todas las asignaciones', () => {
+  for (const name of [
+    'getDirectoryInitialData',
+    'listDirectoryPeople',
+    'listDirectoryAssignments',
+    'getDirectoryPersonById',
+    'getDirectoryAssignmentsByPersonId'
+  ]) {
+    const start = serviceSource.indexOf('function ' + name + '(');
+    assert.ok(start >= 0, 'Debe existir ' + name);
+    const next = serviceSource.indexOf('\\nfunction ', start + 10);
+    const implementation = serviceSource.slice(start, next < 0 ? serviceSource.length : next);
+    assert.match(implementation, /validateSnapshot:\\s*false/);
+  }
+
+  const saveStart = serviceSource.indexOf('function saveDirectoryAssignment(');
+  const saveEnd = serviceSource.indexOf('function setDirectoryAssignmentActive(', saveStart);
+  const saveImplementation = serviceSource.slice(saveStart, saveEnd);
+  assert.doesNotMatch(saveImplementation, /validateSnapshot:\\s*false/);
+});
+
 test('el catálogo de tipos de documento se resuelve exclusivamente desde Global parameters', () => {
   const requested = [];
   sandbox.getIntranetDataSource = (sourceKey, sheetName, headerRow) => {
