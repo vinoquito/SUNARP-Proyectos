@@ -243,17 +243,105 @@ function _accessFindPersonById_(personaId) {
  * la autorización de una persona. Las colecciones completas de gestión se
  * cargan bajo demanda cuando una operación administrativa las necesita.
  */
-function _accessFindSecurityRecords_(sheetName, field, values, requiredHeaders) {
+function _accessFindSecurityRecords_(sheetName, field, values, requiredHeaders, options) {
   const ids = Array.from(new Set((values || []).map(_accessText_).filter(Boolean)));
   if (!ids.length) return [];
   const filters = {};
   filters[field] = ids.length === 1 ? ids[0] : ids;
+  return _accessFindSecurityRecordsByFilters_(sheetName, filters, field, requiredHeaders, options);
+}
+
+function _accessFindSecurityRecordsByFilters_(sheetName, filters, searchField, requiredHeaders, options) {
+  const fields = Object.keys(filters || {});
+  if (!fields.length) return [];
   const result = SUNARPCore.findRecordsByFields(
     _accessSecuritySource_(sheetName),
     filters,
-    { searchField: field, requiredHeaders }
+    Object.assign({ searchField: searchField || fields[0], requiredHeaders }, options || {})
   );
   return result.records || [];
+}
+
+/**
+ * Conjunto reducido utilizado exclusivamente para proteger la continuidad
+ * del último administrador global. No carga las nueve tablas completas:
+ * obtiene ACCESOS, ROL_ADMIN, sus permisos/relaciones, las asignaciones de
+ * ese rol y solo las cuentas/ámbitos que podrían contar como administradores.
+ */
+function _accessMergeUniqueRows_(collections, fields) {
+  const merged = new Map();
+  (collections || []).forEach(collection => (collection || []).forEach(row => {
+    const key = fields.map(field => _accessText_(row[field])).join('\\u0000');
+    merged.set(key, row);
+  }));
+  return Array.from(merged.values());
+}
+
+function _accessLoadAdministratorContinuityData_() {
+  const s = ACCESS_MANAGEMENT_CONFIG.sheets;
+  const moduleMatches = _accessFindSecurityRecords_(
+    s.modules, 'codigo', [ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses],
+    ACCESS_MANAGEMENT_FIELDS.modules, { matchCase: false }
+  ).filter(item => _accessIsActive_(item.active));
+
+  if (moduleMatches.length > 1) {
+    throw new Error('Existe más de un módulo ACCESOS activo.');
+  }
+  const module = moduleMatches[0] || null;
+  if (!module) {
+    return {
+      usuarios: [], modulos: [], roles: [], usuarioRol: [],
+      permisos: [], rolPermiso: [], ambitosAcceso: []
+    };
+  }
+
+  const moduleId = _accessText_(module.modulo_id);
+  const roles = _accessFindSecurityRecords_(
+    s.roles, 'rol_id', [ACCESS_MANAGEMENT_CONFIG.adminRoleId],
+    ACCESS_MANAGEMENT_FIELDS.roles
+  );
+  const activeAdminRoles = roles.filter(item => _accessIsActive_(item.active));
+  if (activeAdminRoles.length > 1) {
+    throw new Error('Existe más de un registro activo para ROL_ADMIN.');
+  }
+
+  const rolePermissions = _accessFindSecurityRecords_(
+    s.rolePermissions, 'rol_id', [ACCESS_MANAGEMENT_CONFIG.adminRoleId],
+    ACCESS_MANAGEMENT_FIELDS.rolePermissions
+  );
+  const permissions = _accessFindSecurityRecords_(
+    s.permissions, 'modulo_id', [moduleId],
+    ACCESS_MANAGEMENT_FIELDS.permissions
+  ).filter(item => ACCESS_MANAGEMENT_CONFIG.adminPermissionCodes.includes(
+    _accessUpper_(item.codigo)
+  ));
+  const userRoles = _accessFindSecurityRecords_(
+    s.userRoles, 'rol_id', [ACCESS_MANAGEMENT_CONFIG.adminRoleId],
+    ACCESS_MANAGEMENT_FIELDS.userRoles
+  ).filter(item => _accessText_(item.modulo_id) === moduleId);
+  const candidatePersonaIds = userRoles.map(item => item.persona_id);
+  const usuarios = _accessFindSecurityRecords_(
+    s.users, 'persona_id', candidatePersonaIds,
+    ACCESS_MANAGEMENT_FIELDS.users
+  );
+  const ambitosAcceso = _accessFindSecurityRecords_(
+    s.scopes, 'modulo_id', [moduleId],
+    ACCESS_MANAGEMENT_FIELDS.scopes
+  ).filter(item => _accessUpper_(item.tipo_ambito_id) === 'TOTAL');
+
+  _accessValidateUnique_(userRoles, ['persona_id', 'modulo_id'], 'UsuarioRol ROL_ADMIN');
+  _accessValidateUnique_(rolePermissions, ['rol_id', 'permiso_id'], 'RolPermiso ROL_ADMIN');
+  _accessValidateUnique_(ambitosAcceso, ['persona_id', 'modulo_id', 'tipo_ambito_id', 'referencia_id'], 'AmbitosAcceso TOTAL');
+
+  return {
+    usuarios,
+    modulos: [module],
+    roles,
+    usuarioRol: userRoles,
+    permisos: permissions,
+    rolPermiso: rolePermissions,
+    ambitosAcceso
+  };
 }
 
 function _accessLoadAuthorizationData_(personaId) {
@@ -1194,17 +1282,27 @@ function _accessRecordUser_(auth, payload, action) {
     throw new Error('No puedes desactivar tu propia cuenta mientras administras el gestor.');
   }
 
-  const data = auth.securityData;
-  const existing = _accessFindBy_(data.usuarios, 'persona_id', personaId);
+  const matchingUsers = _accessFindSecurityRecords_(
+    ACCESS_MANAGEMENT_CONFIG.sheets.users,
+    'persona_id',
+    [personaId],
+    ACCESS_MANAGEMENT_FIELDS.users
+  );
+  if (matchingUsers.length > 1) {
+    throw new Error('La persona tiene más de una cuenta registrada en Usuarios.');
+  }
+  const existing = matchingUsers[0] || null;
   if (action === 'create' && existing) throw new Error('La persona ya tiene una cuenta registrada.');
   if (action === 'edit' && !existing) throw new Error('No se encontró la cuenta que deseas actualizar.');
 
   const nextUser = { persona_id: personaId, active };
+  const data = _accessLoadAdministratorContinuityData_();
   const after = _accessCopyData_(data);
-  if (action === 'edit') {
-    const index = after.usuarios.findIndex(row => _accessText_(row.persona_id) === personaId);
-    after.usuarios[index] = nextUser;
-  } else after.usuarios.push(nextUser);
+  const continuityUserIndex = after.usuarios.findIndex(row =>
+    _accessText_(row.persona_id) === personaId
+  );
+  if (continuityUserIndex >= 0) after.usuarios[continuityUserIndex] = nextUser;
+  else after.usuarios.push(nextUser);
   _accessAssertAdministratorContinuity_(data, after);
 
   const name = [person.nombres, person.apellidos].map(_accessText_).filter(Boolean).join(' ');
@@ -1251,22 +1349,49 @@ function saveAccessUserRole(payload) {
   const active = roleId ? _accessNormalizeActive_(payload.active === undefined ? true : payload.active, 'El estado de la asignación') : false;
   if (!personaId || !moduleId) throw new Error('Debes indicar persona_id y modulo_id.');
 
-  const data = auth.securityData;
-  if (!data.usuarios.some(row => _accessText_(row.persona_id) === personaId && _accessIsActive_(row.active))) {
+  const s = ACCESS_MANAGEMENT_CONFIG.sheets;
+  const users = _accessFindSecurityRecords_(
+    s.users, 'persona_id', [personaId], ACCESS_MANAGEMENT_FIELDS.users
+  );
+  if (!users.some(row => _accessIsActive_(row.active))) {
     throw new Error('La persona no tiene una cuenta activa.');
   }
-  const module = data.modulos.find(row => _accessText_(row.modulo_id) === moduleId && _accessIsActive_(row.active));
-  if (!module) throw new Error('El módulo no existe o está inactivo.');
+  const moduleMatches = _accessFindSecurityRecords_(
+    s.modules, 'modulo_id', [moduleId], ACCESS_MANAGEMENT_FIELDS.modules
+  ).filter(row => _accessIsActive_(row.active));
+  if (moduleMatches.length !== 1) throw new Error('El módulo no existe, está inactivo o está duplicado.');
+  const module = moduleMatches[0];
 
   if (active) {
-    const role = data.roles.find(row => _accessText_(row.rol_id) === roleId && _accessIsActive_(row.active));
-    if (!role) throw new Error('El rol seleccionado no existe o está inactivo.');
+    const roles = _accessFindSecurityRecords_(
+      s.roles, 'rol_id', [roleId], ACCESS_MANAGEMENT_FIELDS.roles
+    );
+    if (!roles.some(row => _accessIsActive_(row.active))) {
+      throw new Error('El rol seleccionado no existe o está inactivo.');
+    }
   }
 
+  const previous = _accessFindSecurityRecordsByFilters_(
+    s.userRoles,
+    { persona_id: personaId, modulo_id: moduleId },
+    'persona_id',
+    ACCESS_MANAGEMENT_FIELDS.userRoles
+  );
+  const data = _accessLoadAdministratorContinuityData_();
   const after = _accessCopyData_(data);
-  const previous = after.usuarioRol.filter(item => _accessText_(item.persona_id) === personaId && _accessText_(item.modulo_id) === moduleId);
-  after.usuarioRol = after.usuarioRol.filter(item => !(_accessText_(item.persona_id) === personaId && _accessText_(item.modulo_id) === moduleId));
-  if (active) after.usuarioRol.push({ persona_id: personaId, modulo_id: moduleId, rol_id: roleId, active: true });
+  const accessModuleId = (data.modulos[0] && _accessText_(data.modulos[0].modulo_id)) || '';
+  if (moduleId === accessModuleId) {
+    after.usuarioRol = after.usuarioRol.filter(item =>
+      !(_accessText_(item.persona_id) === personaId &&
+        _accessText_(item.modulo_id) === moduleId)
+    );
+    if (active && roleId === ACCESS_MANAGEMENT_CONFIG.adminRoleId) {
+      after.usuarioRol.push({
+        persona_id: personaId, modulo_id: moduleId,
+        rol_id: roleId, active: true
+      });
+    }
+  }
   _accessAssertAdministratorContinuity_(data, after);
 
   const person = _accessFindPersonById_(personaId);
@@ -1303,25 +1428,31 @@ function saveAccessRole(payload) {
   if (!['create', 'edit'].includes(action)) throw new Error('La operación del rol no es válida.');
   if (!name) throw new Error('Ingresa el nombre del rol.');
 
-  const data = auth.securityData;
+  const rolesCatalog = _accessLoadSecurityRecords_(
+    ACCESS_MANAGEMENT_CONFIG.sheets.roles,
+    ACCESS_MANAGEMENT_FIELDS.roles
+  );
   const originalId = action === 'edit' ? _accessUpper_(payload.rol_id_original || payload.originalRoleId || payload.rol_id) : '';
-  const existing = action === 'edit' ? _accessFindBy_(data.roles, 'rol_id', originalId) : null;
+  const existing = action === 'edit' ? _accessFindBy_(rolesCatalog, 'rol_id', originalId) : null;
   if (action === 'edit' && !existing) throw new Error('No se encontró el rol que deseas actualizar.');
-  if (data.roles.some(row => _accessText_(row.rol_id) !== originalId && _accessText_(row.nombre).toLowerCase() === name.toLowerCase())) {
+  if (rolesCatalog.some(row => _accessText_(row.rol_id) !== originalId && _accessText_(row.nombre).toLowerCase() === name.toLowerCase())) {
     throw new Error('Ya existe un rol con ese nombre.');
   }
 
   const roleId = action === 'create'
-    ? _accessGenerateUniqueIdentifier_('ROL_', name, data.roles, 'rol_id', 50)
+    ? _accessGenerateUniqueIdentifier_('ROL_', name, rolesCatalog, 'rol_id', 50)
     : originalId;
   const active = action === 'create' ? true : _accessIsActive_(existing.active);
   const nextRole = { rol_id: roleId, nombre: name, descripcion: description, active };
+  const data = _accessLoadAdministratorContinuityData_();
   const after = _accessCopyData_(data);
-  if (action === 'edit') {
-    const index = after.roles.findIndex(row => _accessText_(row.rol_id) === originalId);
-    after.roles[index] = Object.assign({}, after.roles[index], nextRole);
-  } else {
-    after.roles.push(nextRole);
+  if (roleId === ACCESS_MANAGEMENT_CONFIG.adminRoleId) {
+    if (action === 'edit') {
+      const index = after.roles.findIndex(row => _accessText_(row.rol_id) === originalId);
+      if (index >= 0) after.roles[index] = Object.assign({}, after.roles[index], nextRole);
+    } else {
+      after.roles.push(nextRole);
+    }
   }
   _accessAssertAdministratorContinuity_(data, after);
 
@@ -1360,26 +1491,49 @@ function saveAccessPermission(payload) {
   const description = _accessText_(payload.descripcion || payload.description);
   if (!['create', 'edit'].includes(action)) throw new Error('La operación del permiso no es válida.');
   if (!moduleId || !operationId || !description) throw new Error('Completa el módulo, la operación y la descripción del permiso.');
-  const data = auth.securityData;
-  const module = data.modulos.find(item => _accessText_(item.modulo_id) === moduleId && _accessIsActive_(item.active));
-  if (!module) throw new Error('El módulo no existe o está inactivo.');
+  const s = ACCESS_MANAGEMENT_CONFIG.sheets;
+  const moduleMatches = _accessFindSecurityRecords_(
+    s.modules, 'modulo_id', [moduleId], ACCESS_MANAGEMENT_FIELDS.modules
+  ).filter(item => _accessIsActive_(item.active));
+  if (moduleMatches.length !== 1) throw new Error('El módulo no existe, está inactivo o está duplicado.');
+  const module = moduleMatches[0];
   const originalId = action === 'edit' ? _accessUpper_(payload.permiso_id_original || payload.originalPermissionId || payload.permiso_id) : '';
-  const existing = action === 'edit' ? _accessFindBy_(data.permisos, 'permiso_id', originalId) : null;
-  if (action === 'edit' && !existing) throw new Error('No se encontró el permiso que deseas actualizar.');
-  const operation = data.operaciones.find(item => _accessUpper_(item.operacion_id) === operationId);
+  const existingMatches = action === 'edit'
+    ? _accessFindSecurityRecords_(s.permissions, 'permiso_id', [originalId], ACCESS_MANAGEMENT_FIELDS.permissions)
+    : [];
+  if (action === 'edit' && existingMatches.length !== 1) throw new Error('No se encontró un único permiso para actualizar.');
+  const existing = existingMatches[0] || null;
+  const operationMatches = _accessFindSecurityRecords_(
+    s.operations, 'operacion_id', [operationId], ACCESS_MANAGEMENT_FIELDS.operations
+  );
+  const operation = operationMatches.find(item => _accessCatalogIsActive_(item));
   if (!operation || (action === 'create' && !_accessCatalogIsActive_(operation))) throw new Error('Selecciona una operación activa del catálogo Operaciones.');
   if (action === 'edit' && operationId !== _accessUpper_(existing.operacion_id)) throw new Error('La operación de un permiso existente es inmutable porque forma parte de su código.');
   if (action === 'edit' && moduleId !== _accessText_(existing.modulo_id)) throw new Error('El módulo de un permiso existente es inmutable. Crea otro permiso y reasigna sus relaciones.');
   const code = action === 'create' ? _accessBuildPermissionCode_(module.codigo, operationId) : _accessUpper_(existing.codigo);
-  const permissionId = action === 'create' ? _accessGenerateUniqueIdentifier_('PERM_', code, data.permisos, 'permiso_id', 50) : originalId;
-  if (data.permisos.some(row => _accessUpper_(row.codigo) === code && _accessText_(row.permiso_id) !== permissionId)) throw new Error('Ya existe un permiso con esa combinación de módulo y operación.');
+  const codeMatches = _accessFindSecurityRecords_(
+    s.permissions, 'codigo', [code], ACCESS_MANAGEMENT_FIELDS.permissions
+  );
+  if (codeMatches.some(row => _accessText_(row.permiso_id) !== originalId)) {
+    throw new Error('Ya existe un permiso con esa combinación de módulo y operación.');
+  }
+  const allPermissions = _accessLoadSecurityRecords_(s.permissions, ACCESS_MANAGEMENT_FIELDS.permissions);
+  const permissionId = action === 'create' ? _accessGenerateUniqueIdentifier_('PERM_', code, allPermissions, 'permiso_id', 50) : originalId;
   const active = action === 'create' ? true : _accessIsActive_(existing.active);
   const nextPermission = { permiso_id: permissionId, codigo: code, modulo_id: moduleId, operacion_id: operationId, descripcion: description, active };
+  const data = _accessLoadAdministratorContinuityData_();
   const after = _accessCopyData_(data);
-  if (action === 'edit') {
+  if (moduleId === _accessText_(data.modulos[0] && data.modulos[0].modulo_id) &&
+      ACCESS_MANAGEMENT_CONFIG.adminPermissionCodes.includes(code)) {
+    after.permisos = after.permisos.filter(row =>
+      _accessText_(row.permiso_id) !== permissionId &&
+      _accessUpper_(row.codigo) !== code
+    );
+    after.permisos.push(nextPermission);
+  } else if (action === 'edit' && ACCESS_MANAGEMENT_CONFIG.adminPermissionCodes.includes(code)) {
     const index = after.permisos.findIndex(row => _accessText_(row.permiso_id) === permissionId);
-    after.permisos[index] = Object.assign({}, after.permisos[index], nextPermission);
-  } else after.permisos.push(nextPermission);
+    if (index >= 0) after.permisos[index] = Object.assign({}, after.permisos[index], nextPermission);
+  }
   _accessAssertAdministratorContinuity_(data, after);
   return _accessRunAudited_(auth, {
     accion: action === 'create' ? 'CREAR_PERMISO' : 'EDITAR_PERMISO',
@@ -1409,17 +1563,36 @@ function saveRolePermissions(payload) {
   if (!roleId) throw new Error('Selecciona un rol.');
 
   const permissionIds = [...new Set(selected.map(_accessText_).filter(Boolean))];
-  const data = auth.securityData;
-  const role = data.roles.find(row => _accessText_(row.rol_id) === roleId && _accessIsActive_(row.active));
+  const s = ACCESS_MANAGEMENT_CONFIG.sheets;
+  const roles = _accessFindSecurityRecords_(
+    s.roles, 'rol_id', [roleId], ACCESS_MANAGEMENT_FIELDS.roles
+  );
+  const role = roles.find(row => _accessIsActive_(row.active));
   if (!role) throw new Error('El rol no existe o está inactivo.');
 
-  const activePermissionIds = new Set(data.permisos.filter(row => _accessIsActive_(row.active)).map(row => _accessText_(row.permiso_id)));
+  const selectedPermissions = _accessFindSecurityRecords_(
+    s.permissions, 'permiso_id', permissionIds, ACCESS_MANAGEMENT_FIELDS.permissions
+  );
+  const activePermissionIds = new Set(
+    selectedPermissions.filter(row => _accessIsActive_(row.active))
+      .map(row => _accessText_(row.permiso_id))
+  );
   const invalid = permissionIds.filter(id => !activePermissionIds.has(id));
   if (invalid.length) throw new Error('Hay permisos inexistentes o inactivos: ' + invalid.join(', ') + '.');
 
+  const previousAssignments = _accessFindSecurityRecords_(
+    s.rolePermissions, 'rol_id', [roleId], ACCESS_MANAGEMENT_FIELDS.rolePermissions
+  );
+  const data = _accessLoadAdministratorContinuityData_();
   const after = _accessCopyData_(data);
-  after.rolPermiso = after.rolPermiso.filter(row => _accessText_(row.rol_id) !== roleId);
-  permissionIds.forEach(id => after.rolPermiso.push({ rol_id: roleId, permiso_id: id, active: true }));
+  if (roleId === ACCESS_MANAGEMENT_CONFIG.adminRoleId) {
+    after.rolPermiso = after.rolPermiso.filter(row =>
+      _accessText_(row.rol_id) !== roleId
+    );
+    permissionIds.forEach(id => after.rolPermiso.push({
+      rol_id: roleId, permiso_id: id, active: true
+    }));
+  }
   _accessAssertAdministratorContinuity_(data, after);
 
   return _accessRunAudited_(auth, {
@@ -1429,7 +1602,7 @@ function saveRolePermissions(payload) {
     registro_id: roleId,
     registro_nombre: _accessText_(role.nombre),
     detalle: 'Actualización de permisos asignados al rol.',
-    datos_antes: data.rolPermiso.filter(row => _accessText_(row.rol_id) === roleId)
+    datos_antes: previousAssignments
   }, () => {
     const result = SUNARPCore.syncRecordsByKey(
       _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.rolePermissions),
@@ -1455,23 +1628,43 @@ function saveAccessScopes(payload) {
 
   if (!personaId || !moduleId) throw new Error('Debes indicar persona_id y modulo_id.');
 
-  const data = auth.securityData;
-  const user = data.usuarios.find(row =>
-    _accessText_(row.persona_id) === personaId && _accessIsActive_(row.active)
+  const targetUsers = _accessFindSecurityRecords_(
+    ACCESS_MANAGEMENT_CONFIG.sheets.users,
+    'persona_id', [personaId], ACCESS_MANAGEMENT_FIELDS.users
   );
-  if (!user) throw new Error('La persona no tiene una cuenta activa.');
-
-  const userRole = data.usuarioRol.find(row =>
-    _accessText_(row.persona_id) === personaId &&
-    _accessText_(row.modulo_id) === moduleId &&
-    _accessIsActive_(row.active)
+  if (!targetUsers.some(row => _accessIsActive_(row.active))) {
+    throw new Error('La persona no tiene una cuenta activa.');
+  }
+  const targetRoles = _accessFindSecurityRecordsByFilters_(
+    ACCESS_MANAGEMENT_CONFIG.sheets.userRoles,
+    { persona_id: personaId, modulo_id: moduleId },
+    'persona_id',
+    ACCESS_MANAGEMENT_FIELDS.userRoles
   );
-  if (!userRole) throw new Error('La persona debe tener un rol activo en el módulo antes de asignarle ámbitos.');
-
-  const module = data.modulos.find(row =>
-    _accessText_(row.modulo_id) === moduleId && _accessIsActive_(row.active)
+  if (!targetRoles.some(row => _accessIsActive_(row.active))) {
+    throw new Error('La persona debe tener un rol activo en el módulo antes de asignarle ámbitos.');
+  }
+  const targetModules = _accessFindSecurityRecords_(
+    ACCESS_MANAGEMENT_CONFIG.sheets.modules,
+    'modulo_id', [moduleId], ACCESS_MANAGEMENT_FIELDS.modules
+  ).filter(row => _accessIsActive_(row.active));
+  if (targetModules.length !== 1) throw new Error('El módulo no existe, está inactivo o está duplicado.');
+  const module = targetModules[0];
+  const targetScopes = _accessFindSecurityRecords_(
+    ACCESS_MANAGEMENT_CONFIG.sheets.scopes,
+    'persona_id', [personaId], ACCESS_MANAGEMENT_FIELDS.scopes
   );
-  if (!module) throw new Error('El módulo no existe o está inactivo.');
+  const scopeTypes = _accessLoadSecurityRecords_(
+    ACCESS_MANAGEMENT_CONFIG.sheets.scopeTypes,
+    ACCESS_MANAGEMENT_FIELDS.scopeTypes
+  );
+  const data = {
+    usuarios: targetUsers,
+    usuarioRol: targetRoles,
+    modulos: targetModules,
+    tiposAmbito: scopeTypes,
+    ambitosAcceso: targetScopes
+  };
 
   const catalogs = _accessOrgCatalog_();
   const structures = catalogs.estructuraOrg || [];
@@ -1584,6 +1777,22 @@ function saveAccessScopes(payload) {
     _accessText_(row.persona_id) === personaId &&
     _accessText_(row.modulo_id) === moduleId
   );
+  const continuityData = _accessLoadAdministratorContinuityData_();
+  const afterContinuity = _accessCopyData_(continuityData);
+  const accessModuleId = (continuityData.modulos[0] &&
+    _accessText_(continuityData.modulos[0].modulo_id)) || '';
+  if (moduleId === accessModuleId) {
+    afterContinuity.ambitosAcceso = afterContinuity.ambitosAcceso.filter(row =>
+      !(_accessText_(row.persona_id) === personaId &&
+        _accessText_(row.modulo_id) === moduleId)
+    );
+    recordsToSync.filter(row => row.tipo_ambito_id === 'TOTAL').forEach(row => {
+      afterContinuity.ambitosAcceso.push(Object.assign({
+        persona_id: personaId, modulo_id: moduleId, active: true
+      }, row));
+    });
+  }
+  _accessAssertAdministratorContinuity_(continuityData, afterContinuity);
   const person = _accessFindPersonById_(personaId);
 
   return _accessRunAudited_(auth, {
@@ -1638,16 +1847,45 @@ function saveAccessUserConfiguration(payload) {
     throw new Error('Debes indicar la persona y la lista de accesos por módulo.');
   }
 
-  const data = auth.securityData;
-
-  const user = data.usuarios.find(item =>
-    _accessText_(item.persona_id) === personaId &&
-    _accessIsActive_(item.active)
+  const s = ACCESS_MANAGEMENT_CONFIG.sheets;
+  const targetUsers = _accessFindSecurityRecords_(
+    s.users, 'persona_id', [personaId], ACCESS_MANAGEMENT_FIELDS.users
   );
-
+  const user = targetUsers.find(item => _accessIsActive_(item.active));
   if (!user) {
     throw new Error('La persona no tiene una cuenta activa.');
   }
+
+  const continuityData = _accessLoadAdministratorContinuityData_();
+  const modulesCatalog = _accessLoadSecurityRecords_(s.modules, ACCESS_MANAGEMENT_FIELDS.modules);
+  const rolesCatalog = _accessLoadSecurityRecords_(s.roles, ACCESS_MANAGEMENT_FIELDS.roles);
+  const targetUserRoles = _accessFindSecurityRecords_(
+    s.userRoles, 'persona_id', [personaId], ACCESS_MANAGEMENT_FIELDS.userRoles
+  );
+  const targetScopes = _accessFindSecurityRecords_(
+    s.scopes, 'persona_id', [personaId], ACCESS_MANAGEMENT_FIELDS.scopes
+  );
+  const scopeTypesCatalog = _accessLoadSecurityRecords_(
+    s.scopeTypes, ACCESS_MANAGEMENT_FIELDS.scopeTypes
+  );
+  const data = {
+    usuarios: _accessMergeUniqueRows_(
+      [continuityData.usuarios, targetUsers], ['persona_id']
+    ),
+    modulos: modulesCatalog,
+    roles: rolesCatalog,
+    usuarioRol: _accessMergeUniqueRows_(
+      [continuityData.usuarioRol, targetUserRoles],
+      ['persona_id', 'modulo_id', 'rol_id', 'active']
+    ),
+    permisos: continuityData.permisos,
+    rolPermiso: continuityData.rolPermiso,
+    ambitosAcceso: _accessMergeUniqueRows_(
+      [continuityData.ambitosAcceso, targetScopes],
+      ['persona_id', 'modulo_id', 'tipo_ambito_id', 'referencia_id', 'active']
+    ),
+    tiposAmbito: scopeTypesCatalog
+  };
 
   const accessModuleId = _accessResolveModuleId_(
     auth,
@@ -2508,11 +2746,18 @@ function getAccessUsers(filters) {
     });
   });
 
-  const rows = accounts.map(user => {
+  const page = Math.max(1, Number.parseInt(filters.page, 10) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number.parseInt(filters.pageSize, 10) || 10));
+  const offset = (page - 1) * pageSize;
+  const maxRetained = offset + pageSize;
+  const rows = [];
+  let total = 0;
+
+  accounts.forEach(user => {
     const personaId = _accessText_(user.persona_id);
     const person = people.get(personaId) || {};
     const sedeIds = Array.from(sitesByPerson.get(personaId) || []);
-    return {
+    const row = {
       persona_id: personaId,
       correo_institucional: _accessText_(person.correo_institucional),
       nombres: _accessText_(person.nombres),
@@ -2523,17 +2768,26 @@ function getAccessUsers(filters) {
       active: _accessIsActive_(user.active),
       roles: rolesByPerson.get(personaId) || []
     };
-  }).filter(user => {
     if (query && ![
-      user.persona_id, user.nombre_completo, user.correo_institucional, user.sede_nombre
-    ].join(' ').toLocaleLowerCase().includes(query)) return false;
-    return true;
-  }).sort((a, b) => a.nombre_completo.localeCompare(b.nombre_completo, 'es'));
+      row.persona_id, row.nombre_completo, row.correo_institucional, row.sede_nombre
+    ].join(' ').toLocaleLowerCase().includes(query)) return;
 
-  const total = rows.length;
-  const page = Math.max(1, Number.parseInt(filters.page, 10) || 1);
-  const pageSize = Math.min(100, Math.max(1, Number.parseInt(filters.pageSize, 10) || 10));
-  const offset = (page - 1) * pageSize;
+    total++;
+    const compare = (left, right) =>
+      left.nombre_completo.localeCompare(right.nombre_completo, 'es') ||
+      left.persona_id.localeCompare(right.persona_id, 'es');
+    let low = 0;
+    let high = rows.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (compare(rows[middle], row) <= 0) low = middle + 1;
+      else high = middle;
+    }
+    if (low >= maxRetained && rows.length >= maxRetained) return;
+    rows.splice(low, 0, row);
+    if (rows.length > maxRetained) rows.pop();
+  });
+
   return {
     items: rows.slice(offset, offset + pageSize),
     total,
@@ -3045,9 +3299,24 @@ function getAccessEntityHistory(payload) {
 function _accessChangeStatus_(config) {
   const auth = _accessRequirePermission_(config.permission);
   const nextActive = _accessNormalizeActive_(config.active, 'El estado solicitado');
-  const data = auth.securityData;
-  const record = _accessFindBy_(data[config.collection], config.keyField, config.id);
-  if (!record) throw new Error('No se encontró el registro "' + config.id + '".');
+  const collectionField = {
+    usuarios: 'users',
+    roles: 'roles',
+    permisos: 'permissions'
+  }[config.collection];
+  const requiredHeaders = ACCESS_MANAGEMENT_FIELDS[collectionField];
+  const matches = _accessFindSecurityRecords_(
+    config.sheet,
+    config.keyField,
+    [config.id],
+    requiredHeaders
+  );
+  if (matches.length !== 1) {
+    throw new Error(matches.length
+      ? 'El identificador "' + config.id + '" está duplicado.'
+      : 'No se encontró el registro "' + config.id + '".');
+  }
+  const record = matches[0];
 
   const currentActive = _accessIsActive_(record.active);
   if (currentActive === nextActive) {
@@ -3060,15 +3329,39 @@ function _accessChangeStatus_(config) {
   }
 
   if (config.collection === 'roles' && !nextActive) {
-    const assignments = data.usuarioRol.filter(item =>
-      _accessText_(item.rol_id) === _accessText_(record.rol_id) && _accessIsActive_(item.active)
-    );
+    const assignments = _accessFindSecurityRecords_(
+      ACCESS_MANAGEMENT_CONFIG.sheets.userRoles,
+      'rol_id',
+      [record.rol_id],
+      ACCESS_MANAGEMENT_FIELDS.userRoles
+    ).filter(item => _accessIsActive_(item.active));
     if (assignments.length) throw new Error('No puedes desactivar un rol que tiene asignaciones activas.');
   }
 
+  const data = _accessLoadAdministratorContinuityData_();
   const after = _accessCopyData_(data);
-  const afterRecord = _accessFindBy_(after[config.collection], config.keyField, config.id);
-  afterRecord.active = nextActive;
+  if (config.collection === 'usuarios') {
+    const index = after.usuarios.findIndex(item =>
+      _accessText_(item.persona_id) === _accessText_(record.persona_id)
+    );
+    if (index >= 0) after.usuarios[index] = Object.assign({}, record, { active: nextActive });
+    else after.usuarios.push(Object.assign({}, record, { active: nextActive }));
+  } else if (config.collection === 'roles' &&
+      _accessText_(record.rol_id) === ACCESS_MANAGEMENT_CONFIG.adminRoleId) {
+    const index = after.roles.findIndex(item =>
+      _accessText_(item.rol_id) === _accessText_(record.rol_id)
+    );
+    if (index >= 0) after.roles[index] = Object.assign({}, record, { active: nextActive });
+    else after.roles.push(Object.assign({}, record, { active: nextActive }));
+  } else if (config.collection === 'permisos' &&
+      ACCESS_MANAGEMENT_CONFIG.adminPermissionCodes.includes(_accessUpper_(record.codigo)) &&
+      _accessText_(record.modulo_id) === _accessText_(data.modulos[0] && data.modulos[0].modulo_id)) {
+    const index = after.permisos.findIndex(item =>
+      _accessText_(item.permiso_id) === _accessText_(record.permiso_id)
+    );
+    if (index >= 0) after.permisos[index] = Object.assign({}, record, { active: nextActive });
+    else after.permisos.push(Object.assign({}, record, { active: nextActive }));
+  }
   _accessAssertAdministratorContinuity_(data, after);
 
   const person = config.collection === 'usuarios'

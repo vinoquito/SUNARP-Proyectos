@@ -336,6 +336,9 @@ test('la consulta de usuarios aplica paginación en servidor y limita el payload
   const implementation = accessSource.slice(start, end);
   assert.ok(implementation.includes('rows.slice(offset, offset + pageSize)'));
   assert.ok(implementation.includes('totalPages'));
+  assert.ok(implementation.includes('maxRetained'));
+  assert.ok(implementation.includes('rows.splice(low, 0, row)'));
+  assert.doesNotMatch(implementation, /\.sort\(/);
   const uiStart = accessUiSource.indexOf('function renderUsers(host) {');
   const uiEnd = accessUiSource.indexOf('function openUserModal(row) {', uiStart);
   const uiImplementation = accessUiSource.slice(uiStart, uiEnd);
@@ -491,6 +494,101 @@ test('rechaza correos no registrados y correos duplicados en personas', () => {
   });
   const duplicate = createAdapterSandbox(duplicateData);
   assert.throws(() => duplicate._accessGetAuthContext_(), /asociado a más de una persona/i);
+});
+
+test('editar una cuenta usa relaciones puntuales y no carga las nueve tablas de seguridad', () => {
+  const data = makeSecurityData();
+  data.personas.push({
+    persona_id: 'PER_118',
+    nombres: 'Ana',
+    apellidos: 'Zeta',
+    correo_institucional: 'ana.zeta@sunarp.gob.pe'
+  });
+  data.usuarios.push({ persona_id: 'PER_118', active: false });
+  const sandbox = createAdapterSandbox(data);
+  let fullLoads = 0;
+  sandbox._accessLoadSecurityData_ = () => {
+    fullLoads++;
+    throw new Error('No debe cargarse el conjunto completo de tablas de seguridad.');
+  };
+  sandbox._accessAddMetadata_ = (sheet, record) => record;
+  sandbox._accessRunAudited_ = (auth, event, execute) => execute().value;
+  let updated = null;
+  sandbox.SUNARPCore.updateRecord = (...args) => { updated = args; return { success: true }; };
+
+  const auth = {
+    personaId: 'PER_117',
+    email: 'prueba@sunarp.gob.pe',
+    get securityData() { throw new Error('No debe acceder a auth.securityData.'); }
+  };
+  const result = sandbox._accessRecordUser_(
+    auth,
+    { persona_id: 'PER_118', active: true },
+    'edit'
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(updated[1], 'persona_id');
+  assert.equal(updated[2], 'PER_118');
+  assert.equal(fullLoads, 0);
+});
+
+test('asignar un rol consulta solo la cuenta, módulo, rol y relaciones necesarias', () => {
+  const data = makeSecurityData();
+  data.personas.push({
+    persona_id: 'PER_118',
+    nombres: 'Ana',
+    apellidos: 'Zeta',
+    correo_institucional: 'ana.zeta@sunarp.gob.pe'
+  });
+  data.usuarios.push({ persona_id: 'PER_118', active: true });
+  const sandbox = createAdapterSandbox(data);
+  let fullLoads = 0;
+  sandbox._accessLoadSecurityData_ = () => {
+    fullLoads++;
+    throw new Error('No debe cargarse el conjunto completo de tablas de seguridad.');
+  };
+  sandbox._accessRunAudited_ = (auth, event, execute) => execute().value;
+  sandbox._accessFindPersonById_ = personaId => ({
+    persona_id: personaId, nombres: 'Ana', apellidos: 'Zeta'
+  });
+  let sync = null;
+  sandbox.SUNARPCore.syncRecordsByKey = (...args) => {
+    sync = args;
+    return { success: true, inserted: 1, updated: 0, deactivated: 0, totalActive: 1 };
+  };
+
+  const auth = {
+    personaId: 'PER_117',
+    email: 'prueba@sunarp.gob.pe',
+    get securityData() { throw new Error('No debe acceder a auth.securityData.'); }
+  };
+  sandbox._accessRequirePermission_ = () => auth;
+  const result = sandbox.saveAccessUserRole(
+    { persona_id: 'PER_118', modulo_id: 'MOD_INFO_PERSONAL', rol_id: 'ROL_EDITOR', active: true }
+  );
+  assert.equal(result.success, true);
+  assert.equal(sync[1].persona_id, 'PER_118');
+  assert.equal(sync[1].modulo_id, 'MOD_INFO_PERSONAL');
+  assert.equal(fullLoads, 0);
+});
+
+test('las mutaciones administrativas ya no acceden al snapshot diferido auth.securityData', () => {
+  for (const [startName, endName] of [
+    ['function _accessRecordUser_(', 'function saveAccessUser('],
+    ['function saveAccessUserRole(', 'function saveAccessRole('],
+    ['function saveAccessRole(', 'function saveAccessPermission('],
+    ['function saveAccessPermission(', 'function saveRolePermissions('],
+    ['function saveRolePermissions(', 'function saveAccessScopes('],
+    ['function saveAccessScopes(', 'function saveAccessUserConfiguration('],
+    ['function saveAccessUserConfiguration(', 'function _accessLoadSecurityRecords_('],
+    ['function _accessChangeStatus_(', 'function setAccessUserStatus(']
+  ]) {
+    const start = accessSource.indexOf(startName);
+    const end = accessSource.indexOf(endName, start + 1);
+    assert.ok(start >= 0 && end > start, startName + ' debe existir con límites válidos.');
+    assert.doesNotMatch(accessSource.slice(start, end), /auth\.securityData/);
+  }
 });
 
 test('el administrador global exige ROL_ADMIN, TOTAL y los cuatro permisos en ACCESOS', () => {
