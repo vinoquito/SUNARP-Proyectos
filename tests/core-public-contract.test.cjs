@@ -43,6 +43,7 @@ test('el inventario público de SUNARP Core coincide con el contrato documentado
     'resolveAuthorizationContext',
     'resolveIdentity',
     'runCoreTests',
+    'runSourceWriteBatch',
     'searchRecordsByFields',
     'setRecordStatus',
     'syncRecordsByKey',
@@ -126,7 +127,7 @@ test('el documento del contrato declara exactamente los métodos públicos y sus
   for (const match of section[1].matchAll(rowPattern)) {
     documented.set(match[1], match[2]);
   }
-  assert.equal(documented.size, 30, 'El inventario documentado debe contener 30 métodos públicos.');
+  assert.equal(documented.size, 31, 'El inventario documentado debe contener 31 métodos públicos.');
 
   const declarations = new Map();
   for (const file of collectFiles(coreDir, new Set(['.js']))) {
