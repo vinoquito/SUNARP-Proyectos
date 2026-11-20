@@ -158,8 +158,8 @@ test('la navegación del shell obtiene Menu mediante la caché central de SUNARP
   assert.match(implementation, /listRecordsFromSourcesCached/);
   assert.match(implementation, /getIntranetDataSource/);
   assert.match(implementation, /'APP_DATA'/);
-  assert.doesNotMatch(implementation, /SpreadsheetApp\\.openById/);
-  assert.doesNotMatch(implementation, /getDataRange\\(\\)\\.getDisplayValues/);
+  assert.doesNotMatch(implementation, /SpreadsheetApp\.openById/);
+  assert.doesNotMatch(implementation, /getDataRange\(\)\.getDisplayValues/);
 });
 
 test('la actualización independiente de Tipos de ámbito compara el identificador normalizado', () => {
