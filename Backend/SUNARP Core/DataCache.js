@@ -112,16 +112,57 @@ function _coreInvalidateSourceCache_(source) {
       generation,
       _CORE_CACHE_MAX_TTL_
     );
+    if (!generationStored || generationStored.success !== true) {
+      // Si no se pudo publicar la generación nueva, retirar la anterior
+      // para que la siguiente lectura no pueda reutilizarla silenciosamente.
+      try { removeCachedValue(generationKey); } catch (cleanupError) {
+        console.warn('[SUNARP Core] No se pudo retirar la generación anterior:', cleanupError.message);
+      }
+      try { removeCachedValues([recordsKey, infoKey]); } catch (cleanupError) {
+        console.warn('[SUNARP Core] No se pudieron retirar instantáneas base:', cleanupError.message);
+      }
+      return {
+        success: false,
+        generation: null,
+        error: generationStored && generationStored.reason || 'generation-write-failed'
+      };
+    }
+
     const removed = removeCachedValues([recordsKey, infoKey]);
     return {
-      success: Boolean(generationStored && generationStored.success && removed && removed.success),
+      success: Boolean(removed && removed.success),
       generation,
       removed
     };
   } catch (error) {
+    // Fallar al invalidar no debe dejar intacta deliberadamente la generación
+    // anterior. La limpieza es best-effort: CacheService puede estar indisponible.
+    try { removeCachedValue(generationKey); } catch (cleanupError) {
+      console.warn('[SUNARP Core] No se pudo retirar la generación anterior:', cleanupError.message);
+    }
+    try { removeCachedValues([recordsKey, infoKey]); } catch (cleanupError) {
+      console.warn('[SUNARP Core] No se pudieron retirar instantáneas base:', cleanupError.message);
+    }
     console.warn('[SUNARP Core] No se pudo invalidar la fuente:', error.message);
-    return { success: false, error: error.message };
+    return { success: false, generation: null, error: error.message };
   }
+}
+
+/**
+ * Asegura que una escritura Core no reporte éxito normal si falló la
+ * invalidación de su fuente. La escritura de Sheets puede estar ya aplicada;
+ * el mensaje lo declara para que el consumidor reconcilie sin duplicarla.
+ */
+function _coreInvalidateSourceCacheOrThrow_(source) {
+  const result = _coreInvalidateSourceCache_(source);
+  if (!result || result.success !== true) {
+    throw new Error(
+      'SUNARP Core: la escritura en Sheets pudo haberse aplicado, pero falló la invalidación de caché. ' +
+      'No repitas la escritura a ciegas; comprueba el registro y ejecuta invalidateSourceCache(source). ' +
+      (result && result.error ? 'Detalle: ' + result.error : '')
+    );
+  }
+  return result;
 }
 
 function invalidateSourceCache(source) {
