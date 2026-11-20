@@ -344,10 +344,21 @@ function queryRecords(source, options) {
           !lookup.values || typeof lookup.values !== 'object' || Array.isArray(lookup.values)) {
         throw new Error('SUNARP Core: cada scopeRecordLookup requiere recordField y values.');
       }
+      if (lookup.required !== undefined && typeof lookup.required !== 'boolean') {
+        throw new Error('SUNARP Core: scopeRecordLookup.required debe ser booleano.');
+      }
       const lookupId = String(record[lookup.recordField] === null ||
         record[lookup.recordField] === undefined ? '' : record[lookup.recordField]).trim();
-      if (lookupId && lookup.values[lookupId] &&
-          typeof lookup.values[lookupId] === 'object') {
+      const hasRelated = Boolean(
+        lookupId &&
+        lookup.values[lookupId] &&
+        typeof lookup.values[lookupId] === 'object'
+      );
+      if (lookupId && !hasRelated && lookup.required === true) {
+        relationConsistent = false;
+        return;
+      }
+      if (hasRelated) {
         const related = lookup.values[lookupId];
         const requiredEqualFields = Array.isArray(lookup.requireEqualFields)
           ? lookup.requireEqualFields
