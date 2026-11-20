@@ -10,10 +10,10 @@ const source = fs.readFileSync(path.join(root, 'Backend/SUNARP Core/DataQuery.js
 
 function createSandbox() {
   const rows = [
-    { assignment_id: 'A', status: 'ACTIVE', site_id: 'S1', name: 'Ana', allowed: true },
-    { assignment_id: 'B', status: 'ACTIVE', site_id: 'S2', name: 'Bea', allowed: false },
-    { assignment_id: 'C', status: 'INACTIVE', site_id: 'S1', name: 'Cora', allowed: true },
-    { assignment_id: 'D', status: 'ACTIVE', site_id: 'S1', name: 'Dina', allowed: true }
+    { assignment_id: 'A', status: 'ACTIVE', site_id: 'S1', name: 'Ana', cargo_id: 'C1', estructura_local_id: 'R1', local_id: 'L1', persona_id: 'P1', allowed: true },
+    { assignment_id: 'B', status: 'ACTIVE', site_id: 'S2', name: 'Bea', cargo_id: 'C2', estructura_local_id: 'R2', local_id: 'L2', persona_id: 'P2', allowed: false },
+    { assignment_id: 'C', status: 'INACTIVE', site_id: 'S1', name: 'Cora', cargo_id: 'C3', estructura_local_id: 'R3', local_id: 'L3', persona_id: 'P3', allowed: true },
+    { assignment_id: 'D', status: 'ACTIVE', site_id: 'S1', name: 'Dina', cargo_id: 'C2', estructura_local_id: 'R1', local_id: 'L1', persona_id: 'P4', allowed: true }
   ];
   const cache = new Map();
   let cacheReads = 0;
@@ -326,6 +326,23 @@ test('la caché de candidatos nunca omite la autorización vigente de otro usuar
   assert.equal(first.total, 2);
   assert.equal(second.total, 0);
   assert.equal(sourceReads, 1);
+});
+
+test('queryRecords calcula facetas y conteos únicamente sobre registros autorizados', () => {
+  const sandbox = createSandbox();
+  const result = sandbox.context.queryRecords({ spreadsheetId: 'S', sheetName: 'Assignments' }, {
+    idField: 'assignment_id',
+    filters: { status: 'ACTIVE' },
+    distinctFields: ['cargo_id', 'estructura_local_id', 'local_id'],
+    distinctCountFields: ['persona_id'],
+    authorization: sandbox.authorization(),
+    cacheSeconds: 0
+  });
+  assert.deepEqual(Array.from(result.distinctValues.cargo_id), ['C1', 'C2']);
+  assert.deepEqual(Array.from(result.distinctValues.estructura_local_id), ['R1']);
+  assert.deepEqual(Array.from(result.distinctValues.local_id), ['L1']);
+  assert.equal(result.distinctCounts.persona_id, 2);
+  assert.equal(result.total, 2);
 });
 
 test('la nueva generación de la fuente invalida candidatos y resultados derivados', () => {
