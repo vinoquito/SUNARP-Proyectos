@@ -70,3 +70,57 @@ test('abrir varias pestañas del mismo archivo reutiliza el manejador y resuelve
   assert.equal(second.sheet.getName(), 'Asignaciones');
   assert.deepEqual(opened, ['BOOK_1']);
 });
+
+
+test('una lectura cacheada recalcula la generación tras esperar el bloqueo', () => {
+  const repositorySource = fs.readFileSync(
+    path.join(root, 'Backend/SUNARP Core/DataRepository.js'),
+    'utf8'
+  );
+  const cache = new Map();
+  let generation = 'GEN_OLD';
+  let firstOldGenerationLookup = true;
+  let sourceReads = 0;
+
+  const sandbox = vm.createContext({
+    Date,
+    console: { log() {}, warn() {} },
+    _coreGetSourceGeneration_: () => generation,
+    _coreBuildSourceCacheKey_: (_source, kind) => kind + ':SOURCE',
+    getCachedValue: key => {
+      if (key === 'records:SOURCE:GEN_OLD' && firstOldGenerationLookup) {
+        firstOldGenerationLookup = false;
+        return null;
+      }
+      return cache.has(key) ? cache.get(key) : null;
+    },
+    putCachedValue: (key, value) => {
+      cache.set(key, value);
+      return { success: true };
+    },
+    _coreWithWriteLock_: callback => {
+      // Simula que una escritura Core termina mientras esta lectura espera
+      // el bloqueo y que una lectura concurrente deja un valor de la
+      // generación anterior disponible en CacheService.
+      generation = 'GEN_NEW';
+      cache.set('records:SOURCE:GEN_OLD', ['STALE']);
+      return callback();
+    },
+    listRecordsFromSources: requests => {
+      sourceReads++;
+      return Object.fromEntries(requests.map(request => [request.key, ['FRESH']]));
+    }
+  });
+  vm.runInContext(repositorySource, sandbox, { filename: 'DataRepository.js' });
+
+  const result = sandbox.listRecordsFromSourcesCached([{
+    key: 'employees',
+    source: { spreadsheetId: 'BOOK', sheetName: 'Personas' },
+    requiredHeaders: ['persona_id']
+  }], 300);
+
+  assert.equal(sourceReads, 1);
+  assert.deepEqual(Array.from(result.employees), ['FRESH']);
+  assert.deepEqual(cache.get('records:SOURCE:GEN_OLD'), ['STALE']);
+  assert.deepEqual(cache.get('records:SOURCE:GEN_NEW'), ['FRESH']);
+});
