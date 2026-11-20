@@ -3712,20 +3712,34 @@ function _accessMigrationPrepareColumn_(table, targetField, legacyField, resolve
   };
 }
 
-function _accessMigrationWriteColumn_(plan) {
-  if (plan.createHeader) plan.sheet.getRange(1, plan.targetColumn).setValue(plan.targetField);
+function _accessMigrationWriteColumn_(plan, markWriteStarted) {
+  if (typeof markWriteStarted !== 'function') {
+    throw new Error('La escritura de migración requiere el marcador de inicio de Core.');
+  }
+  if (plan.createHeader) {
+    markWriteStarted();
+    plan.sheet.getRange(1, plan.targetColumn).setValue(plan.targetField);
+  }
   plan.updates.forEach(update => {
+    markWriteStarted();
     plan.sheet.getRange(update.rowNumber, plan.targetColumn).setValue(update.value);
   });
 }
 
-function _accessMigrationEnsureScopeTypes_(spreadsheet) {
+function _accessMigrationEnsureScopeTypes_(spreadsheet, markWriteStarted) {
+  if (typeof markWriteStarted !== 'function') {
+    throw new Error('La normalización de TiposAmbito requiere el marcador de inicio de Core.');
+  }
   const sheetName = ACCESS_MANAGEMENT_CONFIG.sheets.scopeTypes;
   let sheet = spreadsheet.getSheetByName(sheetName);
   const created = !sheet;
-  if (!sheet) sheet = spreadsheet.insertSheet(sheetName);
+  if (!sheet) {
+    markWriteStarted();
+    sheet = spreadsheet.insertSheet(sheetName);
+  }
 
   if (!sheet.getLastColumn() || !sheet.getLastRow()) {
+    markWriteStarted();
     sheet.getRange(1, 1, 1, ACCESS_SCHEMA_MIGRATION_SCOPE_HEADERS.length)
       .setValues([ACCESS_SCHEMA_MIGRATION_SCOPE_HEADERS.slice()]);
   }
@@ -3743,6 +3757,7 @@ function _accessMigrationEnsureScopeTypes_(spreadsheet) {
   ACCESS_SCHEMA_MIGRATION_SCOPE_HEADERS.forEach(header => {
     if (headers.includes(header)) return;
     lastColumn += 1;
+    markWriteStarted();
     sheet.getRange(1, lastColumn).setValue(header);
     headers.push(header);
   });
@@ -3769,7 +3784,10 @@ function _accessMigrationEnsureScopeTypes_(spreadsheet) {
       id = ACCESS_SCOPE_TYPE_IDS.includes(legacyToken)
         ? legacyToken
         : typeIdsByName.get(legacyValue.toLocaleLowerCase()) || '';
-      if (id) sheet.getRange(index + 2, typeIdIndex + 1).setValue(id);
+      if (id) {
+        markWriteStarted();
+        sheet.getRange(index + 2, typeIdIndex + 1).setValue(id);
+      }
     }
     if (!id) throw new Error('TiposAmbito contiene un registro sin tipo_ambito_id en la fila ' + (index + 2) + '.');
     if (existing.has(id)) throw new Error('TiposAmbito contiene el identificador duplicado ' + id + '.');
@@ -3785,12 +3803,14 @@ function _accessMigrationEnsureScopeTypes_(spreadsheet) {
       const values = headers.map(header =>
         Object.prototype.hasOwnProperty.call(record, header) ? record[header] : ''
       );
+      markWriteStarted();
       sheet.getRange(targetRow, 1, 1, headers.length).setValues([values]);
       added += 1;
       return;
     }
 
     ACCESS_SCHEMA_MIGRATION_SCOPE_HEADERS.forEach(field => {
+      markWriteStarted();
       sheet.getRange(rowNumber, indexes.get(field) + 1).setValue(record[field]);
     });
   });
@@ -3808,9 +3828,20 @@ function _accessMigrationInvalidateSource_(source) {
  * Los campos anteriores se conservan para permitir una revisión posterior.
  */
 function migrateAccessManagementSchema() {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-  try {
+  if (
+    typeof SUNARPCore === 'undefined' ||
+    typeof SUNARPCore.runSourceWriteBatch !== 'function'
+  ) {
+    throw new Error('La migración requiere SUNARP Core v10. No se ha iniciado ninguna escritura.');
+  }
+
+  const affectedSources = [
+    getIntranetDataSource('SECURITY', ACCESS_MANAGEMENT_CONFIG.sheets.permissions, 1),
+    getIntranetDataSource('SECURITY', ACCESS_MANAGEMENT_CONFIG.sheets.scopes, 1),
+    getIntranetDataSource('SECURITY', ACCESS_MANAGEMENT_CONFIG.sheets.scopeTypes, 1)
+  ];
+
+  return SUNARPCore.runSourceWriteBatch(affectedSources, markWriteStarted => {
     const usersSource = getIntranetDataSource('SECURITY', ACCESS_MANAGEMENT_CONFIG.sheets.users, 1);
     const spreadsheet = SpreadsheetApp.openById(usersSource.spreadsheetId);
     const actor = _accessMigrationAssertAdministrator_(spreadsheet);
@@ -3906,16 +3937,9 @@ function migrateAccessManagementSchema() {
 
     // La hoja de tipos se crea/normaliza después de validar las relaciones
     // existentes, evitando cambios parciales por valores huérfanos.
-    const scopeCatalogResult = _accessMigrationEnsureScopeTypes_(spreadsheet);
-    _accessMigrationWriteColumn_(permissionPlan);
-    _accessMigrationWriteColumn_(scopePlan);
-    SpreadsheetApp.flush();
-
-    [
-      getIntranetDataSource('SECURITY', ACCESS_MANAGEMENT_CONFIG.sheets.permissions, 1),
-      getIntranetDataSource('SECURITY', ACCESS_MANAGEMENT_CONFIG.sheets.scopes, 1),
-      getIntranetDataSource('SECURITY', ACCESS_MANAGEMENT_CONFIG.sheets.scopeTypes, 1)
-    ].forEach(_accessMigrationInvalidateSource_);
+    const scopeCatalogResult = _accessMigrationEnsureScopeTypes_(spreadsheet, markWriteStarted);
+    _accessMigrationWriteColumn_(permissionPlan, markWriteStarted);
+    _accessMigrationWriteColumn_(scopePlan, markWriteStarted);
 
     return {
       success: true,
@@ -3927,7 +3951,5 @@ function migrateAccessManagementSchema() {
       tipos_ambito_creados: scopeCatalogResult.added,
       pestaña_tipos_ambito_creada: scopeCatalogResult.created
     };
-  } finally {
-    lock.releaseLock();
-  }
+  });
 }
