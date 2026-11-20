@@ -532,6 +532,65 @@ test('listDirectoryAssignments pagina mediante Core y no carga asignaciones comp
   assert.equal(result.records[0].sede_id, 'SEDE_1');
 });
 
+test('getDirectoryInitialData carga solo catálogos y una página, reutilizando consultas distintas de Core', () => {
+  const context = assignmentContext();
+  const pagePerson = { persona_id: 'PER_001', nombres: 'Ana', apellidos: 'Pérez' };
+  context.personas = [];
+  context.asignaciones = [];
+  context.documentTypes = [];
+  const authorization = createDirectoryQueryAuthorization(context, [
+    { tipo_ambito_id: 'TOTAL', referencia_id: '', incluir_descendientes: false }
+  ]);
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  vmContext._directoryAuthorizationContext_ = () => authorization;
+  vmContext._directoryLoadContext_ = options => {
+    assert.equal(options.includeAssignments, false);
+    assert.equal(options.includePeople, false);
+    assert.equal(options.includePersonalData, false);
+    return context;
+  };
+  vmContext._accessRecordIsAllowed_ = () => true;
+  vmContext.getIntranetDataSource = (sourceKey, sheetName, headerRow) => ({
+    sourceKey, sheetName, headerRow, spreadsheetId: 'SPREADSHEET_' + sourceKey
+  });
+  const queryCalls = [];
+  vmContext.SUNARPCore = {
+    queryRecords: (source, options) => {
+      queryCalls.push(options);
+      if (options.distinctBy === 'cargo_id') {
+        return { records: [{ cargo_id: 'CAR_001' }], total: 1 };
+      }
+      if (options.distinctBy === 'estructura_local_id') {
+        return { records: [{ estructura_local_id: 'REL_1' }], total: 1 };
+      }
+      if (options.distinctBy === 'local_id') {
+        return { records: [{ local_id: 'LOC_1' }], total: 1 };
+      }
+      if (options.distinctBy === 'persona_id') {
+        return { records: [{ persona_id: 'PER_001' }], total: 1 };
+      }
+      return {
+        records: [{
+          asignacion_id: 'ASG_001', persona_id: 'PER_001', cargo_id: 'CAR_001',
+          estructura_local_id: 'REL_1', local_id: '', active: true, order: 1
+        }],
+        total: 1
+      };
+    },
+    findRecordsByFields: () => ({ records: [pagePerson], total: 1 })
+  };
+
+  const result = vmContext.getDirectoryInitialData();
+  assert.equal(queryCalls.length, 5);
+  assert.equal(result.records.length, 1);
+  assert.equal(result.records[0].persona_nombre, undefined);
+  assert.equal(result.records[0].nombre_completo, 'Ana Pérez');
+  assert.equal(result.summary.people, 1);
+  assert.equal(result.summary.assignments, 1);
+  assert.deepEqual(Array.from(result.catalogs.filterContract.selectable.cargoIds), ['CAR_001']);
+});
+
 test('la validación de contexto parcial conserva las relaciones sin exigir cargar todas las personas', () => {
   const context = assignmentContext();
   context.personas = [];
