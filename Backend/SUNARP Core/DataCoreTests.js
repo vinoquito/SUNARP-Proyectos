@@ -372,6 +372,31 @@ function runCoreSelfTests_() {
       });
     }, 'La unicidad compuesta impide repetir tipo y número de documento.');
 
+    // 8.3. Probar lectura acotada desde el final de una fuente append-only.
+    const tailPage = listTailRecords(source, {
+      offset: 0,
+      limit: 2,
+      requiredHeaders: ['id']
+    });
+    assert(
+      tailPage.total === 5 &&
+      tailPage.records.length === 2 &&
+      tailPage.records[0].id === 'TST_006' &&
+      tailPage.records[1].id === 'TST_005',
+      'La lectura de cola devuelve la página más reciente en orden descendente.'
+    );
+    const tailPrevious = listTailRecords(source, {
+      offset: 2,
+      limit: 2,
+      requiredHeaders: ['id']
+    });
+    assert(
+      tailPrevious.records.length === 2 &&
+      tailPrevious.records[0].id === 'TST_003' &&
+      tailPrevious.records[1].id === 'TST_002',
+      'La lectura de cola pagina hacia registros anteriores sin leer la tabla completa.'
+    );
+
     // 9. Probar duplicidad de identificadores.
     expectError(() => {
       insertRecord(
