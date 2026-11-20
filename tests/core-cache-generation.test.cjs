@@ -63,3 +63,25 @@ test('si CacheService pierde la generación, Core crea una nueva y no reutiliza 
   const afterEviction = sandbox._coreGetSourceGeneration_(sourceRef);
   assert.notEqual(afterEviction, first);
 });
+
+test('la invalidación del maestro cambia la generación efectiva de su réplica dependiente', () => {
+  const { sandbox } = createCacheSandbox();
+  const master = { spreadsheetId: 'MASTER', sheetName: 'estructura_org' };
+  const replica = {
+    spreadsheetId: 'DIRECTORY', sheetName: 'estructura_org',
+    dependencies: [master]
+  };
+  const before = sandbox._coreGetSourceGeneration_(replica);
+  const invalidation = sandbox._coreInvalidateSourceCache_(master);
+  const after = sandbox._coreGetSourceGeneration_(replica);
+  assert.equal(invalidation.success, true);
+  assert.notEqual(after, before);
+});
+
+test('Core desactiva el uso de caché si detecta un ciclo de dependencias', () => {
+  const { sandbox } = createCacheSandbox();
+  const sourceA = { spreadsheetId: 'A', sheetName: 'A' };
+  const sourceB = { spreadsheetId: 'B', sheetName: 'B', dependencies: [sourceA] };
+  sourceA.dependencies = [sourceB];
+  assert.equal(sandbox._coreGetSourceGeneration_(sourceA), null);
+});
