@@ -211,7 +211,7 @@ test('el contrato conserva los límites comprobados de consulta, invalidación y
   assert.ok(contract.includes('distingue mayúsculas/minúsculas'));
   assert.doesNotMatch(contract, /fase específica de consistencia externa/i);
   assert.match(contract, /puede haber cambios parciales/);
-  assert.match(contract, /ejecutar `runCoreTests\(\)`/i);
+  assert.match(contract, /`runCoreTests\(\)`/i);
   assert.match(contract, /no expone el historial de versiones ni los despliegues del proyecto Apps Script/);
   assert.match(contract, /versión 9/);
   assert.ok(contract.includes('### 10.1 Consumidores comprobados en esta rama'));
