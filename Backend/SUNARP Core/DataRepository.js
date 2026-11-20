@@ -543,9 +543,9 @@ function listTailRecords(source, options) {
 
   const startRow = Math.max(dataStartRow, endRow - limit + 1);
   const numberOfRows = endRow - startRow + 1;
-  const values = _coreReadRange_(
-    sheet, startRow, 1, numberOfRows, lastColumn
-  );
+  const values = sheet.getRange(
+    startRow, 1, numberOfRows, lastColumn
+  ).getValues();
   const records = [];
 
   for (let index = values.length - 1; index >= 0; index--) {
