@@ -833,6 +833,54 @@ function runCoreSelfTests_() {
       'La eliminación invalida automáticamente la instantánea de la fuente.'
     );
 
+    // 13. Probar lote multihoja bajo el mismo bloqueo central de Core.
+    const batchSheet = testSpreadsheet.insertSheet('lote_secundario');
+    batchSheet.getRange(1, 1, 1, 2).setValues([['id', 'valor']]);
+    batchSheet.getRange(2, 1, 1, 2).setValues([['BATCH_001', 'antes']]);
+    const batchSource = {
+      spreadsheetId: testSpreadsheet.getId(),
+      sheetName: 'lote_secundario',
+      headerRow: 1,
+      label: 'Prueba lote secundario'
+    };
+
+    const batchGenerationBefore = _coreGetSourceGeneration_(batchSource);
+    const sourceGenerationBefore = _coreGetSourceGeneration_(source);
+    const batchResult = runSourceWriteBatch([source, batchSource], markWriteStarted => {
+      markWriteStarted();
+      sheet.getRange(2, 3).setValue('Lote correcto');
+      batchSheet.getRange(2, 2).setValue('después');
+      return { success: true };
+    });
+    const batchGenerationAfter = _coreGetSourceGeneration_(batchSource);
+    const sourceGenerationAfter = _coreGetSourceGeneration_(source);
+
+    assert(
+      batchResult.success === true &&
+      batchGenerationAfter !== batchGenerationBefore &&
+      sourceGenerationAfter !== sourceGenerationBefore &&
+      batchSheet.getRange(2, 2).getValue() === 'después' &&
+      sheet.getRange(2, 3).getValue() === 'Lote correcto',
+      'El lote multihoja ejecuta las escrituras y cambia las generaciones de todas las fuentes declaradas.'
+    );
+
+    const partialBatchGenerationBefore = _coreGetSourceGeneration_(batchSource);
+    const partialSourceGenerationBefore = _coreGetSourceGeneration_(source);
+    expectError(() => runSourceWriteBatch([source, batchSource], markWriteStarted => {
+      markWriteStarted();
+      sheet.getRange(2, 3).setValue('Cambio parcial');
+      batchSheet.getRange(2, 2).setValue('parcial');
+      throw new Error('fallo simulado después de escribir dos fuentes');
+    }), 'El lote informa el error después de intentar flush e invalidación.');
+
+    assert(
+      _coreGetSourceGeneration_(batchSource) !== partialBatchGenerationBefore &&
+      _coreGetSourceGeneration_(source) !== partialSourceGenerationBefore &&
+      batchSheet.getRange(2, 2).getValue() === 'parcial' &&
+      sheet.getRange(2, 3).getValue() === 'Cambio parcial',
+      'El lote también invalida todas las fuentes cuando el callback falla tras iniciar escrituras parciales.'
+    );
+
     Logger.log('-----------------------------------');
     Logger.log('RESULTADO: TODAS LAS PRUEBAS PASARON');
     Logger.log(`Pruebas satisfactorias: ${results.length}`);
