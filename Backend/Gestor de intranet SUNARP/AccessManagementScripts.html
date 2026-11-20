@@ -1542,6 +1542,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
     let loadingUsers = false;
     let requestNumber = 0;
+    let tableConfig = null;
     let lastPageResult = { items: [], total: 0 };
 
     function updateApplyState() {
@@ -1596,25 +1597,10 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       }
     }
 
-    async function loadFilteredUsers(showLoading) {
-      if (!siteSelect.value && !roleSelect.value) {
-        lastPageResult = { items: [], total: 0 };
-        state.data.users = [];
-        if (state.table && typeof state.table.setData === 'function') {
-          state.table.setData([]);
-        }
-        updateApplyState();
-        return;
-      }
-
-      if (state.table && typeof state.table.refresh === 'function') {
-        await state.table.refresh();
-      } else {
-        const result = await loadUserPage({ page: 1, pageSize: 10, search: '' });
-        if (state.table && typeof state.table.setData === 'function') {
-          state.table.setData(result.items);
-        }
-      }
+    async function loadFilteredUsers() {
+      if (!tableConfig) return;
+      // Recrear la tabla reinicia la página a 1 cuando cambian sede o rol.
+      renderTable(host, tableConfig);
     }
 
     // Los selectores solo actualizan el estado del botón.
@@ -1622,7 +1608,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     siteSelect.addEventListener('change', updateApplyState);
     roleSelect.addEventListener('change', updateApplyState);
 
-    renderTable(host, {
+    tableConfig = {
       data: [],
       mode: 'server',
       loadData: loadUserPage,
@@ -1661,7 +1647,8 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       ],
       searchPlaceholder: 'Buscar por nombre o correo institucional...',
       emptyMessage: 'Selecciona una sede o un rol para consultar usuarios.'
-    });
+    };
+    renderTable(host, tableConfig);
 
     state.userListController = {
       refresh: () => loadFilteredUsers(false)
