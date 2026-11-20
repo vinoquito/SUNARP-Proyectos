@@ -142,6 +142,9 @@ function createAdapterSandbox(data, email = 'prueba@sunarp.gob.pe') {
     estructura_local: 'estructura_local',
     estructura_org: 'estructura_org',
     locales: 'locales',
+    Sedes: 'sedes',
+    EstructuraOrg: 'securityOrg',
+    tipos_estructura: 'tipos_estructura',
     sede: 'sede'
   };
   sandbox.SUNARPCore = {
@@ -961,8 +964,14 @@ test('el contador de administradores globales ignora cuentas, roles o ámbitos i
   assert.equal(sandbox._accessCountAdministrators_(nonAdminRole), 0);
 });
 
-test('el bootstrap de Administración no descarga las relaciones globales de seguridad', () => {
-  const sandbox = createAdapterSandbox(makeSecurityData());
+test('el bootstrap de Administración carga Sedes para el filtro, pero difiere catálogos organizacionales hasta abrir el editor', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData({
+    sedes: [{ id: 'SITE_1', name: 'Lima', active: true }],
+    securityOrg: [{ id: 'ORG_1', sede_id: 'SITE_1', name: 'Sede Central', active: true }],
+    locales: [{ id: 'LOC_1', sede_id: 'SITE_1', name: 'Local Lima', active: true }],
+    tipos_estructura: [{ id: 'TYPE_1', name: 'Oficina', active: true }],
+    estructura_local: [{ id: 'REL_1', estructura_id: 'ORG_1', local_id: 'LOC_1', active: true }]
+  }));
   const reads = [];
   const original = sandbox.SUNARPCore.listRecordsFromSourcesCached;
   sandbox.SUNARPCore.listRecordsFromSourcesCached = requests => {
@@ -976,7 +985,31 @@ test('el bootstrap de Administración no descarga las relaciones globales de seg
   assert.ok(reads.includes('Modulos'));
   assert.ok(reads.includes('Roles'));
   assert.ok(reads.includes('TiposAmbito'));
-  assert.doesNotMatch(reads.join('|'), /Usuarios|UsuarioRol|Permisos|RolPermiso|AmbitosAcceso|Operaciones/);
+  assert.ok(reads.includes('Sedes'));
+  assert.doesNotMatch(reads.join('|'), /EstructuraOrg|locales|tipos_estructura|estructura_local|Usuarios|UsuarioRol|Permisos|RolPermiso|AmbitosAcceso|Operaciones/);
+  assert.equal(view.catalogs.sedes.length, 1);
+  assert.equal(view.catalogs.estructuraOrg.length, 0);
+  assert.equal(view.scopeCatalogsLoaded, false);
+
+  const scopeReads = [];
+  const originalLoader = sandbox.SUNARPCore.listRecordsFromSourcesCached;
+  sandbox.SUNARPCore.listRecordsFromSourcesCached = requests => {
+    requests.forEach(request => scopeReads.push(request.source.sourceKey + ':' + request.source.sheetName));
+    return originalLoader(requests);
+  };
+  const scopeCatalogs = sandbox.getAccessScopeCatalogs();
+  assert.equal(scopeCatalogs.sedes.length, 1);
+  assert.equal(scopeCatalogs.estructuraOrg.length, 1);
+  assert.equal(scopeCatalogs.locales.length, 1);
+  assert.equal(scopeCatalogs.tiposEstructura.length, 1);
+  assert.equal(scopeCatalogs.estructuraLocal.length, 1);
+  assert.deepEqual(scopeReads, [
+    'SECURITY:Sedes',
+    'SECURITY:EstructuraOrg',
+    'DIRECTORY:locales',
+    'DIRECTORY:tipos_estructura',
+    'DIRECTORY:estructura_local'
+  ]);
 });
 
 test('la configuración del editor consulta solo las relaciones de la persona seleccionada', () => {
@@ -1516,4 +1549,16 @@ test('el historial por rango temporal devuelve página vacía y total cero sin r
   assert.equal(result.totalPages, 1);
   assert.equal(result.items.length, 0);
   assert.equal(fullReads, 0);
+});
+
+
+test('el editor de usuarios solicita catálogos de ámbito de forma diferida y una sola vez', () => {
+  const editor = accessUiSource.slice(
+    accessUiSource.indexOf('async function openUserModal(row)'),
+    accessUiSource.indexOf('function renderActiveTab(', accessUiSource.indexOf('async function openUserModal(row)'))
+  );
+  assert.match(editor, /state\.data\.capabilities\.scopes === true/);
+  assert.match(editor, /state\.data\.scopeCatalogsLoaded !== true/);
+  assert.match(editor, /rpc\('getAccessScopeCatalogs'\)/);
+  assert.match(editor, /state\.data\.scopeCatalogsLoaded = true/);
 });

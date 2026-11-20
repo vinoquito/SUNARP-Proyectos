@@ -2519,10 +2519,13 @@ function getAccessManagementData() {
     ? _accessLoadSecurityRecords_(ACCESS_MANAGEMENT_CONFIG.sheets.scopeTypes, ACCESS_MANAGEMENT_FIELDS.scopeTypes)
     : [];
 
-  const needsCatalogs = capabilities.users || capabilities.scopes;
-  const catalogs = needsCatalogs
-    ? _accessOrgManagementCatalog_()
-    : { sedes: [], estructuraOrg: [], locales: [], tiposEstructura: [], estructuraLocal: [] };
+  const siteCatalogData = capabilities.users
+    ? SUNARPCore.listRecordsFromSourcesCached([{
+        key: 'sedes',
+        source: _accessSecuritySource_('Sedes'),
+        requiredHeaders: ['id', 'name']
+      }], 30)
+    : { sedes: [] };
 
   return {
     currentUser: {
@@ -2573,25 +2576,15 @@ function getAccessManagementData() {
     userRoles: [],
     scopes: [],
     catalogs: {
-      sedes: (catalogs.sedes || []).filter(_accessCatalogIsActive_).map(row => ({
+      sedes: (siteCatalogData.sedes || []).filter(_accessCatalogIsActive_).map(row => ({
         id: _accessText_(row.id), name: _accessText_(row.name)
       })),
-      estructuraOrg: (catalogs.estructuraOrg || []).filter(_accessCatalogIsActive_).map(row => ({
-        id: _accessText_(row.id), sede_id: _accessText_(row.sede_id),
-        parent_id: _accessText_(row.parent_id), tipo_estructura_id: _accessText_(row.tipo_estructura_id),
-        name: _accessText_(row.name), order: row.order
-      })),
-      locales: (catalogs.locales || []).filter(_accessCatalogIsActive_).map(row => ({
-        id: _accessText_(row.id), name: _accessText_(row.name), sede_id: _accessText_(row.sede_id)
-      })),
-      tiposEstructura: (catalogs.tiposEstructura || []).filter(_accessCatalogIsActive_).map(row => ({
-        id: _accessText_(row.id), name: _accessText_(row.name)
-      })),
-      estructuraLocal: (catalogs.estructuraLocal || []).filter(_accessCatalogIsActive_).map(row => ({
-        id: _accessText_(row.id), estructura_id: _accessText_(row.estructura_id),
-        local_id: _accessText_(row.local_id), referencia: _accessText_(row.referencia)
-      }))
-    }
+      estructuraOrg: [],
+      locales: [],
+      tiposEstructura: [],
+      estructuraLocal: []
+    },
+    scopeCatalogsLoaded: false
   };
 }
 
@@ -2686,6 +2679,36 @@ function getAccessManagementTabData(tabId) {
     };
   }
   throw new Error('La pestaña solicitada no admite actualización independiente.');
+}
+
+
+/**
+ * Recupera los catálogos organizacionales únicamente al abrir el editor de
+ * ámbitos. Conserva separadas las fuentes de Seguridad y Directorio.
+ */
+function getAccessScopeCatalogs() {
+  _accessRequirePermission_('AMBITOS_ACCESO_ADMINISTRAR');
+  const catalogs = _accessOrgManagementCatalog_();
+  return {
+    sedes: (catalogs.sedes || []).filter(_accessCatalogIsActive_).map(row => ({
+      id: _accessText_(row.id), name: _accessText_(row.name)
+    })),
+    estructuraOrg: (catalogs.estructuraOrg || []).filter(_accessCatalogIsActive_).map(row => ({
+      id: _accessText_(row.id), sede_id: _accessText_(row.sede_id),
+      parent_id: _accessText_(row.parent_id), tipo_estructura_id: _accessText_(row.tipo_estructura_id),
+      name: _accessText_(row.name), order: row.order
+    })),
+    locales: (catalogs.locales || []).filter(_accessCatalogIsActive_).map(row => ({
+      id: _accessText_(row.id), name: _accessText_(row.name), sede_id: _accessText_(row.sede_id)
+    })),
+    tiposEstructura: (catalogs.tiposEstructura || []).filter(_accessCatalogIsActive_).map(row => ({
+      id: _accessText_(row.id), name: _accessText_(row.name)
+    })),
+    estructuraLocal: (catalogs.estructuraLocal || []).filter(_accessCatalogIsActive_).map(row => ({
+      id: _accessText_(row.id), estructura_id: _accessText_(row.estructura_id),
+      local_id: _accessText_(row.local_id), referencia: _accessText_(row.referencia)
+    }))
+  };
 }
 
 

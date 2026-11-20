@@ -1667,13 +1667,35 @@ function createAccessStatusCell(row, method, id, entityLabel) {
   async function openUserModal(row) {
     const editing = Boolean(row);
     let userConfiguration = { userRoles: [], scopes: [] };
+    const needsScopeCatalogs = state.data.capabilities.scopes === true &&
+      state.data.scopeCatalogsLoaded !== true;
 
-    if (editing) {
-      const finishLoading = beginAccessPanelLoading('Consultando los accesos de la persona...');
+    if (editing || needsScopeCatalogs) {
+      const finishLoading = beginAccessPanelLoading(
+        needsScopeCatalogs
+          ? 'Consultando catálogos organizacionales...'
+          : 'Consultando los accesos de la persona...'
+      );
       try {
-        userConfiguration = await rpc('getAccessUserConfiguration', row.persona_id);
+        const requests = [];
+        if (needsScopeCatalogs) requests.push(rpc('getAccessScopeCatalogs'));
+        if (editing) requests.push(rpc('getAccessUserConfiguration', row.persona_id));
+        const results = await Promise.all(requests);
+        let index = 0;
+        if (needsScopeCatalogs) {
+          state.data.catalogs = Object.assign(
+            {},
+            state.data.catalogs || {},
+            results[index++]
+          );
+          state.data.scopeCatalogsLoaded = true;
+        }
+        if (editing) userConfiguration = results[index];
       } catch (error) {
-        SUNARPUI.notify('error', error.message || 'No se pudieron consultar los accesos de la persona.');
+        SUNARPUI.notify(
+          'error',
+          error.message || 'No se pudieron consultar los catálogos o accesos de la persona.'
+        );
         return;
       } finally {
         finishLoading();
