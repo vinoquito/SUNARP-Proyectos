@@ -190,3 +190,22 @@ test('solo los consumidores que declaran SUNARPCore invocan la biblioteca y Gest
     );
   }
 });
+
+
+test('el contrato conserva los límites comprobados de consulta, invalidación y publicación', () => {
+  const contract = fs.readFileSync(
+    path.join(root, 'Documentacion/Contrato público de SUNARP Core.md'),
+    'utf8'
+  );
+
+  assert.match(contract, /intersecta ambos conjuntos de valores/);
+  assert.match(contract, /campo conductor no vacío/);
+  assert.match(contract, /no equivale a paginación de origen/);
+  assert.match(contract, /no convierte la lectura completa, el total ni las facetas en una transacción/);
+  assert.match(contract, /no cambia automáticamente la generación/);
+  assert.match(contract, /debe llamar `invalidateSourceCache\(source\)`/);
+  assert.match(contract, /puede haber cambios parciales/);
+  assert.match(contract, /ejecutar `runCoreTests\(\)`/);
+  assert.match(contract, /no expone el historial de versiones publicadas del proyecto Apps Script/);
+  assert.match(contract, /versión 9/);
+});
