@@ -336,7 +336,7 @@ El resultado final de caché se separa por identidad, módulo, permiso, ámbitos
 
 ## 5. Escrituras y operaciones compuestas
 
-Todas las escrituras del repositorio usan `ScriptLock` y, tras realizar cambios, ejecutan `SpreadsheetApp.flush()` e invalidan la fuente mediante la generación de Core. El bloqueo coordina las operaciones que pasan por el mismo mecanismo de Core; no convierte varias llamadas independientes ni escrituras sobre varias fuentes en una transacción distribuida. Una operación compuesta de una sola fuente no ofrece rollback transaccional garantizado ante un fallo de Apps Script después de que algunas celdas ya hayan sido escritas.
+Todas las escrituras del repositorio usan `ScriptLock` y delegan la modificación efectiva en el ejecutor interno `_coreRunSourceWrite_()`. Cada ruta marca el inicio de la primera modificación; al terminar, Core ejecuta `SpreadsheetApp.flush()` e invalida la fuente mediante una nueva generación. Si el callback de escritura falla después de haber empezado, Core intenta igualmente ejecutar flush e invalidación y propaga un error que advierte de la posible escritura parcial y exige comprobar el estado antes de reintentar. Si falla la invalidación, también se informa explícitamente que la escritura pudo haberse aplicado y no debe repetirse a ciegas. El bloqueo coordina las operaciones que pasan por el mismo mecanismo de Core; no convierte varias llamadas independientes ni escrituras sobre varias fuentes en una transacción distribuida. Una operación compuesta de una sola fuente no ofrece rollback transaccional garantizado ante un fallo de Apps Script después de que algunas celdas ya hayan sido escritas.
 
 ### 5.1 `insertRecord(source, record, options)`
 
@@ -381,7 +381,7 @@ Sincroniza relaciones de un conjunto padre:
 - `options.allowEmptyKeyFields` declara qué campos de clave pueden estar vacíos (por ejemplo, una referencia opcional).
 - Los duplicados en el conjunto deseado o existente provocan error.
 
-Devuelve `{ success, inserted, updated, deactivated, totalActive }`. Usa un solo bloqueo e invalida la fuente cuando hubo cambios. La atomicidad se limita a la coordinación de esa llamada bajo bloqueo: no hay rollback garantizado si una escritura parcial falla, y una secuencia de sincronizaciones de distintas pestañas (por ejemplo, roles y ámbitos) no es una transacción conjunta. El consumidor debe detectar e informar resultados parciales y permitir su reconciliación.
+Devuelve `{ success, inserted, updated, deactivated, totalActive }`. Usa un solo bloqueo y finaliza/invalida la fuente cuando hubo cambios. Si una escritura parcial falla, también intenta flush e invalidación y comunica que puede haber cambios parciales. La coordinación se limita a esa llamada bajo bloqueo: no hay rollback garantizado, y una secuencia de sincronizaciones de distintas pestañas (por ejemplo, roles y ámbitos) no es una transacción conjunta. El consumidor debe detectar e informar resultados parciales y permitir su reconciliación.
 
 ### 5.7 `appendAuditEvent(source, record, idField)`
 
@@ -510,9 +510,9 @@ El manifiesto de Gestor sigue declarando Core versión 9. El código fuente ya c
 Para cerrar el paso a v10 es necesario:
 1. Completar y probar el contrato descrito aquí contra todos los consumidores.
 2. Confirmar que los archivos `.js` de Core se incluyan en el proyecto Apps Script (el `.clasp.json` tiene `rootDir: ""` y extensiones `.js`/ `.gs`).
-3. Ejecutar `runCoreTests()` desde el proyecto de Core para las pruebas reales con hojas temporales.
+3. Ejecutar `runCoreTests()` desde el proyecto de Core con una cuenta que tenga los permisos de Sheets y Drive necesarios; revisar el registro de ejecución completo. Esta función ejecuta las suites de repositorio, autorización y operaciones compuestas sobre hojas temporales, y envía el archivo de prueba a la papelera al finalizar.
 4. Revisar la versión publicada y crear una versión nueva desde el proyecto Apps Script con el procedimiento aprobado.
 5. Verificar que el número 10 y sus funciones son visibles en la biblioteca mediante Apps Script.
 6. Solo después preparar el cambio de `appsscript.json` del Gestor de 9 a 10 y probarlo mediante el mecanismo de pruebas de Gestor.
 
-No publicar ni desplegar automáticamente aplicaciones de producción. La auditoría realizada mediante GitHub no permite afirmar el contenido efectivo de la versión publicada 9 ni que v10 ya exista.
+No publicar ni desplegar automáticamente aplicaciones de producción. El conector GitHub utilizado para esta auditoría no expone el historial de versiones publicadas del proyecto Apps Script; por tanto, no permite afirmar el contenido efectivo de la versión publicada 9 ni que v10 ya exista. Esa comprobación debe hacerse en Apps Script antes de cambiar el manifiesto del Gestor.
