@@ -1602,6 +1602,8 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
     async function loadFilteredUsers() {
       if (!tableConfig) return;
+      // Invalida respuestas pendientes de la tabla anterior.
+      requestNumber += 1;
       appliedSedeId = siteSelect.value;
       appliedRoleId = roleSelect.value;
       updateApplyState();
