@@ -434,7 +434,10 @@ test('getAccessUsers consulta candidatos por sede o rol sin cargar el snapshot g
   const originalFind = sandbox.SUNARPCore.findRecordsByFields;
   sandbox.SUNARPCore.findRecordsByFields = (source, filters, options) => {
     if (source.sheetName === 'asignaciones') projectionRequests.push(options.projectionFields);
-    if (source.sheetName === 'personas') peopleProjectionRequests.push(options.projectionFields);
+    if (options && Array.isArray(options.projectionFields) &&
+        options.projectionFields.includes('nombres')) {
+      peopleProjectionRequests.push(options.projectionFields);
+    }
     return originalFind(source, filters, options);
   };
   let fullLoads = 0;
