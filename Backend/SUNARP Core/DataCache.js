@@ -232,9 +232,11 @@ function _coreCacheReadEnvelope_(cache, fullKey) {
 
   const payload = encoded.join('');
   if (
+    !Number.isInteger(Number(envelope.payloadLength)) ||
     Number(envelope.payloadLength) !== payload.length ||
-    (envelope.checksum &&
-      _coreCacheDigest_(payload) !== envelope.checksum)
+    typeof envelope.checksum !== 'string' ||
+    !envelope.checksum ||
+    _coreCacheDigest_(payload) !== envelope.checksum
   ) {
     cache.remove(fullKey);
     cache.removeAll(chunkKeys);
