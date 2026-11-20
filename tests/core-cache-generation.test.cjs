@@ -179,3 +179,54 @@ test('las escrituras que no pueden invalidar caché propagan un error explícito
     /la escritura en Sheets pudo haberse aplicado, pero falló la invalidación/
   );
 });
+
+
+test('una escritura Core exitosa ejecuta flush e invalidación exactamente una vez', () => {
+  const { sandbox } = createCacheSandbox();
+  let flushes = 0;
+  sandbox.SpreadsheetApp = { flush: () => { flushes++; } };
+  const sourceRef = { spreadsheetId: 'S', sheetName: 'Assignments' };
+  const before = sandbox._coreGetSourceGeneration_(sourceRef);
+
+  const result = sandbox._coreRunSourceWrite_(sourceRef, markWriteStarted => {
+    markWriteStarted();
+    return { success: true };
+  });
+  const after = sandbox._coreGetSourceGeneration_(sourceRef);
+
+  assert.equal(result.success, true);
+  assert.equal(flushes, 1);
+  assert.notEqual(after, before);
+});
+
+test('un error después del primer write también ejecuta flush e invalidación', () => {
+  const { sandbox } = createCacheSandbox();
+  let flushes = 0;
+  sandbox.SpreadsheetApp = { flush: () => { flushes++; } };
+  const sourceRef = { spreadsheetId: 'S', sheetName: 'Assignments' };
+  const before = sandbox._coreGetSourceGeneration_(sourceRef);
+
+  assert.throws(() => sandbox._coreRunSourceWrite_(sourceRef, markWriteStarted => {
+    markWriteStarted();
+    throw new Error('fallo simulado después de modificar una celda');
+  }), /falló después de iniciar una escritura/);
+
+  const after = sandbox._coreGetSourceGeneration_(sourceRef);
+  assert.equal(flushes, 1);
+  assert.notEqual(after, before);
+});
+
+test('una validación fallida antes del primer write no ejecuta flush ni invalida', () => {
+  const { sandbox } = createCacheSandbox();
+  let flushes = 0;
+  sandbox.SpreadsheetApp = { flush: () => { flushes++; } };
+  const sourceRef = { spreadsheetId: 'S', sheetName: 'Assignments' };
+  const before = sandbox._coreGetSourceGeneration_(sourceRef);
+
+  assert.throws(() => sandbox._coreRunSourceWrite_(sourceRef, () => {
+    throw new Error('validación previa');
+  }), /validación previa/);
+
+  assert.equal(flushes, 0);
+  assert.equal(sandbox._coreGetSourceGeneration_(sourceRef), before);
+});
