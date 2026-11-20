@@ -1300,7 +1300,14 @@ test('la migración transforma columnas antiguas sin perder referencias y no alt
 
   assert.match(accessSource, /function migrateAccessManagementSchema\(\)/);
   assert.match(accessSource, /function _accessMigrationAssertAdministrator_/);
-  assert.match(accessSource, /_accessMigrationEnsureScopeTypes_\(spreadsheet\)/);
+  const migrationStart = accessSource.indexOf('function migrateAccessManagementSchema()');
+  const migrationImplementation = accessSource.slice(migrationStart);
+  assert.match(migrationImplementation, /SUNARPCore\.runSourceWriteBatch\(affectedSources, markWriteStarted =>/);
+  assert.doesNotMatch(migrationImplementation, /LockService\.getScriptLock\(\)/);
+  assert.doesNotMatch(migrationImplementation, /SpreadsheetApp\.flush\(\)/);
+  assert.match(accessSource, /function _accessMigrationWriteColumn_\(plan, markWriteStarted\)/);
+  assert.match(accessSource, /function _accessMigrationEnsureScopeTypes_\(spreadsheet, markWriteStarted\)/);
+  assert.match(accessSource, /_accessMigrationEnsureScopeTypes_\(spreadsheet,\s*markWriteStarted\)/);
   assert.match(accessSource, /ACCESS_SCHEMA_MIGRATION_SCOPE_ROWS/);
   assert.match(accessSource, /operacion_id.*nombre/);
   assert.doesNotMatch(
