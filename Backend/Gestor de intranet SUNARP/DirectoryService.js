@@ -1775,6 +1775,7 @@ function _saveDirectoryPersonalData_(payload, allowUnassigned) {
   const context = _directoryLoadContext_({
     includePersonalData: false,
     includePeople: false,
+    includeAssignments: false,
     includeDocumentTypes: true
   });
   const personResult = SUNARPCore.findRecordsByFields(
@@ -1786,15 +1787,21 @@ function _saveDirectoryPersonalData_(payload, allowUnassigned) {
     throw new Error('No existe una identidad única para la ficha de datos personales.');
   }
   const person = personResult.records[0];
-  const linkedAssignments = context.asignaciones.filter(item =>
-    _directoryKey_(item.persona_id) === personaId
+  const assignmentsResult = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones),
+    { persona_id: personaId },
+    {
+      searchField: 'persona_id',
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.asignaciones
+    }
   );
+  const linkedAssignments = assignmentsResult.records || [];
   const createWithoutAssignment = allowUnassigned === true && !linkedAssignments.length;
   const authorization = _directoryAuthorizationContext_(
     createWithoutAssignment ? 'INFORMACION_PERSONAL_CREAR' : 'INFORMACION_PERSONAL_EDITAR'
   );
   if (!createWithoutAssignment) {
-    _directoryAssertPersonMutationScope_(authorization, person, context.asignaciones, context);
+    _directoryAssertPersonMutationScope_(authorization, person, linkedAssignments, context);
   }
 
   const normalizedDocument = _directoryAssertDocumentAvailable_(
