@@ -69,6 +69,41 @@ test('CoreAuthorization consume tipo_ambito_id y mantiene compatibilidad con dat
 });
 
 
+test('Core deniega TOTAL cuando está combinado con ámbitos específicos', () => {
+  const sandbox = vm.createContext({ console: { log: () => {}, warn: () => {} } });
+  vm.runInContext(coreSource, sandbox);
+  const soleTotal = {
+    authenticated: true,
+    personaId: 'PER_1',
+    moduleAccess: [{
+      modulo_id: 'MOD_1',
+      scopes: [{ tipo_ambito_id: 'TOTAL', referencia_id: '' }]
+    }]
+  };
+  const mixed = {
+    authenticated: true,
+    personaId: 'PER_1',
+    moduleAccess: [{
+      modulo_id: 'MOD_1',
+      scopes: [
+        { tipo_ambito_id: 'TOTAL', referencia_id: '' },
+        { tipo_ambito_id: 'SEDE', referencia_id: 'SEDE_1' }
+      ]
+    }]
+  };
+  const malformedTotal = {
+    authenticated: true,
+    personaId: 'PER_1',
+    moduleAccess: [{
+      modulo_id: 'MOD_1',
+      scopes: [{ tipo_ambito_id: 'TOTAL', referencia_id: 'SEDE_1' }]
+    }]
+  };
+  assert.equal(sandbox.authorizationIsRecordInScope(soleTotal, 'MOD_1', {}, []), true);
+  assert.equal(sandbox.authorizationIsRecordInScope(mixed, 'MOD_1', {}, []), false);
+  assert.equal(sandbox.authorizationIsRecordInScope(malformedTotal, 'MOD_1', {}, []), false);
+});
+
 test('el Gestor consume SUNARP Core versión 9 para la autorización optimizada', () => {
   const coreLibrary = appManifest.dependencies.libraries.find(item => item.userSymbol === 'SUNARPCore');
   assert.ok(coreLibrary, 'el manifiesto debe declarar SUNARPCore');
