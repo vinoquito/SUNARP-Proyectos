@@ -626,6 +626,36 @@ function _accessValidateSnapshot_(data) {
 }
 
 
+/**
+ * Recupera únicamente las referencias organizacionales utilizadas por una
+ * operación de ámbito. Mantiene separadas las réplicas de Seguridad y Directorio.
+ */
+function _accessFindOrgCatalogByIds_(entity, ids) {
+  const references = Array.from(new Set((ids || [])
+    .map(_accessText_)
+    .filter(Boolean)));
+  if (!references.length) return [];
+
+  let source;
+  if (entity === 'SEDE') {
+    source = _accessSecuritySource_('Sedes');
+  } else if (entity === 'ESTRUCTURA_ORG') {
+    source = _accessSecuritySource_('EstructuraOrg');
+  } else if (entity === 'LOCAL') {
+    source = _accessDirectorySource_('locales');
+  } else {
+    throw new Error('Entidad de referencia organizacional no admitida: ' + entity + '.');
+  }
+
+  const result = SUNARPCore.findRecordsByFields(
+    source,
+    { id: references },
+    { searchField: 'id', matchCase: false, requiredHeaders: ['id'] }
+  );
+  return (result.records || []).filter(_accessCatalogIsActive_);
+}
+
+
 function _accessOrgCatalog_() {
   const requests = [
     { key: 'sedes', source: getIntranetDataSource('SECURITY', 'Sedes', 1) },
@@ -1727,10 +1757,40 @@ function saveAccessScopes(payload) {
     ambitosAcceso: targetScopes
   };
 
-  const catalogs = _accessOrgCatalog_();
-  const structures = catalogs.estructuraOrg || [];
-  const sites = catalogs.sedes || [];
-  const locals = catalogs.locales || [];
+  // Resolver por ID solo las referencias afectadas por la operación y las
+  // referencias vigentes de otros módulos usadas para validar la sede única.
+  const referenceIdsByEntity = {
+    SEDE: new Set(),
+    ESTRUCTURA_ORG: new Set(),
+    LOCAL: new Set()
+  };
+  scopesInput.forEach(item => {
+    const type = _accessUpper_(item.tipo_ambito_id || item.scopeType);
+    const typeConfig = _accessScopeType_(data, type);
+    const entity = typeConfig && _accessUpper_(typeConfig.entidad_referencia);
+    const referenceId = _accessText_(item.referencia_id || item.referenceId);
+    if (referenceId && referenceIdsByEntity[entity]) {
+      referenceIdsByEntity[entity].add(referenceId);
+    }
+  });
+  targetScopes.forEach(scope => {
+    if (!_accessIsActive_(scope.active) ||
+        _accessText_(scope.modulo_id) === moduleId) return;
+    const type = _accessUpper_(scope.tipo_ambito_id);
+    const referenceId = _accessText_(scope.referencia_id);
+    if (referenceId && referenceIdsByEntity[type]) {
+      referenceIdsByEntity[type].add(referenceId);
+    }
+  });
+  const structures = _accessFindOrgCatalogByIds_(
+    'ESTRUCTURA_ORG', Array.from(referenceIdsByEntity.ESTRUCTURA_ORG)
+  );
+  const sites = _accessFindOrgCatalogByIds_(
+    'SEDE', Array.from(referenceIdsByEntity.SEDE)
+  );
+  const locals = _accessFindOrgCatalogByIds_(
+    'LOCAL', Array.from(referenceIdsByEntity.LOCAL)
+  );
 
   const normalized = scopesInput.map(item => {
     const type = _accessUpper_(item.tipo_ambito_id || item.scopeType);

@@ -1384,6 +1384,40 @@ test('la autorización ordinaria consulta solo relaciones activas y proyecta los
 });
 
 
+
+test('las validaciones de ámbitos consultan referencias puntuales y respetan las dos réplicas organizacionales', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  const calls = [];
+  sandbox.SUNARPCore.findRecordsByFields = (source, filters, options) => {
+    calls.push({
+      sourceKey: source.sourceKey,
+      sheetName: source.sheetName,
+      filterIds: Array.from(filters.id),
+      searchField: options.searchField
+    });
+    return {
+      records: Array.from(filters.id, id => ({ id, active: true, sede_id: 'SITE_1' })),
+      total: filters.id.length
+    };
+  };
+
+  sandbox._accessFindOrgCatalogByIds_('SEDE', ['SITE_1', 'SITE_1']);
+  sandbox._accessFindOrgCatalogByIds_('ESTRUCTURA_ORG', ['ORG_1']);
+  sandbox._accessFindOrgCatalogByIds_('LOCAL', ['LOCAL_1']);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].sheetName, 'Sedes');
+  assert.equal(calls[1].sheetName, 'EstructuraOrg');
+  assert.equal(calls[2].sheetName, 'locales');
+  assert.equal(calls[0].filterIds.join(','), 'SITE_1');
+  assert.ok(calls.every(call => call.searchField === 'id'));
+
+  const start = accessSource.indexOf('function saveAccessScopes(');
+  const end = accessSource.indexOf('function saveAccessUserConfiguration(', start);
+  const saveScopesSource = accessSource.slice(start, end);
+  assert.ok(saveScopesSource.includes('_accessFindOrgCatalogByIds_'));
+  assert.ok(!saveScopesSource.includes('_accessOrgCatalog_'));
+});
+
 test('el historial de auditoría combina actor, módulo, acción, resultado, registro y fechas con total y orden exactos', () => {
   const sandbox = createAdapterSandbox(makeSecurityData());
   sandbox._accessRequirePermission_ = () => ({ authenticated: true });
