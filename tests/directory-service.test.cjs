@@ -996,6 +996,8 @@ function createAssignmentWriteSandbox(context) {
   vmContext._directoryLoadContext_ = () => context;
   vmContext._directoryFindAuthorizedAssignmentById_ = (_context, _authorization, id) =>
     (context.asignaciones || []).find(item => String(item.asignacion_id) === String(id)) || null;
+  vmContext._directoryGetNextOrderForLocation_ = (_context, _authorization, structureLocalId, localId) =>
+    api.getNextOrder(context.asignaciones || [], structureLocalId, localId);
   vmContext._directorySource_ = name => name;
   vmContext._directoryInvalidateCache_ = () => {};
   vmContext._accessRecordIsAllowed_ = () => true;
