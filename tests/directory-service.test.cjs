@@ -516,10 +516,11 @@ test('listDirectoryAssignments pagina mediante Core y no carga asignaciones comp
         hasMore: true
       };
     },
-    findRecordsByFields: (source, filters) => ({
-      records: String(filters.persona_id) === 'PER_001' ? [pagePerson] : [],
-      total: String(filters.persona_id) === 'PER_001' ? 1 : 0
-    })
+    findRecordsByFields: (source, filters) => {
+      const ids = Array.isArray(filters.persona_id) ? Array.from(filters.persona_id) : [filters.persona_id];
+      const records = ids.includes('PER_001') ? [pagePerson] : [];
+      return { records, total: records.length };
+    }
   };
   const result = vmContext.listDirectoryAssignments({ page: 2, pageSize: 10 });
   assert.equal(query.options.offset, 10);
