@@ -1349,17 +1349,22 @@ function listRecordsFromSources(requests) {
 
       const readStarted = Date.now();
 
-      // Una lectura de datos por pestaña.
-      const values = sheet.getDataRange().getValues();
+      // Limita la lectura al rectángulo realmente ocupado por la hoja.
+      // getDataRange() puede extenderse por formato residual muy debajo o
+      // a la derecha de los datos y convertir una consulta pequeña en una
+      // lectura masiva innecesaria.
+      const lastRow = sheet.getLastRow();
+      const lastColumn = sheet.getLastColumn();
 
-      if (
-        values.length < config.headerRow ||
-        values[config.headerRow - 1].length === 0
-      ) {
+      if (!lastColumn || lastRow < config.headerRow) {
         throw new Error(
           `SUNARP Core: la pestaña "${config.sheetName}" no contiene encabezados.`
         );
       }
+
+      // Una lectura contigua por pestaña, conservando el mismo contrato
+      // de encabezados y registros que la implementación anterior.
+      const values = sheet.getRange(1, 1, lastRow, lastColumn).getValues();
 
       const headers = values[
         config.headerRow - 1
