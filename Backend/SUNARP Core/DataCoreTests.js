@@ -536,20 +536,29 @@ function runCoreSelfTests_() {
     );
 
     const generationBeforeExternalEdit = _coreGetSourceGeneration_(source);
-    const externalName = 'Edición manual de prueba';
+    const sourceRecordsKey = _coreBuildSourceCacheKey_(source, 'records') +
+      ':' + generationBeforeExternalEdit;
+    const externalName = 'Edición externa a Core';
     sheet.getRange(sheet.getLastRow(), 2).setValue(externalName);
     SpreadsheetApp.flush();
     const generationAfterExternalEdit = _coreGetSourceGeneration_(source);
+    const retainedSnapshot = getCachedValue(sourceRecordsKey);
     const cachedAfterExternalEdit = listRecordsFromSourcesCached([{
       key: 'registros', source, requiredHeaders: ['id', 'nombre']
     }], 300);
     const cachedExternalRow = cachedAfterExternalEdit.registros.find(
       row => row.id === 'TST_003'
     );
+    const retainedExternalRow = Array.isArray(retainedSnapshot)
+      ? retainedSnapshot.find(row => row.id === 'TST_003')
+      : null;
+    const cachedName = cachedExternalRow && cachedExternalRow.nombre;
     assert(
       generationAfterExternalEdit === generationBeforeExternalEdit &&
-      cachedExternalRow && cachedExternalRow.nombre === 'María López',
-      'Una edición directa de Sheets no cambia la generación y deja vigente la instantánea hasta invalidarla.'
+      (!Array.isArray(retainedSnapshot) ||
+        (retainedExternalRow && retainedExternalRow.nombre === 'María López')) &&
+      (cachedName === 'María López' || cachedName === externalName),
+      'Una edición externa no cambia la generación; una instantánea retenida puede quedar obsoleta, pero CacheService también puede desalojarla antes del TTL.'
     );
 
     const externalInvalidation = invalidateSourceCache(source);
