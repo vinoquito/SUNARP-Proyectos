@@ -377,6 +377,77 @@ test('la edición rechaza una asignación que pertenece a otra persona antes de 
   assert.equal(writes, 0);
 });
 
+
+test('guardar datos personales consulta únicamente las asignaciones de la persona', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  const person = {
+    persona_id: 'PER_015',
+    nombres: 'Ana',
+    apellidos: 'Pérez',
+    correo_institucional: 'ana@sunarp.gob.pe'
+  };
+  const linkedAssignment = {
+    asignacion_id: 'ASG_015',
+    persona_id: 'PER_015',
+    estructura_local_id: 'REL_1',
+    local_id: ''
+  };
+  const lookupCalls = [];
+  let loadOptions = null;
+  let scopeAssignments = null;
+  let permissionRequested = '';
+
+  vmContext._directoryAssertAllowedFields_ = () => true;
+  vmContext._directoryLoadContext_ = options => {
+    loadOptions = options;
+    return { asignaciones: [], estructuraLocal: [], estructuraOrg: [], locales: [] };
+  };
+  vmContext._directorySource_ = name => name;
+  vmContext._directoryAuthorizationContext_ = permission => {
+    permissionRequested = permission;
+    return { auth: {}, structures: [], locals: [] };
+  };
+  vmContext._directoryAssertPersonMutationScope_ = (_authorization, _person, assignments, context) => {
+    scopeAssignments = assignments;
+    assert.equal(context.asignaciones.length, 0);
+  };
+  vmContext._directoryAssertDocumentAvailable_ = () => ({
+    tipo_documento: 'DNI',
+    numero_documento: '12345678'
+  });
+  vmContext._accessRunAudited_ = (_auth, _event, callback) => callback().value;
+  vmContext.SUNARPCore = {
+    findRecordsByFields: (source, filters) => {
+      lookupCalls.push({ source, filters });
+      if (source === 'personas') return { records: [person], total: 1 };
+      if (source === 'asignaciones') return { records: [linkedAssignment], total: 1 };
+      if (source === 'servidores datos personales') return { records: [], total: 0 };
+      throw new Error('Fuente inesperada: ' + source);
+    },
+    assertValidRecord: () => true,
+    insertRecord: (source, record) => ({ success: true, record })
+  };
+
+  const result = vmContext._saveDirectoryPersonalData_({
+    servidor_id: 'PER_015',
+    tipo_documento: 'DNI',
+    numero_documento: '12345678'
+  }, false);
+
+  assert.equal(loadOptions.includeAssignments, false);
+  assert.equal(loadOptions.includePersonalData, false);
+  assert.equal(permissionRequested, 'INFORMACION_PERSONAL_EDITAR');
+  assert.equal(scopeAssignments.length, 1);
+  assert.equal(scopeAssignments[0].asignacion_id, 'ASG_015');
+  assert.deepEqual(JSON.parse(JSON.stringify(lookupCalls)), [
+    { source: 'personas', filters: { persona_id: 'PER_015' } },
+    { source: 'asignaciones', filters: { persona_id: 'PER_015' } },
+    { source: 'servidores datos personales', filters: { servidor_id: 'PER_015' } }
+  ]);
+  assert.equal(result.success, true);
+});
+
 test('el guardado directo de ficha personal aplica la unicidad documental normalizada', () => {
   const start = serviceSource.indexOf('function _saveDirectoryPersonalData_(');
   const end = serviceSource.indexOf('function saveDirectoryEntry(', start);
