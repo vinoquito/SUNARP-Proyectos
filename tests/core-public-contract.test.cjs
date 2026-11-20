@@ -204,9 +204,9 @@ test('el contrato conserva los límites comprobados de consulta, invalidación y
   assert.match(contract, /no convierte la lectura completa, el total ni las facetas en una transacción/);
   assert.match(contract, /no cambia automáticamente la generación/);
   assert.match(contract, /debe llamar `invalidateSourceCache\(source\)`/);
-  assert.match(contract, /consistencia ante ediciones externas forma parte del contrato de \\*\\*Fase 1\\*\\*/);
-  assert.match(contract, /distingue mayúsculas\\/minúsculas/);
-  assert.doesNotMatch(contract, /Fase 4/);
+  assert.ok(contract.includes('consistencia ante ediciones externas forma parte del contrato de **Fase 1**'));
+  assert.ok(contract.includes('distingue mayúsculas/minúsculas'));
+  assert.doesNotMatch(contract, /fase específica de consistencia externa/i);
   assert.match(contract, /puede haber cambios parciales/);
   assert.match(contract, /ejecutar `runCoreTests\(\)`/i);
   assert.match(contract, /no expone el historial de versiones ni los despliegues del proyecto Apps Script/);
