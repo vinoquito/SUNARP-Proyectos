@@ -734,16 +734,16 @@ test('el contrato de filtros separa ámbitos fijos, opciones autorizadas y ances
     { estructura_id: '', sede_id: 'SEDE_2', local_id: 'LOC_9', cargo_id: 'CAR_2' }
   ], structures);
 
-  assert.deepEqual(contract.scopes, [
+  assert.equal(JSON.stringify(contract.scopes), JSON.stringify([
     { type: 'ESTRUCTURA_ORG', referenceId: 'EST_1', includeDescendants: true },
     { type: 'LOCAL', referenceId: 'LOC_9', includeDescendants: false }
-  ]);
-  assert.deepEqual(contract.fixed.structureIds, ['EST_1']);
-  assert.deepEqual(contract.fixed.localIds, ['LOC_9']);
-  assert.deepEqual(contract.selectable.sedeIds, ['SEDE_1', 'SEDE_2']);
-  assert.deepEqual(contract.selectable.cargoIds, ['CAR_1', 'CAR_2']);
-  assert.deepEqual(contract.selectable.structureIds, ['EST_CHILD']);
-  assert.deepEqual(contract.contextStructureIds, ['EST_1', 'EST_ROOT']);
+  ]));
+  assert.equal(JSON.stringify(contract.fixed.structureIds), JSON.stringify(['EST_1']));
+  assert.equal(JSON.stringify(contract.fixed.localIds), JSON.stringify(['LOC_9']));
+  assert.equal(JSON.stringify(contract.selectable.sedeIds), JSON.stringify(['SEDE_1', 'SEDE_2']));
+  assert.equal(JSON.stringify(contract.selectable.cargoIds), JSON.stringify(['CAR_1', 'CAR_2']));
+  assert.equal(JSON.stringify(contract.selectable.structureIds), JSON.stringify(['EST_CHILD']));
+  assert.equal(JSON.stringify(contract.contextStructureIds), JSON.stringify(['EST_1', 'EST_ROOT']));
 });
 
 test('el contrato de filtros reconoce TOTAL sin convertirlo en una selección restrictiva', () => {
@@ -755,6 +755,6 @@ test('el contrato de filtros reconoce TOTAL sin convertirlo en una selección re
     }] }
   }, [{ sede_id: 'SEDE_1', cargo_id: 'CAR_1', estructura_id: 'EST_1', local_id: 'LOC_1' }], []);
   assert.equal(contract.fixed.total, true);
-  assert.deepEqual(contract.fixed.sedeIds, []);
-  assert.deepEqual(contract.selectable.sedeIds, ['SEDE_1']);
+  assert.equal(JSON.stringify(contract.fixed.sedeIds), '[]');
+  assert.equal(JSON.stringify(contract.selectable.sedeIds), JSON.stringify(['SEDE_1']));
 });
