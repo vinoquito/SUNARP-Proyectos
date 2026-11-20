@@ -2745,7 +2745,11 @@ function getAccessUsers(filters) {
   const peopleResult = SUNARPCore.findRecordsByFields(
     _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
     { persona_id: accountPersonaIds },
-    { searchField: 'persona_id', requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people }
+    {
+      searchField: 'persona_id',
+      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people,
+      projectionFields: ['persona_id', 'correo_institucional', 'nombres', 'apellidos']
+    }
   );
   const people = new Map((peopleResult.records || []).map(person => [_accessText_(person.persona_id), person]));
 

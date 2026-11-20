@@ -430,9 +430,11 @@ test('getAccessUsers consulta candidatos por sede o rol sin cargar el snapshot g
 
   const sandbox = createAdapterSandbox(data);
   const projectionRequests = [];
+  const peopleProjectionRequests = [];
   const originalFind = sandbox.SUNARPCore.findRecordsByFields;
   sandbox.SUNARPCore.findRecordsByFields = (source, filters, options) => {
     if (source.sheetName === 'asignaciones') projectionRequests.push(options.projectionFields);
+    if (source.sheetName === 'personas') peopleProjectionRequests.push(options.projectionFields);
     return originalFind(source, filters, options);
   };
   let fullLoads = 0;
@@ -451,6 +453,9 @@ test('getAccessUsers consulta candidatos por sede o rol sin cargar el snapshot g
     fields.join(',') === 'asignacion_id,persona_id,estructura_local_id,local_id,active'
   ));
   assert.ok(!bySite.items.some(item => item.persona_id === 'PER_119'));
+  assert.deepEqual(peopleProjectionRequests[0], [
+    'persona_id', 'correo_institucional', 'nombres', 'apellidos'
+  ]);
 
   const byRole = sandbox.getAccessUsers({ rol_id: 'ROL_ADMIN', page: 1, pageSize: 10 });
   assert.equal(byRole.total, 1);
