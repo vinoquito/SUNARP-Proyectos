@@ -547,10 +547,15 @@ function authorizationIsRecordInScope(
 
   const activeScopes = moduleAccess.scopes;
 
-  if (activeScopes.some(scope =>
+  const totalScopes = activeScopes.filter(scope =>
     _coreAuthScopeType_(scope) === 'TOTAL'
-  )) {
-    return true;
+  );
+  if (totalScopes.length) {
+    // TOTAL es exclusivo dentro del módulo. Una mezcla de TOTAL y ámbitos
+    // específicos es inconsistente y debe denegarse, nunca ampliar permisos.
+    return activeScopes.length === 1 &&
+      totalScopes.length === 1 &&
+      !_coreAuthText_(totalScopes[0].referencia_id);
   }
 
   record = record || {};
