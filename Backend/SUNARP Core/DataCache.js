@@ -45,11 +45,48 @@ function _coreBuildSourceCacheKey_(source, kind) {
 /**
  * Invalida las instantáneas de una fuente después de una escritura.
  */
+/**
+ * Devuelve la generación vigente de una fuente. Si CacheService expulsa
+ * la clave antes de tiempo se crea un UUID nuevo: las consultas anteriores
+ * quedan inaccesibles aunque sus entradas físicas todavía existan.
+ */
+function _coreGetSourceGeneration_(source) {
+  const key = _coreBuildSourceCacheKey_(source, 'generation');
+  try {
+    const current = getCachedValue(key);
+    if (typeof current === 'string' && current) return current;
+    const generation = Utilities.getUuid();
+    const stored = putCachedValue(key, generation, _CORE_CACHE_MAX_TTL_);
+    return stored && stored.success === true ? generation : null;
+  } catch (error) {
+    console.warn('[SUNARP Core] No se pudo obtener la generación de la fuente:', error.message);
+    return null;
+  }
+}
+
+
+/**
+ * Invalida instantáneas y cambia la generación de la fuente.
+ * Los resultados derivados incluyen esta generación en su clave; por tanto
+ * dejan de ser utilizables incluso si CacheService conserva entradas antiguas.
+ */
 function _coreInvalidateSourceCache_(source) {
   const recordsKey = _coreBuildSourceCacheKey_(source, 'records');
   const infoKey = _coreBuildSourceCacheKey_(source, 'info');
+  const generationKey = _coreBuildSourceCacheKey_(source, 'generation');
   try {
-    return removeCachedValues([recordsKey, infoKey]);
+    const generation = Utilities.getUuid();
+    const generationStored = putCachedValue(
+      generationKey,
+      generation,
+      _CORE_CACHE_MAX_TTL_
+    );
+    const removed = removeCachedValues([recordsKey, infoKey]);
+    return {
+      success: Boolean(generationStored && generationStored.success && removed && removed.success),
+      generation,
+      removed
+    };
   } catch (error) {
     console.warn('[SUNARP Core] No se pudo invalidar la fuente:', error.message);
     return { success: false, error: error.message };
