@@ -162,7 +162,11 @@ function queryRecords(source, options) {
   const validated = _coreQueryValidateAuthorization_(authorization);
   const groups = _coreQueryNormalizeGroups_(options);
   const idField = String(options.idField || '').trim();
+  const distinctBy = String(options.distinctBy || '').trim();
   if (!idField) throw new Error('SUNARP Core: queryRecords requiere idField.');
+  if (distinctBy && !/^[A-Za-z0-9_]+$/.test(distinctBy)) {
+    throw new Error('SUNARP Core: distinctBy no es un campo válido.');
+  }
 
   const offset = options.offset === undefined ? 0 : Number(options.offset);
   const limit = options.limit === undefined ? 25 : Number(options.limit);
@@ -194,7 +198,7 @@ function queryRecords(source, options) {
   }
 
   const descriptor = {
-    groups, search, searchFields, searchAny, sortBy, sortDirection, offset, limit, idField,
+    groups, search, searchFields, searchAny, sortBy, sortDirection, offset, limit, idField, distinctBy,
     schemaVersion: String(options.schemaVersion || '1')
   };
   const catalogVersion = _coreQueryGetCatalogVersion_(authorization);
@@ -226,7 +230,7 @@ function queryRecords(source, options) {
   groups.forEach(group => {
     const fields = Object.keys(group);
     const result = findRecordsByFields(source, group, {
-      requiredHeaders: [idField, sortBy].concat(searchFields, searchAny.map(match => match.field)),
+      requiredHeaders: [idField, distinctBy, sortBy].filter(Boolean).concat(searchFields, searchAny.map(match => match.field)),
       searchField: fields[0]
     });
     (result.records || []).forEach(record => {
@@ -296,6 +300,17 @@ function queryRecords(source, options) {
       _coreCompareValues_(a[idField], b[idField]);
     return compared * (sortDirection === 'desc' ? -1 : 1);
   });
+
+  if (distinctBy) {
+    const distinctRecords = new Map();
+    records.forEach(record => {
+      const value = String(record[distinctBy] === null || record[distinctBy] === undefined
+        ? '' : record[distinctBy]).trim();
+      if (value && !distinctRecords.has(value)) distinctRecords.set(value, record);
+    });
+    records.length = 0;
+    distinctRecords.forEach(record => records.push(record));
+  }
 
   const total = records.length;
   const page = records.slice(offset, offset + limit);
