@@ -1,8 +1,8 @@
 # Contrato público de SUNARP Core — base para v10
 
-**Estado:** contrato de trabajo asociado al código fuente del repositorio. No acredita que la versión 10 haya sido creada o publicada en Apps Script.  
+**Estado:** SUNARP Core v10 fue creada como versión inmutable y cuenta con un despliegue versionado de biblioteca en Apps Script. La ejecución de pruebas de Core fue satisfactoria. La sincronización del manifiesto de Gestor y su validación mediante el despliegue de pruebas siguen pendientes.  
 **Biblioteca:** `1mDzO7uTarQCKYpS5U7pMv5go0Wh76k3JoIh5GvxWPfU0zoUG7Jfp17tD`  
-**Consumidor del repositorio:** Gestor de intranet SUNARP. Su manifiesto permanece en versión 9 hasta la publicación y verificación efectiva de v10.
+**Consumidor del repositorio:** Gestor de intranet SUNARP. El manifiesto de esta rama se actualiza para referenciar Core versión 10; esto no demuestra que el proyecto Apps Script consumidor ni su despliegue de prueba hayan sido sincronizados.
 
 Este documento enumera la superficie global que Apps Script expone a los proyectos consumidores, describe los parámetros y las respuestas observables en el código y diferencia expresamente las lecturas completas de las consultas selectivas. Las funciones privadas cuyos nombres empiezan y terminan con guion bajo no forman parte de la API de la biblioteca.
 
@@ -521,7 +521,7 @@ Ejecuta la misma validación y lanza un error agregado si `valid` es falso. Devu
 
 ### 10.1 Consumidores comprobados en esta rama
 
-- **Gestor de intranet SUNARP** es el único proyecto de Apps Script que declara e invoca directamente la biblioteca `SUNARPCore` en esta rama. Su manifiesto mantiene la dependencia en versión 9; no se actualiza a v10 hasta completar el procedimiento de publicación y la prueba del consumidor.
+- **Gestor de intranet SUNARP** es el único proyecto de Apps Script que declara e invoca directamente la biblioteca `SUNARPCore` en esta rama. El manifiesto del repositorio referencia la versión 10 publicada. Queda pendiente sincronizarlo con el proyecto Apps Script consumidor y validar la integración mediante el despliegue de pruebas existente; no se debe actualizar el despliegue productivo.
 - La resolución ordinaria de identidad del Gestor obtiene el correo de sesión, busca una coincidencia exacta en `personas.correo_institucional` mediante `resolveIdentity` y proyecta únicamente `persona_id`, correo, nombres y apellidos. Exige exactamente una coincidencia y entrega `persona_id` a `resolveAuthorizationContext`; Core no busca identidades por correo dentro del motor de autorización.
 - La autorización ordinaria del Gestor consulta las relaciones activas de la persona solicitante, sus ámbitos, roles asociados, relaciones rol-permiso y permisos correspondientes; carga el catálogo de módulos mediante la caché central. No carga las nueve tablas administrativas completas durante el login. `_accessLoadSecurityData_()`, que sí lee el snapshot integral de seguridad, se reserva para la operación explícita de mantenimiento `validateAccessManagementIntegrity()`.
 - La migración excepcional `migrateAccessManagementSchema()` modifica las fuentes `Permisos`, `AmbitosAcceso` y `TiposAmbito`. Ahora utiliza `runSourceWriteBatch`: el bloqueo, `flush` y las invalidaciones se coordinan desde la biblioteca Core para evitar carreras con CRUD de Core. La función exige que la biblioteca exponga ese método y se niega a iniciar escrituras cuando el consumidor permanece en una versión anterior. El callback no tiene rollback; un error tras la primera mutación puede dejar cambios parciales y exige inspección antes de reintentar.
@@ -534,18 +534,26 @@ Este inventario describe los consumidores comprobados en el repositorio y la ram
 
 ## 11. Verificación de versión y publicación
 
-El manifiesto de Gestor sigue declarando Core versión 9. El código fuente ya contiene contratos que Gestor comprueba como v10, pero un manifiesto no demuestra qué código contiene una versión publicada.
+### 11.1 Comprobaciones completadas
 
-Para cerrar el paso a v10 es necesario:
-1. Completar y probar el contrato descrito aquí contra todos los consumidores.
-2. Confirmar que los archivos `.js` de Core se incluyan en el proyecto Apps Script (el `.clasp.json` tiene `rootDir: ""` y extensiones `.js`/ `.gs`).
-3. Ejecutar `runCoreTests()` desde el proyecto de Core con una cuenta que tenga los permisos de Sheets y Drive necesarios; revisar el registro de ejecución completo. Esta función ejecuta las suites de repositorio, autorización y operaciones compuestas sobre hojas temporales, y envía el archivo de prueba a la papelera al finalizar.
-4. En Apps Script, abrir **Project History** y **Manage deployments** del proyecto Core. Confirmar la versión más alta y revisar qué versión utiliza cada despliegue existente. No asumir que la versión siguiente será 10 solo porque Gestor declare actualmente la 9.
-5. Guardar/sincronizar el código probado de Core y crear una versión inmutable con descripción `SUNARP Core v10 — cierre de contrato y arquitectura de Fase 1`. Para distribuir Core como biblioteca, crear un **despliegue versionado dedicado a la biblioteca Core** y verificar qué número de versión asignó Apps Script. No editar ni actualizar ningún despliegue existente de Gestor, de la intranet o de otra aplicación de producción. Una versión es una instantánea inmutable; un despliegue es una liberación que apunta a una versión. La creación de una nueva versión/despliegue de la biblioteca Core no requiere mover los despliegues de las aplicaciones consumidoras.
-6. En el editor de Gestor, abrir la dependencia `SUNARPCore` usando el ID de biblioteca existente y comprobar que la versión 10 aparece en el selector y que expone los 31 métodos públicos documentados. La biblioteca requiere acceso de visualización para sus consumidores.
-7. Solo después preparar el cambio de `appsscript.json` del Gestor de 9 a 10 y probarlo mediante el mecanismo de pruebas de Gestor, sin actualizar el despliegue productivo.
+- El proyecto de Core incluye los archivos fuente JavaScript mediante `.clasp.json` con `rootDir: ""` y extensiones `.js`/`.gs`.
+- `runCoreTests()` se ejecutó en Apps Script sin errores. La suite de repositorio registró 51 pruebas satisfactorias; las suites de autorización y repositorio compuesto también finalizaron con sus aserciones correctas.
+- La auditoría estática de la rama identifica 31 funciones globales públicas y comprueba sus firmas documentadas y las invocaciones desde Gestor.
+- Apps Script creó la versión inmutable **10**, con la descripción `SUNARP Core v10 - contrato público y validación integral`.
+- Se creó el despliegue versionado de biblioteca **v10** con ID `AKfycbw5Sx_tBJH6zANC8IrQ4cbYSIbiYj8N2NEfBqAtNtXEylclET7XK7ns5TNemHAw9KRpCg`. El inventario confirmó que los despliegues previos `@HEAD` y `@9` permanecen intactos.
+- En el editor del Gestor, el usuario confirmó que la versión 10 aparece disponible en el selector de la dependencia `SUNARPCore`; el identificador de código permanece `SUNARPCore` y el ID de biblioteca está conservado en el manifiesto.
 
-No publicar ni desplegar automáticamente aplicaciones de producción. El conector GitHub utilizado para esta auditoría no expone el historial de versiones ni los despliegues del proyecto Apps Script; por tanto, no permite afirmar el contenido efectivo de la versión publicada 9, la versión más alta de Core ni que v10 ya exista. También debe comprobarse en Apps Script si los triggers que eventualmente invalidan hojas están realmente instalados, quién es su propietario y qué eventos/archivos cubren; los triggers no se heredan automáticamente de la biblioteca. Esas comprobaciones deben hacerse antes de cambiar el manifiesto del Gestor.
+### 11.2 Sincronización y validación pendientes
+
+1. El manifiesto de esta rama pasa a declarar `SUNARPCore` versión `10`. Se conserva `SUNARP_UI` versión `0` en modo desarrollo y se respeta el acceso `DOMAIN` informado para el proyecto Apps Script de Gestor.
+2. Sincronizar el cambio del repositorio con el proyecto Apps Script de Gestor mediante `clasp push` desde su carpeta. Esta operación actualiza el código fuente del proyecto, no el despliegue productivo existente.
+3. Validar el consumidor con el mecanismo de pruebas de Gestor ya establecido. Comprobar inicio de sesión, resolución de identidad/autorización y las operaciones de Información de personal que utilizan Core. No crear ni actualizar despliegues productivos.
+4. Verificar en Apps Script los activadores instalados en Core y en cada proyecto que escriba fuentes compartidas. Registrar propietario, función, evento, archivo y cobertura real. No asumir que la biblioteca transmite activadores a los consumidores ni que `IMPORTRANGE` activa una invalidación.
+
+La publicación de Core v10 y su disponibilidad como biblioteca están comprobadas. **La Fase 1 no debe declararse completamente cerrada** hasta sincronizar y probar el consumidor Gestor y completar la auditoría de activadores/invalidación externa. Los despliegues de Gestor y de otras aplicaciones de producción deben permanecer sin cambios.
+
+No se afirma que el despliegue productivo de Gestor utilice v10. La validación pendiente debe realizarse mediante su mecanismo de pruebas; no se debe crear, editar ni actualizar un despliegue productivo de la aplicación.
+
 
 ## 12. Referencias oficiales de Apps Script
 
