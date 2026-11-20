@@ -37,6 +37,7 @@ const DIRECTORY_SERVICE_CONFIG = Object.freeze({
 });
 
 const DIRECTORY_DATA_CACHE_TTL = 300;
+const DIRECTORY_CATALOG_CACHE_TTL = 60;
 
 const DIRECTORY_REQUIRED_HEADERS = Object.freeze({
   personas: ['persona_id', 'nombres', 'apellidos', 'correo_institucional'],
@@ -163,7 +164,7 @@ function _directoryResolveDocumentTypesSource_() {
     DIRECTORY_SERVICE_CONFIG.sheets.documentTypes,
     'MASTER_DATA'
   );
-  const info = SUNARPCore.getSourceInfoCached(source, 300);
+  const info = SUNARPCore.getSourceInfoCached(source, DIRECTORY_CATALOG_CACHE_TTL);
   const missing = DIRECTORY_REQUIRED_HEADERS.documentTypes.filter(header =>
     !info.headers.includes(header)
   );
@@ -491,9 +492,28 @@ function _directoryLoadContextFromSheets_(options) {
     });
   }
 
-  // Core agrupa la lectura por libro aunque el catálogo documental
-  // se encuentre en Global parameters o en Directorios telefónicos.
-  const context = SUNARPCore.listRecordsFromSourcesCached(requests, DIRECTORY_DATA_CACHE_TTL);
+  // Las fuentes operativas conservan TTL de 5 minutos. Los catálogos
+  // replicados desde Global parameters usan TTL de 1 minuto; además, sus
+  // generaciones incluyen la fuente maestra declarada en AppConfig.
+  const operationalRequests = requests.filter(request =>
+    !(request.source.dependencies || []).length &&
+    request.source.sheetName !== DIRECTORY_SERVICE_CONFIG.sheets.documentTypes
+  );
+  const catalogRequests = requests.filter(request =>
+    (request.source.dependencies || []).length > 0 ||
+    request.source.sheetName === DIRECTORY_SERVICE_CONFIG.sheets.documentTypes
+  );
+  const context = {};
+  if (operationalRequests.length) {
+    Object.assign(context, SUNARPCore.listRecordsFromSourcesCached(
+      operationalRequests, DIRECTORY_DATA_CACHE_TTL
+    ));
+  }
+  if (catalogRequests.length) {
+    Object.assign(context, SUNARPCore.listRecordsFromSourcesCached(
+      catalogRequests, DIRECTORY_CATALOG_CACHE_TTL
+    ));
+  }
   if (!Array.isArray(context.personas)) context.personas = [];
   if (!Array.isArray(context.datosPersonales)) context.datosPersonales = [];
   if (!Array.isArray(context.asignaciones)) context.asignaciones = [];
