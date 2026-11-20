@@ -521,8 +521,8 @@ function _directoryInvalidateCache_() {
 }
 
 
-function _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap) {
-  const location = _directoryResolveAssignmentLocation_(assignment, context, false);
+function _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap, resolvedLocation) {
+  const location = resolvedLocation || _directoryResolveAssignmentLocation_(assignment, context, false);
   const maps = _directoryGetContextMaps_(context);
   const relation = location.relation
     ? relationMap.get(_directoryKey_(location.relation.id))
@@ -597,19 +597,27 @@ function _directoryBuildFilterContract_(authorization, assignments, structures) 
 function _directoryBuildView_(context, authorization) {
   const relations = _directoryBuildRelations_(context, false), relationMap = _directoryCreateMap_(relations);
   const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
-  const assignments = context.asignaciones
-    .map(item => _directoryEnrichAssignment_(item, context, relationMap, peopleMap))
-    .filter(record => _accessRecordIsAllowed_(
+  const assignments = [];
+
+  // Resolver primero la adscripción y comprobar el ámbito. Solo los registros
+  // autorizados pasan por el enriquecimiento destinado a la respuesta.
+  context.asignaciones.forEach(item => {
+    const location = _directoryResolveAssignmentLocation_(item, context, false);
+    const allowed = _accessRecordIsAllowed_(
       authorization.auth,
       'MOD_INFO_PERSONAL',
       {
-        estructura_id: record.estructura_id,
-        sede_id: record.sede_id,
-        local_id: record.local_id
+        estructura_id: location.estructura_id,
+        sede_id: location.sede_id,
+        local_id: item.local_id
       },
       authorization.structures,
       authorization.locals
-    ));
+    );
+    if (!allowed) return;
+    assignments.push(_directoryEnrichAssignment_(item, context, relationMap, peopleMap, location));
+  });
+
   const visiblePersonIds = new Set(assignments.map(x => _directoryKey_(x.persona_id)));
   const hasTotalScope = _accessRecordIsAllowed_(authorization.auth, 'MOD_INFO_PERSONAL', {}, authorization.structures);
   const people = context.personas.filter(x => hasTotalScope || visiblePersonIds.has(_directoryKey_(x.persona_id)));
