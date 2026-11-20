@@ -476,6 +476,40 @@ test('el contador de administradores globales ignora cuentas, roles o ámbitos i
   assert.equal(sandbox._accessCountAdministrators_(nonAdminRole), 0);
 });
 
+test('el bootstrap de Administración no descarga las relaciones globales de seguridad', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  const reads = [];
+  const original = sandbox.SUNARPCore.listRecordsFromSourcesCached;
+  sandbox.SUNARPCore.listRecordsFromSourcesCached = requests => {
+    requests.forEach(request => reads.push(request.source.sheetName));
+    return original(requests);
+  };
+  const view = sandbox.getAccessManagementData();
+  assert.equal(view.users.length, 0);
+  assert.equal(view.userRoles.length, 0);
+  assert.equal(view.scopes.length, 0);
+  assert.ok(reads.includes('Modulos'));
+  assert.ok(reads.includes('Roles'));
+  assert.ok(reads.includes('TiposAmbito'));
+  assert.doesNotMatch(reads.join('|'), /Usuarios|UsuarioRol|Permisos|RolPermiso|AmbitosAcceso|Operaciones/);
+});
+
+test('la configuración del editor consulta solo las relaciones de la persona seleccionada', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  const calls = [];
+  const original = sandbox.SUNARPCore.findRecordsByFields;
+  sandbox.SUNARPCore.findRecordsByFields = (source, filters, options) => {
+    calls.push({ sheet: source.sheetName, filters });
+    return original(source, filters, options);
+  };
+  const configuration = sandbox.getAccessUserConfiguration('PER_117');
+  assert.equal(configuration.userRoles.length, 2);
+  assert.equal(configuration.scopes.length, 2);
+  assert.ok(calls.some(item => item.sheet === 'UsuarioRol' && item.filters.persona_id === 'PER_117'));
+  assert.ok(calls.some(item => item.sheet === 'AmbitosAcceso' && item.filters.persona_id === 'PER_117'));
+  assert.doesNotMatch(calls.map(item => item.sheet).join('|'), /Usuarios|Roles|Permisos|RolPermiso/);
+});
+
 test('la validación del snapshot rechaza dos roles activos de la misma persona y módulo', () => {
   const sandbox = createAdapterSandbox(makeSecurityData());
   const data = makeSecurityData();
