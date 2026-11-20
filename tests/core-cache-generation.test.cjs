@@ -230,3 +230,119 @@ test('una validación fallida antes del primer write no ejecuta flush ni invalid
   assert.equal(flushes, 0);
   assert.equal(sandbox._coreGetSourceGeneration_(sourceRef), before);
 });
+
+
+test('runSourceWriteBatch mantiene el bloqueo central hasta flush e invalidación de todas las fuentes únicas', () => {
+  const { sandbox } = createCacheSandbox();
+  const events = [];
+  sandbox._coreWithWriteLock_ = callback => {
+    events.push('lock:start');
+    try { return callback(); } finally { events.push('lock:end'); }
+  };
+  sandbox.SpreadsheetApp = { flush: () => events.push('flush') };
+  const invalidate = sandbox._coreInvalidateSourceCacheOrThrow_;
+  sandbox._coreInvalidateSourceCacheOrThrow_ = source => {
+    events.push('invalidate:' + source.sheetName);
+    return invalidate(source);
+  };
+
+  const result = sandbox.runSourceWriteBatch([
+    { spreadsheetId: 'S', sheetName: 'Permissions' },
+    { spreadsheetId: 'S', sheetName: 'Scopes' },
+    { spreadsheetId: 'S', sheetName: 'Permissions', label: 'duplicate label' }
+  ], markWriteStarted => {
+    events.push('write');
+    markWriteStarted();
+    return { success: true };
+  });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(events, [
+    'lock:start',
+    'write',
+    'flush',
+    'invalidate:Permissions',
+    'invalidate:Scopes',
+    'lock:end'
+  ]);
+});
+
+test('runSourceWriteBatch finaliza e invalida todas las fuentes si el callback falla después del primer write', () => {
+  const { sandbox } = createCacheSandbox();
+  const events = [];
+  sandbox._coreWithWriteLock_ = callback => {
+    events.push('lock:start');
+    try { return callback(); } finally { events.push('lock:end'); }
+  };
+  sandbox.SpreadsheetApp = { flush: () => events.push('flush') };
+  sandbox._coreInvalidateSourceCacheOrThrow_ = source => {
+    events.push('invalidate:' + source.sheetName);
+    return { success: true };
+  };
+
+  assert.throws(() => sandbox.runSourceWriteBatch([
+    { spreadsheetId: 'S', sheetName: 'Permissions' },
+    { spreadsheetId: 'S', sheetName: 'Scopes' }
+  ], markWriteStarted => {
+    markWriteStarted();
+    events.push('first-write');
+    throw new Error('partial failure');
+  }), /el lote falló después de iniciar una escritura/);
+
+  assert.deepEqual(events, [
+    'lock:start',
+    'first-write',
+    'flush',
+    'invalidate:Permissions',
+    'invalidate:Scopes',
+    'lock:end'
+  ]);
+});
+
+test('runSourceWriteBatch no finaliza ni invalida cuando el callback falla antes del primer write', () => {
+  const { sandbox } = createCacheSandbox();
+  const events = [];
+  sandbox._coreWithWriteLock_ = callback => {
+    events.push('lock:start');
+    try { return callback(); } finally { events.push('lock:end'); }
+  };
+  sandbox.SpreadsheetApp = { flush: () => events.push('flush') };
+  sandbox._coreInvalidateSourceCacheOrThrow_ = source => events.push('invalidate:' + source.sheetName);
+
+  assert.throws(() => sandbox.runSourceWriteBatch([
+    { spreadsheetId: 'S', sheetName: 'Permissions' }
+  ], () => {
+    throw new Error('validation failure');
+  }), /validation failure/);
+
+  assert.deepEqual(events, ['lock:start', 'lock:end']);
+});
+
+test('runSourceWriteBatch continúa invalidando fuentes cuando falla una invalidación', () => {
+  const { sandbox } = createCacheSandbox();
+  const events = [];
+  sandbox._coreWithWriteLock_ = callback => {
+    try { return callback(); } finally { events.push('lock:end'); }
+  };
+  sandbox.SpreadsheetApp = { flush: () => events.push('flush') };
+  sandbox._coreInvalidateSourceCacheOrThrow_ = source => {
+    events.push('invalidate:' + source.sheetName);
+    if (source.sheetName === 'Permissions') throw new Error('cache unavailable');
+    return { success: true };
+  };
+
+  assert.throws(() => sandbox.runSourceWriteBatch([
+    { spreadsheetId: 'S', sheetName: 'Permissions' },
+    { spreadsheetId: 'S', sheetName: 'Scopes' }
+  ], markWriteStarted => {
+    markWriteStarted();
+    return true;
+  }), /no se pudo completar su finalización segura/);
+
+  assert.deepEqual(events, [
+    'flush',
+    'invalidate:Permissions',
+    'invalidate:Scopes',
+    'lock:end'
+  ]);
+});
