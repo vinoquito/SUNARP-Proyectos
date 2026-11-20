@@ -297,10 +297,6 @@ function syncRecordsByKey(
       };
     });
 
-      updated,
-      deactivated,
-      totalActive: desiredMap.size
-    };
   });
 }
 
