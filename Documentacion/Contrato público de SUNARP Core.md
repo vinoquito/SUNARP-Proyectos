@@ -540,7 +540,7 @@ Este inventario describe los consumidores comprobados en el repositorio y la ram
 - `runCoreTests()` se ejecutó en Apps Script sin errores. La suite de repositorio registró 51 pruebas satisfactorias; las suites de autorización y repositorio compuesto también finalizaron con sus aserciones correctas.
 - La auditoría estática de la rama identifica 31 funciones globales públicas y comprueba sus firmas documentadas y las invocaciones desde Gestor.
 - Apps Script creó la versión inmutable **10**, con la descripción `SUNARP Core v10 - contrato público y validación integral`.
-- Se creó el despliegue versionado de biblioteca **v10** con ID `AKfycbw5Sx_tBJH6zANC8IrQ4cbYSIbiYj8N2NEfBqAtNtXEylclET7XK7ns5TNemHAw9KRpCg`. El inventario confirmó que los despliegues previos `@HEAD` y `@9` permanecen intactos.
+- Se creó el despliegue versionado de biblioteca **v10** con ID `AKfycbw5Sx_tBJH6zANC8IrQ4cbYSIbiYj8N2NEfBqAtNtXEylclET7XK7ns5TNemHAw9KRpCg`. El inventario confirmó que los despliegues previos `@HEAD` y `@9` permanecen intactos. El despliegue versionado anterior de Core, **versión 9**, se conserva sin modificaciones.
 - En el editor del Gestor, el usuario confirmó que la versión 10 aparece disponible en el selector de la dependencia `SUNARPCore`; el identificador de código permanece `SUNARPCore` y el ID de biblioteca está conservado en el manifiesto.
 
 ### 11.2 Sincronización y validación pendientes
