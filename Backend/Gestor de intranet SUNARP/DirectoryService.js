@@ -474,7 +474,8 @@ function _directoryLoadContextFromSheets_(options) {
 
   const selectedSheets = sheetMap.filter(item =>
     !(options.includePersonalData === false && item[0] === 'datosPersonales') &&
-    !(options.includePeople === false && item[0] === 'personas')
+    !(options.includePeople === false && item[0] === 'personas') &&
+    !(options.includeAssignments === false && item[0] === 'asignaciones')
   );
   const requests = selectedSheets.map(item => ({
     key: item[0],
@@ -495,6 +496,7 @@ function _directoryLoadContextFromSheets_(options) {
   const context = SUNARPCore.listRecordsFromSourcesCached(requests, DIRECTORY_DATA_CACHE_TTL);
   if (!Array.isArray(context.personas)) context.personas = [];
   if (!Array.isArray(context.datosPersonales)) context.datosPersonales = [];
+  if (!Array.isArray(context.asignaciones)) context.asignaciones = [];
 
   if (options.validateSnapshot !== false) _directoryValidateSnapshot_(context, options);
 
