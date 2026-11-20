@@ -40,7 +40,7 @@ Las respuestas de lectura suelen utilizar `{ records, total }`; las lecturas pag
 
 ## 2. Inventario de la API pública
 
-En el HEAD auditado se identificaron **29 funciones globales públicas**. La lista siguiente se ha obtenido de las declaraciones de los archivos de Core, excluyendo los auxiliares privados.
+En el HEAD auditado se identificaron **30 funciones globales públicas**, incluida la entrada de desarrollo `runCoreTests()`. La lista siguiente se ha obtenido de las declaraciones de los archivos de Core, excluyendo los auxiliares privados.
 
 | Módulo | Función pública | Firma |
 |---|---|---|
@@ -52,6 +52,7 @@ En el HEAD auditado se identificaron **29 funciones globales públicas**. La lis
 | Repositorio compuesto | `updateRecordByFields` | `(source, criteria, updates, options)` |
 | Repositorio compuesto | `syncRecordsByKey` | `(source, parentMatch, keyFields, desiredRecords, statusField, activeValue, inactiveValue, options)` |
 | Repositorio compuesto | `appendAuditEvent` | `(source, record, idField)` |
+| Pruebas del núcleo | `runCoreTests` | `()` — ejecutor de pruebas de desarrollo; no es una operación funcional del Gestor |
 | Caché | `invalidateSourceCache` | `(source)` |
 | Caché | `getCachedValue` | `(key)` |
 | Caché | `putCachedValue` | `(key, value, expirationSeconds)` |
@@ -477,6 +478,10 @@ Devuelve `{ valid, errors, messages }`. Cada error contiene `field` y `message`.
 ### 8.2 `assertValidRecord(record, schema, options)`
 
 Ejecuta la misma validación y lanza un error agregado si `valid` es falso. Devuelve `true` si la validación pasa.
+
+### 8.3 `runCoreTests()` — ejecutor de desarrollo
+
+Ejecuta las suites `runCoreSelfTests_()`, `runAuthorizationSelfTests_()` y `runCompositeRepositorySelfTests_()`. La primera crea una hoja de cálculo temporal y al finalizar intenta enviarla a la papelera. Es una herramienta de desarrollo que debe ejecutarse manualmente desde el proyecto de Core con los permisos necesarios; no forma parte de las operaciones RPC funcionales de Gestor y no debe invocarse desde una aplicación de producción.
 
 ## 9. Semántica de caché, consistencia y límites
 
