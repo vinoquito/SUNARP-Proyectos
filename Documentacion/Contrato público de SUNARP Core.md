@@ -557,7 +557,7 @@ Se completaron las verificaciones de publicación, sincronización e integració
 
 **Estado: FASE 1 COMPLETADA para la arquitectura actualmente integrada de SUNARP Core y Gestor de intranet SUNARP.** No se debe interpretar como certificación de los proyectos Backend aún no unificados, ni como afirmación de invalidación automática para ediciones manuales.
 
-No se actualizó ningún despliegue productivo. Core v10 permanece como biblioteca versionada; el despliegue productivo de Gestor no fue modificado.
+No se actualizó ningún despliegue productivo. Core v10 permanece como biblioteca versionada; el despliegue productivo de Gestor no fue modificado. **No se afirma que el despliegue productivo de Gestor utilice v10**; la validación se limita al código sincronizado y al mecanismo de pruebas existente.
 
 ## 12. Referencias oficiales de Apps Script
 
