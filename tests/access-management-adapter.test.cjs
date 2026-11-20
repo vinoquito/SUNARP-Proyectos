@@ -153,11 +153,11 @@ function createAdapterSandbox(data, email = 'prueba@sunarp.gob.pe') {
 }
 
 test('el historial por entidad reutiliza la caché central de auditoría', () => {
-  const start = serviceSource.indexOf('function getAccessEntityHistory(payload) {');
-  const end = serviceSource.indexOf('function _accessChangeStatus_(', start);
-  const implementation = serviceSource.slice(start, end);
+  const start = accessSource.indexOf('function getAccessEntityHistory(payload) {');
+  const end = accessSource.indexOf('function _accessChangeStatus_(', start);
+  const implementation = accessSource.slice(start, end);
   assert.match(implementation, /listRecordsFromSourcesCached/);
-  assert.doesNotMatch(implementation, /SUNARPCore\\.listRecords\\(/);
+  assert.doesNotMatch(implementation, /SUNARPCore\.listRecords\(/);
 });
 
 test('los servicios y scripts de interfaz tienen sintaxis válida', () => {
