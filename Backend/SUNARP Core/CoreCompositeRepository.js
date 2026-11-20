@@ -90,7 +90,7 @@ function updateRecordByFields(source, criteria, updates, options) {
     });
 
     SpreadsheetApp.flush();
-    _coreInvalidateSourceCache_(source);
+    _coreInvalidateSourceCacheOrThrow_(source);
 
     return {
       success: true,
@@ -291,7 +291,7 @@ function syncRecordsByKey(
 
     SpreadsheetApp.flush();
     if (inserted || updated || deactivated) {
-      _coreInvalidateSourceCache_(source);
+      _coreInvalidateSourceCacheOrThrow_(source);
     }
 
     return {
