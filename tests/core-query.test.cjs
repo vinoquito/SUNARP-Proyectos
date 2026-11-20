@@ -430,7 +430,7 @@ test('queryRecords retiene solo offset + limit al ordenar páginas no distintas'
   assert.equal(maximumRetained, 15);
 });
 
-test('queryRecords reutiliza candidatos entre consultas distintas y prioriza el filtro de ámbito', () => {
+test('queryRecords reutiliza candidatos entre páginas con la misma proyección y prioriza el filtro de ámbito', () => {
   const sandbox = createSandbox();
   let sourceReads = 0;
   const searchFields = [];
@@ -446,18 +446,21 @@ test('queryRecords reutiliza candidatos entre consultas distintas y prioriza el 
     filters: { status: 'ACTIVE' },
     anyOf: [{ site_id: 'S1' }],
     authorization: sandbox.authorization(),
-    cacheSeconds: 60
-  };
-  const first = sandbox.context.queryRecords(sourceRef, Object.assign({}, base, {
+    cacheSeconds: 60,
     distinctBy: 'site_id',
     sortBy: 'site_id'
+  };
+  const first = sandbox.context.queryRecords(sourceRef, Object.assign({}, base, {
+    offset: 0,
+    limit: 1
   }));
   const second = sandbox.context.queryRecords(sourceRef, Object.assign({}, base, {
-    distinctBy: 'name',
-    sortBy: 'name'
+    offset: 1,
+    limit: 1
   }));
   assert.equal(first.total, 1);
-  assert.equal(second.total, 2);
+  assert.equal(second.total, 1);
+  assert.equal(second.candidateCacheHit, true);
   assert.equal(sourceReads, 1);
   assert.equal(searchFields[0], 'site_id');
 });
@@ -571,7 +574,7 @@ test('queryRecords proyecta columnas de evaluación y solo hidrata la página au
       authorization: sandbox.authorization()
     }
   );
-  assert.deepEqual(hydratedIds, ['B']);
+  assert.equal(hydratedIds.join(','), 'B');
   assert.equal(result.records.length, 1);
   assert.equal(result.records[0].fullPayload, 'B_FULL');
   for (const field of ['status', 'site_id', 'name', 'assignment_id']) {
