@@ -455,6 +455,7 @@ function queryRecords(source, options) {
   let candidateRows = candidateCacheKey ? getCachedValue(candidateCacheKey) : null;
   const candidateCacheHit = Array.isArray(candidateRows);
   let candidateContext = null;
+  let projectedFieldCount = projectionFields.length;
 
   if (!candidateCacheHit) {
     if (typeof _coreOpenSource_ === 'function') {
@@ -463,6 +464,9 @@ function queryRecords(source, options) {
       );
       candidateRows = loaded.candidates;
       candidateContext = loaded.context;
+      projectedFieldCount = Array.isArray(loaded.projectedFields)
+        ? loaded.projectedFields.length
+        : projectionFields.length;
     } else {
       // Adaptador de prueba: simula candidatos sin fila física de Google Sheets.
       const candidateMap = new Map();
@@ -488,6 +492,9 @@ function queryRecords(source, options) {
     }
   } else if (typeof _coreOpenSource_ === 'function') {
     candidateContext = _coreOpenSource_(source);
+    if (candidateRows.length) {
+      projectedFieldCount = Object.keys(_coreQueryRecordValue_(candidateRows[0])).length;
+    }
   }
 
   const maxRetainedRecords = offset + limit;
@@ -628,9 +635,7 @@ function queryRecords(source, options) {
     candidateCount: candidateRows.length,
     authorizedCount,
     retainedForPage: pageSource.length,
-    projectedFieldCount: candidateRows.length
-      ? Object.keys(_coreQueryRecordValue_(candidateRows[0])).length
-      : projectionFields.length,
+    projectedFieldCount,
     hydratedRowCount: page.length,
     durationMs: Date.now() - queryStartedAt
   };

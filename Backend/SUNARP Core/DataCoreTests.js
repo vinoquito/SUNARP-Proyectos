@@ -247,6 +247,54 @@ function runCoreSelfTests_() {
     );
     testSpreadsheet.deleteSheet(distinctPageSheet);
 
+    // 4.16. El Directorio puede aportar la jerarquía por relaciones:
+    // asignaciones no debe declarar columnas organizacionales adicionales.
+    const assignmentSheet = testSpreadsheet.insertSheet('asignaciones');
+    assignmentSheet.getRange(1, 1, 1, 10).setValues([[
+      'asignacion_id', 'persona_id', 'cargo_id', 'condicion_cargo',
+      'anexo', 'estructura_local_id', 'local_id', 'observaciones',
+      'active', 'order'
+    ]]);
+    assignmentSheet.getRange(2, 1, 2, 10).setValues([
+      ['ASG_001', 'PER_001', 'CAR_001', 'Titular', 1001, 'REL_001', 'LOC_001', '', true, 1],
+      ['ASG_002', 'PER_002', 'CAR_002', 'Suplente', 1002, 'REL_INEXISTENTE', 'LOC_002', '', true, 2]
+    ]);
+    SpreadsheetApp.flush();
+    const assignmentLookupResult = queryRecords(
+      Object.assign({}, source, { sheetName: 'asignaciones' }),
+      {
+        idField: 'asignacion_id',
+        filters: { active: true },
+        sortBy: 'order',
+        authorization: {
+          context: queryAuthorizationContext,
+          moduleId: 'MOD_TEST',
+          permissionCode: 'TEST_READ',
+          scopeRecordLookups: [{
+            recordField: 'estructura_local_id',
+            values: {
+              REL_001: {
+                estructura_id: 'ORG_001',
+                local_id: 'LOC_001',
+                sede_id: 'SEDE_001'
+              }
+            },
+            required: true,
+            requireEqualFields: ['local_id']
+          }]
+        },
+        cacheSeconds: 0,
+        candidateCacheSeconds: 0
+      }
+    );
+    assert(
+      assignmentLookupResult.total === 1 &&
+      assignmentLookupResult.records.length === 1 &&
+      assignmentLookupResult.records[0].asignacion_id === 'ASG_001',
+      'queryRecords autoriza asignaciones con relaciones organizacionales enriquecidas sin exigir columnas adicionales en la tabla de negocio.'
+    );
+    testSpreadsheet.deleteSheet(assignmentSheet);
+
     const candidateCacheQuery = queryRecords(source, {
       idField: 'id',
       distinctBy: 'active',
