@@ -61,11 +61,18 @@ function _coreNormalizeSourceConfig_(source) {
     );
   }
 
+  const dependencies = source.dependencies === undefined ? [] : source.dependencies;
+  if (!Array.isArray(dependencies)) {
+    throw new Error('SUNARP Core: dependencies debe ser un arreglo de fuentes.');
+  }
+  dependencies.forEach(dependency => _coreNormalizeSourceConfig_(dependency));
+
   return {
     spreadsheetId,
     sheetName,
     headerRow,
-    label
+    label,
+    dependencies
   };
 }
 
