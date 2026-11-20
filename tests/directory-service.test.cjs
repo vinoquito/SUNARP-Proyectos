@@ -73,7 +73,7 @@ test('las lecturas del Directorio no ejecutan validación integral de todas las 
   ]) {
     const start = serviceSource.indexOf('function ' + name + '(');
     assert.ok(start >= 0, 'Debe existir ' + name);
-    const next = serviceSource.indexOf('\\nfunction ', start + 10);
+    const next = serviceSource.indexOf('\nfunction ', start + 10);
     const implementation = serviceSource.slice(start, next < 0 ? serviceSource.length : next);
     assert.match(implementation, /validateSnapshot:\\s*false/);
   }
