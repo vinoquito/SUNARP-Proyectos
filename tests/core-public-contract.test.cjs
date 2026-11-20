@@ -106,6 +106,7 @@ test('el proyecto Apps Script de Core incluye los archivos JavaScript fuente', (
 
 
 
+
 test('el documento del contrato declara exactamente los métodos públicos y sus parámetros reales', () => {
   const contractPath = path.join(root, 'Documentacion/Contrato público de SUNARP Core.md');
   const contract = fs.readFileSync(contractPath, 'utf8');
@@ -117,7 +118,7 @@ test('el documento del contrato declara exactamente los métodos públicos y sus
   const tick = String.fromCharCode(96);
   const rowPattern = new RegExp(
     '^\\|\\s*[^|]+\\|\\s*' + tick + '([A-Za-z_$][\\w$]*)' + tick +
-    '\\s*\\|\\s*' + tick + '([A-Za-z_$][\\w$]*\\([^' + tick + ']*\\))' +
+    '\\s*\\|\\s*' + tick + '(\\([^' + tick + ']*\\))' +
     tick + '\\s*\\|$',
     'gm'
   );
@@ -143,7 +144,7 @@ test('el documento del contrato declara exactamente los métodos públicos y sus
   assert.deepEqual([...documented.keys()].sort(), [...declarations.keys()].sort());
 
   for (const [name, signature] of documented) {
-    const signatureMatch = signature.match(/^[A-Za-z_$][\w$]*\((.*)\)$/);
+    const signatureMatch = signature.match(/^\\((.*)\\)$/);
     assert.ok(signatureMatch, 'Firma documentada inválida para ' + name + '.');
     const documentedParameters = signatureMatch[1].split(',')
       .map(value => value.trim()).filter(Boolean);
