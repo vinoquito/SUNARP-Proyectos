@@ -363,13 +363,14 @@
 
 
   function renderTable(host, config) {
-    const tableHost = document.createElement('div');
-
-    tableHost.id = 'accessDataTableHost';
-
-    host.appendChild(tableHost);
-
     destroyTable();
+
+    const previousHost = host.querySelector('#accessDataTableHost');
+    if (previousHost) previousHost.remove();
+
+    const tableHost = document.createElement('div');
+    tableHost.id = 'accessDataTableHost';
+    host.appendChild(tableHost);
 
     state.table = SUNARPUI.createDataTable({
       containerId: tableHost.id,
@@ -1543,15 +1544,17 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     let loadingUsers = false;
     let requestNumber = 0;
     let tableConfig = null;
+    let appliedSedeId = '';
+    let appliedRoleId = '';
     let lastPageResult = { items: [], total: 0 };
 
     function updateApplyState() {
-      applyButton.disabled = loadingUsers || (!siteSelect.value && !roleSelect.value);
+      applyButton.disabled = loadingUsers || (!siteSelect.value && !roleSelect.value && !appliedSedeId && !appliedRoleId);
     }
 
     async function loadUserPage(params) {
-      const sedeId = siteSelect.value;
-      const rolId = roleSelect.value;
+      const sedeId = appliedSedeId;
+      const rolId = appliedRoleId;
       if (!sedeId && !rolId) {
         lastPageResult = { items: [], total: 0 };
         state.data.users = [];
@@ -1599,6 +1602,8 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
     async function loadFilteredUsers() {
       if (!tableConfig) return;
+      appliedSedeId = siteSelect.value;
+      appliedRoleId = roleSelect.value;
       // Recrear la tabla reinicia la página a 1 cuando cambian sede o rol.
       renderTable(host, tableConfig);
     }
