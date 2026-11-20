@@ -65,7 +65,11 @@ function _coreNormalizeSourceConfig_(source) {
   if (!Array.isArray(dependencies)) {
     throw new Error('SUNARP Core: dependencies debe ser un arreglo de fuentes.');
   }
-  dependencies.forEach(dependency => _coreNormalizeSourceConfig_(dependency));
+  if (dependencies.some(dependency =>
+    !dependency || typeof dependency !== 'object' || Array.isArray(dependency)
+  )) {
+    throw new Error('SUNARP Core: cada dependencia debe ser una configuración de fuente.');
+  }
 
   return {
     spreadsheetId,
