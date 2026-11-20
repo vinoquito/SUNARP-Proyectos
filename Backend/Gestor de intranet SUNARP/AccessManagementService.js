@@ -250,7 +250,11 @@ function _accessFindPersonById_(personaId) {
   const result = SUNARPCore.findRecordsByFields(
     _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
     { persona_id: id },
-    { searchField: 'persona_id', requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people }
+    {
+      searchField: 'persona_id',
+      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people,
+      projectionFields: ['persona_id', 'correo_institucional', 'nombres', 'apellidos']
+    }
   );
   if (result.total > 1) {
     throw new Error('El identificador de persona está duplicado en el directorio: ' + id + '.');
@@ -2632,7 +2636,8 @@ function getAccessUsers(filters) {
       ACCESS_MANAGEMENT_CONFIG.sheets.userRoles,
       'rol_id',
       [roleId],
-      ACCESS_MANAGEMENT_FIELDS.userRoles
+      ACCESS_MANAGEMENT_FIELDS.userRoles,
+      { projectionFields: ['persona_id', 'active'] }
     ).filter(item => _accessIsActive_(item.active));
     candidateSets.push(new Set(roleAssignments.map(item => _accessText_(item.persona_id)).filter(Boolean)));
   }
@@ -2664,52 +2669,58 @@ function getAccessUsers(filters) {
     const assignmentHeaders = [
       'asignacion_id', 'persona_id', 'estructura_local_id', 'local_id', 'active'
     ];
-    const assignments = new Map();
+    // Consume cada conjunto inmediatamente: no se construye un Map
+    // intermedio que retenga todos los registros de asignación coincidentes.
+    const collectAssignments = records => {
+      (records || []).forEach(assignment => {
+        if (!_accessIsActive_(assignment.active)) return;
+        const personaId = _accessText_(assignment.persona_id);
+        const relationId = _accessText_(assignment.estructura_local_id);
+        const localId = _accessText_(assignment.local_id);
+        let assignedSiteId = '';
+
+        if (relationId) {
+          const relation = relations.get(relationId);
+          const structure = relation && structures.get(_accessText_(relation.estructura_id));
+          if (!relation || !structure ||
+              (localId && localId !== _accessText_(relation.local_id))) return;
+          assignedSiteId = _accessText_(structure.sede_id);
+        } else if (localId) {
+          const local = locals.get(localId);
+          assignedSiteId = local ? _accessText_(local.sede_id) : '';
+        }
+
+        if (!personaId || assignedSiteId !== sedeId) return;
+        if (!sitesByPerson.has(personaId)) sitesByPerson.set(personaId, new Set());
+        sitesByPerson.get(personaId).add(assignedSiteId);
+      });
+    };
 
     if (relationIds.length) {
       const result = SUNARPCore.findRecordsByFields(
         assignmentSource,
         { estructura_local_id: relationIds },
-        { searchField: 'estructura_local_id', requiredHeaders: assignmentHeaders }
+        {
+          searchField: 'estructura_local_id',
+          requiredHeaders: assignmentHeaders,
+          projectionFields: assignmentHeaders
+        }
       );
-      (result.records || []).forEach(item =>
-        assignments.set(_accessText_(item.asignacion_id), item)
-      );
+      collectAssignments(result.records);
     }
 
     if (localIds.length) {
       const result = SUNARPCore.findRecordsByFields(
         assignmentSource,
         { local_id: localIds, estructura_local_id: '' },
-        { searchField: 'local_id', requiredHeaders: assignmentHeaders }
+        {
+          searchField: 'local_id',
+          requiredHeaders: assignmentHeaders,
+          projectionFields: assignmentHeaders
+        }
       );
-      (result.records || []).forEach(item =>
-        assignments.set(_accessText_(item.asignacion_id), item)
-      );
+      collectAssignments(result.records);
     }
-
-    assignments.forEach(assignment => {
-      if (!_accessIsActive_(assignment.active)) return;
-      const personaId = _accessText_(assignment.persona_id);
-      const relationId = _accessText_(assignment.estructura_local_id);
-      const localId = _accessText_(assignment.local_id);
-      let assignedSiteId = '';
-
-      if (relationId) {
-        const relation = relations.get(relationId);
-        const structure = relation && structures.get(_accessText_(relation.estructura_id));
-        if (!relation || !structure ||
-            (localId && localId !== _accessText_(relation.local_id))) return;
-        assignedSiteId = _accessText_(structure.sede_id);
-      } else if (localId) {
-        const local = locals.get(localId);
-        assignedSiteId = local ? _accessText_(local.sede_id) : '';
-      }
-
-      if (!personaId || assignedSiteId !== sedeId) return;
-      if (!sitesByPerson.has(personaId)) sitesByPerson.set(personaId, new Set());
-      sitesByPerson.get(personaId).add(assignedSiteId);
-    });
 
     candidateSets.push(new Set(sitesByPerson.keys()));
   }
@@ -2725,7 +2736,8 @@ function getAccessUsers(filters) {
     ACCESS_MANAGEMENT_CONFIG.sheets.users,
     'persona_id',
     personaIds,
-    ACCESS_MANAGEMENT_FIELDS.users
+    ACCESS_MANAGEMENT_FIELDS.users,
+    { projectionFields: ['persona_id', 'active'] }
   );
   const accountPersonaIds = [...new Set(accounts.map(item => _accessText_(item.persona_id)).filter(Boolean))];
   if (!accountPersonaIds.length) return { items: [], total: 0 };
@@ -2741,7 +2753,8 @@ function getAccessUsers(filters) {
     ACCESS_MANAGEMENT_CONFIG.sheets.userRoles,
     'persona_id',
     accountPersonaIds,
-    ACCESS_MANAGEMENT_FIELDS.userRoles
+    ACCESS_MANAGEMENT_FIELDS.userRoles,
+    { projectionFields: ['persona_id', 'modulo_id', 'rol_id', 'active'] }
   );
   const rolesByPerson = new Map();
   userRoles.filter(item => _accessIsActive_(item.active)).forEach(item => {

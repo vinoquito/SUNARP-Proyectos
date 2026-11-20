@@ -155,7 +155,13 @@ function createAdapterSandbox(data, email = 'prueba@sunarp.gob.pe') {
           ? actual.toLowerCase() === expected.toLowerCase()
           : actual === expected);
       }));
-      return { records: rows, total: rows.length };
+      const projectionFields = options && Array.isArray(options.projectionFields)
+        ? Array.from(new Set(Object.keys(filters).concat(options.projectionFields)))
+        : null;
+      const projectedRows = projectionFields
+        ? rows.map(record => Object.fromEntries(projectionFields.map(field => [field, record[field]])))
+        : rows;
+      return { records: projectedRows, total: projectedRows.length };
     },
     resolveIdentity: (source, email, options) => {
       const result = sandbox.SUNARPCore.findRecordsByFields(
@@ -414,7 +420,8 @@ test('getAccessUsers consulta candidatos por sede o rol sin cargar el snapshot g
   data.usuarios.push({ persona_id: 'PER_118', active: false });
   data.asignaciones = [
     { asignacion_id: 'ASG_001', persona_id: 'PER_117', estructura_local_id: 'REL_1', local_id: 'LOC_1', active: true },
-    { asignacion_id: 'ASG_002', persona_id: 'PER_118', estructura_local_id: '', local_id: 'LOC_1', active: true }
+    { asignacion_id: 'ASG_002', persona_id: 'PER_118', estructura_local_id: '', local_id: 'LOC_1', active: true },
+    { asignacion_id: 'ASG_003', persona_id: 'PER_119', estructura_local_id: 'REL_1', local_id: 'LOC_WRONG', active: true }
   ];
   data.estructura_local = [{ id: 'REL_1', estructura_id: 'EST_1', local_id: 'LOC_1' }];
   data.estructura_org = [{ id: 'EST_1', sede_id: 'SEDE_1' }];
@@ -422,6 +429,12 @@ test('getAccessUsers consulta candidatos por sede o rol sin cargar el snapshot g
   data.sede = [{ id: 'SEDE_1', name: 'Lima' }];
 
   const sandbox = createAdapterSandbox(data);
+  const projectionRequests = [];
+  const originalFind = sandbox.SUNARPCore.findRecordsByFields;
+  sandbox.SUNARPCore.findRecordsByFields = (source, filters, options) => {
+    if (source.sheetName === 'asignaciones') projectionRequests.push(options.projectionFields);
+    return originalFind(source, filters, options);
+  };
   let fullLoads = 0;
   const fullLoader = sandbox._accessLoadSecurityData_;
   sandbox._accessLoadSecurityData_ = () => {
@@ -433,6 +446,11 @@ test('getAccessUsers consulta candidatos por sede o rol sin cargar el snapshot g
   assert.equal(bySite.total, 2);
   assert.equal(bySite.items.length, 2);
   assert.equal(bySite.items[0].sede_nombre, 'Lima');
+  assert.ok(projectionRequests.length > 0);
+  assert.ok(projectionRequests.every(fields =>
+    fields.join(',') === 'asignacion_id,persona_id,estructura_local_id,local_id,active'
+  ));
+  assert.ok(!bySite.items.some(item => item.persona_id === 'PER_119'));
 
   const byRole = sandbox.getAccessUsers({ rol_id: 'ROL_ADMIN', page: 1, pageSize: 10 });
   assert.equal(byRole.total, 1);
