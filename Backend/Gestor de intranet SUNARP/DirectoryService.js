@@ -923,7 +923,11 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
       ['name'],
       { matchCase: false }
     );
-    addSearchMatches('local_id', (localMatches.records || []).map(item => item.id));
+    const matchedLocalIds = new Set((localMatches.records || []).map(item => _directoryKey_(item.id)));
+    addSearchMatches('local_id', Array.from(matchedLocalIds));
+    addSearchMatches('estructura_local_id', relations.filter(item =>
+      matchedLocalIds.has(_directoryKey_(item.local_id))
+    ).map(item => item.id));
 
     const structureMatches = SUNARPCore.searchRecordsByFields(
       _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.estructuraOrg),
