@@ -217,5 +217,8 @@ test('el contrato conserva los límites comprobados de consulta, invalidación y
   assert.ok(contract.includes('### 10.1 Consumidores comprobados en esta rama'));
   assert.ok(contract.includes('`_accessLoadSecurityData_()`'));
   assert.ok(contract.includes('No carga las nueve tablas administrativas completas durante el login.'));
+  assert.ok(contract.includes('`saveDirectoryEntry()`'));
+  assert.ok(contract.includes('no es una transacción multihoja'));
+  assert.ok(contract.includes('No envolver este flujo en `runSourceWriteBatch`'));
   assert.ok(contract.includes('no se consideran consumidores directos del Core'));
 });
