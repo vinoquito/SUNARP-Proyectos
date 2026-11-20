@@ -1016,6 +1016,72 @@ function createAssignmentWriteSandbox(context) {
   return { context: vmContext, writes };
 }
 
+
+test('editar una asignación la consulta puntualmente y no carga todas las asignaciones', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  const context = assignmentContext();
+  context.asignaciones = [];
+  const existing = {
+    asignacion_id: 'ASG_025',
+    persona_id: 'PER_001',
+    cargo_id: 'CAR_001',
+    condicion_cargo: 'TITULAR',
+    anexo: '',
+    estructura_local_id: 'REL_1',
+    local_id: '',
+    observaciones: 'Anterior',
+    active: true,
+    order: 4
+  };
+  let loadOptions = null;
+  let assignmentLookup = null;
+  let updateCall = null;
+
+  vmContext._directoryAuthorizationContext_ = permissionCode => ({
+    auth: {},
+    moduleId: 'MOD_INFO_PERSONAL',
+    permissionCode,
+    structures: context.estructuraOrg,
+    locals: context.locales
+  });
+  vmContext._directoryLoadContext_ = options => {
+    loadOptions = options;
+    return context;
+  };
+  vmContext._directoryFindAuthorizedAssignmentById_ = (_context, _authorization, id) => {
+    assignmentLookup = id;
+    return existing;
+  };
+  vmContext._directoryAssertScope_ = () => true;
+  vmContext._directoryFindPersonById_ = () => context.personas[0];
+  vmContext._directoryValidateAssignmentReferences_ = () => true;
+  vmContext._accessRunAudited_ = (_auth, _event, callback) => callback().value;
+  vmContext._directorySource_ = name => name;
+  vmContext.SUNARPCore = {
+    assertValidRecord: () => true,
+    updateRecord: (...args) => {
+      updateCall = args;
+      return { success: true, record: Object.assign({}, args[3], { asignacion_id: args[2] }) };
+    }
+  };
+
+  const result = vmContext.saveDirectoryAssignment({
+    asignacion_id: 'ASG_025',
+    observaciones: 'Actualizada'
+  });
+
+  assert.equal(loadOptions.includeAssignments, false);
+  assert.equal(loadOptions.validateSnapshot, false);
+  assert.equal(assignmentLookup, 'ASG_025');
+  assert.equal(updateCall[0], 'asignaciones');
+  assert.equal(updateCall[1], 'asignacion_id');
+  assert.equal(updateCall[2], 'ASG_025');
+  assert.equal(updateCall[3].observaciones, 'Actualizada');
+  assert.equal(updateCall[3].order, 4);
+  assert.equal(result.assignment.asignacion_id, 'ASG_025');
+});
+
 test('el guardado persiste exactamente los tres modelos de adscripción', () => {
   const cases = [
     { estructura_local_id: 'REL_1', local_id: '' },
