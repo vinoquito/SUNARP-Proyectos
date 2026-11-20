@@ -180,6 +180,14 @@ test('el historial conserva compatibilidad con SUNARP Core v9 mientras admite le
   assert.ok(implementation.includes('listTailRecords'));
 });
 
+test('la actualización de filtros invalida respuestas RPC anteriores de usuarios', () => {
+  const start = accessUiSource.indexOf('async function loadFilteredUsers()');
+  const end = accessUiSource.indexOf('siteSelect.addEventListener', start);
+  const implementation = accessUiSource.slice(start, end);
+  assert.ok(implementation.includes('requestNumber += 1'));
+  assert.ok(implementation.includes('renderTable(host, tableConfig)'));
+});
+
 test('la tabla de usuarios usa filtros aplicados y reinicia su página al actualizar', () => {
   const start = accessUiSource.indexOf('function renderUsers(host) {');
   const end = accessUiSource.indexOf('function openUserModal(row) {', start);
