@@ -104,29 +104,35 @@ test('el proyecto Apps Script de Core incluye los archivos JavaScript fuente', (
 });
 
 
+
 test('el documento del contrato declara exactamente los métodos públicos y sus parámetros reales', () => {
   const contractPath = path.join(root, 'Documentacion/Contrato público de SUNARP Core.md');
   const contract = fs.readFileSync(contractPath, 'utf8');
   const section = contract.match(
-    /^## 2\\. Inventario de la API pública\\s*([\\s\\S]*?)^## 3\\./m
+    /^## 2\. Inventario de la API pública\s*([\s\S]*?)^## 3\./m
   );
   assert.ok(section, 'Debe existir la sección de inventario de la API pública.');
 
+  const tick = String.fromCharCode(96);
+  const rowPattern = new RegExp(
+    '^\\|\\s*[^|]+\\|\\s*' + tick + '([A-Za-z_$][\\w$]*)' + tick +
+    '\\s*\\|\\s*' + tick + '([A-Za-z_$][\\w$]*\\([^' + tick + ']*\\))' +
+    tick + '\\s*\\|$',
+    'gm'
+  );
   const documented = new Map();
-  for (const match of section[1].matchAll(
-    /^\\|\\s*[^|]+\\|\\s*`([A-Za-z_$][\\w$]*)`\\s*\\|\\s*`([A-Za-z_$][\\w$]*\\([^ `]*\\))`\\s*\\|$/gm
-  )) {
+  for (const match of section[1].matchAll(rowPattern)) {
     documented.set(match[1], match[2]);
   }
+  assert.equal(documented.size, 30, 'El inventario documentado debe contener 30 métodos públicos.');
 
   const declarations = new Map();
   for (const file of collectFiles(coreDir, new Set(['.js']))) {
     const source = fs.readFileSync(file, 'utf8');
     for (const name of documented.keys()) {
       if (declarations.has(name)) continue;
-      const escapedName = name.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&');
       const declaration = source.match(new RegExp(
-        '^function\\s+' + escapedName + '\\s*\\(([\\s\\S]*?)\\)\\s*\\{',
+        '^function\\s+' + name + '\\s*\\(([\\s\\S]*?)\\)\\s*\\{',
         'm'
       ));
       if (declaration) declarations.set(name, declaration[1]);
@@ -136,13 +142,13 @@ test('el documento del contrato declara exactamente los métodos públicos y sus
   assert.deepEqual([...documented.keys()].sort(), [...declarations.keys()].sort());
 
   for (const [name, signature] of documented) {
-    const signatureMatch = signature.match(/^[A-Za-z_$][\\w$]*\\((.*)\\)$/);
+    const signatureMatch = signature.match(/^[A-Za-z_$][\w$]*\((.*)\)$/);
     assert.ok(signatureMatch, 'Firma documentada inválida para ' + name + '.');
     const documentedParameters = signatureMatch[1].split(',')
       .map(value => value.trim()).filter(Boolean);
     const actualParameters = declarations.get(name)
-      .replace(/\\/\\*[\\s\\S]*?\\*\\//g, '')
-      .replace(/\\/\\/[^\\n]*/g, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '')
       .split(',')
       .map(value => value.trim()).filter(Boolean);
     assert.deepEqual(
@@ -172,7 +178,7 @@ test('solo los consumidores que declaran SUNARPCore invocan la biblioteca y Gest
     if (!fs.existsSync(manifestPath)) continue;
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     const referencesCore = collectFiles(projectDir, new Set(['.js', '.gs', '.html']))
-      .some(file => /\\bSUNARPCore\\./.test(fs.readFileSync(file, 'utf8')));
+      .some(file => /\bSUNARPCore\./.test(fs.readFileSync(file, 'utf8')));
     const declaresCore = (manifest.dependencies?.libraries || [])
       .some(item => item.userSymbol === 'SUNARPCore' || item.libraryId === library.libraryId);
     assert.equal(
