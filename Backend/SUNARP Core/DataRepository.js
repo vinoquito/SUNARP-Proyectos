@@ -745,6 +745,81 @@ function getRecordById(source, idField, id) {
 
 
 /**
+ * Lee únicamente un conjunto declarado de columnas para filas candidatas.
+ * Agrupa filas por ventanas y columnas contiguas para reducir lecturas de Sheets.
+ */
+function _coreReadProjectedCandidateRows_(
+  sheet, rowNumbers, headerMap, fields, dataStartRow, windowSize
+) {
+  const selectedFields = Array.from(new Set(fields || []));
+  if (!selectedFields.length) {
+    throw new Error('SUNARP Core: projectionFields debe contener al menos una columna.');
+  }
+  const columns = selectedFields.map(field => {
+    if (!Object.prototype.hasOwnProperty.call(headerMap, field)) {
+      throw new Error('SUNARP Core: no existe la columna proyectada "' + field + '".');
+    }
+    return { field, index: headerMap[field] };
+  }).sort((a, b) => a.index - b.index);
+
+  const blocks = [];
+  columns.forEach(column => {
+    const previous = blocks[blocks.length - 1];
+    if (previous && column.index === previous.end + 1) {
+      previous.end = column.index;
+      previous.fields.push(column);
+    } else {
+      blocks.push({
+        start: column.index,
+        end: column.index,
+        fields: [column]
+      });
+    }
+  });
+
+  const size = Number(windowSize) || 25;
+  const windows = new Map();
+  rowNumbers.forEach(rowNumber => {
+    const startRow = dataStartRow +
+      Math.floor((rowNumber - dataStartRow) / size) * size;
+    if (!windows.has(startRow)) windows.set(startRow, []);
+    windows.get(startRow).push(rowNumber);
+  });
+
+  const result = new Map();
+  windows.forEach((candidates, startRow) => {
+    const endRow = Math.min(
+      startRow + size - 1,
+      Math.max.apply(null, candidates)
+    );
+    const rowCount = endRow - startRow + 1;
+    const blockValues = blocks.map(block => ({
+      block,
+      values: sheet.getRange(
+        startRow,
+        block.start + 1,
+        rowCount,
+        block.end - block.start + 1
+      ).getValues()
+    }));
+
+    candidates.forEach(rowNumber => {
+      const offset = rowNumber - startRow;
+      const record = {};
+      blockValues.forEach(item => {
+        item.block.fields.forEach(column => {
+          record[column.field] =
+            item.values[offset][column.index - item.block.start];
+        });
+      });
+      result.set(rowNumber, record);
+    });
+  });
+  return result;
+}
+
+
+/**
  * Busca registros mediante coincidencias exactas en una o más columnas.
  *
  * La columna indicada por options.searchField (o el primer filtro) se
@@ -755,8 +830,12 @@ function getRecordById(source, idField, id) {
  * {
  *   searchField: 'correo_institucional',
  *   matchCase: false,
- *   requiredHeaders: ['persona_id', 'correo_institucional']
+ *   requiredHeaders: ['persona_id', 'correo_institucional'],
+ *   projectionFields: ['persona_id', 'nombres']
  * }
+ *
+ * Cuando se declara projectionFields, Core devuelve únicamente esos campos
+ * y los filtros exactos necesarios para comprobar la coincidencia.
  */
 function findRecordsByFields(source, filters, options) {
   options = options || {};
@@ -799,8 +878,17 @@ function findRecordsByFields(source, filters, options) {
   const requiredHeaders = Array.isArray(options.requiredHeaders)
     ? options.requiredHeaders
     : [];
-  const missing = [...new Set(filterFields.concat(requiredHeaders))]
-    .filter(field => !Object.prototype.hasOwnProperty.call(headerMap, field));
+  if (options.projectionFields !== undefined &&
+      (!Array.isArray(options.projectionFields) || !options.projectionFields.length ||
+       options.projectionFields.some(field => typeof field !== 'string' || !field.trim()))) {
+    throw new Error('SUNARP Core: projectionFields debe ser un arreglo de nombres de columna no vacío.');
+  }
+  const projectionFields = options.projectionFields === undefined
+    ? null
+    : Array.from(new Set(filterFields.concat(options.projectionFields)));
+  const missing = [...new Set(
+    filterFields.concat(requiredHeaders, projectionFields || [])
+  )].filter(field => !Object.prototype.hasOwnProperty.call(headerMap, field));
 
   if (missing.length) {
     throw new Error(
@@ -874,13 +962,19 @@ function findRecordsByFields(source, filters, options) {
 
   const records = [];
   const orderedRows = [...candidateRows].sort((a, b) => a - b);
-  const candidateValues = _coreReadCandidateRows_(
-    sheet, orderedRows, lastColumn, dataStartRow, 25
-  );
+  const candidateValues = projectionFields
+    ? _coreReadProjectedCandidateRows_(
+        sheet, orderedRows, headerMap, projectionFields, dataStartRow, 25
+      )
+    : _coreReadCandidateRows_(
+        sheet, orderedRows, lastColumn, dataStartRow, 25
+      );
   orderedRows.forEach(rowNumber => {
     const values = candidateValues.get(rowNumber);
-    if (_coreIsEmptyRow_(values)) return;
-    const record = _coreRowToRecord_(headers, values);
+    if (!projectionFields && _coreIsEmptyRow_(values)) return;
+    const record = projectionFields
+      ? values
+      : _coreRowToRecord_(headers, values);
 
     const matches = filterFields.every(field => {
       const expected = filters[field];

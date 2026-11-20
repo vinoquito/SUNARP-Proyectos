@@ -237,6 +237,7 @@ findRecordsByFields(source, {
 - `ignoreWhitespace: true` compara tolerando espacios, incluso entre caracteres.
 - Los filtros exactos no aceptan valores vacíos.
 - `requiredHeaders` comprueba encabezados adicionales.
+- `projectionFields` es opcional; cuando se declara, devuelve únicamente esos campos más los campos de filtro, y Core lee solo las columnas solicitadas para las filas candidatas. Sin esta opción, mantiene el comportamiento completo anterior.
 
 No es un índice persistente de base de datos: `TextFinder` localiza coincidencias sobre el rango de columna de la hoja. Evita transferir/materializar todos los registros, pero el tiempo del buscador depende del tamaño de la fuente.
 
