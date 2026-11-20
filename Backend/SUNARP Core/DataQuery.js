@@ -419,6 +419,10 @@ function queryRecords(source, options) {
     distinctFields, distinctCountFields, scopeRelations, authorization
   );
   const requiredHeaders = projectionFields.slice();
+  const optionalScopeFields = _coreQueryBuildOptionalScopeFields_(authorization);
+  const candidateProjectionFields = Array.from(new Set(
+    projectionFields.concat(optionalScopeFields)
+  ));
   _coreQueryAssertHeaders_(source, requiredHeaders);
 
   // El permiso se comprueba antes de cualquier lectura de caché. Los resultados
@@ -445,7 +449,7 @@ function queryRecords(source, options) {
   // directamente: cada consulta vuelve a comprobar permiso y ámbito sobre ellas.
   const candidateCacheKey = generation && candidateCacheSeconds > 0
     ? _coreQueryCandidateCacheKey_(
-        source, generation, idField, descriptor.schemaVersion, groups, projectionFields
+        source, generation, idField, descriptor.schemaVersion, groups, candidateProjectionFields
       )
     : null;
   let candidateRows = candidateCacheKey ? getCachedValue(candidateCacheKey) : null;
@@ -455,7 +459,7 @@ function queryRecords(source, options) {
   if (!candidateCacheHit) {
     if (typeof _coreOpenSource_ === 'function') {
       const loaded = _coreQueryLoadCandidateRows_(
-        source, groups, requiredHeaders, projectionFields, idField
+        source, groups, requiredHeaders, projectionFields, idField, optionalScopeFields
       );
       candidateRows = loaded.candidates;
       candidateContext = loaded.context;
@@ -624,7 +628,9 @@ function queryRecords(source, options) {
     candidateCount: candidateRows.length,
     authorizedCount,
     retainedForPage: pageSource.length,
-    projectedFieldCount: projectionFields.length,
+    projectedFieldCount: candidateRows.length
+      ? Object.keys(_coreQueryRecordValue_(candidateRows[0])).length
+      : projectionFields.length,
     hydratedRowCount: page.length,
     durationMs: Date.now() - queryStartedAt
   };
@@ -656,7 +662,7 @@ function queryRecords(source, options) {
  * Localiza filas candidatas con TextFinder y recupera únicamente las columnas
  * necesarias, agrupando filas cercanas para reducir llamadas a Sheets.
  */
-function _coreQueryLoadCandidateRows_(source, groups, requiredHeaders, projectionFields, idField) {
+function _coreQueryLoadCandidateRows_(source, groups, requiredHeaders, projectionFields, idField, optionalProjectionFields) {
   const context = _coreOpenSource_(source);
   const config = context.config;
   const sheet = context.sheet;
@@ -680,6 +686,11 @@ function _coreQueryLoadCandidateRows_(source, groups, requiredHeaders, projectio
     throw new Error('SUNARP Core: la fuente "' + config.sheetName +
       '" no contiene las columnas requeridas: ' + missing.join(', ') + '.');
   }
+  const actualProjectionFields = Array.from(new Set(
+    projectionFields.concat((optionalProjectionFields || []).filter(field =>
+      Object.prototype.hasOwnProperty.call(headerMap, field)
+    ))
+  ));
   const dataStartRow = config.headerRow + 1;
   const dataRows = Math.max(0, lastRow - config.headerRow);
   if (!dataRows) return { context, candidates: [] };
@@ -700,7 +711,7 @@ function _coreQueryLoadCandidateRows_(source, groups, requiredHeaders, projectio
       range.createTextFinder('^(?:' + batch.join('|') + ')$')
         .useRegularExpression(true)
         .matchEntireCell(true)
-        .matchCase(true)
+        .matchCase(false)
         .findAll()
         .forEach(cell => candidateRowNumbers.add(cell.getRow()));
     }
@@ -708,7 +719,7 @@ function _coreQueryLoadCandidateRows_(source, groups, requiredHeaders, projectio
 
   const rowNumbers = Array.from(candidateRowNumbers).sort((a, b) => a - b);
   if (!rowNumbers.length) return { context, candidates: [] };
-  const columns = projectionFields.map(field => ({ field, index: headerMap[field] }))
+  const columns = actualProjectionFields.map(field => ({ field, index: headerMap[field] }))
     .sort((a, b) => a.index - b.index);
   const blocks = [];
   columns.forEach(column => {
@@ -746,7 +757,11 @@ function _coreQueryLoadCandidateRows_(source, groups, requiredHeaders, projectio
       if (id && !byId.has(id)) byId.set(id, { rowNumber, record });
     });
   });
-  return { context, candidates: Array.from(byId.values()) };
+  return {
+    context,
+    candidates: Array.from(byId.values()),
+    projectedFields: actualProjectionFields
+  };
 }
 
 function _coreQueryRecordValue_(candidate) {
@@ -790,17 +805,25 @@ function _coreQueryBuildProjectionFields_(
     fields.add(lookup.recordField);
     lookup.requireEqualFields.forEach(field => fields.add(field));
   });
+  return Array.from(fields);
+}
+
+/**
+ * Los campos organizacionales directos son opcionales en la fuente base:
+ * pueden venir de lookups declarados y no de columnas de negocio.
+ * Si existen como columnas, se proyectan para autorización.
+ */
+function _coreQueryBuildOptionalScopeFields_(authorization) {
   const scopeFields = Object.assign({
     recordOrganizationStructureId: 'estructura_org_id',
     recordStructureId: 'estructura_id',
     recordLocalId: 'local_id',
     recordSiteId: 'sede_id'
   }, authorization.fields || {});
-  [
+  return Array.from(new Set([
     scopeFields.recordOrganizationStructureId,
     scopeFields.recordStructureId,
     scopeFields.recordLocalId,
     scopeFields.recordSiteId
-  ].forEach(field => { if (field) fields.add(field); });
-  return Array.from(fields);
+  ].filter(field => typeof field === 'string' && field.trim())));
 }

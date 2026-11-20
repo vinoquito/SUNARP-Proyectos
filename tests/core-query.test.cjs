@@ -584,3 +584,91 @@ test('queryRecords proyecta columnas de evaluación y solo hidrata la página au
   assert.equal(result.hydratedRowCount, 1);
   assert.equal(result.version, 2);
 });
+
+
+test('queryRecords carga asignaciones sin exigir columnas organizacionales aportadas por los lookups', () => {
+  const sandbox = createSandbox();
+  const headers = [
+    'asignacion_id', 'persona_id', 'cargo_id', 'condicion_cargo',
+    'anexo', 'estructura_local_id', 'local_id', 'observaciones',
+    'active', 'order'
+  ];
+  const values = [
+    ['ASG_1', 'PER_1', 'CAR_1', 'Titular', '101', 'REL_1', 'LOC_1', '', true, 1],
+    ['ASG_2', 'PER_2', 'CAR_2', 'Suplente', '102', 'REL_2', 'LOC_2', '', false, 2],
+    ['ASG_3', 'PER_3', 'CAR_1', 'Titular', '103', 'REL_1', 'LOC_1', '', true, 3]
+  ];
+  const rangeReads = [];
+  let finderMatchCase = null;
+  const sheet = {
+    getLastRow: () => 4,
+    getLastColumn: () => headers.length,
+    getRange(startRow, startColumn, numRows, numColumns) {
+      rangeReads.push({ startRow, startColumn, numRows, numColumns });
+      const selected = values.slice(startRow - 2, startRow - 2 + numRows)
+        .map(row => row.slice(startColumn - 1, startColumn - 1 + numColumns));
+      return {
+        getDisplayValues: () => startRow === 1
+          ? [headers.slice(startColumn - 1, startColumn - 1 + numColumns)]
+          : selected.map(row => row.map(value =>
+              typeof value === 'boolean' ? (value ? 'TRUE' : 'FALSE') : String(value)
+            )),
+        getValues: () => selected,
+        createTextFinder(pattern) {
+          let useRegex = false;
+          let matchCase = true;
+          return {
+            useRegularExpression(value) { useRegex = value; return this; },
+            matchEntireCell() { return this; },
+            matchCase(value) { matchCase = value; finderMatchCase = value; return this; },
+            findAll() {
+              const flags = matchCase ? '' : 'i';
+              const regex = new RegExp(pattern, flags);
+              const found = [];
+              selected.forEach((row, offset) => {
+                const actual = typeof row[0] === 'boolean'
+                  ? (row[0] ? 'TRUE' : 'FALSE')
+                  : String(row[0]);
+                const matches = useRegex
+                  ? regex.test(actual)
+                  : (matchCase ? actual === pattern : actual.toLowerCase() === pattern.toLowerCase());
+                if (matches) found.push({ getRow: () => startRow + offset });
+              });
+              return found;
+            }
+          };
+        }
+      };
+    }
+  };
+  sandbox.context._coreOpenSource_ = () => ({
+    config: { headerRow: 1, sheetName: 'asignaciones' },
+    sheet
+  });
+
+  const loaded = sandbox.context._coreQueryLoadCandidateRows_(
+    { spreadsheetId: 'S', sheetName: 'asignaciones' },
+    [{ active: true }],
+    ['asignacion_id', 'active'],
+    ['asignacion_id', 'active', 'estructura_local_id', 'local_id', 'order'],
+    'asignacion_id',
+    ['estructura_org_id', 'estructura_id', 'sede_id', 'local_id']
+  );
+
+  assert.equal(finderMatchCase, false);
+  assert.deepEqual(
+    Array.from(loaded.candidates, item => item.record.asignacion_id),
+    ['ASG_1', 'ASG_3']
+  );
+  assert.ok(loaded.projectedFields.includes('local_id'));
+  assert.ok(!loaded.projectedFields.includes('estructura_org_id'));
+  assert.ok(!loaded.projectedFields.includes('estructura_id'));
+  assert.ok(!loaded.projectedFields.includes('sede_id'));
+  assert.ok(loaded.candidates.every(item =>
+    Object.keys(item.record).every(field => headers.includes(field))
+  ));
+  const projectedReads = rangeReads.filter(read =>
+    read.startRow > 1 && read.numColumns > 0
+  );
+  assert.ok(projectedReads.every(read => read.numColumns < headers.length));
+});
