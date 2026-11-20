@@ -102,6 +102,12 @@ function createSandbox(initialRecords = []) {
     }
     return result;
   };
+  context._coreRunSourceWrite_ = (sourceRef, writer) => {
+    let writeStarted = false;
+    const result = writer(() => { writeStarted = true; });
+    if (writeStarted) context._coreInvalidateSourceCacheOrThrow_(sourceRef);
+    return result;
+  };
   vm.runInContext(source, context, { filename: 'CoreCompositeRepository.js' });
 
   return {
