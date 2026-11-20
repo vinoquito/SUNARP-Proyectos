@@ -58,6 +58,31 @@ function _accessGenerateUniqueIdentifier_(prefix, value, records, field, maxLeng
   throw new Error('No se pudo generar un identificador único.');
 }
 
+/**
+ * Genera un identificador comprobando colisiones mediante búsquedas exactas.
+ * Evita cargar el catálogo completo solo para reservar un ID.
+ */
+function _accessGenerateUniqueIdentifierFromSource_(sheetName, prefix, value, field, requiredHeaders, maxLength) {
+  const token = _accessIdentifierToken_(value) || 'REGISTRO';
+  const limit = Math.max(2, Number(maxLength) || 50);
+  const base = (String(prefix || '') + token).slice(0, limit);
+  const exists = candidate => _accessFindSecurityRecords_(
+    sheetName,
+    field,
+    [candidate],
+    requiredHeaders,
+    { matchCase: false, projectionFields: [field] }
+  ).length > 0;
+
+  if (!exists(base)) return base;
+  for (let suffixNumber = 2; suffixNumber < 10000; suffixNumber++) {
+    const suffix = '_' + suffixNumber;
+    const candidate = base.slice(0, limit - suffix.length) + suffix;
+    if (!exists(candidate)) return candidate;
+  }
+  throw new Error('No se pudo generar un identificador único.');
+}
+
 function _accessBuildPermissionCode_(moduleCode, operation) {
   const moduleToken = _accessIdentifierToken_(moduleCode);
   const operationToken = _accessIdentifierToken_(operation);
@@ -1518,19 +1543,29 @@ function saveAccessRole(payload) {
   if (!['create', 'edit'].includes(action)) throw new Error('La operación del rol no es válida.');
   if (!name) throw new Error('Ingresa el nombre del rol.');
 
-  const rolesCatalog = _accessLoadSecurityRecords_(
-    ACCESS_MANAGEMENT_CONFIG.sheets.roles,
-    ACCESS_MANAGEMENT_FIELDS.roles
-  );
+  const rolesSheet = ACCESS_MANAGEMENT_CONFIG.sheets.roles;
   const originalId = action === 'edit' ? _accessUpper_(payload.rol_id_original || payload.originalRoleId || payload.rol_id) : '';
-  const existing = action === 'edit' ? _accessFindBy_(rolesCatalog, 'rol_id', originalId) : null;
-  if (action === 'edit' && !existing) throw new Error('No se encontró el rol que deseas actualizar.');
-  if (rolesCatalog.some(row => _accessText_(row.rol_id) !== originalId && _accessText_(row.nombre).toLowerCase() === name.toLowerCase())) {
+  const existingMatches = action === 'edit'
+    ? _accessFindSecurityRecords_(rolesSheet, 'rol_id', [originalId], ACCESS_MANAGEMENT_FIELDS.roles)
+    : [];
+  if (action === 'edit' && existingMatches.length !== 1) throw new Error('No se encontró un único rol para actualizar.');
+  const existing = existingMatches[0] || null;
+  const duplicateNames = _accessFindSecurityRecords_(
+    rolesSheet,
+    'nombre',
+    [name],
+    ACCESS_MANAGEMENT_FIELDS.roles,
+    { matchCase: false, projectionFields: ['rol_id', 'nombre'] }
+  );
+  if (duplicateNames.some(row => _accessText_(row.rol_id) !== originalId &&
+      _accessText_(row.nombre).toLowerCase() === name.toLowerCase())) {
     throw new Error('Ya existe un rol con ese nombre.');
   }
 
   const roleId = action === 'create'
-    ? _accessGenerateUniqueIdentifier_('ROL_', name, rolesCatalog, 'rol_id', 50)
+    ? _accessGenerateUniqueIdentifierFromSource_(
+        rolesSheet, 'ROL_', name, 'rol_id', ACCESS_MANAGEMENT_FIELDS.roles, 50
+      )
     : originalId;
   const active = action === 'create' ? true : _accessIsActive_(existing.active);
   const nextRole = { rol_id: roleId, nombre: name, descripcion: description, active };
@@ -1607,8 +1642,11 @@ function saveAccessPermission(payload) {
   if (codeMatches.some(row => _accessText_(row.permiso_id) !== originalId)) {
     throw new Error('Ya existe un permiso con esa combinación de módulo y operación.');
   }
-  const allPermissions = _accessLoadSecurityRecords_(s.permissions, ACCESS_MANAGEMENT_FIELDS.permissions);
-  const permissionId = action === 'create' ? _accessGenerateUniqueIdentifier_('PERM_', code, allPermissions, 'permiso_id', 50) : originalId;
+  const permissionId = action === 'create'
+    ? _accessGenerateUniqueIdentifierFromSource_(
+        s.permissions, 'PERM_', code, 'permiso_id', ACCESS_MANAGEMENT_FIELDS.permissions, 50
+      )
+    : originalId;
   const active = action === 'create' ? true : _accessIsActive_(existing.active);
   const nextPermission = { permiso_id: permissionId, codigo: code, modulo_id: moduleId, operacion_id: operationId, descripcion: description, active };
   const data = _accessLoadAdministratorContinuityData_();

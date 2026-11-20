@@ -1593,3 +1593,35 @@ test('el editor de usuarios solicita catálogos de ámbito de forma diferida y u
   assert.match(editor, /rpc\('getAccessScopeCatalogs'\)/);
   assert.match(editor, /state\.data\.scopeCatalogsLoaded = true/);
 });
+
+test('CRUD de roles y permisos consulta únicamente las claves necesarias, sin cargar catálogos completos', () => {
+  const roleStart = accessSource.indexOf('function saveAccessRole(');
+  const roleEnd = accessSource.indexOf('function saveAccessPermission(', roleStart);
+  const permissionStart = roleEnd;
+  const permissionEnd = accessSource.indexOf('function saveRolePermissions(', permissionStart);
+  assert.ok(roleStart >= 0 && roleEnd > roleStart && permissionEnd > permissionStart);
+  const roleCrud = accessSource.slice(roleStart, roleEnd);
+  const permissionCrud = accessSource.slice(permissionStart, permissionEnd);
+  assert.doesNotMatch(roleCrud, /_accessLoadSecurityRecords_\s*\(/);
+  assert.doesNotMatch(permissionCrud, /_accessLoadSecurityRecords_\s*\(/);
+  assert.match(roleCrud, /_accessFindSecurityRecords_\s*\(\s*rolesSheet\s*,\s*'nombre'/);
+  assert.match(permissionCrud, /_accessGenerateUniqueIdentifierFromSource_/);
+});
+
+test('la generación de ID administrativo detecta colisiones mediante búsquedas exactas', () => {
+  const data = makeSecurityData();
+  data.roles.push({ rol_id: 'ROL_EDITOR', nombre: 'Editor', descripcion: '', active: true });
+  const sandbox = createAdapterSandbox(data);
+  const lookups = [];
+  const originalFind = sandbox.SUNARPCore.findRecordsByFields;
+  sandbox.SUNARPCore.findRecordsByFields = (source, filters, options) => {
+    lookups.push({ sheetName: source.sheetName, filters, options });
+    return originalFind(source, filters, options);
+  };
+  const generated = sandbox._accessGenerateUniqueIdentifierFromSource_(
+    'Roles', 'ROL_', 'Editor', 'rol_id', ['rol_id', 'nombre', 'active'], 50
+  );
+  assert.equal(generated, 'ROL_EDITOR_2');
+  assert.deepEqual(lookups.map(item => item.filters.rol_id), ['ROL_EDITOR', 'ROL_EDITOR_2']);
+  assert.ok(lookups.every(item => item.options.matchCase === false));
+});
