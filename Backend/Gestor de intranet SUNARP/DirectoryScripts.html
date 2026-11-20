@@ -619,6 +619,7 @@ const DirectoryPage = (() => {
       containerId: 'directoryTableContainer',
 
       mode: 'server',
+      initialData: state.initialPage || null,
 
       loadData: async params => {
         const elements = getElements();
@@ -1833,6 +1834,9 @@ async function deleteDirectoryEntry(record) {
       }
 
       state.records = result.records;
+      state.initialPage = result.page
+        ? { items: prepareRows(result.records), total: Number(result.page.total) || 0 }
+        : null;
       state.catalogs = result.catalogs;
 
       // 2. Preparar filtros.
