@@ -137,7 +137,12 @@ function createAdapterSandbox(data, email = 'prueba@sunarp.gob.pe') {
     RolPermiso: 'rolPermiso',
     AmbitosAcceso: 'ambitosAcceso',
     Operaciones: 'operaciones',
-    TiposAmbito: 'tiposAmbito'
+    TiposAmbito: 'tiposAmbito',
+    asignaciones: 'asignaciones',
+    estructura_local: 'estructura_local',
+    estructura_org: 'estructura_org',
+    locales: 'locales',
+    sede: 'sede'
   };
   sandbox.SUNARPCore = {
     getCurrentUserEmail: () => email,
@@ -213,6 +218,43 @@ test('el historial conserva compatibilidad con SUNARP Core v9 mientras admite le
   assert.ok(implementation.includes("typeof SUNARPCore.listTailRecords === 'function'"));
   assert.ok(implementation.includes('listRecordsFromSourcesCached'));
   assert.ok(implementation.includes('listTailRecords'));
+});
+
+test('getAccessUsers consulta candidatos por sede o rol sin cargar el snapshot global', () => {
+  const data = makeSecurityData();
+  data.personas.push({
+    persona_id: 'PER_118',
+    nombres: 'Ana',
+    apellidos: 'Zeta',
+    correo_institucional: 'ana.zeta@sunarp.gob.pe'
+  });
+  data.usuarios.push({ persona_id: 'PER_118', active: false });
+  data.asignaciones = [
+    { asignacion_id: 'ASG_001', persona_id: 'PER_117', estructura_local_id: 'REL_1', local_id: 'LOC_1', active: true },
+    { asignacion_id: 'ASG_002', persona_id: 'PER_118', estructura_local_id: '', local_id: 'LOC_1', active: true }
+  ];
+  data.estructura_local = [{ id: 'REL_1', estructura_id: 'EST_1', local_id: 'LOC_1' }];
+  data.estructura_org = [{ id: 'EST_1', sede_id: 'SEDE_1' }];
+  data.locales = [{ id: 'LOC_1', sede_id: 'SEDE_1' }];
+  data.sede = [{ id: 'SEDE_1', name: 'Lima' }];
+
+  const sandbox = createAdapterSandbox(data);
+  let fullLoads = 0;
+  const fullLoader = sandbox._accessLoadSecurityData_;
+  sandbox._accessLoadSecurityData_ = () => {
+    fullLoads++;
+    return fullLoader();
+  };
+
+  const bySite = sandbox.getAccessUsers({ sede_id: 'SEDE_1', search: 'lima', page: 1, pageSize: 10 });
+  assert.equal(bySite.total, 2);
+  assert.equal(bySite.items.length, 2);
+  assert.equal(bySite.items[0].sede_nombre, 'Lima');
+
+  const byRole = sandbox.getAccessUsers({ rol_id: 'ROL_ADMIN', page: 1, pageSize: 10 });
+  assert.equal(byRole.total, 1);
+  assert.equal(byRole.items[0].persona_id, 'PER_117');
+  assert.equal(fullLoads, 0);
 });
 
 test('la actualización de filtros invalida respuestas RPC anteriores de usuarios', () => {
