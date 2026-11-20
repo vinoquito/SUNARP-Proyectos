@@ -187,6 +187,17 @@ function queryRecords(source, options) {
   const groups = _coreQueryNormalizeGroups_(options);
   const idField = String(options.idField || '').trim();
   const distinctBy = String(options.distinctBy || '').trim();
+  const normalizeDistinctFields = (fields, label) => {
+    if (fields === undefined) return [];
+    if (!Array.isArray(fields) || fields.some(field =>
+      typeof field !== 'string' || !/^[A-Za-z0-9_]+$/.test(field.trim())
+    )) {
+      throw new Error('SUNARP Core: ' + label + ' debe ser un arreglo de nombres de campo válidos.');
+    }
+    return Array.from(new Set(fields.map(field => field.trim())));
+  };
+  const distinctFields = normalizeDistinctFields(options.distinctFields, 'distinctFields');
+  const distinctCountFields = normalizeDistinctFields(options.distinctCountFields, 'distinctCountFields');
   if (!idField) throw new Error('SUNARP Core: queryRecords requiere idField.');
   if (distinctBy && !/^[A-Za-z0-9_]+$/.test(distinctBy)) {
     throw new Error('SUNARP Core: distinctBy no es un campo válido.');
@@ -223,6 +234,7 @@ function queryRecords(source, options) {
 
   const descriptor = {
     groups, search, searchFields, searchAny, sortBy, sortDirection, offset, limit, idField, distinctBy,
+    distinctFields, distinctCountFields,
     schemaVersion: String(options.schemaVersion || '1')
   };
   const catalogVersion = _coreQueryGetCatalogVersion_(authorization);
@@ -268,7 +280,7 @@ function queryRecords(source, options) {
   }
 
   const requiredHeaders = [idField, distinctBy, sortBy].filter(Boolean)
-    .concat(searchFields, searchAny.map(match => match.field));
+    .concat(searchFields, searchAny.map(match => match.field), distinctFields, distinctCountFields);
   _coreQueryAssertHeaders_(source, requiredHeaders);
 
   // La caché de candidatos contiene filas aún no autorizadas y nunca se entrega
@@ -367,6 +379,26 @@ function queryRecords(source, options) {
   });
 
   const authorizedCount = records.length;
+  const distinctValues = {};
+  distinctFields.forEach(field => {
+    const values = new Set();
+    records.forEach(record => {
+      const value = String(record[field] === null || record[field] === undefined
+        ? '' : record[field]).trim();
+      if (value) values.add(value);
+    });
+    distinctValues[field] = Array.from(values).sort(_coreCompareValues_);
+  });
+  const distinctCounts = {};
+  distinctCountFields.forEach(field => {
+    const values = new Set();
+    records.forEach(record => {
+      const value = String(record[field] === null || record[field] === undefined
+        ? '' : record[field]).trim();
+      if (value) values.add(value);
+    });
+    distinctCounts[field] = values.size;
+  });
   records.sort((a, b) => {
     const compared = _coreCompareValues_(a[sortBy], b[sortBy]) ||
       _coreCompareValues_(a[idField], b[idField]);
@@ -388,6 +420,7 @@ function queryRecords(source, options) {
   const page = records.slice(offset, offset + limit);
   const result = {
     version: 1, records: page, total, offset, limit,
+    distinctValues, distinctCounts,
     hasMore: offset + page.length < total,
     cacheHit: false,
     candidateCacheHit,
