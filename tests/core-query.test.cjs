@@ -724,3 +724,80 @@ test('queryRecords rechaza la hidratación cuando cambió una columna usada para
     /fuente cambió durante la consulta/
   );
 });
+
+
+test('queryRecords intersecta filters con anyOf cuando repiten un campo', () => {
+  const sandbox = createSandbox();
+  const result = sandbox.context.queryRecords(
+    { spreadsheetId: 'S', sheetName: 'Assignments' },
+    {
+      idField: 'assignment_id',
+      filters: { status: 'ACTIVE' },
+      anyOf: [{ status: ['ACTIVE', 'INACTIVE'] }],
+      sortBy: 'assignment_id',
+      cacheSeconds: 0,
+      candidateCacheSeconds: 0,
+      authorization: sandbox.authorization()
+    }
+  );
+
+  assert.equal(result.total, 2);
+  assert.deepEqual(Array.from(result.records, item => item.assignment_id), ['A', 'D']);
+});
+
+test('queryRecords devuelve cero coincidencias si filters y anyOf son incompatibles', () => {
+  const sandbox = createSandbox();
+  const result = sandbox.context.queryRecords(
+    { spreadsheetId: 'S', sheetName: 'Assignments' },
+    {
+      idField: 'assignment_id',
+      filters: { status: 'ACTIVE' },
+      anyOf: [{ status: 'INACTIVE' }],
+      cacheSeconds: 0,
+      candidateCacheSeconds: 0,
+      authorization: sandbox.authorization()
+    }
+  );
+
+  assert.equal(result.total, 0);
+  assert.deepEqual(Array.from(result.records), []);
+});
+
+test('queryRecords elige como columna conductora un filtro no vacío aunque el primero sea vacío', () => {
+  const sandbox = createSandbox();
+  const originalFind = sandbox.context.findRecordsByFields;
+  const searchFields = [];
+  sandbox.context.findRecordsByFields = (source, filters, options) => {
+    searchFields.push(options.searchField);
+    return originalFind(source, filters, options);
+  };
+
+  const result = sandbox.context.queryRecords(
+    { spreadsheetId: 'S', sheetName: 'Assignments' },
+    {
+      idField: 'assignment_id',
+      filters: { status: 'ACTIVE' },
+      anyOf: [{ estructura_local_id: '', local_id: 'L1' }],
+      cacheSeconds: 0,
+      candidateCacheSeconds: 0,
+      authorization: sandbox.authorization()
+    }
+  );
+
+  assert.deepEqual(searchFields, ['local_id']);
+  assert.deepEqual(Array.from(result.records, item => item.assignment_id), ['A', 'D']);
+});
+
+test('queryRecords rechaza grupos que solo pueden localizar celdas vacías', () => {
+  const sandbox = createSandbox();
+  assert.throws(() => sandbox.context.queryRecords(
+    { spreadsheetId: 'S', sheetName: 'Assignments' },
+    {
+      idField: 'assignment_id',
+      filters: { estructura_local_id: '' },
+      cacheSeconds: 0,
+      candidateCacheSeconds: 0,
+      authorization: sandbox.authorization()
+    }
+  ), /columna conductora con valores no vacíos/);
+});
