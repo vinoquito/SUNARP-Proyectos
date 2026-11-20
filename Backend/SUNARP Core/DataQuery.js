@@ -349,16 +349,17 @@ function _coreQueryCacheKey_(source, generation, authorizationFingerprint, query
   return 'query-result:v2:' + digest;
 }
 
-function _coreQueryCandidateCacheKey_(source, generation, idField, schemaVersion, groups, projectionFields) {
+function _coreQueryCandidateCacheKey_(source, generation, idField, schemaVersion, groups) {
+  // La clave identifica el conjunto de candidatos, no la forma de la respuesta.
+  // La compatibilidad de proyecciones se valida contra los metadatos guardados.
   const digest = _coreQueryDigest_({
     source: _coreBuildSourceCacheKey_(source, 'query-candidates'),
     generation,
     idField,
     schemaVersion,
-    groups,
-    projectionFields
+    groups
   });
-  return 'query-candidates:v2:' + digest;
+  return 'query-candidates:v3:' + digest;
 }
 
 function _coreQueryAssertHeaders_(source, requiredHeaders) {
@@ -494,13 +495,33 @@ function queryRecords(source, options) {
   // directamente: cada consulta vuelve a comprobar permiso y ámbito sobre ellas.
   const candidateCacheKey = generation && candidateCacheSeconds > 0
     ? _coreQueryCandidateCacheKey_(
-        source, generation, idField, descriptor.schemaVersion, groups, candidateProjectionFields
+        source, generation, idField, descriptor.schemaVersion, groups
       )
     : null;
-  let candidateRows = candidateCacheKey ? getCachedValue(candidateCacheKey) : null;
+  const cachedCandidateEntry = candidateCacheKey
+    ? getCachedValue(candidateCacheKey)
+    : null;
+  const candidateCacheCompatible = Boolean(
+    cachedCandidateEntry &&
+    cachedCandidateEntry.version === 3 &&
+    Array.isArray(cachedCandidateEntry.candidates) &&
+    Array.isArray(cachedCandidateEntry.requestedFields) &&
+    Array.isArray(cachedCandidateEntry.projectedFields) &&
+    candidateProjectionFields.every(field =>
+      cachedCandidateEntry.requestedFields.includes(field)
+    )
+  );
+  let candidateRows = candidateCacheCompatible
+    ? cachedCandidateEntry.candidates
+    : null;
   const candidateCacheHit = Array.isArray(candidateRows);
   let candidateContext = null;
-  let projectedFieldCount = projectionFields.length;
+  let projectedFieldCount = candidateCacheHit
+    ? cachedCandidateEntry.projectedFields.length
+    : projectionFields.length;
+  let actualCandidateProjectedFields = candidateCacheHit
+    ? cachedCandidateEntry.projectedFields.slice()
+    : null;
 
   if (!candidateCacheHit) {
     if (typeof _coreOpenSource_ === 'function') {
@@ -509,11 +530,13 @@ function queryRecords(source, options) {
       );
       candidateRows = loaded.candidates;
       candidateContext = loaded.context;
-      projectedFieldCount = Array.isArray(loaded.projectedFields)
-        ? loaded.projectedFields.length
-        : projectionFields.length;
+      actualCandidateProjectedFields = Array.isArray(loaded.projectedFields)
+        ? loaded.projectedFields.slice()
+        : projectionFields.slice();
+      projectedFieldCount = actualCandidateProjectedFields.length;
     } else {
-      // Adaptador de prueba: simula candidatos sin fila física de Google Sheets.
+      // Adaptador de prueba: devuelve objetos completos; se registra la proyección
+      // solicitada para comprobar la compatibilidad al reutilizar candidatos.
       const candidateMap = new Map();
       groups.forEach(group => {
         const searchField = _coreQueryGetCandidateSearchField_(group);
@@ -528,19 +551,22 @@ function queryRecords(source, options) {
         });
       });
       candidateRows = Array.from(candidateMap.values());
+      actualCandidateProjectedFields = candidateProjectionFields.slice();
     }
     if (candidateCacheKey) {
       try {
-        putCachedValue(candidateCacheKey, candidateRows, candidateCacheSeconds);
+        putCachedValue(candidateCacheKey, {
+          version: 3,
+          requestedFields: candidateProjectionFields.slice(),
+          projectedFields: actualCandidateProjectedFields.slice(),
+          candidates: candidateRows
+        }, candidateCacheSeconds);
       } catch (error) {
         console.warn('[SUNARP Core] No se pudo almacenar la caché de candidatos:', error.message);
       }
     }
   } else if (typeof _coreOpenSource_ === 'function') {
     candidateContext = _coreOpenSource_(source);
-    if (candidateRows.length) {
-      projectedFieldCount = Object.keys(_coreQueryRecordValue_(candidateRows[0])).length;
-    }
   }
 
   const maxRetainedRecords = offset + limit;
@@ -744,7 +770,9 @@ function _coreQueryLoadCandidateRows_(source, groups, requiredHeaders, projectio
   ));
   const dataStartRow = config.headerRow + 1;
   const dataRows = Math.max(0, lastRow - config.headerRow);
-  if (!dataRows) return { context, candidates: [] };
+  if (!dataRows) {
+    return { context, candidates: [], projectedFields: actualProjectionFields };
+  }
 
   const candidateRowNumbers = new Set();
   groups.forEach(group => {
@@ -765,7 +793,9 @@ function _coreQueryLoadCandidateRows_(source, groups, requiredHeaders, projectio
   });
 
   const rowNumbers = Array.from(candidateRowNumbers).sort((a, b) => a - b);
-  if (!rowNumbers.length) return { context, candidates: [] };
+  if (!rowNumbers.length) {
+    return { context, candidates: [], projectedFields: actualProjectionFields };
+  }
   const columns = actualProjectionFields.map(field => ({ field, index: headerMap[field] }))
     .sort((a, b) => a.index - b.index);
   const blocks = [];

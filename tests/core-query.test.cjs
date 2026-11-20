@@ -497,6 +497,54 @@ test('la caché de candidatos nunca omite la autorización vigente de otro usuar
   assert.equal(sourceReads, 1);
 });
 
+test('queryRecords reutiliza proyecciones suficientes y recarga cuando falta un campo requerido', () => {
+  const sandbox = createSandbox();
+  let sourceReads = 0;
+  const original = sandbox.context.findRecordsByFields;
+  sandbox.context.findRecordsByFields = (...args) => {
+    sourceReads++;
+    return original(...args);
+  };
+  const sourceRef = { spreadsheetId: 'S', sheetName: 'Assignments' };
+  const base = {
+    idField: 'assignment_id',
+    filters: { status: 'ACTIVE' },
+    cacheSeconds: 0,
+    candidateCacheSeconds: 60
+  };
+
+  const first = sandbox.context.queryRecords(sourceRef, Object.assign({}, base, {
+    distinctBy: 'site_id',
+    sortBy: 'site_id',
+    authorization: sandbox.authorization()
+  }));
+  assert.equal(first.total, 2);
+  assert.equal(first.candidateCacheHit, false);
+  assert.equal(sourceReads, 1);
+
+  const scopedAuthorization = sandbox.authorization('P2', ['DIRECTORY_READ'], [
+    { tipo_ambito_id: 'SEDE', referencia_id: 'S2' }
+  ]);
+  scopedAuthorization.structures = [];
+  scopedAuthorization.locals = [];
+  const second = sandbox.context.queryRecords(sourceRef, Object.assign({}, base, {
+    distinctBy: 'status',
+    sortBy: 'status',
+    authorization: scopedAuthorization
+  }));
+  assert.equal(second.candidateCacheHit, true);
+  assert.equal(second.total, 0);
+  assert.equal(sourceReads, 1);
+
+  const third = sandbox.context.queryRecords(sourceRef, Object.assign({}, base, {
+    distinctBy: 'name',
+    sortBy: 'name',
+    authorization: sandbox.authorization()
+  }));
+  assert.equal(third.candidateCacheHit, false);
+  assert.equal(sourceReads, 2);
+});
+
 test('queryRecords calcula facetas y conteos únicamente sobre registros autorizados', () => {
   const sandbox = createSandbox();
   const result = sandbox.context.queryRecords({ spreadsheetId: 'S', sheetName: 'Assignments' }, {
