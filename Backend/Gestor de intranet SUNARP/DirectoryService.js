@@ -603,14 +603,15 @@ function _directoryBuildView_(context, authorization) {
   // autorizados pasan por el enriquecimiento destinado a la respuesta.
   context.asignaciones.forEach(item => {
     const location = _directoryResolveAssignmentLocation_(item, context, false);
+    const record = {
+      estructura_id: location.estructura_id,
+      sede_id: location.sede_id,
+      local_id: item.local_id
+    };
     const allowed = _accessRecordIsAllowed_(
       authorization.auth,
       'MOD_INFO_PERSONAL',
-      {
-        estructura_id: location.estructura_id,
-        sede_id: location.sede_id,
-        local_id: item.local_id
-      },
+      record,
       authorization.structures,
       authorization.locals
     );
