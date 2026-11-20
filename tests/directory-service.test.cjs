@@ -1092,6 +1092,43 @@ function createAssignmentWriteSandbox(context) {
 }
 
 
+
+test('_directoryGetNextOrderForLocation_ consulta mediante Core y calcula el orden por adscripción exacta', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  const candidates = [
+    { asignacion_id: 'ASG_1', estructura_local_id: 'REL_1', local_id: '', order: 4 },
+    { asignacion_id: 'ASG_2', estructura_local_id: 'REL_1', local_id: 'LOC_1', order: 40 },
+    { asignacion_id: 'ASG_3', estructura_local_id: '', local_id: 'LOC_1', order: 8 },
+    { asignacion_id: 'ASG_4', estructura_local_id: 'REL_2', local_id: '', order: 70 }
+  ];
+  const calls = [];
+  vmContext._directoryExecuteAssignmentQuery_ = (...args) => {
+    calls.push(args);
+    return { records: candidates, total: candidates.length };
+  };
+
+  const relationOrder = vmContext._directoryGetNextOrderForLocation_(
+    {}, { permissionCode: 'INFORMACION_PERSONAL_EDITAR' }, 'REL_1', ''
+  );
+  const localOrder = vmContext._directoryGetNextOrderForLocation_(
+    {}, { permissionCode: 'INFORMACION_PERSONAL_EDITAR' }, '', 'LOC_1'
+  );
+
+  assert.equal(relationOrder, 5);
+  assert.equal(localOrder, 9);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.map(item => item[2]))), [
+    { active: 'all', estructuraLocalId: 'REL_1' },
+    { active: 'all', localId: 'LOC_1' }
+  ]);
+  calls.forEach(args => {
+    assert.equal(args[3], 'asignacion_id');
+    assert.equal(args[4], 0);
+    assert.equal(args[5], 1000);
+    assert.equal(args[6], false);
+  });
+});
+
 test('editar una asignación la consulta puntualmente y no carga todas las asignaciones', () => {
   const vmContext = vm.createContext({});
   vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
