@@ -257,6 +257,49 @@ test('getAccessUsers consulta candidatos por sede o rol sin cargar el snapshot g
   assert.equal(fullLoads, 0);
 });
 
+test('la búsqueda documental comprueba la cuenta por persona_id sin cargar el snapshot global', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  let fullLoads = 0;
+  sandbox._accessLoadSecurityData_ = () => {
+    fullLoads++;
+    throw new Error('No debe cargarse el snapshot completo para esta consulta.');
+  };
+  let accountLookup = null;
+  sandbox._accessRequirePermission_ = () => ({
+    get userAccountsCatalog() {
+      throw new Error('No debe consultarse userAccountsCatalog.');
+    }
+  });
+  sandbox._accessLoadDocumentTypeRecords_ = () => [{ id: 'DNI', name: 'DNI' }];
+  sandbox._accessFindPersonById_ = personaId => ({
+    persona_id: personaId,
+    nombres: 'Persona',
+    apellidos: 'Prueba',
+    correo_institucional: 'prueba@sunarp.gob.pe'
+  });
+  sandbox._accessFindSecurityRecords_ = (sheet, field, values) => {
+    accountLookup = { sheet, field, values: Array.from(values) };
+    return [{ persona_id: 'PER_117', active: true }];
+  };
+  sandbox.SUNARPCore.findRecordsByFields = () => ({
+    records: [{ servidor_id: 'PER_117', tipo_documento: 'DNI', numero_documento: '12345678' }],
+    total: 1
+  });
+
+  const result = sandbox.searchAccessPersonByDocument({
+    tipo_documento: 'DNI',
+    numero_documento: '12345678'
+  });
+  assert.equal(result.found, true);
+  assert.equal(result.canEnableAccount, false);
+  assert.deepEqual(accountLookup, {
+    sheet: 'Usuarios',
+    field: 'persona_id',
+    values: ['PER_117']
+  });
+  assert.equal(fullLoads, 0);
+});
+
 test('la actualización de filtros invalida respuestas RPC anteriores de usuarios', () => {
   const start = accessUiSource.indexOf('async function loadFilteredUsers()');
   const end = accessUiSource.indexOf('siteSelect.addEventListener', start);
