@@ -391,19 +391,6 @@ const DirectoryPage = (() => {
   }
 
 
-
-    return (state.catalogs.estructuraOrg || [])
-      .filter(node => key(node.parent_id) === key(parentId))
-      .slice()
-      .sort((a, b) => {
-        const orderA = Number(a.order) || 0;
-        const orderB = Number(b.order) || 0;
-        return orderA - orderB ||
-          String(a.name).localeCompare(String(b.name), 'es');
-      });
-  }
-
-
   /**
    * Determina la etiqueta del nivel jerárquico.
    * También se utiliza en el formulario de registro.
