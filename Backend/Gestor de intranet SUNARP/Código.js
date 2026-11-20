@@ -82,39 +82,6 @@ function getAppShellConfig() {
  * Lee y valida la configuración del menú.
  */
 function getNavigationItems_() {
-  const spreadsheetId = INTRANET_CONFIG.DATA_SPREADSHEET_ID;
-
-  if (
-    !spreadsheetId ||
-    spreadsheetId === 'PEGAR_AQUI_EL_ID_DE_LA_HOJA'
-  ) {
-    throw new Error(
-      'Configura DATA_SPREADSHEET_ID en Code.gs.'
-    );
-  }
-
-  const spreadsheet = SpreadsheetApp.openById(spreadsheetId);
-
-  const sheet = spreadsheet.getSheetByName(
-    INTRANET_CONFIG.NAVIGATION_SHEET_NAME
-  );
-
-  if (!sheet) {
-    throw new Error(
-      `No existe la pestaña "${INTRANET_CONFIG.NAVIGATION_SHEET_NAME}".`
-    );
-  }
-
-  const values = sheet.getDataRange().getDisplayValues();
-
-  if (!values.length || !values[0].some(value => value.trim())) {
-    throw new Error('La hoja Menu no tiene encabezados.');
-  }
-
-  const headers = values[0].map(value =>
-    String(value).trim().toLowerCase()
-  );
-
   const requiredHeaders = [
     'id',
     'parent_id',
@@ -127,30 +94,22 @@ function getNavigationItems_() {
     'active'
   ];
 
-  const missingHeaders = requiredHeaders.filter(
-    name => !headers.includes(name)
-  );
+  const result = SUNARPCore.listRecordsFromSourcesCached([{
+    key: 'menu',
+    source: getIntranetDataSource(
+      'APP_DATA',
+      INTRANET_CONFIG.NAVIGATION_SHEET_NAME,
+      1
+    ),
+    requiredHeaders
+  }], 300);
 
-  if (missingHeaders.length) {
-    throw new Error(
-      `Faltan encabezados en Menu: ${missingHeaders.join(', ')}.`
-    );
-  }
-
-  const column = {};
-  requiredHeaders.forEach(name => {
-    column[name] = headers.indexOf(name);
-  });
-
-  const rows = values.slice(1);
+  const rows = result.menu || [];
   const seenIds = new Set();
   const items = [];
 
   rows.forEach((row, index) => {
-    if (!row.some(value => String(value).trim())) return;
-
-    const get = name =>
-      String(row[column[name]] ?? '').trim();
+    const get = name => String(row[name] === null || row[name] === undefined ? '' : row[name]).trim();
 
     const id = get('id');
     const label = get('label');
@@ -172,7 +131,6 @@ function getNavigationItems_() {
     seenIds.add(normalizedId);
 
     const activeValue = get('active').toUpperCase();
-
     const active = [
       'TRUE',
       'VERDADERO',
