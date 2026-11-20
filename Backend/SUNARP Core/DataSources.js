@@ -168,17 +168,24 @@ function getSourceInfoCached(source, expirationSeconds) {
     throw new Error('SUNARP Core: el TTL de metadatos debe estar entre 1 y 21600 segundos.');
   }
 
-  const key = _coreBuildSourceCacheKey_(source, 'info');
-  const cached = getCachedValue(key);
+  const generation = typeof _coreGetSourceGeneration_ === 'function'
+    ? _coreGetSourceGeneration_(source)
+    : null;
+  const key = generation
+    ? _coreBuildSourceCacheKey_(source, 'info') + ':' + generation
+    : null;
+  const cached = key ? getCachedValue(key) : null;
   if (cached && typeof cached === 'object' && Array.isArray(cached.headers)) {
     return cached;
   }
 
   const info = getSourceInfo(source);
-  try {
-    putCachedValue(key, info, ttl);
-  } catch (error) {
-    console.warn('[SUNARP Core] No se pudieron almacenar metadatos en caché:', error.message);
+  if (key) {
+    try {
+      putCachedValue(key, info, ttl);
+    } catch (error) {
+      console.warn('[SUNARP Core] No se pudieron almacenar metadatos en caché:', error.message);
+    }
   }
   return info;
 }
