@@ -315,7 +315,7 @@ function _accessLoadDocumentTypes_() {
     key: 'documentTypes',
     source: _directoryResolveDocumentTypesSource_(),
     requiredHeaders: ['id', 'name']
-  }], 300);
+  }], 60);
   return result.documentTypes || [];
 }
 
