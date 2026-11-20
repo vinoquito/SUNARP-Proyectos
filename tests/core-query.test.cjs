@@ -72,6 +72,47 @@ function createSandbox() {
   return { context, authorization, getCacheReads: () => cacheReads, cache };
 }
 
+test('queryRecords pagina distinctBy con retención acotada cuando distinctBy coincide con sortBy', () => {
+  const sandbox = createSandbox();
+  const rows = [
+    { assignment_id: 'A', status: 'ACTIVE', persona_id: 'P1', name: 'A', site_id: 'S1', allowed: true },
+    { assignment_id: 'C', status: 'ACTIVE', persona_id: 'P1', name: 'C', site_id: 'S1', allowed: true },
+    { assignment_id: 'B', status: 'ACTIVE', persona_id: 'P2', name: 'B', site_id: 'S1', allowed: true },
+    { assignment_id: 'Z', status: 'ACTIVE', persona_id: 'P3', name: 'Z', site_id: 'S1', allowed: true },
+    { assignment_id: 'D', status: 'ACTIVE', persona_id: 'P4', name: 'D', site_id: 'S1', allowed: true }
+  ];
+  sandbox.context.findRecordsByFields = () => ({ records: rows });
+  let maxRetained = 0;
+  const insert = sandbox.context._coreQueryInsertDistinctPageRecord_;
+  sandbox.context._coreQueryInsertDistinctPageRecord_ = function(records, ...args) {
+    const result = insert(records, ...args);
+    maxRetained = Math.max(maxRetained, records.length);
+    return result;
+  };
+
+  const result = sandbox.context.queryRecords(
+    { spreadsheetId: 'S', sheetName: 'Assignments' },
+    {
+      idField: 'assignment_id',
+      filters: { status: 'ACTIVE' },
+      distinctBy: 'persona_id',
+      sortBy: 'persona_id',
+      sortDirection: 'asc',
+      offset: 1,
+      limit: 2,
+      cacheSeconds: 0,
+      candidateCacheSeconds: 0,
+      authorization: sandbox.authorization()
+    }
+  );
+
+  assert.equal(result.total, 4);
+  assert.equal(result.records.length, 2);
+  assert.deepEqual(Array.from(result.records, item => item.persona_id), ['P2', 'P3']);
+  assert.equal(result.retainedForPage, 3);
+  assert.equal(maxRetained, 3);
+});
+
 test('queryRecords aplica AND, OR, autorización, orden y paginación antes de devolver datos', () => {
   const sandbox = createSandbox();
   const result = sandbox.context.queryRecords({ spreadsheetId: 'S', sheetName: 'Assignments' }, {

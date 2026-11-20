@@ -248,6 +248,49 @@ function _coreQueryInsertPageRecord_(records, record, sortBy, idField, sortDirec
   if (records.length > maxRecords) records.pop();
 }
 
+/**
+ * Inserta/reemplaza un representante distinto manteniendo solo la mejor página.
+ * Se usa cuando distinctBy === sortBy: todos los registros del mismo grupo
+ * comparten la clave primaria de orden y basta retener offset + limit grupos.
+ */
+function _coreQueryInsertDistinctPageRecord_(
+  records, retainedByValue, record, distinctValue,
+  sortBy, idField, sortDirection, maxRecords
+) {
+  const previous = retainedByValue.get(distinctValue);
+  if (previous) {
+    if (_coreQueryCompareRecords_(
+      record, previous, sortBy, idField, sortDirection
+    ) >= 0) return;
+    const previousIndex = records.indexOf(previous);
+    if (previousIndex >= 0) records.splice(previousIndex, 1);
+    retainedByValue.delete(distinctValue);
+  }
+
+  let low = 0;
+  let high = records.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (_coreQueryCompareRecords_(
+      records[middle], record, sortBy, idField, sortDirection
+    ) <= 0) low = middle + 1;
+    else high = middle;
+  }
+  if (low >= maxRecords && records.length >= maxRecords) return;
+
+  records.splice(low, 0, record);
+  retainedByValue.set(distinctValue, record);
+  if (records.length > maxRecords) {
+    const removed = records.pop();
+    const removedValue = String(
+      removed[sortBy] === null || removed[sortBy] === undefined
+        ? ''
+        : removed[sortBy]
+    ).trim();
+    retainedByValue.delete(removedValue);
+  }
+}
+
 function _coreQueryCacheKey_(source, generation, authorizationFingerprint, query) {
   const digest = _coreQueryDigest_({
     source: _coreBuildSourceCacheKey_(source, 'query'),
@@ -433,7 +476,12 @@ function queryRecords(source, options) {
 
   const maxRetainedRecords = offset + limit;
   const pageCandidates = [];
-  const distinctRecords = distinctBy ? new Map() : null;
+  const boundedDistinctPage = Boolean(distinctBy && distinctBy === sortBy);
+  const distinctPageRecords = boundedDistinctPage ? [] : null;
+  const retainedDistinctByValue = boundedDistinctPage ? new Map() : null;
+  const seenDistinctValues = distinctBy ? new Set() : null;
+  let distinctTotal = 0;
+  const distinctRecords = distinctBy && !boundedDistinctPage ? new Map() : null;
   const distinctValueSets = {};
   const distinctCountSets = {};
   distinctFields.forEach(field => { distinctValueSets[field] = new Set(); });
@@ -499,11 +547,28 @@ function queryRecords(source, options) {
       const value = String(record[distinctBy] === null || record[distinctBy] === undefined
         ? '' : record[distinctBy]).trim();
       if (!value) return;
-      const previous = distinctRecords.get(value);
-      if (!previous || _coreQueryCompareRecords_(
-        record, previous, sortBy, idField, sortDirection
-      ) < 0) {
-        distinctRecords.set(value, record);
+      if (!seenDistinctValues.has(value)) {
+        seenDistinctValues.add(value);
+        distinctTotal++;
+      }
+      if (boundedDistinctPage) {
+        _coreQueryInsertDistinctPageRecord_(
+          distinctPageRecords,
+          retainedDistinctByValue,
+          record,
+          value,
+          sortBy,
+          idField,
+          sortDirection,
+          maxRetainedRecords
+        );
+      } else {
+        const previous = distinctRecords.get(value);
+        if (!previous || _coreQueryCompareRecords_(
+          record, previous, sortBy, idField, sortDirection
+        ) < 0) {
+          distinctRecords.set(value, record);
+        }
       }
     } else {
       _coreQueryInsertPageRecord_(
@@ -525,10 +590,15 @@ function queryRecords(source, options) {
   let total = authorizedCount;
   let pageSource = pageCandidates;
   if (distinctBy) {
-    pageSource = Array.from(distinctRecords.values()).sort((a, b) =>
-      _coreQueryCompareRecords_(a, b, sortBy, idField, sortDirection)
-    );
-    total = distinctRecords.size;
+    if (boundedDistinctPage) {
+      pageSource = distinctPageRecords;
+      total = distinctTotal;
+    } else {
+      pageSource = Array.from(distinctRecords.values()).sort((a, b) =>
+        _coreQueryCompareRecords_(a, b, sortBy, idField, sortDirection)
+      );
+      total = distinctRecords.size;
+    }
   }
   const page = pageSource.slice(offset, offset + limit);
   const result = {

@@ -475,6 +475,7 @@ test('guardar datos personales consulta únicamente las asignaciones de la perso
     return { asignaciones: [], estructuraLocal: [], estructuraOrg: [], locales: [] };
   };
   vmContext._directorySource_ = name => name;
+  vmContext.getIntranetDataSource = (_key, sheetName) => ({ sheetName });
   vmContext._directoryAuthorizationContext_ = permission => {
     permissionRequested = permission;
     return { auth: {}, structures: [], locals: [] };
@@ -625,6 +626,123 @@ test('la consulta de LOCAL solo incluye asignaciones directas sin estructura org
   const descriptor = api.buildAssignmentQuery(context, authorization, { active: 'all' });
   const groups = JSON.parse(JSON.stringify(descriptor.queryOptions.anyOf));
   assert.deepEqual(groups, [{ local_id: ['LOC_1'], estructura_local_id: '' }]);
+});
+
+test('listDirectoryPeople consulta personas distintas y recupera solo las asignaciones de la página', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+
+  const calls = [];
+  const context = {
+    personas: [],
+    asignaciones: [],
+    datosPersonales: [],
+    sedes: [{ id: 'S1', name: 'Sede' }],
+    tiposLocal: [],
+    locales: [{ id: 'L1', name: 'Local', sede_id: 'S1' }],
+    tiposEstructura: [],
+    estructuraOrg: [{ id: 'E1', sede_id: 'S1' }],
+    estructuraLocal: [{ id: 'R1', estructura_id: 'E1', local_id: 'L1', active: true }],
+    cargos: [{ id: 'C1', name: 'Cargo', active: true }]
+  };
+  vmContext._directoryAuthorizationContext_ = () => ({
+    auth: {
+      moduleAccess: [{
+        modulo_id: 'MOD_INFO_PERSONAL',
+        scopes: [{ tipo_ambito_id: 'TOTAL', referencia_id: '' }]
+      }]
+    },
+    moduleId: 'MOD_INFO_PERSONAL',
+    permissionCode: 'INFORMACION_PERSONAL_VER',
+    structures: [],
+    locals: []
+  });
+  vmContext._directoryLoadContext_ = options => {
+    assert.equal(options.includePeople, false);
+    assert.equal(options.includeAssignments, false);
+    assert.equal(options.includePersonalData, false);
+    return context;
+  };
+  vmContext._directoryExecuteAssignmentQuery_ = (
+    _context, _authorization, options, _idField, offset, limit,
+    _enrich, distinctBy
+  ) => {
+    calls.push({ options, offset, limit, distinctBy });
+    if (distinctBy === 'persona_id') {
+      return {
+        records: [
+          { asignacion_id: 'A2', persona_id: 'PER_002' },
+          { asignacion_id: 'A3', persona_id: 'PER_003' }
+        ],
+        total: 3,
+        hasMore: true
+      };
+    }
+    assert.deepEqual(Array.from(options.personaIds), ['PER_002', 'PER_003']);
+    return {
+      records: [
+        { asignacion_id: 'A2', persona_id: 'PER_002', cargo_id: 'C1', estructura_local_id: 'R1', local_id: 'L1', active: true, order: 1 },
+        { asignacion_id: 'A2B', persona_id: 'PER_002', cargo_id: 'C1', estructura_local_id: 'R1', local_id: 'L1', active: false, order: 2 },
+        { asignacion_id: 'A3', persona_id: 'PER_003', cargo_id: 'C1', estructura_local_id: 'R1', local_id: 'L1', active: true, order: 1 }
+      ],
+      total: 3
+    };
+  };
+  vmContext.SUNARPCore = {
+    findRecordsByFields: (source, filters, options) => {
+      assert.equal(source.sheetName, 'personas');
+      assert.equal(options.searchField, 'persona_id');
+      assert.deepEqual(Array.from(filters.persona_id), ['PER_002', 'PER_003']);
+      return {
+        records: [
+          { persona_id: 'PER_002', nombres: 'Ana', apellidos: 'Beta' },
+          { persona_id: 'PER_003', nombres: 'Bea', apellidos: 'Gamma' }
+        ],
+        total: 2
+      };
+    }
+  };
+  vmContext._directoryCreateMap_ = (records, field = 'id') =>
+    new Map((records || []).map(item => [String(item[field]), item]));
+  vmContext._directoryBuildRelations_ = () => [{
+    id: 'R1', estructura_id: 'E1', local_id: 'L1',
+    estructura_name: 'Unidad', estructura_path: 'Unidad',
+    sede_name: 'Sede', referencia: 'Referencia', display_name: 'Unidad - Local',
+    active: true
+  }];
+  vmContext._directoryResolveAssignmentLocation_ = () => ({
+    estructura_id: 'E1', sede_id: 'S1',
+    relation: { id: 'R1' },
+    local: { id: 'L1', name: 'Local' }
+  });
+  vmContext._directoryEnrichAssignment_ = (item, _context, _relations, people) =>
+    Object.assign({}, item, {
+      nombres: people.get(item.persona_id).nombres
+    });
+
+  const result = vmContext.listDirectoryPeople({
+    active: true,
+    search: 'ana',
+    offset: 10,
+    limit: 2
+  });
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].distinctBy, 'persona_id');
+  assert.equal(calls[0].offset, 10);
+  assert.equal(calls[0].limit, 2);
+  assert.equal(calls[0].options.sortBy, 'persona_id');
+  assert.equal(calls[0].options.search, 'ana');
+  assert.equal(calls[1].options.active, 'all');
+  assert.equal(calls[1].limit, 1000);
+  assert.equal(result.total, 3);
+  assert.equal(result.offset, 10);
+  assert.equal(result.limit, 2);
+  assert.equal(result.hasMore, true);
+  assert.deepEqual(Array.from(result.records, item => item.persona_id), ['PER_002', 'PER_003']);
+  assert.equal(result.records[0].assignments.length, 2);
+  assert.equal(result.records[1].assignments.length, 1);
+  assert.equal(Object.prototype.hasOwnProperty.call(result.records[0], 'personalData'), false);
 });
 
 test('listDirectoryAssignments pagina mediante Core y no carga asignaciones completas', () => {

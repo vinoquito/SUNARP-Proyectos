@@ -799,6 +799,9 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
 
   const baseFilters = {};
   if (options.personaId) baseFilters.persona_id = _directoryKey_(options.personaId);
+  if (Array.isArray(options.personaIds)) {
+    baseFilters.persona_id = Array.from(new Set(options.personaIds.map(_directoryKey_).filter(Boolean)));
+  }
   if (options.asignacionId) baseFilters.asignacion_id = _directoryKey_(options.asignacionId);
   if (options.estructuraLocalId) baseFilters.estructura_local_id = _directoryKey_(options.estructuraLocalId);
   const selectedLocalId = _directoryKey_(options.localId);
@@ -1356,62 +1359,138 @@ function getDirectoryInitialData() {
 }
 
 
+/**
+ * Lista personas derivadas de asignaciones autorizadas.
+ *
+ * Core obtiene una página de personas distintas desde asignaciones. El Gestor
+ * recupera las identidades y todas las asignaciones visibles únicamente para
+ * los persona_id de esa página. No descarga el directorio ni las asignaciones
+ * completas, y no consulta la ficha de datos personales.
+ */
 function listDirectoryPeople(options) {
   options = options || {};
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const context = _directoryLoadContext_({ includePersonalData: false, includeDocumentTypes: false, validateSnapshot: false });
-  const view = _directoryBuildView_(context, authorization);
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeAssignments: false,
+    includeDocumentTypes: false,
+    validateSnapshot: false
+  });
 
   const activeFilter = options.active === undefined ? true : options.active;
   if (activeFilter !== 'all' && typeof activeFilter !== 'boolean') {
     throw new Error('El filtro active debe ser true, false o "all".');
   }
 
-  const assignmentByPerson = new Map();
-  view.assignments.forEach(item => {
-    const key = _directoryKey_(item.persona_id);
-    if (!assignmentByPerson.has(key)) assignmentByPerson.set(key, []);
-    assignmentByPerson.get(key).push(item);
-  });
-
-  let records = view.people.map(person => Object.assign({}, person, {
-    assignments: assignmentByPerson.get(_directoryKey_(person.persona_id)) || []
-  }));
-
-  if (activeFilter !== 'all') {
-    records = records.filter(person =>
-      person.assignments.some(item => _directoryIsActive_(item) === activeFilter)
-    );
-  }
-
-  const search = _directoryText_(options.search).toLocaleLowerCase();
-  if (search) {
-    records = records.filter(person =>
-      [person.nombres, person.apellidos].some(value =>
-        _directoryText_(value).toLocaleLowerCase().includes(search)
-      )
-    );
-  }
-
-  records.sort((a, b) =>
-    _directoryCompare_(a.apellidos, b.apellidos) ||
-    _directoryCompare_(a.nombres, b.nombres)
-  );
-
-  const total = records.length;
   const offset = options.offset === undefined ? 0 : Number(options.offset);
   if (!Number.isInteger(offset) || offset < 0) throw new Error('offset no es válido.');
-
-  let limit = null;
-  if (options.limit !== undefined && options.limit !== null) {
-    limit = Number(options.limit);
-    if (!Number.isInteger(limit) || limit < 0) throw new Error('limit no es válido.');
-    records = records.slice(offset, offset + limit);
-  } else {
-    records = records.slice(offset);
+  const limit = options.limit === undefined || options.limit === null
+    ? 25
+    : Number(options.limit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new Error('limit debe estar entre 1 y 100.');
   }
 
-  return { records: records, total: total, offset: offset, limit: limit };
+  // La primera consulta aplica filtros y ámbito sobre las asignaciones y
+  // colapsa por persona. persona_id es también la clave de orden estable.
+  const peoplePage = _directoryExecuteAssignmentQuery_(
+    context,
+    authorization,
+    {
+      active: activeFilter,
+      search: options.search,
+      sortBy: 'persona_id',
+      sortDirection: 'asc'
+    },
+    'asignacion_id',
+    offset,
+    limit,
+    false,
+    'persona_id'
+  );
+
+  const pageAssignments = peoplePage.records || [];
+  const personaIds = Array.from(new Set(pageAssignments.map(item =>
+    _directoryKey_(item.persona_id)
+  ).filter(Boolean)));
+  if (!personaIds.length) {
+    return {
+      records: [],
+      total: Number(peoplePage.total) || 0,
+      offset,
+      limit,
+      hasMore: Boolean(peoplePage.hasMore)
+    };
+  }
+
+  // La identidad solo se consulta para las personas que aparecerán en la página.
+  const peopleResult = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+    { persona_id: personaIds },
+    {
+      searchField: 'persona_id',
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas
+    }
+  );
+  const people = peopleResult.records || [];
+  const peopleMap = _directoryCreateMap_(people, 'persona_id');
+  if (people.length !== personaIds.length || peopleMap.size !== personaIds.length) {
+    throw new Error('Una o más asignaciones autorizadas no tienen una identidad válida en el directorio.');
+  }
+
+  // La segunda consulta recupera todas las asignaciones visibles solo de la
+  // página actual, sin repetir el filtro de búsqueda/estado de selección.
+  const assignmentPage = _directoryExecuteAssignmentQuery_(
+    context,
+    authorization,
+    {
+      personaIds,
+      active: 'all',
+      sortBy: 'order',
+      sortDirection: 'asc'
+    },
+    'asignacion_id',
+    0,
+    1000,
+    false
+  );
+  if (Number(assignmentPage.total) > (assignmentPage.records || []).length) {
+    throw new Error('Las personas de la página superan el límite de asignaciones recuperables en una sola consulta.');
+  }
+
+  const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
+  const assignmentsByPerson = new Map();
+  (assignmentPage.records || []).forEach(item => {
+    const personaId = _directoryKey_(item.persona_id);
+    const person = peopleMap.get(personaId);
+    if (!person) throw new Error('Una asignación visible no tiene una persona válida.');
+    const location = _directoryResolveAssignmentLocation_(item, context, false);
+    const enriched = _directoryEnrichAssignment_(
+      item,
+      context,
+      relationMap,
+      peopleMap,
+      location
+    );
+    if (!assignmentsByPerson.has(personaId)) assignmentsByPerson.set(personaId, []);
+    assignmentsByPerson.get(personaId).push(enriched);
+  });
+
+  const records = personaIds.map(personaId => {
+    const person = peopleMap.get(personaId);
+    return Object.assign({}, person, {
+      assignments: assignmentsByPerson.get(personaId) || []
+    });
+  });
+
+  return {
+    records,
+    total: Number(peoplePage.total) || 0,
+    offset,
+    limit,
+    hasMore: Boolean(peoplePage.hasMore)
+  };
 }
 
 function listDirectoryAssignments(options) {

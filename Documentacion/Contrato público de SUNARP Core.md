@@ -303,6 +303,7 @@ Reglas:
 7. El orden es ascendente por defecto y añade `idField` como desempate. `offset` debe ser entero no negativo; `limit` entero de 1 a 1000.
 8. `cacheSeconds` y `candidateCacheSeconds` aceptan 0..21600. `schemaVersion` separa versiones de la forma de los candidatos.
 9. Para ámbitos distintos de TOTAL, `structures` y `locals` deben estar presentes. Para almacenar resultados finales de dichos ámbitos se debe poder obtener una versión de catálogo (`catalogVersion` o generaciones de `catalogSources`). Si no hay versión verificable, no se almacena el resultado final restringido.
+10. Cuando `distinctBy` coincide con `sortBy`, Core conserva únicamente los mejores `offset + limit` representantes distintos y mantiene un conjunto compacto de claves para contar el total exacto. Esto permite paginar conjuntos por identidad (por ejemplo, personas) sin retener todos los registros representativos. Cuando los campos no coinciden, Core conserva un representante por valor distinto para poder resolver el orden global.
 
 Respuesta:
 
@@ -325,7 +326,7 @@ Respuesta:
 }
 ```
 
-**Límite de paginación que debe permanecer explícito:** el código usa `findRecordsByFields` para materializar todos los candidatos que cumplen los filtros exactos y los examina para calcular autorización, total y facetas exactas. En la Fase 1 se evita conservar y ordenar toda la colección autorizada cuando no se usa `distinctBy`: se retiene como máximo `offset + limit` registros ordenados para la página. Esto reduce memoria de resultados, pero **no convierte la lectura en paginación de origen** ni evita examinar todos los candidatos. Cuando se utiliza `distinctBy`, se conserva un representante por cada valor distinto antes de paginar. La optimización de acceso/seek por origen queda como pendiente técnico y no debe describirse como resuelta.
+**Límite de paginación que debe permanecer explícito:** el código usa `findRecordsByFields` para materializar todos los candidatos que cumplen los filtros exactos y los examina para calcular autorización, total y facetas exactas. En la Fase 1 se evita conservar y ordenar toda la colección autorizada cuando no se usa `distinctBy`: se retiene como máximo `offset + limit` registros ordenados para la página. Esto reduce memoria de resultados, pero **no convierte la lectura en paginación de origen** ni evita examinar todos los candidatos. Cuando se utiliza `distinctBy`, si coincide con `sortBy` Core mantiene como máximo `offset + limit` representantes y el conjunto compacto de claves necesario para contar personas/grupos distintos; si no coincide, conserva un representante por cada valor distinto para resolver la ordenación global. La optimización de acceso/seek por origen queda como pendiente técnico y no debe describirse como resuelta.
 
 El resultado final de caché se separa por identidad, módulo, permiso, ámbitos, campos, versión de catálogos y huella de las instantáneas organizacionales/relacionales usadas para autorizar. La caché de candidatos puede compartirse porque almacena datos aún no autorizados; cada solicitud vuelve a aplicar filtros, relaciones y autorización antes de devolver cualquier resultado.
 

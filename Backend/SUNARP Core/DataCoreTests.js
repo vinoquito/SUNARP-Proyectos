@@ -206,6 +206,47 @@ function runCoreSelfTests_() {
       'La consulta central filtra, autoriza, ordena y devuelve valores distintos.'
     );
 
+    const distinctPageSheet = testSpreadsheet.insertSheet('distinct-page');
+    distinctPageSheet.getRange(1, 1, 1, 5).setValues([[
+      'asignacion_id', 'persona_id', 'active', 'sede_id', 'detalle'
+    ]]);
+    distinctPageSheet.getRange(2, 1, 5, 5).setValues([
+      ['ASG_001', 'PER_001', true, 'SEDE_1', 'primera'],
+      ['ASG_002', 'PER_001', true, 'SEDE_1', 'segunda'],
+      ['ASG_003', 'PER_002', true, 'SEDE_1', 'tercera'],
+      ['ASG_004', 'PER_003', true, 'SEDE_1', 'cuarta'],
+      ['ASG_005', 'PER_004', true, 'SEDE_1', 'quinta']
+    ]);
+    SpreadsheetApp.flush();
+    const distinctPageResult = queryRecords(
+      Object.assign({}, source, { sheetName: 'distinct-page' }),
+      {
+        idField: 'asignacion_id',
+        filters: { active: true },
+        distinctBy: 'persona_id',
+        sortBy: 'persona_id',
+        sortDirection: 'asc',
+        offset: 1,
+        limit: 2,
+        authorization: {
+          context: queryAuthorizationContext,
+          moduleId: 'MOD_TEST',
+          permissionCode: 'TEST_READ'
+        },
+        cacheSeconds: 0,
+        candidateCacheSeconds: 0
+      }
+    );
+    assert(
+      distinctPageResult.total === 4 &&
+      distinctPageResult.records.length === 2 &&
+      distinctPageResult.records[0].persona_id === 'PER_002' &&
+      distinctPageResult.records[1].persona_id === 'PER_003' &&
+      distinctPageResult.retainedForPage === 3,
+      'La paginación por personas distintas retiene solo offset + limit representantes y conserva el total exacto.'
+    );
+    testSpreadsheet.deleteSheet(distinctPageSheet);
+
     const candidateCacheQuery = queryRecords(source, {
       idField: 'id',
       distinctBy: 'active',
