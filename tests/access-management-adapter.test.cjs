@@ -180,6 +180,14 @@ test('el historial conserva compatibilidad con SUNARP Core v9 mientras admite le
   assert.ok(implementation.includes('listTailRecords'));
 });
 
+test('la escritura de auditoría reutiliza metadatos de fuente desde Core', () => {
+  const start = accessSource.indexOf('function _accessWriteAudit_(actor, event) {');
+  const end = accessSource.indexOf('function _accessRunAudited_(', start);
+  const implementation = accessSource.slice(start, end);
+  assert.ok(implementation.includes('getSourceInfoCached'));
+  assert.ok(!implementation.includes('getSourceInfo(source)'));
+});
+
 test('el historial general evita leer la tabla completa cuando no hay filtros', () => {
   const start = accessSource.indexOf('function getAccessAuditHistory(filters) {');
   const end = accessSource.indexOf('function _accessParseAuditData_(', start);
