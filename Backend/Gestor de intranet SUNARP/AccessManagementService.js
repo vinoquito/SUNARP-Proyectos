@@ -354,29 +354,36 @@ function _accessLoadAdministratorContinuityData_() {
     throw new Error('Existe más de un registro activo para ROL_ADMIN.');
   }
 
-  const rolePermissions = _accessFindSecurityRecords_(
-    s.rolePermissions, 'rol_id', [ACCESS_MANAGEMENT_CONFIG.adminRoleId],
+  const permissions = _accessFindSecurityRecordsByFilters_(
+    s.permissions,
+    { modulo_id: moduleId, codigo: ACCESS_MANAGEMENT_CONFIG.adminPermissionCodes },
+    'modulo_id',
+    ACCESS_MANAGEMENT_FIELDS.permissions
+  );
+  const permissionIds = permissions.map(item => _accessText_(item.permiso_id)).filter(Boolean);
+  const rolePermissions = _accessFindSecurityRecordsByFilters_(
+    s.rolePermissions,
+    { rol_id: ACCESS_MANAGEMENT_CONFIG.adminRoleId, permiso_id: permissionIds },
+    'rol_id',
     ACCESS_MANAGEMENT_FIELDS.rolePermissions
   );
-  const permissions = _accessFindSecurityRecords_(
-    s.permissions, 'modulo_id', [moduleId],
-    ACCESS_MANAGEMENT_FIELDS.permissions
-  ).filter(item => ACCESS_MANAGEMENT_CONFIG.adminPermissionCodes.includes(
-    _accessUpper_(item.codigo)
-  ));
-  const userRoles = _accessFindSecurityRecords_(
-    s.userRoles, 'rol_id', [ACCESS_MANAGEMENT_CONFIG.adminRoleId],
+  const userRoles = _accessFindSecurityRecordsByFilters_(
+    s.userRoles,
+    { rol_id: ACCESS_MANAGEMENT_CONFIG.adminRoleId, modulo_id: moduleId },
+    'rol_id',
     ACCESS_MANAGEMENT_FIELDS.userRoles
-  ).filter(item => _accessText_(item.modulo_id) === moduleId);
+  );
   const candidatePersonaIds = userRoles.map(item => item.persona_id);
   const usuarios = _accessFindSecurityRecords_(
     s.users, 'persona_id', candidatePersonaIds,
     ACCESS_MANAGEMENT_FIELDS.users
   );
-  const ambitosAcceso = _accessFindSecurityRecords_(
-    s.scopes, 'modulo_id', [moduleId],
+  const ambitosAcceso = _accessFindSecurityRecordsByFilters_(
+    s.scopes,
+    { modulo_id: moduleId, tipo_ambito_id: 'TOTAL' },
+    'modulo_id',
     ACCESS_MANAGEMENT_FIELDS.scopes
-  ).filter(item => _accessUpper_(item.tipo_ambito_id) === 'TOTAL');
+  );
 
   _accessValidateUnique_(userRoles, ['persona_id', 'modulo_id'], 'UsuarioRol ROL_ADMIN');
   _accessValidateUnique_(rolePermissions, ['rol_id', 'permiso_id'], 'RolPermiso ROL_ADMIN');

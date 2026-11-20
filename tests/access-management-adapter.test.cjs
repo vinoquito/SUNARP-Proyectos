@@ -1638,3 +1638,30 @@ test('la edición conjunta de accesos consulta módulos y roles por los IDs de l
   assert.match(implementation, /_accessFindSecurityRecords_\s*\(\s*s\.modules/);
   assert.match(implementation, /_accessFindSecurityRecords_\s*\(\s*s\.roles/);
 });
+
+test('la continuidad del administrador global restringe las relaciones por módulo y permisos críticos', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  const calls = [];
+  const originalFind = sandbox.SUNARPCore.findRecordsByFields;
+  sandbox.SUNARPCore.findRecordsByFields = (source, filters, options) => {
+    calls.push({ sheet: source.sheetName, filters });
+    return originalFind(source, filters, options);
+  };
+  const data = sandbox._accessLoadAdministratorContinuityData_();
+  assert.equal(data.modulos.length, 1);
+  assert.equal(data.usuarioRol.length, 1);
+  assert.equal(data.ambitosAcceso.length, 1);
+  const permissionQuery = calls.find(call => call.sheet === 'Permisos');
+  const rolePermissionQuery = calls.find(call => call.sheet === 'RolPermiso');
+  const userRoleQuery = calls.find(call => call.sheet === 'UsuarioRol');
+  const scopeQuery = calls.find(call => call.sheet === 'AmbitosAcceso');
+  assert.deepEqual(permissionQuery.filters.codigo, [
+    'USUARIOS_ADMINISTRAR', 'ROLES_ADMINISTRAR',
+    'PERMISOS_ADMINISTRAR', 'AMBITOS_ACCESO_ADMINISTRAR'
+  ]);
+  assert.equal(permissionQuery.filters.modulo_id, 'MOD_ACCESOS');
+  assert.equal(rolePermissionQuery.filters.rol_id, 'ROL_ADMIN');
+  assert.equal(rolePermissionQuery.filters.permiso_id.length, 4);
+  assert.equal(userRoleQuery.filters.modulo_id, 'MOD_ACCESOS');
+  assert.equal(scopeQuery.filters.tipo_ambito_id, 'TOTAL');
+});
