@@ -294,3 +294,35 @@ test('queryRecords reutiliza candidatos entre consultas distintas y prioriza el 
   assert.equal(sourceReads, 1);
   assert.equal(searchFields[0], 'site_id');
 });
+
+test('la caché de candidatos nunca omite la autorización vigente de otro usuario', () => {
+  const sandbox = createSandbox();
+  let sourceReads = 0;
+  const original = sandbox.context.findRecordsByFields;
+  sandbox.context.findRecordsByFields = (...args) => {
+    sourceReads++;
+    return original(...args);
+  };
+  const sourceRef = { spreadsheetId: 'S', sheetName: 'Assignments' };
+  const base = {
+    idField: 'assignment_id',
+    filters: { status: 'ACTIVE' },
+    anyOf: [{ site_id: 'S1' }],
+    cacheSeconds: 0,
+    candidateCacheSeconds: 60
+  };
+  const first = sandbox.context.queryRecords(sourceRef, Object.assign({}, base, {
+    authorization: sandbox.authorization()
+  }));
+  const scoped = sandbox.authorization('P2', ['DIRECTORY_READ'], [
+    { tipo_ambito_id: 'SEDE', referencia_id: 'S2' }
+  ]);
+  scoped.structures = [];
+  scoped.locals = [];
+  const second = sandbox.context.queryRecords(sourceRef, Object.assign({}, base, {
+    authorization: scoped
+  }));
+  assert.equal(first.total, 2);
+  assert.equal(second.total, 0);
+  assert.equal(sourceReads, 1);
+});
