@@ -157,6 +157,18 @@ function createAdapterSandbox(data, email = 'prueba@sunarp.gob.pe') {
       }));
       return { records: rows, total: rows.length };
     },
+    resolveIdentity: (source, email, options) => {
+      const result = sandbox.SUNARPCore.findRecordsByFields(
+        source,
+        { [options.emailField]: email },
+        { searchField: options.emailField, matchCase: false, requiredHeaders: options.requiredHeaders }
+      );
+      const records = (result.records || []).filter(item =>
+        String(item[options.emailField] || '').trim().toLowerCase() === String(email || '').trim().toLowerCase() &&
+        String(item[options.idField] || '').trim()
+      );
+      return { records, total: records.length };
+    },
     listRecordsFromSourcesCached: requests => requests.reduce((result, request) => {
       const key = dataKeyBySheet[request.source.sheetName] || request.source.sheetName;
       result[request.key] = data[key] || [];
@@ -678,6 +690,7 @@ test('la validación del snapshot rechaza dos roles activos de la misma persona 
 
 test('el contrato del Gestor no busca usuarios por correo ni lee rol_id desde Usuarios', () => {
   assert.match(accessSource, /person\.correo_institucional/);
+  assert.match(accessSource, /SUNARPCore\.resolveIdentity\(/);
   assert.match(accessSource, /resolveAuthorizationContext\(\s*\{\s*personaId,/);
   assert.match(accessSource, /userRoles:\s*data\.usuarioRol/);
   assert.doesNotMatch(accessSource, /user\.rol_id/);
