@@ -180,6 +180,19 @@ test('el historial conserva compatibilidad con SUNARP Core v9 mientras admite le
   assert.ok(implementation.includes('listTailRecords'));
 });
 
+test('la consulta de usuarios aplica paginación en servidor y limita el payload', () => {
+  const start = accessSource.indexOf('function getAccessUsers(filters) {');
+  const end = accessSource.indexOf('function getAccessAuditHistory(', start);
+  const implementation = accessSource.slice(start, end);
+  assert.ok(implementation.includes('rows.slice(offset, offset + pageSize)'));
+  assert.ok(implementation.includes('totalPages'));
+  const uiStart = accessUiSource.indexOf('function renderUsers(host) {');
+  const uiEnd = accessUiSource.indexOf('function openUserModal(row) {', uiStart);
+  const uiImplementation = accessUiSource.slice(uiStart, uiEnd);
+  assert.ok(uiImplementation.includes("mode: 'server'"));
+  assert.ok(uiImplementation.includes('loadData: loadUserPage'));
+});
+
 test('la escritura de auditoría reutiliza metadatos de fuente desde Core', () => {
   const start = accessSource.indexOf('function _accessWriteAudit_(actor, event) {');
   const end = accessSource.indexOf('function _accessRunAudited_(', start);
