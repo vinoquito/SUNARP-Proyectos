@@ -453,10 +453,18 @@ test('AUDITORIA_VER es independiente y no concede administración de accesos', (
   assert.equal(view.users.length, 0);
 });
 
-test('el editor puede consultar accesos existentes aunque la cuenta esté inactiva', () => {
-  const data = makeSecurityData({ usuarios: [{ persona_id: 'PER_117', active: false }] });
+test('el editor puede consultar accesos existentes de una cuenta objetivo inactiva', () => {
+  const base = makeSecurityData();
+  const data = makeSecurityData({
+    usuarios: [
+      { persona_id: 'PER_117', active: true },
+      { persona_id: 'PER_118', active: false }
+    ],
+    usuarioRol: base.usuarioRol.concat(base.usuarioRol.map(item => Object.assign({}, item, { persona_id: 'PER_118' }))),
+    ambitosAcceso: base.ambitosAcceso.concat(base.ambitosAcceso.map(item => Object.assign({}, item, { persona_id: 'PER_118' })))
+  });
   const sandbox = createAdapterSandbox(data);
-  const configuration = sandbox.getAccessUserConfiguration('PER_117');
+  const configuration = sandbox.getAccessUserConfiguration('PER_118');
   assert.equal(configuration.userRoles.length, 2);
   assert.equal(configuration.scopes.length, 2);
 });
