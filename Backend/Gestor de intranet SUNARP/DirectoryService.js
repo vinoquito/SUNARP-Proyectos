@@ -1928,10 +1928,13 @@ function saveDirectoryEntry(payload) {
   if (personaId) personPayload.persona_id = personaId;
 
   if (!isNewPerson && !isNewAssignment) {
+    const assignmentAuthorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_EDITAR');
     const snapshot = _directoryLoadContext_({
       includePersonalData: false,
       includePeople: false,
-      includeDocumentTypes: false
+      includeAssignments: false,
+      includeDocumentTypes: false,
+      validateSnapshot: false
     });
     const previousPersonResult = SUNARPCore.findRecordsByFields(
       _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
@@ -1947,7 +1950,11 @@ function saveDirectoryEntry(payload) {
     );
     if (previousPersonalResult.total > 1) throw new Error('La ficha de datos personales está duplicada.');
     const previousPersonalData = previousPersonalResult.records[0] || null;
-    const previousAssignment = snapshot.asignaciones.find(item => _directoryKey_(item.asignacion_id) === assignmentId);
+    const previousAssignment = _directoryFindAuthorizedAssignmentById_(
+      snapshot,
+      assignmentAuthorization,
+      assignmentId
+    );
     if (!previousPerson || !previousAssignment) throw new Error('No se encontró la persona o asignación que se intenta editar.');
     if (_directoryKey_(previousAssignment.persona_id) !== personaId) {
       throw new Error('La asignación seleccionada no pertenece a la persona indicada.');
