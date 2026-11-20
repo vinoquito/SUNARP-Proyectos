@@ -1004,6 +1004,8 @@ test('el bootstrap de Administración carga Sedes para el filtro, pero difiere c
   assert.equal(scopeCatalogs.tiposEstructura.length, 1);
   assert.equal(scopeCatalogs.estructuraLocal.length, 1);
   assert.deepEqual(scopeReads, [
+    // La autorización del endpoint resuelve Modulos antes de consultar catálogos.
+    'SECURITY:Modulos',
     'SECURITY:Sedes',
     'SECURITY:EstructuraOrg',
     'DIRECTORY:locales',
