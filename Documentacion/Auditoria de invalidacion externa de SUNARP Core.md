@@ -2,7 +2,7 @@
 
 **Fecha:** 20 de noviembre de 2026  
 **Rama auditada:** `feat/directorio-personas-datos-asignaciones`  
-**Alcance:** código versionado de los proyectos bajo `Backend`. No se modificó código ni se alteraron despliegues durante esta auditoría.
+**Alcance:** arquitectura actualmente integrada de SUNARP Core y Gestor de intranet SUNARP. Los demás proyectos Backend aún no están unificados bajo esta arquitectura y quedan expresamente fuera de esta auditoría. No se modificó código ni se alteraron despliegues.
 
 ## 1. Fuentes reales configuradas por Gestor de intranet
 
@@ -45,35 +45,9 @@ La función envuelve esas escrituras en `SUNARPCore.runSourceWriteBatch()`, decl
 
 No se encontró un equivalente de esa utilidad para invalidar manualmente `APP_DATA`, `MASTER_DATA` completo o `SECURITY`.
 
-### 2.2 Gestor de contenidos Sunarp: escrituras en archivos distintos
+### 2.2 Proyectos todavía no unificados
 
-El proyecto no declara la biblioteca Core. [Código.js](https://github.com/vinoquito/SUNARP-Proyectos/blob/feat/directorio-personas-datos-asignaciones/Backend/Gestor%20de%20contenidos%20Sunarp/C%C3%B3digo.js) configura estos archivos:
-
-- `SPREADSHEET_ID`: `1bMMjklKWjHAM8GfWPFLYmOxz-B20lbsyzeOuOabRh-0`
-- `MASTER_SPREADSHEET_ID`: `17DLCau1UjHaqgnGWrNAQ6mB4vUULZuuCsfPSIHdhoiQ`
-- `SECURITY_SPREADSHEET_ID`: `1eLStGWsZUmqllXrpwsU_XJL58B-QzGc2a27EygkErgE`
-
-Escribe directamente en sus tablas de agentes, catálogos y seguridad; su módulo de auditoría también escribe en su propio archivo de seguridad. Ninguno de esos tres IDs coincide con los cuatro IDs configurados por Core en la sección 1. Por ello, las escrituras versionadas de este proyecto no son escritoras de las fuentes Core auditadas y no requieren invalidar la caché de SUNARP Core.
-
-Este proyecto mantiene su propio mecanismo de caché/auditoría; no debe confundirse con la caché central de Core.
-
-### 2.3 Agente Sunarp: sincronización de otra hoja
-
-[Agente Sunarp/Código.js](https://github.com/vinoquito/SUNARP-Proyectos/blob/feat/directorio-personas-datos-asignaciones/Backend/Agente%20Sunarp/C%C3%B3digo.js) no declara ni invoca Core. Utiliza `SpreadsheetApp.getActiveSpreadsheet()`, lee las hojas `Agentes Sunarp`, `sede`, `departamentos`, `provincias`, `distritos` y `config agentes`, y escribe el resultado en `data agentes sunarp`; también completa IDs faltantes en `Agentes Sunarp`.
-
-Su código contiene una función instaladora, `instalarDisparadoresDataAgentesSunarp()`, que reemplaza únicamente sus propios activadores y crea:
-
-- `actualizarDataAgentesSunarpAlEditar`: activador instalable `onEdit`.
-- `actualizarDataAgentesSunarpAlCambiar`: activador instalable `onChange`, limitado a `INSERT_ROW` y `REMOVE_ROW`.
-- `verificarCambiosAgentesSunarp`: activador temporal cada cinco minutos.
-
-Estos activadores sincronizan `data agentes sunarp`; no llaman a `SUNARPCore.invalidateSourceCache()` y no constituyen un mecanismo de invalidación de las fuentes Core. El ID del archivo contenedor no está fijado en el código porque se obtiene mediante `getActiveSpreadsheet()`; debe comprobarse en Apps Script/Google Sheets para cerrar la identificación de ese proyecto. Los nombres de las pestañas que modifica no corresponden a las tablas funcionales de Core enumeradas en la sección 1.
-
-### 2.4 SUNARP Core y SUNARP UI
-
-Core contiene las escrituras de repositorio y compuesto; no se encontraron definiciones de activadores `ScriptApp.newTrigger`, `onEdit` u `onChange` en sus archivos de implementación. Las escrituras de Core invalidan la fuente modificada mediante su propio contrato.
-
-SUNARP UI es una biblioteca de interfaz y no se identificaron escrituras de hojas ni instalación de activadores en su código.
+Los proyectos **Gestor de contenidos Sunarp** y **Agente Sunarp** todavía no están incorporados a la arquitectura unificada objeto de esta Fase 1. Por indicación del responsable del proyecto, sus mecanismos de escritura y sus activadores no forman parte del alcance ni condicionan el cierre actual. Se revisarán cuando esos proyectos se integren formalmente.
 
 ## 3. Resultado de la auditoría de invalidación
 
@@ -124,22 +98,35 @@ Hallazgos estáticos:
 
 Los activadores instalados son propios del proyecto y de la cuenta que los creó; no se heredan por incluir una biblioteca. Un activador de Agente Sunarp no invalida cachés de Core por el mero hecho de ejecutarse.
 
-## 5. Verificaciones manuales que siguen pendientes
+## 5. Verificaciones manuales completadas
 
-Para cerrar la auditoría operativa, comprobar en Apps Script:
+El responsable del proyecto comprobó directamente los paneles **Activadores** de los dos proyectos incluidos en el alcance:
 
-1. **Proyecto SUNARP Core:** abrir el panel Activadores y comprobar si existe algún activador instalado. El código auditado no define ninguno.
-2. **Proyecto Gestor de intranet SUNARP:** abrir el panel Activadores y comprobar si existe algún activador instalado. El código auditado no define ninguno.
-3. **Proyectos Apps Script externos que estén vinculados o escriban en los cuatro archivos fuente de la sección 1:** identificar si existen y, cuando existan, revisar sus activadores y código de escritura. Registrar función, tipo de evento, archivo fuente, propietario y si llama a `invalidateSourceCache` para todas las pestañas que modifica.
-4. **Archivo contenedor de Agente Sunarp:** confirmar el ID del archivo al que está vinculado. Su instalador de activadores no es una invalidación de Core; esta comprobación permite cerrar su identificación dentro del inventario.
-5. **Ediciones manuales:** confirmar quién administra `Global parameters`, `Directorios telefónicos`, `Seguridad - Gestor de contenidos Intranet SUNARP` y `Gestor de intranet - Datos`, y que conozca que debe ejecutarse la invalidación de Core cuando edite una fuente cacheada.
+1. **SUNARP Core:** no hay activadores instalados.
+2. **Gestor de intranet SUNARP:** no hay activadores instalados.
 
-En cada panel de activadores, registrar el nombre de la función, el origen del evento, el tipo de evento o frecuencia y la cuenta propietaria. No instalar nuevos activadores todavía. No se debe asumir que `onEdit` o `onChange` detectará cambios de `IMPORTRANGE` o escrituras hechas por otros servicios.
+Este resultado coincide con el código inspeccionado: ninguno de los dos proyectos define instaladores ni manejadores de activadores de edición/cambio/temporizador. No se instalarán activadores para esta fase.
 
-## 6. Conclusión
+Los demás proyectos Backend quedan fuera del alcance porque todavía no están unificados con la arquitectura Core/Gestor. No se requiere revisar sus activadores ni identificar sus archivos contenedores para cerrar esta fase.
 
-**Resultado del código versionado:** no se encontró una escritura funcional de los proyectos Gestor de contenidos Sunarp o Agente Sunarp contra las cuatro fuentes Core configuradas. Las escrituras del Gestor de intranet pasan por Core, salvo la migración excepcional, correctamente agrupada con `runSourceWriteBatch`. No se identificó una ruta de escritura versionada que omita invalidación dentro de ese consumidor.
+### Procedimiento de consistencia para el alcance actual
 
-**Pendiente para cerrar Fase 1:** comprobar en Apps Script los activadores instalados y descartar proyectos externos no versionados que escriban los cuatro archivos fuente. Además, confirmar la identidad del archivo contenedor de Agente Sunarp y acordar el procedimiento operativo para invalidar después de ediciones manuales. Si se detecta un escritor externo, debe corregirse antes de cerrar la fase para que invalide cada fuente que modifica.
+- Las escrituras funcionales realizadas por el Gestor de intranet a través de Core invalidan automáticamente la fuente escrita.
+- La migración excepcional de esquema ejecuta sus escrituras directas dentro de `runSourceWriteBatch()`, que coordina bloqueo, `flush` e invalidación.
+- Una edición manual de una pestaña cacheada en Google Sheets no ejecuta una invalidación automática. Cuando sea necesario que la aplicación refleje inmediatamente esa edición, debe invocarse `SUNARPCore.invalidateSourceCache(source)` desde el proyecto Gestor, pasando la configuración exacta de archivo, pestaña y fila de encabezados mediante `getIntranetDataSource(sourceKey, sheetName, 1)`.
+- Si no se requiere actualización inmediata, las entradas cacheadas se renovarán al expirar o ser desalojadas según el TTL y el comportamiento de CacheService. Este comportamiento es consistencia eventual, no invalidación inmediata.
+- Para las réplicas `IMPORTRANGE`, primero debe reflejarse el cambio del maestro en la réplica y luego invalidarse la generación del maestro; si se editó directamente la réplica, debe invalidarse también esa réplica.
 
-Esta auditoría no instala activadores, no cambia el código de producción, no altera la versión 10 de Core y no crea ni modifica despliegues.
+La ausencia de activadores queda aceptada como decisión operativa de la arquitectura actual: no se promete detección automática de ediciones manuales. No se instalarán triggers en Core ni en Gestor como parte del cierre de Fase 1.
+
+## 6. Conclusión y estado de Fase 1
+
+**Auditoría de código:** las escrituras funcionales del Gestor de intranet usan SUNARP Core y reciben invalidación automática. La única ruta de escritura directa encontrada, la migración de esquema, está protegida mediante `runSourceWriteBatch()`. No se encontró otra ruta de escritura del Gestor que omita la invalidación.
+
+**Comprobación manual:** el responsable confirmó que no hay activadores instalados ni en SUNARP Core ni en Gestor de intranet. Esta situación es coherente con el diseño actual y se acepta: las ediciones manuales no generan invalidación automática y deben seguir el procedimiento explícito descrito en la sección 5.
+
+**Alcance:** Gestor de contenidos Sunarp y Agente Sunarp se excluyen de esta auditoría porque todavía no están unificados bajo la arquitectura de Core. Su integración futura deberá incorporar el contrato de invalidación correspondiente antes de convertirse en consumidores o escritores de fuentes administradas por Core.
+
+**Resultado:** la auditoría de invalidación externa queda completada para la arquitectura actualmente integrada. La limitación de consistencia ante ediciones manuales queda documentada y aceptada; no se requiere instalar activadores ni modificar código para cerrar Fase 1.
+
+Esta auditoría no instala activadores, no cambia código de producción, no altera Core v10 y no crea ni modifica despliegues.
