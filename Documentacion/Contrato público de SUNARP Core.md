@@ -440,7 +440,7 @@ Eliminan las entradas solicitadas y los fragmentos conocidos de sus manifiestos.
 
 Bajo bloqueo, genera una nueva generación de la fuente e invalida metadatos/instantánea de esa fuente. Devuelve `{ success, generation, removed }` o `{ success: false, error }`. Los resultados derivados que incluyan la generación anterior dejan de ser accesibles aunque permanezcan físicamente en CacheService y expiren por TTL/desalojo; `removed` cuenta las claves base de instantánea/metadatos eliminadas y sus fragmentos conocidos, no todas las entradas versionadas de resultados derivadas. En las lecturas agrupadas con caché, si se produce un miss y la solicitud tuvo que esperar el bloqueo, Core recalcula la generación antes de volver a comprobar la caché.
 
-Los consumidores deben comprobar `success` en tareas administrativas críticas. Las escrituras implementadas por Core llaman a la invalidación internamente; no deben duplicar invalidaciones dispersas salvo operaciones especiales.
+Los consumidores deben comprobar `success` en tareas administrativas críticas. Las escrituras implementadas por Core llaman a la invalidación internamente y propagan un error explícito si esta falla después de que la escritura pudo haberse aplicado; en ese caso no se debe repetir la escritura a ciegas, sino comprobar el registro y ejecutar `invalidateSourceCache(source)`. La propia invalidación intenta retirar la generación anterior cuando no puede publicar una nueva, pero esta limpieza es best-effort si CacheService está indisponible.
 
 ## 8. Validación genérica
 
