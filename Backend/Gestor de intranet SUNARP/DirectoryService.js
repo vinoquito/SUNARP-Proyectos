@@ -1000,11 +1000,13 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
       {
         recordField: 'estructura_local_id',
         values: relationValues,
+        required: true,
         requireEqualFields: ['local_id']
       },
       {
         recordField: 'local_id',
-        values: localValues
+        values: localValues,
+        required: true
       }
     ],
     catalogSources: [
@@ -2358,7 +2360,7 @@ function deleteDirectoryPerson(personaId) {
   _directoryAssertPersonMutationScope_(
     authorization,
     person,
-    context.asignaciones,
+    linkedAssignments,
     context
   );
 
