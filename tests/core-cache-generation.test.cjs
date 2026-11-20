@@ -28,7 +28,7 @@ function createCacheSandbox() {
     Utilities: {
       DigestAlgorithm: { SHA_256: 'SHA-256' },
       computeDigest: (_algorithm, value) => Array.from(crypto.createHash('sha256').update(String(value)).digest()),
-      base64EncodeWebSafe: bytes => Buffer.from(bytes).toString('base64').replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/g, ''),
+      base64EncodeWebSafe: bytes => Buffer.from(bytes).toString('base64').split('+').join('-').split('/').join('_').replace(/=+$/g, ''),
       newBlob: value => ({ getBytes: () => Array.from(String(value)).map(character => character.charCodeAt(0)) }),
       getUuid: () => 'generation-' + (++uuid)
     },
