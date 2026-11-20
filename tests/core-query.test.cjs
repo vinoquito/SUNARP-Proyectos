@@ -18,7 +18,7 @@ function createSandbox() {
   const cache = new Map();
   let cacheReads = 0;
   const context = vm.createContext({
-    console: { warn: () => {} },
+    console: { warn: () => {}, log: () => {} },
     Date,
     Map,
     Set,
