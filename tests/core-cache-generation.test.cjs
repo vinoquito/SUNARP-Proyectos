@@ -143,3 +143,39 @@ test('la caché fragmentada acepta un payload con longitud y checksum válidos',
   const recovered = sandbox.getCachedValue('test:valid-checksum');
   assert.equal(recovered && recovered.payload, 'decoded');
 });
+
+
+test('si no puede publicar una nueva generación, Core intenta retirar la generación anterior', () => {
+  const { sandbox } = createCacheSandbox();
+  const sourceRef = { spreadsheetId: 'S', sheetName: 'Assignments' };
+  const generationKey = sandbox._coreBuildSourceCacheKey_(sourceRef, 'generation');
+  sandbox.putCachedValue(generationKey, 'GEN_OLD', 300);
+  assert.equal(sandbox.getCachedValue(generationKey), 'GEN_OLD');
+
+  sandbox.putCachedValue = () => ({
+    success: false,
+    storage: 'not-cached',
+    reason: 'simulated-cache-failure'
+  });
+  const result = sandbox._coreInvalidateSourceCache_(sourceRef);
+
+  assert.equal(result.success, false);
+  assert.equal(result.generation, null);
+  assert.equal(sandbox.getCachedValue(generationKey), null);
+});
+
+test('las escrituras que no pueden invalidar caché propagan un error explícito de posible commit parcial', () => {
+  const { sandbox } = createCacheSandbox();
+  sandbox._coreInvalidateSourceCache_ = () => ({
+    success: false,
+    error: 'simulated-cache-failure'
+  });
+
+  assert.throws(
+    () => sandbox._coreInvalidateSourceCacheOrThrow_({
+      spreadsheetId: 'S',
+      sheetName: 'Assignments'
+    }),
+    /la escritura en Sheets pudo haberse aplicado, pero falló la invalidación/
+  );
+});
