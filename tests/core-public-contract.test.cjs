@@ -206,6 +206,6 @@ test('el contrato conserva los límites comprobados de consulta, invalidación y
   assert.match(contract, /debe llamar `invalidateSourceCache\(source\)`/);
   assert.match(contract, /puede haber cambios parciales/);
   assert.match(contract, /ejecutar `runCoreTests\(\)`/i);
-  assert.match(contract, /no expone el historial de versiones publicadas del proyecto Apps Script/);
+  assert.match(contract, /no expone el historial de versiones ni los despliegues del proyecto Apps Script/);
   assert.match(contract, /versión 9/);
 });
