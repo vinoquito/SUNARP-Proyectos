@@ -719,8 +719,8 @@ test('el contrato de filtros separa ámbitos fijos, opciones autorizadas y ances
     auth: { moduleAccess: [{
       modulo_id: 'MOD_INFO_PERSONAL',
       scopes: [
-        { tipo_ambito: 'ESTRUCTURA_ORG', referencia_id: 'EST_1', incluir_descendientes: true },
-        { tipo_ambito: 'LOCAL', referencia_id: 'LOC_9', incluir_descendientes: false }
+        { tipo_ambito_id: 'ESTRUCTURA_ORG', referencia_id: 'EST_1', incluir_descendientes: true },
+        { tipo_ambito_id: 'LOCAL', referencia_id: 'LOC_9', incluir_descendientes: false }
       ]
     }] }
   };
@@ -751,7 +751,7 @@ test('el contrato de filtros reconoce TOTAL sin convertirlo en una selección re
     moduleId: 'MOD_INFO_PERSONAL',
     auth: { moduleAccess: [{
       modulo_id: 'MOD_INFO_PERSONAL',
-      scopes: [{ tipo_ambito: 'TOTAL', referencia_id: '', incluir_descendientes: false }]
+      scopes: [{ tipo_ambito_id: 'TOTAL', referencia_id: '', incluir_descendientes: false }]
     }] }
   }, [{ sede_id: 'SEDE_1', cargo_id: 'CAR_1', estructura_id: 'EST_1', local_id: 'LOC_1' }], []);
   assert.equal(contract.fixed.total, true);
