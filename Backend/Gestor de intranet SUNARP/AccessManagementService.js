@@ -361,12 +361,14 @@ function _accessLoadAdministratorContinuityData_() {
     ACCESS_MANAGEMENT_FIELDS.permissions
   );
   const permissionIds = permissions.map(item => _accessText_(item.permiso_id)).filter(Boolean);
-  const rolePermissions = _accessFindSecurityRecordsByFilters_(
-    s.rolePermissions,
-    { rol_id: ACCESS_MANAGEMENT_CONFIG.adminRoleId, permiso_id: permissionIds },
-    'rol_id',
-    ACCESS_MANAGEMENT_FIELDS.rolePermissions
-  );
+  const rolePermissions = permissionIds.length
+    ? _accessFindSecurityRecordsByFilters_(
+        s.rolePermissions,
+        { rol_id: ACCESS_MANAGEMENT_CONFIG.adminRoleId, permiso_id: permissionIds },
+        'rol_id',
+        ACCESS_MANAGEMENT_FIELDS.rolePermissions
+      )
+    : [];
   const userRoles = _accessFindSecurityRecordsByFilters_(
     s.userRoles,
     { rol_id: ACCESS_MANAGEMENT_CONFIG.adminRoleId, modulo_id: moduleId },
