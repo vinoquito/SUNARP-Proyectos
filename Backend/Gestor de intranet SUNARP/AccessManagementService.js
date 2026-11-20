@@ -2336,7 +2336,17 @@ function getAccessUsers(filters) {
     if (query && ![user.persona_id, user.nombre_completo, user.correo_institucional, user.sede_nombre].join(' ').toLocaleLowerCase().includes(query)) return false;
     return true;
   }).sort((a, b) => a.nombre_completo.localeCompare(b.nombre_completo, 'es'));
-  return { items: rows, total: rows.length };
+  const total = rows.length;
+  const page = Math.max(1, Number.parseInt(filters.page, 10) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number.parseInt(filters.pageSize, 10) || 10));
+  const offset = (page - 1) * pageSize;
+  return {
+    items: rows.slice(offset, offset + pageSize),
+    total,
+    page,
+    pageSize,
+    totalPages: Math.max(1, Math.ceil(total / pageSize))
+  };
 }
 
 function getAccessAuditHistory(filters) {
