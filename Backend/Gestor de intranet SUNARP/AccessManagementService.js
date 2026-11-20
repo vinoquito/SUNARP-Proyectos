@@ -3818,9 +3818,6 @@ function _accessMigrationEnsureScopeTypes_(spreadsheet, markWriteStarted) {
   return { created, added };
 }
 
-function _accessMigrationInvalidateSource_(source) {
-  return SUNARPCore.invalidateSourceCache(source);
-}
 
 /**
  * Ejecuta una sola vez la migración del esquema en el archivo Seguridad.
