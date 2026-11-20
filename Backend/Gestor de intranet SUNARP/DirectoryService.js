@@ -553,7 +553,7 @@ function _directoryBuildFilterContract_(authorization, assignments, structures) 
   const moduleAccess = (authorization.auth && authorization.auth.moduleAccess || [])
     .find(item => _directoryKey_(item.modulo_id) === _directoryKey_(authorization.moduleId));
   const scopes = (moduleAccess && moduleAccess.scopes || []).map(scope => ({
-    type: _directoryText_(scope.tipo_ambito || scope.tipo || scope.scope_type).toUpperCase(),
+    type: _directoryText_(scope.tipo_ambito_id).toUpperCase(),
     referenceId: _directoryKey_(scope.referencia_id),
     includeDescendants: _directoryNormalizeBoolean_(scope.incluir_descendientes === undefined ? false : scope.incluir_descendientes)
   })).filter(scope => ['TOTAL', 'SEDE', 'ESTRUCTURA_ORG', 'LOCAL'].includes(scope.type));
