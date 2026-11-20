@@ -163,7 +163,7 @@ function createAdapterSandbox(data, email = 'prueba@sunarp.gob.pe') {
   };
 
   vm.runInContext(
-    coreSource + '\n' + accessSource,
+    coreSource + '\n' + accessSource + '\n' + directorySource,
     sandbox,
     { filename: 'SUNARP-Core-and-AccessManagementService' }
   );
@@ -787,8 +787,10 @@ test('la actualización de Asignación de permisos usa claves reales de la insta
   const end = accessSource.indexOf("if (tab === 'operations')", start);
   assert.ok(start >= 0 && end > start);
   const endpoint = accessSource.slice(start, end);
-  assert.match(endpoint, /modules:\s*\(result\.modulos \|\| \[\]\)\.map/);
-  assert.match(endpoint, /permissions:\s*\(result\.permisos \|\| \[\]\)\.map/);
-  assert.match(endpoint, /rolePermissions:\s*\(result\.rolPermiso \|\| \[\]\)\.map/);
-  assert.doesNotMatch(endpoint, /result\.modules|result\.permissions|result\.rolePermissions/);
+  assert.match(endpoint, /const modules = _accessLoadSecurityRecords_\(s\.modules/);
+  assert.match(endpoint, /const permissions = _accessLoadSecurityRecords_\(s\.permissions/);
+  assert.match(endpoint, /const rolePermissions = _accessLoadSecurityRecords_\(s\.rolePermissions/);
+  assert.match(endpoint, /modules: modules\.map/);
+  assert.match(endpoint, /permissions: permissions\.map/);
+  assert.match(endpoint, /rolePermissions: rolePermissions\.map/);
 });
