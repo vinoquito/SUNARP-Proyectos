@@ -217,84 +217,10 @@ function _coreQueryNormalizeScopeRelations_(authorization) {
   return { scopeRecordById, scopeRecordLookups: normalizedLookups };
 }
 
-
-/**
- * Obtiene candidatos de la fuente mediante TextFinder, pero recupera solo las
- * columnas necesarias para filtrar, autorizar, ordenar y calcular facetas.
- * La fila completa se leerá únicamente para los elementos de la página final.
- */
-function _coreQueryLoadCandidateRows_(source, groups, requiredHeaders, projectionFields) {
-  const context = _coreOpenSource_(source);
-  const config = context.config;
-  const sheet = context.sheet;
-  const lastRow = sheet.getLastRow();
-  const lastColumn = sheet.getLastColumn();
-  if (!lastColumn || lastRow < config.headerRow) {
-    throw new Error('SUNARP Core: la fuente no contiene encabezados.');
-  }
-
-  const headers = sheet.getRange(
-    config.headerRow, 1, 1, lastColumn
-  ).getDisplayValues()[0].map(value => String(value).trim());
-  const headerMap = {};
-  headers.forEach((header, index) => {
-    if (!header || Object.prototype.hasOwnProperty.call(headerMap, header)) {
-      throw new Error(
-        'SUNARP Core: existen encabezados vacíos o duplicados en "' +
-        config.sheetName + '".'
-      );
-    }
-    headerMap[header] = index;
-  });
-
-  const required = [...new Set(requiredHeaders.concat(projectionFields))];
-  const missing = required.filter(field =>
-    !Object.prototype.hasOwnProperty.call(headerMap, field)
-  );
-  if (missing.length) {
-    throw new Error(
-      'SUNARP Core: la fuente "' + config.sheetName +
-      '" no contiene las columnas requeridas: ' + missing.join(', ') + '.'
-    );
-  }
-
-  const dataStartRow = config.headerRow + 1;
-  const dataRows = Math.max(0, lastRow - config.headerRow);
-  if (!dataRows) return { context, candidates: [] };
-
-  const candidateRowNumbers = new Set();
-  groups.forEach(group => {
-    const filterFields = Object.keys(group);
-    if (!filterFields.length) {
-      throw new Error('SUNARP Core: la consulta autorizada requiere filtros exactos.');
-    }
-    const searchField = filterFields[0];
-    const expectedValues = Array.isArray(group[searchField])
-      ? group[searchField]
-      : [group[searchField]];
-    if (expectedValues.some(value =>
-      value === null || value === undefined || String(value) === ''
-    )) {
-      throw new Error('SUNARP Core: los filtros de búsqueda exacta no admiten valores vacíos.');
-    }
-
-    const range = sheet.getRange(
-      dataStartRow, headerMap[searchField] + 1, dataRows, 1
-    );
-    const escapeRegex = value => String(value).replace(/[.*+?^\${}()|[\]\\]/g, character => '\\' + character);
-    if (expectedValues.length === 1) {
-      range.createTextFinder(String(expectedValues[0]))
-        .matchEntireCell(true)
-        .matchCase(true)
-        .findAll()
-        .forEach(cell => candidateRowNumbers.add(cell.getRow()));
-    } else {
-      for (let index = 0; index < expectedValues.length; index += 100) {
-        const batch = expectedValues.slice(index, index + 100).map(escapeRegex);
-        const pattern = '^(?:' + batch.join('|') + ')
+/** Orden total y determinista usado por la página retenida en memoria. */
 function _coreQueryCompareRecords_(recordA, recordB, sortBy, idField, sortDirection) {
-  const left = recordA && recordA.__coreQueryRecord || recordA;
-  const right = recordB && recordB.__coreQueryRecord || recordB;
+  const left = _coreQueryRecordValue_(recordA);
+  const right = _coreQueryRecordValue_(recordB);
   const compared = _coreCompareValues_(left[sortBy], right[sortBy]) ||
     _coreCompareValues_(left[idField], right[idField]);
   return compared * (sortDirection === 'desc' ? -1 : 1);
@@ -358,7 +284,7 @@ function _coreQueryInsertDistinctPageRecord_(
   retainedByValue.set(distinctValue, record);
   if (records.length > maxRecords) {
     const removed = records.pop();
-    const removedRecord = removed && removed.__coreQueryRecord || removed;
+    const removedRecord = _coreQueryRecordValue_(removed);
     const removedValue = String(
       removedRecord[sortBy] === null || removedRecord[sortBy] === undefined
         ? ''
@@ -499,7 +425,7 @@ function queryRecords(source, options) {
   // finales quedan aislados por identidad, permiso, ámbito y versión de catálogo.
   if (cacheKey) {
     const cached = getCachedValue(cacheKey);
-    if (cached && cached.version === 1 && Array.isArray(cached.records)) {
+    if (cached && cached.version === 2 && Array.isArray(cached.records)) {
       const cacheResult = Object.assign({}, cached, {
         cacheHit: true,
         durationMs: Date.now() - queryStartedAt
@@ -527,16 +453,14 @@ function queryRecords(source, options) {
   let candidateContext = null;
 
   if (!candidateCacheHit) {
-    if (typeof _coreOpenSource_ === 'function' &&
-        typeof _coreQueryLoadCandidateRows_ === 'function') {
+    if (typeof _coreOpenSource_ === 'function') {
       const loaded = _coreQueryLoadCandidateRows_(
-        source, groups, requiredHeaders, projectionFields
+        source, groups, requiredHeaders, projectionFields, idField
       );
       candidateRows = loaded.candidates;
       candidateContext = loaded.context;
     } else {
-      // Compatibilidad para entornos de prueba o adaptadores antiguos que
-      // proporcionan findRecordsByFields pero no los auxiliares de Sheets.
+      // Adaptador de prueba: simula candidatos sin fila física de Google Sheets.
       const candidateMap = new Map();
       groups.forEach(group => {
         const fields = Object.keys(group);
@@ -546,20 +470,14 @@ function queryRecords(source, options) {
         });
         (result.records || []).forEach(record => {
           const id = String(record[idField] === null || record[idField] === undefined ? '' : record[idField]).trim();
-          if (id) candidateMap.set(id, record);
+          if (id && !candidateMap.has(id)) candidateMap.set(id, { rowNumber: null, record });
         });
       });
-      candidateRows = Array.from(candidateMap.values()).map(record => ({
-        rowNumber: null,
-        __coreQueryRecord: record
-      }));
+      candidateRows = Array.from(candidateMap.values());
     }
     if (candidateCacheKey) {
       try {
-        const cacheResult = putCachedValue(candidateCacheKey, candidateRows, candidateCacheSeconds);
-        if (!cacheResult || cacheResult.success !== true) {
-          console.warn('[SUNARP Core] No se pudo almacenar la caché de candidatos:', cacheResult && cacheResult.reason || 'storage-unavailable');
-        }
+        putCachedValue(candidateCacheKey, candidateRows, candidateCacheSeconds);
       } catch (error) {
         console.warn('[SUNARP Core] No se pudo almacenar la caché de candidatos:', error.message);
       }
@@ -583,7 +501,7 @@ function queryRecords(source, options) {
   let authorizedCount = 0;
 
   candidateRows.forEach(candidate => {
-    const record = candidate && candidate.__coreQueryRecord || candidate.record || candidate;
+    const record = _coreQueryRecordValue_(candidate);
     if (!groups.some(group => _coreQueryMatchesGroup_(record, group))) return;
     if (!_coreQueryMatchesSearch_(record, search, searchFields, searchAny)) return;
     const id = String(record[idField] === null || record[idField] === undefined ? '' : record[idField]).trim();
@@ -660,9 +578,9 @@ function queryRecords(source, options) {
       } else {
         const previous = distinctRecords.get(value);
         if (!previous || _coreQueryCompareRecords_(
-          record, previous, sortBy, idField, sortDirection
+          candidate, previous, sortBy, idField, sortDirection
         ) < 0) {
-          distinctRecords.set(value, record);
+          distinctRecords.set(value, candidate);
         }
       }
     } else {
@@ -696,9 +614,7 @@ function queryRecords(source, options) {
     }
   }
   const selectedPage = pageSource.slice(offset, offset + limit);
-  const page = _coreQueryHydratePage_(
-    source, selectedPage, candidateContext
-  );
+  const page = _coreQueryHydratePage_(source, selectedPage, candidateContext);
   const result = {
     version: 2, records: page, total, offset, limit,
     distinctValues, distinctCounts,
@@ -734,24 +650,65 @@ function queryRecords(source, options) {
   });
   return result;
 }
-;
-        range.createTextFinder(pattern)
-          .useRegularExpression(true)
-          .matchEntireCell(true)
-          .matchCase(true)
-          .findAll()
-          .forEach(cell => candidateRowNumbers.add(cell.getRow()));
-      }
+
+
+/**
+ * Localiza filas candidatas con TextFinder y recupera únicamente las columnas
+ * necesarias, agrupando filas cercanas para reducir llamadas a Sheets.
+ */
+function _coreQueryLoadCandidateRows_(source, groups, requiredHeaders, projectionFields, idField) {
+  const context = _coreOpenSource_(source);
+  const config = context.config;
+  const sheet = context.sheet;
+  const lastRow = sheet.getLastRow();
+  const lastColumn = sheet.getLastColumn();
+  if (!lastColumn || lastRow < config.headerRow) {
+    throw new Error('SUNARP Core: la fuente no contiene encabezados.');
+  }
+  const headers = sheet.getRange(config.headerRow, 1, 1, lastColumn)
+    .getDisplayValues()[0].map(value => String(value).trim());
+  const headerMap = {};
+  headers.forEach((header, index) => {
+    if (!header || Object.prototype.hasOwnProperty.call(headerMap, header)) {
+      throw new Error('SUNARP Core: existen encabezados vacíos o duplicados en "' + config.sheetName + '".');
+    }
+    headerMap[header] = index;
+  });
+  const required = Array.from(new Set(requiredHeaders.concat(projectionFields)));
+  const missing = required.filter(field => !Object.prototype.hasOwnProperty.call(headerMap, field));
+  if (missing.length) {
+    throw new Error('SUNARP Core: la fuente "' + config.sheetName +
+      '" no contiene las columnas requeridas: ' + missing.join(', ') + '.');
+  }
+  const dataStartRow = config.headerRow + 1;
+  const dataRows = Math.max(0, lastRow - config.headerRow);
+  if (!dataRows) return { context, candidates: [] };
+
+  const candidateRowNumbers = new Set();
+  groups.forEach(group => {
+    const filterFields = Object.keys(group);
+    if (!filterFields.length) throw new Error('SUNARP Core: la consulta autorizada requiere filtros exactos.');
+    const searchField = filterFields[0];
+    const expectedValues = Array.isArray(group[searchField]) ? group[searchField] : [group[searchField]];
+    if (expectedValues.some(value => value === null || value === undefined || String(value) === '')) {
+      throw new Error('SUNARP Core: los filtros de búsqueda exacta no admiten valores vacíos.');
+    }
+    const range = sheet.getRange(dataStartRow, headerMap[searchField] + 1, dataRows, 1);
+    const escapeRegex = value => String(value).replace(/[.*+?^$()|[\]\\]/g, '\\$&');
+    for (let index = 0; index < expectedValues.length; index += 100) {
+      const batch = expectedValues.slice(index, index + 100).map(escapeRegex);
+      range.createTextFinder('^(?:' + batch.join('|') + ')$')
+        .useRegularExpression(true)
+        .matchEntireCell(true)
+        .matchCase(true)
+        .findAll()
+        .forEach(cell => candidateRowNumbers.add(cell.getRow()));
     }
   });
 
-  const rowNumbers = [...candidateRowNumbers].sort((a, b) => a - b);
+  const rowNumbers = Array.from(candidateRowNumbers).sort((a, b) => a - b);
   if (!rowNumbers.length) return { context, candidates: [] };
-
-  // Lee bloques contiguos de columnas una sola vez. No materializa el ancho
-  // completo de la tabla para cada candidato.
-  const columns = projectionFields
-    .map(field => ({ field, index: headerMap[field] }))
+  const columns = projectionFields.map(field => ({ field, index: headerMap[field] }))
     .sort((a, b) => a.index - b.index);
   const blocks = [];
   columns.forEach(column => {
@@ -760,87 +717,70 @@ function queryRecords(source, options) {
       previous.end = column.index;
       previous.fields.push(column);
     } else {
-      blocks.push({
-        start: column.index,
-        end: column.index,
-        fields: [column]
-      });
+      blocks.push({ start: column.index, end: column.index, fields: [column] });
     }
   });
 
-  const blockValues = blocks.map(block => ({
-    block,
-    values: sheet.getRange(
-      dataStartRow,
-      block.start + 1,
-      dataRows,
-      block.end - block.start + 1
-    ).getValues()
-  }));
-
-  const candidates = rowNumbers.map(rowNumber => {
-    const rowOffset = rowNumber - dataStartRow;
-    if (rowOffset < 0 || rowOffset >= dataRows) return null;
-    const record = {};
-    blockValues.forEach(({ block, values }) => {
-      const row = values[rowOffset];
-      block.fields.forEach(column => {
-        record[column.field] = row[column.index - block.start];
-      });
+  const windowSize = 25;
+  const windows = new Map();
+  rowNumbers.forEach(rowNumber => {
+    const startRow = dataStartRow + Math.floor((rowNumber - dataStartRow) / windowSize) * windowSize;
+    if (!windows.has(startRow)) windows.set(startRow, []);
+    windows.get(startRow).push(rowNumber);
+  });
+  const byId = new Map();
+  windows.forEach((windowRows, startRow) => {
+    const endRow = Math.min(lastRow, startRow + windowSize - 1, Math.max.apply(null, windowRows));
+    const count = endRow - startRow + 1;
+    const projectedBlocks = blocks.map(block => ({
+      block,
+      values: sheet.getRange(startRow, block.start + 1, count, block.end - block.start + 1).getValues()
+    }));
+    windowRows.forEach(rowNumber => {
+      const offset = rowNumber - startRow;
+      const record = {};
+      projectedBlocks.forEach(item => item.block.fields.forEach(column => {
+        record[column.field] = item.values[offset][column.index - item.block.start];
+      }));
+      const id = String(record[idField] === null || record[idField] === undefined ? '' : record[idField]).trim();
+      if (id && !byId.has(id)) byId.set(id, { rowNumber, record });
     });
-    return { rowNumber, record };
-  }).filter(Boolean);
-
-  return { context, candidates };
+  });
+  return { context, candidates: Array.from(byId.values()) };
 }
 
-/**
- * Recupera las filas completas solo de la página seleccionada y conserva
- * exactamente el orden autorizado y ordenado que recibió el consumidor.
- */
+function _coreQueryRecordValue_(candidate) {
+  return candidate && candidate.record ? candidate.record : candidate;
+}
+
+/** Recupera el ancho completo exclusivamente para las filas de la página final. */
 function _coreQueryHydratePage_(source, candidates, context) {
   if (!Array.isArray(candidates) || !candidates.length) return [];
-  const canReadSourceRows =
-    typeof _coreOpenSource_ === 'function' &&
-    typeof _coreReadCandidateRows_ === 'function' &&
-    candidates.every(item => Number.isInteger(item.rowNumber));
-  if (!canReadSourceRows) {
-    return candidates.map(item => item.__coreQueryRecord || item.record || item);
+  if (!candidates.every(item => item && Number.isInteger(item.rowNumber))) {
+    return candidates.map(item => _coreQueryRecordValue_(item));
   }
-
   context = context || _coreOpenSource_(source);
   const sheet = context.sheet;
   const lastColumn = sheet.getLastColumn();
-  const headers = sheet.getRange(
-    context.config.headerRow, 1, 1, lastColumn
-  ).getDisplayValues()[0].map(value => String(value).trim());
-  const dataStartRow = context.config.headerRow + 1;
+  const headers = sheet.getRange(context.config.headerRow, 1, 1, lastColumn)
+    .getDisplayValues()[0].map(value => String(value).trim());
   const rowNumbers = candidates.map(item => item.rowNumber);
   const valuesByNumber = _coreReadCandidateRows_(
-    sheet, rowNumbers, lastColumn, dataStartRow, 25
+    sheet, rowNumbers, lastColumn, context.config.headerRow + 1, 25
   );
-
   return candidates.map(candidate => {
     const values = valuesByNumber.get(candidate.rowNumber);
-    if (!values) {
-      throw new Error(
-        'SUNARP Core: la fuente cambió mientras se ejecutaba la consulta; vuelve a solicitar la página.'
-      );
-    }
+    if (!values) throw new Error('SUNARP Core: la fuente cambió durante la consulta; vuelve a solicitar la página.');
     return _coreRowToRecord_(headers, values);
   });
 }
 
-/** Lista de campos de origen necesarios para evaluar una consulta autorizada. */
+/** Determina las columnas necesarias para evaluar la consulta y su ámbito. */
 function _coreQueryBuildProjectionFields_(
   idField, sortBy, distinctBy, groups, searchFields, searchAny,
   distinctFields, distinctCountFields, scopeRelations, authorization
 ) {
-  const fields = new Set([
-    idField,
-    sortBy,
-    distinctBy
-  ].filter(Boolean));
+  const fields = new Set([idField, sortBy, distinctBy].filter(Boolean));
   groups.forEach(group => Object.keys(group).forEach(field => fields.add(field)));
   searchFields.forEach(field => fields.add(field));
   searchAny.forEach(match => fields.add(match.field));
@@ -850,7 +790,6 @@ function _coreQueryBuildProjectionFields_(
     fields.add(lookup.recordField);
     lookup.requireEqualFields.forEach(field => fields.add(field));
   });
-
   const scopeFields = Object.assign({
     recordOrganizationStructureId: 'estructura_org_id',
     recordStructureId: 'estructura_id',
@@ -862,425 +801,6 @@ function _coreQueryBuildProjectionFields_(
     scopeFields.recordStructureId,
     scopeFields.recordLocalId,
     scopeFields.recordSiteId
-  ].forEach(field => {
-    if (field) fields.add(field);
-  });
-
-  return [...fields];
-}
-
-/** Orden total y determinista usado por la página retenida en memoria. */
-function _coreQueryCompareRecords_(recordA, recordB, sortBy, idField, sortDirection) {
-  const compared = _coreCompareValues_(recordA[sortBy], recordB[sortBy]) ||
-    _coreCompareValues_(recordA[idField], recordB[idField]);
-  return compared * (sortDirection === 'desc' ? -1 : 1);
-}
-
-/**
- * Mantiene únicamente los primeros maxRecords registros según el orden
- * solicitado. El conjunto completo sigue examinándose para calcular el total,
- * facetas y autorización; no se conserva todo el resultado autorizado.
- */
-function _coreQueryInsertPageRecord_(records, record, sortBy, idField, sortDirection, maxRecords) {
-  if (maxRecords < 1) return;
-  let low = 0;
-  let high = records.length;
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2);
-    if (_coreQueryCompareRecords_(
-      records[middle], record, sortBy, idField, sortDirection
-    ) <= 0) {
-      low = middle + 1;
-    } else {
-      high = middle;
-    }
-  }
-  if (low >= maxRecords && records.length >= maxRecords) return;
-  records.splice(low, 0, record);
-  if (records.length > maxRecords) records.pop();
-}
-
-/**
- * Inserta/reemplaza un representante distinto manteniendo solo la mejor página.
- * Se usa cuando distinctBy === sortBy: todos los registros del mismo grupo
- * comparten la clave primaria de orden y basta retener offset + limit grupos.
- */
-function _coreQueryInsertDistinctPageRecord_(
-  records, retainedByValue, record, distinctValue,
-  sortBy, idField, sortDirection, maxRecords
-) {
-  const previous = retainedByValue.get(distinctValue);
-  if (previous) {
-    if (_coreQueryCompareRecords_(
-      record, previous, sortBy, idField, sortDirection
-    ) >= 0) return;
-    const previousIndex = records.indexOf(previous);
-    if (previousIndex >= 0) records.splice(previousIndex, 1);
-    retainedByValue.delete(distinctValue);
-  }
-
-  let low = 0;
-  let high = records.length;
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2);
-    if (_coreQueryCompareRecords_(
-      records[middle], record, sortBy, idField, sortDirection
-    ) <= 0) low = middle + 1;
-    else high = middle;
-  }
-  if (low >= maxRecords && records.length >= maxRecords) return;
-
-  records.splice(low, 0, record);
-  retainedByValue.set(distinctValue, record);
-  if (records.length > maxRecords) {
-    const removed = records.pop();
-    const removedValue = String(
-      removed[sortBy] === null || removed[sortBy] === undefined
-        ? ''
-        : removed[sortBy]
-    ).trim();
-    retainedByValue.delete(removedValue);
-  }
-}
-
-function _coreQueryCacheKey_(source, generation, authorizationFingerprint, query) {
-  const digest = _coreQueryDigest_({
-    source: _coreBuildSourceCacheKey_(source, 'query'),
-    generation,
-    authorizationFingerprint,
-    query
-  });
-  return 'query-result:v1:' + digest;
-}
-
-function _coreQueryCandidateCacheKey_(source, generation, idField, schemaVersion, groups) {
-  const digest = _coreQueryDigest_({
-    source: _coreBuildSourceCacheKey_(source, 'query-candidates'),
-    generation,
-    idField,
-    schemaVersion,
-    groups
-  });
-  return 'query-candidates:v1:' + digest;
-}
-
-function _coreQueryAssertHeaders_(source, requiredHeaders) {
-  if (typeof getSourceInfoCached !== 'function') return;
-  const info = getSourceInfoCached(source);
-  const headers = info && Array.isArray(info.headers) ? info.headers : [];
-  const missing = requiredHeaders.filter(header => !headers.includes(header));
-  if (missing.length) {
-    throw new Error('SUNARP Core: faltan encabezados requeridos: ' + missing.join(', ') + '.');
-  }
-}
-
-/**
- * Ejecuta una consulta exacta, autorizada y paginada en el servidor.
- * El permiso se valida antes de consultar la caché y el ámbito se aplica
- * a cada candidato antes de calcular el total y la página.
- */
-function queryRecords(source, options) {
-  const queryStartedAt = Date.now();
-  options = options || {};
-  const authorization = options.authorization;
-  const validated = _coreQueryValidateAuthorization_(authorization);
-  const groups = _coreQueryNormalizeGroups_(options);
-  const idField = String(options.idField || '').trim();
-  const distinctBy = String(options.distinctBy || '').trim();
-  const normalizeDistinctFields = (fields, label) => {
-    if (fields === undefined) return [];
-    if (!Array.isArray(fields) || fields.some(field =>
-      typeof field !== 'string' || !/^[A-Za-z0-9_]+$/.test(field.trim())
-    )) {
-      throw new Error('SUNARP Core: ' + label + ' debe ser un arreglo de nombres de campo válidos.');
-    }
-    return Array.from(new Set(fields.map(field => field.trim())));
-  };
-  const distinctFields = normalizeDistinctFields(options.distinctFields, 'distinctFields');
-  const distinctCountFields = normalizeDistinctFields(options.distinctCountFields, 'distinctCountFields');
-  if (!idField) throw new Error('SUNARP Core: queryRecords requiere idField.');
-  if (distinctBy && !/^[A-Za-z0-9_]+$/.test(distinctBy)) {
-    throw new Error('SUNARP Core: distinctBy no es un campo válido.');
-  }
-
-  const offset = options.offset === undefined ? 0 : Number(options.offset);
-  const limit = options.limit === undefined ? 25 : Number(options.limit);
-  if (!Number.isInteger(offset) || offset < 0) {
-    throw new Error('SUNARP Core: offset debe ser un entero mayor o igual a cero.');
-  }
-  if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
-    throw new Error('SUNARP Core: limit debe ser un entero entre 1 y 1000.');
-  }
-  const sortBy = String(options.sortBy || idField);
-  const sortDirection = String(options.sortDirection || 'asc').toLowerCase();
-  if (!['asc', 'desc'].includes(sortDirection)) {
-    throw new Error('SUNARP Core: sortDirection debe ser "asc" o "desc".');
-  }
-  const search = String(options.search || '').trim();
-  const searchFields = options.searchFields === undefined ? [] : options.searchFields;
-  const searchAny = options.searchAny === undefined ? [] : options.searchAny;
-  if (!Array.isArray(searchFields) || !Array.isArray(searchAny)) {
-    throw new Error('SUNARP Core: searchFields y searchAny deben ser arreglos.');
-  }
-  searchAny.forEach(match => {
-    if (!match || typeof match.field !== 'string' || !match.field.trim() ||
-        !Array.isArray(match.values) || !match.values.length) {
-      throw new Error('SUNARP Core: cada searchAny requiere field y values no vacío.');
-    }
-  });
-  if (search && !searchFields.length && !searchAny.length) {
-    throw new Error('SUNARP Core: search requiere searchFields o searchAny.');
-  }
-
-  const descriptor = {
-    groups, search, searchFields, searchAny, sortBy, sortDirection, offset, limit, idField, distinctBy,
-    distinctFields, distinctCountFields,
-    schemaVersion: String(options.schemaVersion || '1')
-  };
-  const scopeRelations = _coreQueryNormalizeScopeRelations_(authorization);
-  const catalogVersion = _coreQueryGetCatalogVersion_(authorization);
-  const authFingerprint = _coreQueryAuthorizationFingerprint_(
-    authorization, validated, catalogVersion, scopeRelations
-  );
-  const cacheSeconds = options.cacheSeconds === undefined ? 60 : Number(options.cacheSeconds);
-  if (!Number.isInteger(cacheSeconds) || cacheSeconds < 0 || cacheSeconds > 21600) {
-    throw new Error('SUNARP Core: cacheSeconds debe ser un entero entre 0 y 21600.');
-  }
-  const candidateCacheSeconds = options.candidateCacheSeconds === undefined
-    ? cacheSeconds
-    : Number(options.candidateCacheSeconds);
-  if (!Number.isInteger(candidateCacheSeconds) || candidateCacheSeconds < 0 || candidateCacheSeconds > 21600) {
-    throw new Error('SUNARP Core: candidateCacheSeconds debe ser un entero entre 0 y 21600.');
-  }
-  const generation = typeof _coreGetSourceGeneration_ === 'function'
-    ? _coreGetSourceGeneration_(source)
-    : null;
-  // Para ámbitos no globales, el consumidor debe suministrar una versión
-  // verificable de los catálogos para no reutilizar permisos con jerarquía obsoleta.
-  const catalogCacheSafe = validated.totalOnly || Boolean(catalogVersion);
-  const cacheKey = generation && cacheSeconds > 0 && catalogCacheSafe
-    ? _coreQueryCacheKey_(source, generation, authFingerprint, descriptor)
-    : null;
-
-  const requiredHeaders = [idField, distinctBy, sortBy].filter(Boolean)
-    .concat(
-      searchFields,
-      searchAny.map(match => match.field),
-      distinctFields,
-      distinctCountFields,
-      scopeRelations.scopeRecordLookups.map(lookup => lookup.recordField),
-      ...scopeRelations.scopeRecordLookups.map(lookup => lookup.requireEqualFields)
-    );
-  _coreQueryAssertHeaders_(source, requiredHeaders);
-
-  // El permiso se comprueba antes de cualquier lectura de caché. Los resultados
-  // finales quedan aislados por identidad, permiso, ámbito y versión de catálogo.
-  if (cacheKey) {
-    const cached = getCachedValue(cacheKey);
-    if (cached && cached.version === 1 && Array.isArray(cached.records)) {
-      const cacheResult = Object.assign({}, cached, {
-        cacheHit: true,
-        durationMs: Date.now() - queryStartedAt
-      });
-      console.log('[SUNARP Core] Consulta autorizada: resultado en caché', {
-        sheet: (source && (source.sheetName || source.label)) || 'fuente',
-        durationMs: cacheResult.durationMs,
-        total: cacheResult.total,
-        offset: cacheResult.offset,
-        limit: cacheResult.limit
-      });
-      return cacheResult;
-    }
-  }
-
-  // La caché de candidatos contiene filas aún no autorizadas y nunca se entrega
-  // directamente: cada consulta vuelve a comprobar permiso y ámbito sobre ellas.
-  const candidateCacheKey = generation && candidateCacheSeconds > 0
-    ? _coreQueryCandidateCacheKey_(
-        source, generation, idField, descriptor.schemaVersion, groups
-      )
-    : null;
-  let candidateRows = candidateCacheKey ? getCachedValue(candidateCacheKey) : null;
-  const candidateCacheHit = Array.isArray(candidateRows);
-
-  if (!candidateCacheHit) {
-    const candidateMap = new Map();
-    groups.forEach(group => {
-      const fields = Object.keys(group);
-      const result = findRecordsByFields(source, group, {
-        requiredHeaders,
-        searchField: fields[0]
-      });
-      (result.records || []).forEach(record => {
-        const id = String(record[idField] === null || record[idField] === undefined ? '' : record[idField]).trim();
-        if (id) candidateMap.set(id, record);
-      });
-    });
-    candidateRows = Array.from(candidateMap.values());
-    if (candidateCacheKey) {
-      try {
-        putCachedValue(candidateCacheKey, candidateRows, candidateCacheSeconds);
-      } catch (error) {
-        console.warn('[SUNARP Core] No se pudo almacenar la caché de candidatos:', error.message);
-      }
-    }
-  }
-
-  const maxRetainedRecords = offset + limit;
-  const pageCandidates = [];
-  const boundedDistinctPage = Boolean(distinctBy && distinctBy === sortBy);
-  const distinctPageRecords = boundedDistinctPage ? [] : null;
-  const retainedDistinctByValue = boundedDistinctPage ? new Map() : null;
-  const seenDistinctValues = distinctBy ? new Set() : null;
-  let distinctTotal = 0;
-  const distinctRecords = distinctBy && !boundedDistinctPage ? new Map() : null;
-  const distinctValueSets = {};
-  const distinctCountSets = {};
-  distinctFields.forEach(field => { distinctValueSets[field] = new Set(); });
-  distinctCountFields.forEach(field => { distinctCountSets[field] = new Set(); });
-  let authorizedCount = 0;
-
-  candidateRows.forEach(record => {
-    if (!groups.some(group => _coreQueryMatchesGroup_(record, group))) return;
-    if (!_coreQueryMatchesSearch_(record, search, searchFields, searchAny)) return;
-    const id = String(record[idField] === null || record[idField] === undefined ? '' : record[idField]).trim();
-    if (!id) return;
-    const scopeRecord = Object.assign(
-      {}, record, scopeRelations.scopeRecordById[id] || {}
-    );
-    let relationConsistent = true;
-    scopeRelations.scopeRecordLookups.forEach(lookup => {
-      const lookupId = String(record[lookup.recordField] === null ||
-        record[lookup.recordField] === undefined ? '' : record[lookup.recordField]).trim();
-      const related = lookupId ? lookup.values[lookupId] : null;
-      const hasRelated = Boolean(related);
-      if (lookupId && !hasRelated && lookup.required) {
-        relationConsistent = false;
-        return;
-      }
-      if (hasRelated) {
-        const inconsistent = lookup.requireEqualFields.some(field => {
-          const actual = record[field];
-          const expected = related[field];
-          const actualText = String(actual === null || actual === undefined ? '' : actual).trim();
-          const expectedText = String(expected === null || expected === undefined ? '' : expected).trim();
-          return actualText && expectedText && actualText !== expectedText;
-        });
-        if (inconsistent) {
-          relationConsistent = false;
-          return;
-        }
-        Object.assign(scopeRecord, related);
-      }
-    });
-    if (!relationConsistent) return;
-    if (!authorizationIsRecordInScope(
-      validated.context,
-      validated.moduleId,
-      scopeRecord,
-      authorization.structures || [],
-      authorization.fields || {},
-      authorization.locals || []
-    )) return;
-
-    authorizedCount++;
-    distinctFields.forEach(field => {
-      const value = String(record[field] === null || record[field] === undefined
-        ? '' : record[field]).trim();
-      if (value) distinctValueSets[field].add(value);
-    });
-    distinctCountFields.forEach(field => {
-      const value = String(record[field] === null || record[field] === undefined
-        ? '' : record[field]).trim();
-      if (value) distinctCountSets[field].add(value);
-    });
-
-    if (distinctBy) {
-      const value = String(record[distinctBy] === null || record[distinctBy] === undefined
-        ? '' : record[distinctBy]).trim();
-      if (!value) return;
-      if (!seenDistinctValues.has(value)) {
-        seenDistinctValues.add(value);
-        distinctTotal++;
-      }
-      if (boundedDistinctPage) {
-        _coreQueryInsertDistinctPageRecord_(
-          distinctPageRecords,
-          retainedDistinctByValue,
-          record,
-          value,
-          sortBy,
-          idField,
-          sortDirection,
-          maxRetainedRecords
-        );
-      } else {
-        const previous = distinctRecords.get(value);
-        if (!previous || _coreQueryCompareRecords_(
-          record, previous, sortBy, idField, sortDirection
-        ) < 0) {
-          distinctRecords.set(value, record);
-        }
-      }
-    } else {
-      _coreQueryInsertPageRecord_(
-        pageCandidates, record, sortBy, idField,
-        sortDirection, maxRetainedRecords
-      );
-    }
-  });
-
-  const distinctValues = {};
-  distinctFields.forEach(field => {
-    distinctValues[field] = Array.from(distinctValueSets[field]).sort(_coreCompareValues_);
-  });
-  const distinctCounts = {};
-  distinctCountFields.forEach(field => {
-    distinctCounts[field] = distinctCountSets[field].size;
-  });
-
-  let total = authorizedCount;
-  let pageSource = pageCandidates;
-  if (distinctBy) {
-    if (boundedDistinctPage) {
-      pageSource = distinctPageRecords;
-      total = distinctTotal;
-    } else {
-      pageSource = Array.from(distinctRecords.values()).sort((a, b) =>
-        _coreQueryCompareRecords_(a, b, sortBy, idField, sortDirection)
-      );
-      total = distinctRecords.size;
-    }
-  }
-  const page = pageSource.slice(offset, offset + limit);
-  const result = {
-    version: 1, records: page, total, offset, limit,
-    distinctValues, distinctCounts,
-    hasMore: offset + page.length < total,
-    cacheHit: false,
-    candidateCacheHit,
-    candidateCount: candidateRows.length,
-    authorizedCount,
-    retainedForPage: pageSource.length,
-    durationMs: Date.now() - queryStartedAt
-  };
-  if (cacheKey) {
-    try {
-      putCachedValue(cacheKey, result, cacheSeconds);
-    } catch (error) {
-      console.warn('[SUNARP Core] No se pudo almacenar el resultado de consulta:', error.message);
-    }
-  }
-  console.log('[SUNARP Core] Consulta autorizada:', {
-    sheet: (source && (source.sheetName || source.label)) || 'fuente',
-    candidateCacheHit,
-    candidateCount: result.candidateCount,
-    authorizedCount,
-    retainedForPage: result.retainedForPage,
-    total,
-    offset,
-    limit,
-    durationMs: result.durationMs
-  });
-  return result;
+  ].forEach(field => { if (field) fields.add(field); });
+  return Array.from(fields);
 }

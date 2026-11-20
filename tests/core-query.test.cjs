@@ -191,7 +191,7 @@ test('queryRecords exige catálogos para ámbitos no globales y no cachea sin ve
   });
   assert.equal(result.total, 2);
   assert.equal(sandbox.cache.size, 1);
-  assert.ok(Array.from(sandbox.cache.keys()).every(key => key.startsWith('query-candidates:v1:')));
+  assert.ok(Array.from(sandbox.cache.keys()).every(key => key.startsWith('query-candidates:v2:')));
 });
 
 test('queryRecords valida paginación y búsqueda', () => {
@@ -533,4 +533,51 @@ test('la nueva generación de la fuente invalida candidatos y resultados derivad
   const refreshed = sandbox.context.queryRecords(sourceRef, options);
   assert.equal(refreshed.cacheHit, false);
   assert.equal(sourceReads, 2);
+});
+
+
+test('queryRecords proyecta columnas de evaluación y solo hidrata la página autorizada', () => {
+  const sandbox = createSandbox();
+  const rows = [
+    { assignment_id: 'A', status: 'ACTIVE', site_id: 'S1', name: 'Ana', allowed: true, fullPayload: 'A_FULL' },
+    { assignment_id: 'B', status: 'ACTIVE', site_id: 'S1', name: 'Bea', allowed: true, fullPayload: 'B_FULL' },
+    { assignment_id: 'C', status: 'ACTIVE', site_id: 'S1', name: 'Cora', allowed: true, fullPayload: 'C_FULL' }
+  ];
+  let projectedFields = [];
+  let hydratedIds = [];
+  sandbox.context._coreOpenSource_ = () => ({ fake: true });
+  sandbox.context._coreQueryLoadCandidateRows_ = (_source, _groups, _required, fields) => {
+    projectedFields = fields;
+    return {
+      context: { fake: true },
+      candidates: rows.map((record, index) => ({ rowNumber: index + 2, record }))
+    };
+  };
+  sandbox.context._coreQueryHydratePage_ = (_source, selected) => {
+    hydratedIds = selected.map(item => item.record.assignment_id);
+    return selected.map(item => Object.assign({}, item.record));
+  };
+  const result = sandbox.context.queryRecords(
+    { spreadsheetId: 'S', sheetName: 'Assignments' },
+    {
+      idField: 'assignment_id',
+      filters: { status: 'ACTIVE' },
+      anyOf: [{ site_id: 'S1' }],
+      sortBy: 'name',
+      offset: 1,
+      limit: 1,
+      cacheSeconds: 0,
+      candidateCacheSeconds: 0,
+      authorization: sandbox.authorization()
+    }
+  );
+  assert.deepEqual(hydratedIds, ['B']);
+  assert.equal(result.records.length, 1);
+  assert.equal(result.records[0].fullPayload, 'B_FULL');
+  for (const field of ['status', 'site_id', 'name', 'assignment_id']) {
+    assert.ok(projectedFields.includes(field));
+  }
+  assert.equal(result.projectedFieldCount, projectedFields.length);
+  assert.equal(result.hydratedRowCount, 1);
+  assert.equal(result.version, 2);
 });

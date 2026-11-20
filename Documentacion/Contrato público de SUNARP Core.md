@@ -40,7 +40,7 @@ Las respuestas de lectura suelen utilizar `{ records, total }`; las lecturas pag
 
 ## 2. Inventario de la API pública
 
-En el HEAD auditado se identificaron **29 funciones globales públicas**. La lista siguiente se ha obtenido de las declaraciones de los archivos de Core, excluyendo los auxiliares privados.
+En el HEAD auditado se identificaron **30 funciones globales públicas**. La lista siguiente se ha obtenido de las declaraciones de los archivos de Core, excluyendo los auxiliares privados.
 
 | Módulo | Función pública | Firma |
 |---|---|---|
@@ -73,6 +73,7 @@ En el HEAD auditado se identificaron **29 funciones globales públicas**. La lis
 | Fuentes | `getSourceInfo` | `(source)` |
 | Validación | `validateRecord` | `(record, schema, options)` |
 | Validación | `assertValidRecord` | `(record, schema, options)` |
+| Pruebas Apps Script | `runCoreTests` | `()` |
 
 Los métodos públicos no quedan automáticamente garantizados por el número de versión declarado por un consumidor. El proyecto consumidor debe apuntar a una versión de biblioteca realmente creada que contenga estas implementaciones.
 
@@ -309,7 +310,7 @@ Respuesta:
 
 ```js
 {
-  version: 1,
+  version: 2,
   records: [...],             // solo la página autorizada
   total: 123,                  // posterior a distinctBy, si se declaró
   offset: 0,
@@ -322,11 +323,13 @@ Respuesta:
   candidateCount: 400,
   authorizedCount: 123,        // antes de distinctBy
   retainedForPage: 25,
+  projectedFieldCount: 9,
+  hydratedRowCount: 25,
   durationMs: 15
 }
 ```
 
-**Límite de paginación que debe permanecer explícito:** el código usa `findRecordsByFields` para materializar todos los candidatos que cumplen los filtros exactos y los examina para calcular autorización, total y facetas exactas. En la Fase 1 se evita conservar y ordenar toda la colección autorizada cuando no se usa `distinctBy`: se retiene como máximo `offset + limit` registros ordenados para la página. Esto reduce memoria de resultados, pero **no convierte la lectura en paginación de origen** ni evita examinar todos los candidatos. Cuando se utiliza `distinctBy`, si coincide con `sortBy` Core mantiene como máximo `offset + limit` representantes y el conjunto compacto de claves necesario para contar personas/grupos distintos; si no coincide, conserva un representante por cada valor distinto para resolver la ordenación global. La optimización de acceso/seek por origen queda como pendiente técnico y no debe describirse como resuelta.
+**Límite de paginación que debe permanecer explícito:** el código usa `findRecordsByFields` para materializar todos los candidatos que cumplen los filtros exactos y los examina para calcular autorización, total y facetas exactas. En la implementación de Fase 1, Core proyecta únicamente las columnas necesarias para filtrar, autorizar, ordenar y calcular facetas. Primero usa `TextFinder` sobre el campo exacto prioritario de cada grupo; después recupera las columnas proyectadas de ventanas de filas candidatas, sin cargar el ancho completo de todas esas filas. Mantiene la autorización, los conteos y las facetas sobre todos los candidatos coincidentes, pero conserva como máximo `offset + limit` candidatos ordenados cuando no se usa `distinctBy`. **Solo después de seleccionar la página se hidratan las filas completas**, agrupando lecturas de hasta 25 filas para la página. Esto reduce el volumen de columnas y la memoria de registros completos, pero **no equivale a paginación de origen ni evita el barrido de búsqueda y cálculo sobre todos los candidatos**. La consulta sigue siendo O(n) en la exploración del campo usado por `TextFinder` y O(m) en el conjunto candidato para autorización y facetas. Cuando se utiliza `distinctBy`, si coincide con `sortBy` Core mantiene como máximo `offset + limit` representantes y el conjunto compacto de claves necesario para contar personas/grupos distintos; si no coincide, conserva un representante por cada valor distinto para resolver la ordenación global. La optimización de acceso/seek por origen queda como pendiente técnico y no debe describirse como resuelta.
 
 El resultado final de caché se separa por identidad, módulo, permiso, ámbitos, campos, versión de catálogos y huella de las instantáneas organizacionales/relacionales usadas para autorizar. La caché de candidatos puede compartirse porque almacena datos aún no autorizados; cada solicitud vuelve a aplicar filtros, relaciones y autorización antes de devolver cualquier resultado.
 
