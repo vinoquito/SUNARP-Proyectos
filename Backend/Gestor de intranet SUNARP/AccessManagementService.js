@@ -2408,15 +2408,29 @@ function getAccessAuditHistory(filters) {
       new Date(b.fecha_hora).getTime() - new Date(a.fecha_hora).getTime()
     );
   } else {
-    const recent = SUNARPCore.listTailRecords(source, {
-      offset,
-      limit: pageSize,
-      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.audit
-    });
-    records = recent.records.sort((a, b) =>
-      new Date(b.fecha_hora).getTime() - new Date(a.fecha_hora).getTime()
-    );
-    total = recent.total;
+    if (typeof SUNARPCore.listTailRecords === 'function') {
+      const recent = SUNARPCore.listTailRecords(source, {
+        offset,
+        limit: pageSize,
+        requiredHeaders: ACCESS_MANAGEMENT_FIELDS.audit
+      });
+      records = recent.records.sort((a, b) =>
+        new Date(b.fecha_hora).getTime() - new Date(a.fecha_hora).getTime()
+      );
+      total = recent.total;
+    } else {
+      // Compatibilidad temporal con la versión 9 de SUNARP Core.
+      const cached = SUNARPCore.listRecordsFromSourcesCached([{
+        key: 'audit',
+        source,
+        requiredHeaders: ACCESS_MANAGEMENT_FIELDS.audit
+      }], 60);
+      records = (cached.audit || []).slice().sort((a, b) =>
+        new Date(b.fecha_hora).getTime() - new Date(a.fecha_hora).getTime()
+      );
+      total = records.length;
+      records = records.slice(offset, offset + pageSize);
+    }
   }
 
   records = records.filter(row => {
