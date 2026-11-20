@@ -1194,7 +1194,12 @@ function searchAccessPersonByDocument(payload) {
   const documentLookup = SUNARPCore.findRecordsByFields(
     _accessDirectorySource_('servidores datos personales'),
     { tipo_documento: documentType, numero_documento: documentNumber },
-    { searchField: 'numero_documento', matchCase: false, requiredHeaders: ['servidor_id', 'tipo_documento', 'numero_documento'] }
+    {
+      searchField: 'numero_documento',
+      matchCase: false,
+      requiredHeaders: ['servidor_id', 'tipo_documento', 'numero_documento'],
+      projectionFields: ['servidor_id', 'tipo_documento', 'numero_documento']
+    }
   );
   const matches = documentLookup.records.filter(record =>
     _accessText_(record.tipo_documento).replace(/\\s+/g, '').toUpperCase() === documentType
@@ -1685,7 +1690,8 @@ function saveAccessScopes(payload) {
 
   const targetUsers = _accessFindSecurityRecords_(
     ACCESS_MANAGEMENT_CONFIG.sheets.users,
-    'persona_id', [personaId], ACCESS_MANAGEMENT_FIELDS.users
+    'persona_id', [personaId], ACCESS_MANAGEMENT_FIELDS.users,
+    { projectionFields: ['persona_id', 'active'] }
   );
   if (!targetUsers.some(row => _accessIsActive_(row.active))) {
     throw new Error('La persona no tiene una cuenta activa.');
@@ -2637,12 +2643,26 @@ function getAccessUserConfiguration(personaId) {
   if (!id) throw new Error('Debes indicar persona_id.');
 
   const s = ACCESS_MANAGEMENT_CONFIG.sheets;
-  const users = _accessFindSecurityRecords_(s.users, 'persona_id', [id], ACCESS_MANAGEMENT_FIELDS.users);
+  const users = _accessFindSecurityRecords_(
+    s.users, 'persona_id', [id], ACCESS_MANAGEMENT_FIELDS.users,
+    { projectionFields: ['persona_id'] }
+  );
   if (!users.length) {
     throw new Error('La persona no tiene una cuenta registrada.');
   }
-  const userRoles = _accessFindSecurityRecords_(s.userRoles, 'persona_id', [id], ACCESS_MANAGEMENT_FIELDS.userRoles);
-  const scopes = _accessFindSecurityRecords_(s.scopes, 'persona_id', [id], ACCESS_MANAGEMENT_FIELDS.scopes);
+  const userRoles = _accessFindSecurityRecords_(
+    s.userRoles, 'persona_id', [id], ACCESS_MANAGEMENT_FIELDS.userRoles,
+    { projectionFields: ['persona_id', 'modulo_id', 'rol_id', 'active'] }
+  );
+  const scopes = _accessFindSecurityRecords_(
+    s.scopes, 'persona_id', [id], ACCESS_MANAGEMENT_FIELDS.scopes,
+    {
+      projectionFields: [
+        'persona_id', 'modulo_id', 'tipo_ambito_id',
+        'referencia_id', 'incluir_descendientes', 'active'
+      ]
+    }
+  );
   const activeScopesByModule = new Set(scopes.filter(item => _accessIsActive_(item.active))
     .map(item => _accessText_(item.modulo_id)));
   return {

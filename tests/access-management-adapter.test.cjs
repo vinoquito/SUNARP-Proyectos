@@ -496,10 +496,18 @@ test('la búsqueda documental comprueba la cuenta por persona_id sin cargar el s
     accountLookup = { sheet, field, values: Array.from(values) };
     return [{ persona_id: 'PER_117', active: true }];
   };
-  sandbox.SUNARPCore.findRecordsByFields = () => ({
-    records: [{ servidor_id: 'PER_117', tipo_documento: 'DNI', numero_documento: '12345678' }],
-    total: 1
-  });
+  let documentQuery = null;
+  sandbox.SUNARPCore.findRecordsByFields = (source, filters, options) => {
+    documentQuery = {
+      sheet: source.sheetName,
+      filters,
+      projectionFields: options.projectionFields
+    };
+    return {
+      records: [{ servidor_id: 'PER_117', tipo_documento: 'DNI', numero_documento: '12345678' }],
+      total: 1
+    };
+  };
 
   const result = sandbox.searchAccessPersonByDocument({
     tipo_documento: 'DNI',
@@ -507,6 +515,11 @@ test('la búsqueda documental comprueba la cuenta por persona_id sin cargar el s
   });
   assert.equal(result.found, true);
   assert.equal(result.canEnableAccount, false);
+  assert.equal(documentQuery.sheet, 'servidores datos personales');
+  assert.equal(
+    documentQuery.projectionFields.join(','),
+    'servidor_id,tipo_documento,numero_documento'
+  );
   assert.deepEqual(accountLookup, {
     sheet: 'Usuarios',
     field: 'persona_id',
@@ -973,7 +986,7 @@ test('la configuración del editor consulta solo las relaciones de la persona se
   const original = sandbox.SUNARPCore.findRecordsByFields;
   const originalList = sandbox.SUNARPCore.listRecordsFromSourcesCached;
   sandbox.SUNARPCore.findRecordsByFields = (source, filters, options) => {
-    calls.push({ sheet: source.sheetName, filters });
+    calls.push({ sheet: source.sheetName, filters, projectionFields: options.projectionFields });
     return original(source, filters, options);
   };
   sandbox.SUNARPCore.listRecordsFromSourcesCached = requests => {
@@ -983,8 +996,15 @@ test('la configuración del editor consulta solo las relaciones de la persona se
   const configuration = sandbox.getAccessUserConfiguration('PER_117');
   assert.equal(configuration.userRoles.length, 2);
   assert.equal(configuration.scopes.length, 2);
-  assert.ok(calls.some(item => item.sheet === 'UsuarioRol' && item.filters.persona_id === 'PER_117'));
-  assert.ok(calls.some(item => item.sheet === 'AmbitosAcceso' && item.filters.persona_id === 'PER_117'));
+  const roleCall = calls.find(item => item.sheet === 'UsuarioRol' && item.filters.persona_id === 'PER_117');
+  const scopeCall = calls.find(item => item.sheet === 'AmbitosAcceso' && item.filters.persona_id === 'PER_117');
+  assert.ok(roleCall);
+  assert.ok(scopeCall);
+  assert.equal(roleCall.projectionFields.join(','), 'persona_id,modulo_id,rol_id,active');
+  assert.equal(
+    scopeCall.projectionFields.join(','),
+    'persona_id,modulo_id,tipo_ambito_id,referencia_id,incluir_descendientes,active'
+  );
   assert.deepEqual(listReads, ['Modulos']);
 });
 
