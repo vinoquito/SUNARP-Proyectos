@@ -233,6 +233,17 @@ function createDirectorySandbox() {
   vm.runInContext(serviceSource, context, { filename: 'DirectoryService.js' });
   context._directoryAssertAllowedFields_ = () => true;
   context._directoryLoadContext_ = () => ({ datosPersonales: [] });
+  context._directoryAuthorizationContext_ = permissionCode => ({
+    auth: {},
+    moduleId: 'MOD_INFO_PERSONAL',
+    permissionCode,
+    structures: [],
+    locals: []
+  });
+  context._directoryFindAuthorizedAssignmentById_ = (snapshot, _authorization, id) =>
+    (snapshot.asignaciones || []).find(item =>
+      String(item.asignacion_id) === String(id)
+    ) || null;
   context._directoryAssertDocumentAvailable_ = (type, number) => ({
     tipo_documento: String(type).toUpperCase(),
     numero_documento: String(number)
@@ -349,6 +360,66 @@ test('una asignación adicional no crea ni modifica persona o ficha personal', (
   assert.equal(result.assignment.asignacion_id, 'ASG_009');
 });
 
+
+
+test('la edición coordinada recupera la asignación anterior por ID sin cargar toda la tabla', () => {
+  const context = createDirectorySandbox();
+  const person = {
+    persona_id: 'PER_012', nombres: 'Ana', apellidos: 'Pérez',
+    correo_institucional: 'ana@sunarp.gob.pe'
+  };
+  const personalData = {
+    servidor_id: 'PER_012', tipo_documento: 'DNI', numero_documento: '12345678',
+    fecha_nacimiento: '', fecha_inicio_servicios: '', fecha_cese: ''
+  };
+  const previousAssignment = {
+    asignacion_id: 'ASG_012', persona_id: 'PER_012', cargo_id: 'CAR_001',
+    estructura_local_id: 'REL_1', local_id: '', active: true, order: 2
+  };
+  let loadOptions = null;
+  let lookupId = '';
+
+  context._directoryLoadContext_ = options => {
+    loadOptions = options;
+    return {
+      personas: [person],
+      datosPersonales: [personalData],
+      asignaciones: [],
+      estructuraLocal: [],
+      estructuraOrg: [],
+      locales: []
+    };
+  };
+  context._directoryFindAuthorizedAssignmentById_ = (_snapshot, _authorization, id) => {
+    lookupId = id;
+    return previousAssignment;
+  };
+  context._directoryAssertDocumentAvailable_ = () => ({
+    tipo_documento: 'DNI',
+    numero_documento: '12345678'
+  });
+  context._saveDirectoryPerson_ = () => ({ person });
+  context.saveDirectoryPersonalData = () => ({ personalData });
+  context.saveDirectoryAssignment = () => ({
+    assignment: { asignacion_id: 'ASG_012' }
+  });
+
+  const result = context.saveDirectoryEntry({
+    persona_id: 'PER_012',
+    asignacion_id: 'ASG_012',
+    nombres: 'Ana',
+    apellidos: 'Pérez',
+    tipo_documento: 'DNI',
+    numero_documento: '12345678',
+    cargo_id: 'CAR_001',
+    estructura_local_id: 'REL_1'
+  });
+
+  assert.equal(loadOptions.includeAssignments, false);
+  assert.equal(loadOptions.validateSnapshot, false);
+  assert.equal(lookupId, 'ASG_012');
+  assert.equal(result.success, true);
+});
 
 test('la edición rechaza una asignación que pertenece a otra persona antes de escribir', () => {
   const context = createDirectorySandbox();
