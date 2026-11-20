@@ -38,7 +38,9 @@ vm.runInContext(
     'buildView: _directoryBuildView_,' +
     'createPersonalDataMap: _directoryCreatePersonalDataMap_,' +
     'resolveDocumentTypesSource: _directoryResolveDocumentTypesSource_,' +
-    'buildFilterContract: _directoryBuildFilterContract_' +
+    'buildFilterContract: _directoryBuildFilterContract_,' +
+    'buildAssignmentQuery: _directoryBuildAssignmentQuery_,' +
+    'executeAssignmentQuery: _directoryExecuteAssignmentQuery_' +
   '};',
   sandbox,
   { filename: 'DirectoryService.js' }
@@ -697,25 +699,35 @@ test('el Directorio utiliza exclusivamente la caché central de SUNARP Core', ()
   assert.match(serviceSource, /function clearDirectoryCache\(\)/);
 });
 
-test('la carga inicial entrega solo catálogos y la lista de asignaciones admite filtros y paginación en servidor', () => {
+test('la carga inicial y las páginas del Directorio consultan asignaciones mediante Core', () => {
   const initialStart = serviceSource.indexOf('function getDirectoryInitialData() {');
   const initialEnd = serviceSource.indexOf('function listDirectoryPeople(', initialStart);
   const initial = serviceSource.slice(initialStart, initialEnd);
+  const listStart = serviceSource.indexOf('function listDirectoryAssignments(', initialStart);
+  const listEnd = serviceSource.indexOf('function ', listStart + 10);
+  const listing = serviceSource.slice(listStart, listEnd);
   assert.match(initial, /records:\s*initialPage\.records/);
-  assert.match(initial, /_directoryBuildInitialAssignmentPage_\(view, context\)/);
-  assert.match(serviceSource, /if \(options\.sedeId\)/);
-  assert.match(serviceSource, /if \(options\.cargoId\)/);
-  assert.match(serviceSource, /if \(options\.estructuraId\)/);
-  assert.match(serviceSource, /pageSize > 100/);
-  assert.match(serviceSource, /view\.assignments\.slice\(offset, offset \+ limit\)/);
+  assert.match(initial, /includeAssignments:\s*false/);
+  assert.match(initial, /_directoryExecuteAssignmentQuery_/);
+  assert.match(listing, /includeAssignments:\s*false/);
+  assert.match(listing, /_directoryExecuteAssignmentQuery_/);
+  assert.match(serviceSource, /function _directoryBuildAssignmentQuery_/);
+  assert.match(serviceSource, /SUNARPCore\.queryRecords/);
+  assert.match(serviceSource, /selectedSiteId/);
+  assert.match(serviceSource, /options\.cargoId/);
+  assert.match(serviceSource, /selectedStructureId/);
+  assert.match(listing, /pageSize > 100/);
+  assert.doesNotMatch(listing, /view\.assignments/);
 });
 
-test('la carga inicial no recupera ni entrega datos personales de todos los servidores', () => {
+test('la carga inicial no recupera asignaciones ni datos personales completos', () => {
   const initialDataStart = serviceSource.indexOf('function getDirectoryInitialData() {');
   const initialDataEnd = serviceSource.indexOf('function listDirectoryPeople(', initialDataStart);
   const initialDataSource = serviceSource.slice(initialDataStart, initialDataEnd);
-  assert.match(initialDataSource, /_directoryLoadContext_\(\{ includePersonalData: false, includePeople: false, validateSnapshot: false \}\)/);
-  assert.doesNotMatch(initialDataSource, /context\.datosPersonales|tipo_documento|numero_documento|fecha_nacimiento/);
+  assert.match(initialDataSource, /includePersonalData:\s*false/);
+  assert.match(initialDataSource, /includePeople:\s*false/);
+  assert.match(initialDataSource, /includeAssignments:\s*false/);
+  assert.doesNotMatch(initialDataSource, /context\.datosPersonales|context\.personas|tipo_documento|numero_documento|fecha_nacimiento/);
   assert.match(serviceSource, /function getDirectoryPersonById\([\s\S]*?findRecordsByFields\([\s\S]*?servidor_id/s);
   assert.match(frontendScript, /callServer\('getDirectoryPersonById', record\.persona_id\)/);
 });
