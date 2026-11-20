@@ -2630,12 +2630,16 @@ function getAccessEntityHistory(payload) {
     ACCESS_MANAGEMENT_CONFIG.sheets.audit
   );
 
-  const result = SUNARPCore.listRecords(source, {
-    sortBy: 'fecha_hora',
-    sortDirection: 'desc'
-  });
-
-  let records = result.records.filter(event => {
+  // Comparte la misma instantánea central que el historial general.
+  // Evita una lectura completa adicional de Auditoria por cada entidad.
+  const cached = SUNARPCore.listRecordsFromSourcesCached([{
+    key: 'audit',
+    source,
+    requiredHeaders: ACCESS_MANAGEMENT_FIELDS.audit
+  }], 60);
+  let records = (cached.audit || []).slice().sort((a, b) =>
+    new Date(b.fecha_hora).getTime() - new Date(a.fecha_hora).getTime()
+  ).filter(event => {
     const eventType = _accessUpper_(event.tipo_entidad);
     const eventId = _accessText_(event.registro_id);
     const eventModule = _accessUpper_(event.modulo);
