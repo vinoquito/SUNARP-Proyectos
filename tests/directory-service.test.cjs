@@ -632,6 +632,7 @@ test('listDirectoryPeople consulta personas distintas y recupera solo las asigna
   const vmContext = vm.createContext({});
   vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
 
+  vmContext.getIntranetDataSource = (_key, sheetName) => ({ sheetName });
   const calls = [];
   const context = {
     personas: [],
