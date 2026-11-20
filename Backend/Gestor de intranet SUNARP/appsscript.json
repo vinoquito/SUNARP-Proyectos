@@ -13,12 +13,12 @@
       {
         "userSymbol": "SUNARPCore",
         "libraryId": "1mDzO7uTarQCKYpS5U7pMv5go0Wh76k3JoIh5GvxWPfU0zoUG7Jfp17tD",
-        "version": "9"
+        "version": "10"
       }
     ]
   },
   "webapp": {
     "executeAs": "USER_DEPLOYING",
-    "access": "MYSELF"
+    "access": "DOMAIN"
   }
 }
