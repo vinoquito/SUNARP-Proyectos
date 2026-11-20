@@ -339,6 +339,52 @@ test('la escritura de auditoría reutiliza metadatos de fuente desde Core', () =
   assert.ok(!implementation.includes('getSourceInfo(source)'));
 });
 
+test('el historial filtrado por actor busca candidatos en Core y evita cargar toda Auditoria', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  sandbox._accessRequirePermission_ = () => ({ authenticated: true });
+  sandbox._accessSecuritySource_ = sheet => ({ sheetName: sheet });
+  let lookup = null;
+  let fullReads = 0;
+  sandbox.SUNARPCore.searchRecordsByFields = (source, query, fields, options) => {
+    lookup = { sheet: source.sheetName, query, fields: Array.from(fields), matchCase: options.matchCase };
+    return {
+      records: [{
+        evento_id: 'EVT_001',
+        fecha_hora: new Date('2026-11-20T10:00:00Z'),
+        actor_correo: 'ana@sunarp.gob.pe',
+        actor_nombre: 'Ana',
+        accion: 'ACTUALIZAR',
+        modulo: 'ACCESOS',
+        tipo_entidad: 'USUARIO',
+        registro_id: 'PER_001',
+        registro_nombre: 'Ana',
+        resultado: 'OK',
+        detalle: 'Actualización de cuenta',
+        datos_antes: '',
+        datos_despues: '',
+        ambito_modulo: '',
+        ambito_tipo: '',
+        ambito_referencia_id: ''
+      }],
+      total: 1
+    };
+  };
+  sandbox.SUNARPCore.listRecordsFromSourcesCached = () => {
+    fullReads++;
+    throw new Error('No debe cargarse la tabla completa para un filtro de actor.');
+  };
+
+  const result = sandbox.getAccessAuditHistory({ actor: 'ana@sunarp.gob.pe', page: 1, pageSize: 10 });
+  assert.equal(result.total, 1);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].actor_correo, 'ana@sunarp.gob.pe');
+  assert.equal(lookup.sheet, 'Auditoria');
+  assert.equal(lookup.query, 'ana@sunarp.gob.pe');
+  assert.deepEqual(lookup.fields, ['actor_correo']);
+  assert.equal(lookup.matchCase, false);
+  assert.equal(fullReads, 0);
+});
+
 test('el historial general evita leer la tabla completa cuando no hay filtros', () => {
   const start = accessSource.indexOf('function getAccessAuditHistory(filters) {');
   const end = accessSource.indexOf('function _accessParseAuditData_(', start);
