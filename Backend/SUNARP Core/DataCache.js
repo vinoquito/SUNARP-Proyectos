@@ -165,6 +165,78 @@ function _coreInvalidateSourceCacheOrThrow_(source) {
   return result;
 }
 
+/**
+ * Ejecuta el tramo de escritura de una fuente y garantiza que la ruta normal
+ * y la ruta de error intenten flush + invalidación si ya comenzó a modificar
+ * celdas. No ofrece rollback: ante un error posterior al primer write, avisa
+ * que el consumidor debe inspeccionar el estado antes de repetir la operación.
+ */
+function _coreRunSourceWrite_(source, writer) {
+  if (typeof writer !== 'function') {
+    throw new Error('SUNARP Core: se requiere una función para ejecutar la escritura.');
+  }
+
+  let writeStarted = false;
+  let finalizationStarted = false;
+
+  const finalize = () => {
+    finalizationStarted = true;
+    let flushError = null;
+    let invalidationError = null;
+
+    try {
+      SpreadsheetApp.flush();
+    } catch (error) {
+      flushError = error;
+    }
+
+    try {
+      _coreInvalidateSourceCacheOrThrow_(source);
+    } catch (error) {
+      invalidationError = error;
+    }
+
+    if (flushError || invalidationError) {
+      const details = [];
+      if (flushError) details.push('flush: ' + flushError.message);
+      if (invalidationError) details.push('invalidación: ' + invalidationError.message);
+      throw new Error(
+        'SUNARP Core: la escritura pudo haberse aplicado, pero no se pudo completar ' +
+        'su finalización segura. Comprueba los datos antes de reintentar. ' +
+        details.join(' | ')
+      );
+    }
+  };
+
+  try {
+    const result = writer(() => {
+      writeStarted = true;
+    });
+    if (writeStarted) finalize();
+    return result;
+  } catch (error) {
+    if (writeStarted && !finalizationStarted) {
+      try {
+        finalize();
+      } catch (finalizationError) {
+        throw new Error(
+          'SUNARP Core: la operación falló después de iniciar una escritura y también ' +
+          'falló la finalización/invalidación. Puede existir una actualización parcial; ' +
+          'comprueba los datos antes de reintentar. Error original: ' + error.message +
+          '. Error de finalización: ' + finalizationError.message
+        );
+      }
+
+      throw new Error(
+        'SUNARP Core: la operación falló después de iniciar una escritura. Se ejecutaron ' +
+        'flush e invalidación de la fuente; puede haber cambios parciales. Comprueba ' +
+        'los datos antes de reintentar. Detalle: ' + error.message
+      );
+    }
+    throw error;
+  }
+}
+
 function invalidateSourceCache(source) {
   return _coreWithWriteLock_(() => _coreInvalidateSourceCache_(source));
 }
