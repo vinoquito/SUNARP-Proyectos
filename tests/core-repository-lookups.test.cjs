@@ -227,18 +227,24 @@ test('findRecordsByFields admite proyección de columnas sin leer el ancho compl
         createTextFinder(pattern) {
           let entireCell = false;
           let matchCase = true;
+          let useRegex = false;
           return {
             matchEntireCell(value) { entireCell = value; return this; },
             matchCase(value) { matchCase = value; return this; },
-            useRegularExpression() { return this; },
+            useRegularExpression(value) { useRegex = value; return this; },
             findAll() {
               const found = [];
+              const regex = useRegex
+                ? new RegExp(String(pattern), matchCase ? '' : 'i')
+                : null;
               selected.forEach((row, index) => {
                 const actual = String(row[0]);
                 const expected = String(pattern);
                 const left = matchCase ? actual : actual.toLowerCase();
                 const right = matchCase ? expected : expected.toLowerCase();
-                const matched = entireCell ? left === right : left.includes(right);
+                const matched = useRegex
+                  ? regex.test(actual)
+                  : (entireCell ? left === right : left.includes(right));
                 if (matched) found.push({ getRow: () => startRow + index });
               });
               return found;
