@@ -1497,7 +1497,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     const canConfigure = state.data.capabilities.userRoles;
     const section = makeTabPanel(
       'Usuarios',
-      'Selecciona una sede o un rol para consultar las cuentas. El buscador permite acotar los resultados.',
+      'Selecciona una sede o un rol para consultar las cuentas. El buscador y la paginación consultan el servidor.',
       canManage ? 'Nueva cuenta' : '',
       canManage ? () => openUserModal(null) : null,
       { hideRefresh: true }
@@ -1540,50 +1540,45 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     );
     host.appendChild(filters);
 
-    let requestNumber = 0;
     let loadingUsers = false;
+    let requestNumber = 0;
+    let lastPageResult = { items: [], total: 0 };
 
     function updateApplyState() {
       applyButton.disabled = loadingUsers || (!siteSelect.value && !roleSelect.value);
     }
 
-    async function loadFilteredUsers(showLoading) {
+    async function loadUserPage(params) {
       const sedeId = siteSelect.value;
       const rolId = roleSelect.value;
-      const currentRequest = ++requestNumber;
-
-      updateApplyState();
-
       if (!sedeId && !rolId) {
-        loadingUsers = false;
+        lastPageResult = { items: [], total: 0 };
         state.data.users = [];
-        if (state.table && typeof state.table.setData === 'function') {
-          state.table.setData([]);
-        }
-        updateApplyState();
-        return;
+        return lastPageResult;
       }
 
-      const finishLoading = showLoading === false
-        ? () => {}
-        : beginAccessPanelLoading();
-
+      const currentRequest = ++requestNumber;
+      const finishLoading = beginAccessPanelLoading();
       loadingUsers = true;
       updateApplyState();
 
       try {
         const result = await rpc('getAccessUsers', {
           sede_id: sedeId,
-          rol_id: rolId
+          rol_id: rolId,
+          search: params && params.search || '',
+          page: params && params.page || 1,
+          pageSize: params && params.pageSize || 10
         });
 
-        if (currentRequest !== requestNumber) return;
+        if (currentRequest !== requestNumber) return lastPageResult;
 
-        state.data.users = Array.isArray(result.items) ? result.items : [];
-
-        if (state.table && typeof state.table.setData === 'function') {
-          state.table.setData(state.data.users);
-        }
+        lastPageResult = {
+          items: Array.isArray(result.items) ? result.items : [],
+          total: Number(result.total) || 0
+        };
+        state.data.users = lastPageResult.items;
+        return lastPageResult;
       } catch (error) {
         if (currentRequest === requestNumber) {
           SUNARPUI.notify(
@@ -1591,6 +1586,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             error.message || 'No se pudieron consultar los usuarios.'
           );
         }
+        return lastPageResult;
       } finally {
         finishLoading();
         if (currentRequest === requestNumber) {
@@ -1600,13 +1596,36 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       }
     }
 
+    async function loadFilteredUsers(showLoading) {
+      if (!siteSelect.value && !roleSelect.value) {
+        lastPageResult = { items: [], total: 0 };
+        state.data.users = [];
+        if (state.table && typeof state.table.setData === 'function') {
+          state.table.setData([]);
+        }
+        updateApplyState();
+        return;
+      }
+
+      if (state.table && typeof state.table.refresh === 'function') {
+        await state.table.refresh();
+      } else {
+        const result = await loadUserPage({ page: 1, pageSize: 10, search: '' });
+        if (state.table && typeof state.table.setData === 'function') {
+          state.table.setData(result.items);
+        }
+      }
+    }
+
     // Los selectores solo actualizan el estado del botón.
-    // La consulta se ejecuta una vez, explícitamente, al pulsar Actualizar.
+    // La consulta se ejecuta al pulsar Actualizar o al cambiar página/búsqueda.
     siteSelect.addEventListener('change', updateApplyState);
     roleSelect.addEventListener('change', updateApplyState);
 
     renderTable(host, {
       data: [],
+      mode: 'server',
+      loadData: loadUserPage,
       columns: [
         { key: 'nombre_completo', label: 'Nombre' },
         { key: 'correo_institucional', label: 'Correo institucional' },
@@ -1641,7 +1660,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         }] : [])
       ],
       searchPlaceholder: 'Buscar por nombre o correo institucional...',
-      emptyMessage: 'Selecciona una sede o un rol para consultar usuarios. No se carga el listado completo.'
+      emptyMessage: 'Selecciona una sede o un rol para consultar usuarios.'
     });
 
     state.userListController = {
@@ -1649,7 +1668,6 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     };
     updateApplyState();
   }
-
 
   function openUserModal(row) {
     const editing = Boolean(row);
