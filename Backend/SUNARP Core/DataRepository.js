@@ -1200,23 +1200,18 @@ function insertRecord(source, record, options) {
       table.sheet.getLastRow() + 1
     );
 
-    table.sheet
-      .getRange(targetRow, 1, 1, row.length)
-      .setValues([row]);
+    return _coreRunSourceWrite_(source, markWriteStarted => {
+      markWriteStarted();
+      table.sheet
+        .getRange(targetRow, 1, 1, row.length)
+        .setValues([row]);
 
-    SpreadsheetApp.flush();
-    _coreInvalidateSourceCacheOrThrow_(source);
-
-    const insertedRecord = _coreRowToRecord_(
-      table.headers,
-      row
-    );
-
-    return {
-      success: true,
-      message: 'Registro insertado correctamente.',
-      record: insertedRecord
-    };
+      return {
+        success: true,
+        message: 'Registro insertado correctamente.',
+        record: _coreRowToRecord_(table.headers, row)
+      };
+    });
   });
 }
 
@@ -1285,41 +1280,38 @@ function updateRecord(source, idField, id, updates, options) {
       }
     }
 
-    fields.forEach(field => {
-      const columnIndex = _coreGetFieldIndex_(table, field);
+    return _coreRunSourceWrite_(source, markWriteStarted => {
+      fields.forEach(field => {
+        const columnIndex = _coreGetFieldIndex_(table, field);
+        const value = updates[field];
 
-      const value = updates[field];
+        markWriteStarted();
+        table.sheet
+          .getRange(entry.rowNumber, columnIndex + 1)
+          .setValue(value === null || value === undefined ? '' : value);
+      });
 
-      table.sheet
-        .getRange(entry.rowNumber, columnIndex + 1)
-        .setValue(
-          value === null || value === undefined ? '' : value
-        );
+      const updatedRecord = table.headers.reduce((record, header, index) => {
+        record[header] = entry.values[index];
+        return record;
+      }, {});
+
+      fields.forEach(field => {
+        updatedRecord[field] =
+          updates[field] === null || updates[field] === undefined
+            ? ''
+            : updates[field];
+      });
+
+      // El identificador permanece inalterado.
+      updatedRecord[idField] = entry.values[idIndex];
+
+      return {
+        success: true,
+        message: 'Registro actualizado correctamente.',
+        record: updatedRecord
+      };
     });
-
-    SpreadsheetApp.flush();
-    _coreInvalidateSourceCacheOrThrow_(source);
-
-    const updatedRecord = table.headers.reduce((record, header, index) => {
-      record[header] = entry.values[index];
-      return record;
-    }, {});
-
-    fields.forEach(field => {
-      updatedRecord[field] =
-        updates[field] === null || updates[field] === undefined
-          ? ''
-          : updates[field];
-    });
-
-    // El identificador permanece inalterado.
-    updatedRecord[idField] = entry.values[idIndex];
-
-    return {
-      success: true,
-      message: 'Registro actualizado correctamente.',
-      record: updatedRecord
-    };
   });
 }
 
@@ -1371,16 +1363,16 @@ function deleteRecord(source, idField, id) {
       );
     }
 
-    table.sheet.deleteRow(entry.rowNumber);
+    return _coreRunSourceWrite_(source, markWriteStarted => {
+      markWriteStarted();
+      table.sheet.deleteRow(entry.rowNumber);
 
-    SpreadsheetApp.flush();
-    _coreInvalidateSourceCacheOrThrow_(source);
-
-    return {
-      success: true,
-      message: 'Registro eliminado correctamente.',
-      id
-    };
+      return {
+        success: true,
+        message: 'Registro eliminado correctamente.',
+        id
+      };
+    });
   });
 }
 
