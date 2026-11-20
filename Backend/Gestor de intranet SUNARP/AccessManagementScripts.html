@@ -1604,6 +1604,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       if (!tableConfig) return;
       appliedSedeId = siteSelect.value;
       appliedRoleId = roleSelect.value;
+      updateApplyState();
       // Recrear la tabla reinicia la página a 1 cuando cambian sede o rol.
       renderTable(host, tableConfig);
     }
