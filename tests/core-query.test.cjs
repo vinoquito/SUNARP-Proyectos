@@ -162,3 +162,46 @@ test('queryRecords valida paginación y búsqueda', () => {
   assert.throws(() => sandbox.context.queryRecords({}, Object.assign({}, base, { limit: 0 })), /limit/);
   assert.throws(() => sandbox.context.queryRecords({}, Object.assign({}, base, { search: 'ana' })), /searchFields/);
 });
+
+test('queryRecords aplica la autorización sobre la relación de ubicación declarada por el consumidor', () => {
+  const sandbox = createSandbox();
+  const scoped = sandbox.authorization('P1', ['DIRECTORY_READ'], [
+    { tipo_ambito_id: 'SEDE', referencia_id: 'S2' }
+  ]);
+  scoped.structures = [];
+  scoped.locals = [];
+  scoped.scopeRecordById = {
+    A: { site_id: 'S2' }
+  };
+  const result = sandbox.context.queryRecords({ spreadsheetId: 'S', sheetName: 'Assignments' }, {
+    idField: 'assignment_id',
+    filters: { assignment_id: 'A' },
+    authorization: scoped,
+    cacheSeconds: 0
+  });
+  assert.equal(result.total, 1);
+  assert.equal(result.records[0].assignment_id, 'A');
+});
+
+test('queryRecords obtiene la versión de catálogos desde generaciones de sus fuentes', () => {
+  const sandbox = createSandbox();
+  const scoped = sandbox.authorization('P1', ['DIRECTORY_READ'], [
+    { tipo_ambito_id: 'SEDE', referencia_id: 'S1' }
+  ]);
+  scoped.structures = [];
+  scoped.locals = [];
+  scoped.catalogSources = [
+    { spreadsheetId: 'MASTER', sheetName: 'estructura_org' },
+    { spreadsheetId: 'DIRECTORY', sheetName: 'estructura_local' }
+  ];
+  const sourceRef = { spreadsheetId: 'S', sheetName: 'Assignments' };
+  const options = {
+    idField: 'assignment_id',
+    filters: { status: 'ACTIVE' },
+    authorization: scoped
+  };
+  const first = sandbox.context.queryRecords(sourceRef, options);
+  assert.equal(first.cacheHit, false);
+  const second = sandbox.context.queryRecords(sourceRef, options);
+  assert.equal(second.cacheHit, true);
+});
