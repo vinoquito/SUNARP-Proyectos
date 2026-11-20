@@ -301,6 +301,54 @@ test('los filtros combinados de auditoría retienen solo la página cronológica
   assert.equal(result.items[0].evento_id, 'EVT_003');
 });
 
+test('getAccessUsers calcula total exacto y devuelve páginas ordenadas sin construir un array global ordenado', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  sandbox._accessRequirePermission_ = () => ({ authenticated: true });
+  const accounts = [];
+  const assignments = [];
+  const people = [];
+  for (let index = 30; index >= 1; index--) {
+    const personaId = 'PER_' + String(index).padStart(3, '0');
+    accounts.push({ persona_id: personaId, active: true });
+    assignments.push({
+      persona_id: personaId,
+      modulo_id: 'MOD_INFO_PERSONAL',
+      rol_id: 'ROL_EDITOR',
+      active: true
+    });
+    people.push({
+      persona_id: personaId,
+      nombres: 'Persona',
+      apellidos: String(index).padStart(3, '0'),
+      correo_institucional: 'persona' + index + '@sunarp.gob.pe'
+    });
+  }
+  sandbox._accessFindSecurityRecords_ = (sheet, field, values) => {
+    if (sheet === 'Usuarios') return accounts;
+    if (sheet === 'UsuarioRol' && field === 'rol_id') return assignments;
+    if (sheet === 'UsuarioRol' && field === 'persona_id') return assignments;
+    throw new Error('Consulta no prevista en el listado de usuarios: ' + sheet + '.' + field);
+  };
+  sandbox.SUNARPCore.findRecordsByFields = () => ({
+    records: people,
+    total: people.length
+  });
+
+  const result = sandbox.getAccessUsers({
+    rol_id: 'ROL_EDITOR',
+    page: 2,
+    pageSize: 10
+  });
+  assert.equal(result.total, 30);
+  assert.equal(result.page, 2);
+  assert.equal(result.pageSize, 10);
+  assert.equal(result.totalPages, 3);
+  assert.equal(result.items.length, 10);
+  assert.equal(result.items[0].persona_id, 'PER_011');
+  assert.equal(result.items[0].nombre_completo, 'Persona 011');
+  assert.equal(result.items[9].persona_id, 'PER_020');
+});
+
 test('la autorización ordinaria no expone getters de snapshots completos y la integridad global es explícita', () => {
   const authStart = accessSource.indexOf('function _accessGetAuthContext_() {');
   const authEnd = accessSource.indexOf('function getAuthContext_()', authStart);
@@ -600,9 +648,9 @@ test('la autorización carga relaciones selectivas y difiere las nueve fuentes a
   assert.equal(calls.find(item => item.sheet === 'Usuarios').filters.persona_id, 'PER_117');
   assert.equal(Object.hasOwn(auth, 'personasCatalog'), false);
 
-  const security = auth.securityData;
-  assert.equal(fullLoads, 1);
-  assert.equal(Object.hasOwn(security, 'personas'), false);
+  assert.equal(Object.hasOwn(auth, 'securityData'), false);
+  assert.equal(Object.hasOwn(auth, 'userAccountsCatalog'), false);
+  assert.equal(fullLoads, 0);
 });
 
 test('rechaza correos no registrados y correos duplicados en personas', () => {
