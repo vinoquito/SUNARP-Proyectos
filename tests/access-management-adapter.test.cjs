@@ -563,15 +563,21 @@ test('la tabla de usuarios usa filtros aplicados y reinicia su página al actual
   assert.ok(implementation.includes('renderTable(host, tableConfig)'));
 });
 
-test('la consulta de usuarios aplica paginación en servidor y limita el payload', () => {
+test('la consulta de usuarios reutiliza la vista materializada, pagina en servidor y limita el payload', () => {
+  const helperStart = accessSource.indexOf('function _accessBuildUserListingIndex_(sedeId, roleId) {');
+  const helperEnd = accessSource.indexOf('function getAccessUsers(filters) {', helperStart);
+  const helper = accessSource.slice(helperStart, helperEnd);
   const start = accessSource.indexOf('function getAccessUsers(filters) {');
-  const end = accessSource.indexOf('function getAccessAuditHistory(', start);
+  const end = accessSource.indexOf('function _accessAuditTimestamp_(', start);
   const implementation = accessSource.slice(start, end);
-  assert.ok(implementation.includes('rows.slice(offset, offset + pageSize)'));
+  assert.ok(helper.includes('getOrBuildCachedValue'));
+  assert.ok(helper.includes('access-users-index-v1'));
+  assert.ok(helper.includes('rows.sort'));
+  assert.ok(implementation.includes('indexed.value.forEach'));
+  assert.ok(implementation.includes('items.push(row)'));
   assert.ok(implementation.includes('totalPages'));
-  assert.ok(implementation.includes('maxRetained'));
-  assert.ok(implementation.includes('rows.splice(low, 0, row)'));
-  assert.doesNotMatch(implementation, /\.sort\(/);
+  assert.ok(implementation.includes('items.length < pageSize'));
+  assert.doesNotMatch(implementation, /rows\\.splice|rows\\.slice/);
   const uiStart = accessUiSource.indexOf('function renderUsers(host) {');
   const uiEnd = accessUiSource.indexOf('function openUserModal(row) {', uiStart);
   const uiImplementation = accessUiSource.slice(uiStart, uiEnd);

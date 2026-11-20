@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const crypto = require('node:crypto');
 
 const root = path.resolve(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'Backend/SUNARP Core/DataCache.js'), 'utf8');
@@ -26,8 +27,8 @@ function createCacheSandbox() {
     CacheService: { getScriptCache: () => cache },
     Utilities: {
       DigestAlgorithm: { SHA_256: 'SHA-256' },
-      computeDigest: (_algorithm, value) => Array.from({ length: 32 }, (_, index) => (String(value).charCodeAt(index % String(value).length) + index) % 256),
-      base64EncodeWebSafe: bytes => bytes.join('_'),
+      computeDigest: (_algorithm, value) => Array.from(crypto.createHash('sha256').update(String(value)).digest()),
+      base64EncodeWebSafe: bytes => Buffer.from(bytes).toString('base64').replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/g, ''),
       newBlob: value => ({ getBytes: () => Array.from(String(value)).map(character => character.charCodeAt(0)) }),
       getUuid: () => 'generation-' + (++uuid)
     },
@@ -381,7 +382,7 @@ test('getOrBuildCachedValue rechaza publicar un resultado si una fuente cambia d
       return [];
     },
     300
-  ), /fuente cambió durante la construcción/);
+  ), /fuentes cambió durante la construcción/);
 });
 
 test('getOrBuildCachedValue ejecuta el builder sin caché cuando no puede obtener generaciones', () => {
