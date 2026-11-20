@@ -52,8 +52,12 @@ test('el servicio, el frontend y las pruebas Core tienen sintaxis válida', () =
 
 
 test('SUNARP Core ofrece lectura limitada desde el final de una fuente', () => {
-  assert.match(coreRepositorySource, /function listTailRecords\(/);
-  assert.match(coreRepositorySource, /const startRow = Math\.max\(dataStartRow, endRow - limit \+ 1\)/);
+  const start = coreRepositorySource.indexOf('function listTailRecords(source, options) {');
+  const end = coreRepositorySource.indexOf('function getRecordById(', start);
+  const implementation = coreRepositorySource.slice(start, end);
+  assert.match(implementation, /sheet\\.getRange\\(\\s*startRow, 1, numberOfRows, lastColumn\\)/);
+  assert.doesNotMatch(implementation, /getDataRange/);
+  assert.match(implementation, /const startRow = Math\\.max\\(dataStartRow, endRow - limit \\+ 1\\)/);
 });
 
 test('SUNARP Core no contiene definiciones globales duplicadas en DataRepository', () => {
