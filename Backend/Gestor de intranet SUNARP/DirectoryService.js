@@ -731,6 +731,335 @@ function _directoryAssertAllowedFields_(payload, allowedFields, label) {
  * Devuelve los catálogos autorizados y las dos colecciones operativas.
  * Las personas se devuelven una sola vez, aunque tengan varias asignaciones.
  */
+function _directoryGetStructureIds_(structures, rootIds, includeDescendants) {
+  const roots = new Set(Array.from(rootIds || []).map(_directoryKey_).filter(Boolean));
+  const result = new Set(roots);
+  if (!includeDescendants || !roots.size) return result;
+  const structureMap = _directoryCreateMap_(structures || []);
+  (structures || []).forEach(node => {
+    let current = node;
+    const visited = new Set();
+    while (current) {
+      const id = _directoryKey_(current.id);
+      if (!id || visited.has(id)) break;
+      if (roots.has(id)) {
+        result.add(_directoryKey_(node.id));
+        break;
+      }
+      visited.add(id);
+      current = structureMap.get(_directoryKey_(current.parent_id));
+    }
+  });
+  return result;
+}
+
+
+/**
+ * Construye filtros exactos a partir de los ámbitos efectivos.
+ * Las relaciones estructura-local y local se traducen a candidatos físicos;
+ * Core vuelve a comprobar el ámbito sobre los datos de relación declarados.
+ */
+function _directoryBuildAssignmentQuery_(context, authorization, options) {
+  options = options || {};
+  const relations = context.estructuraLocal || [];
+  const structures = context.estructuraOrg || [];
+  const locals = context.locales || [];
+  const structureMap = _directoryCreateMap_(structures);
+  const moduleAccess = (authorization.auth.moduleAccess || []).find(item =>
+    _directoryKey_(item.modulo_id) === _directoryKey_(authorization.moduleId)
+  );
+  const scopes = moduleAccess && Array.isArray(moduleAccess.scopes)
+    ? moduleAccess.scopes
+    : [];
+
+  const selectedSiteId = _directoryKey_(options.sedeId);
+  const selectedStructureId = _directoryKey_(options.estructuraId);
+  const selectedStructureIds = selectedStructureId
+    ? _directoryGetStructureIds_(structures, [selectedStructureId], true)
+    : null;
+
+  const baseFilters = {};
+  if (options.personaId) baseFilters.persona_id = _directoryKey_(options.personaId);
+  if (options.estructuraLocalId) baseFilters.estructura_local_id = _directoryKey_(options.estructuraLocalId);
+  if (options.localId) baseFilters.local_id = _directoryKey_(options.localId);
+  if (options.cargoId) baseFilters.cargo_id = _directoryKey_(options.cargoId);
+
+  const activeFilter = options.active === undefined ? true : options.active;
+  if (activeFilter !== 'all') {
+    if (activeFilter === true || String(activeFilter).toLowerCase() === 'true') {
+      baseFilters.active = [true, 'true', 'TRUE', '', 1, '1', 'SI', 'SÍ', 'YES'];
+    } else if (activeFilter === false || String(activeFilter).toLowerCase() === 'false') {
+      baseFilters.active = [false, 'false', 'FALSE', 0, '0', 'NO', 'no', 'INACTIVO', 'inactivo'];
+    } else {
+      throw new Error('El filtro active debe ser true, false o "all".');
+    }
+  }
+
+  const groups = [];
+  const addScopeCandidates = (scope, type, referenceId, includeDescendants) => {
+    let relationIds = [];
+    let localIds = [];
+
+    if (type === 'TOTAL') {
+      relationIds = relations.map(item => _directoryKey_(item.id)).filter(Boolean);
+      localIds = locals.map(item => _directoryKey_(item.id)).filter(Boolean);
+    } else if (type === 'SEDE') {
+      relationIds = relations.filter(relation => {
+        const structure = structureMap.get(_directoryKey_(relation.estructura_id));
+        return structure && _directoryKey_(structure.sede_id) === referenceId;
+      }).map(item => _directoryKey_(item.id)).filter(Boolean);
+      localIds = locals.filter(local =>
+        _directoryKey_(local.sede_id) === referenceId
+      ).map(item => _directoryKey_(item.id)).filter(Boolean);
+    } else if (type === 'ESTRUCTURA_ORG') {
+      const allowedIds = _directoryGetStructureIds_(structures, [referenceId], includeDescendants);
+      relationIds = relations.filter(relation =>
+        allowedIds.has(_directoryKey_(relation.estructura_id))
+      ).map(item => _directoryKey_(item.id)).filter(Boolean);
+    } else if (type === 'LOCAL') {
+      localIds = [referenceId];
+    }
+
+    if (selectedSiteId) {
+      relationIds = relationIds.filter(id => {
+        const relation = relations.find(item => _directoryKey_(item.id) === id);
+        const structure = relation && structureMap.get(_directoryKey_(relation.estructura_id));
+        return structure && _directoryKey_(structure.sede_id) === selectedSiteId;
+      });
+      localIds = localIds.filter(id => {
+        const local = locals.find(item => _directoryKey_(item.id) === id);
+        return local && _directoryKey_(local.sede_id) === selectedSiteId;
+      });
+    }
+
+    if (selectedStructureIds) {
+      relationIds = relationIds.filter(id => {
+        const relation = relations.find(item => _directoryKey_(item.id) === id);
+        return relation && selectedStructureIds.has(_directoryKey_(relation.estructura_id));
+      });
+      // El filtro de unidad orgánica no incluye asignaciones directas a locales.
+      localIds = [];
+    }
+
+    if (relationIds.length) {
+      groups.push({ estructura_local_id: Array.from(new Set(relationIds)) });
+    }
+    if (localIds.length) {
+      groups.push({
+        local_id: Array.from(new Set(localIds)),
+        estructura_local_id: ''
+      });
+    }
+  };
+
+  scopes.forEach(scope => {
+    const type = _directoryText_(scope.tipo_ambito_id).toUpperCase();
+    const referenceId = _directoryKey_(scope.referencia_id);
+    const includeDescendants = _directoryNormalizeBoolean_(
+      scope.incluir_descendientes === undefined ? false : scope.incluir_descendientes
+    );
+    if (type === 'TOTAL') addScopeCandidates(scope, type, '', false);
+    if (type === 'SEDE' && referenceId) addScopeCandidates(scope, type, referenceId, false);
+    if (type === 'ESTRUCTURA_ORG' && referenceId) addScopeCandidates(scope, type, referenceId, includeDescendants);
+    if (type === 'LOCAL' && referenceId) addScopeCandidates(scope, type, referenceId, false);
+  });
+
+  const relationValues = {};
+  relations.forEach(relation => {
+    const relationId = _directoryKey_(relation.id);
+    const structure = structureMap.get(_directoryKey_(relation.estructura_id));
+    const local = locals.find(item => _directoryKey_(item.id) === _directoryKey_(relation.local_id));
+    if (!relationId || !structure || !local) return;
+    relationValues[relationId] = {
+      estructura_id: _directoryKey_(relation.estructura_id),
+      local_id: _directoryKey_(relation.local_id),
+      sede_id: _directoryKey_(structure.sede_id)
+    };
+  });
+  const localValues = {};
+  locals.forEach(local => {
+    const id = _directoryKey_(local.id);
+    if (!id) return;
+    localValues[id] = {
+      local_id: id,
+      sede_id: _directoryKey_(local.sede_id)
+    };
+  });
+
+  const search = _directoryText_(options.search);
+  const searchAny = [];
+  const addSearchMatches = (field, values) => {
+    const ids = Array.from(new Set((values || []).map(_directoryKey_).filter(Boolean)));
+    if (ids.length) searchAny.push({ field, values: ids });
+  };
+  if (search) {
+    const peopleMatches = SUNARPCore.searchRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+      search,
+      ['nombres', 'apellidos', 'correo_institucional'],
+      { matchCase: false }
+    );
+    addSearchMatches('persona_id', (peopleMatches.records || []).map(item => item.persona_id));
+
+    const cargoMatches = SUNARPCore.searchRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.cargos),
+      search,
+      ['name'],
+      { matchCase: false }
+    );
+    addSearchMatches('cargo_id', (cargoMatches.records || []).map(item => item.id));
+
+    const localMatches = SUNARPCore.searchRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.locales),
+      search,
+      ['name'],
+      { matchCase: false }
+    );
+    addSearchMatches('local_id', (localMatches.records || []).map(item => item.id));
+
+    const structureMatches = SUNARPCore.searchRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.estructuraOrg),
+      search,
+      ['name'],
+      { matchCase: false }
+    );
+    const matchingStructureIds = _directoryGetStructureIds_(
+      structures,
+      (structureMatches.records || []).map(item => item.id),
+      true
+    );
+    addSearchMatches('estructura_local_id', relations.filter(item =>
+      matchingStructureIds.has(_directoryKey_(item.estructura_id))
+    ).map(item => item.id));
+
+    const siteMatches = SUNARPCore.searchRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.sedes),
+      search,
+      ['name'],
+      { matchCase: false }
+    );
+    const matchingSiteIds = new Set((siteMatches.records || []).map(item => _directoryKey_(item.id)));
+    addSearchMatches('estructura_local_id', relations.filter(item => {
+      const structure = structureMap.get(_directoryKey_(item.estructura_id));
+      return structure && matchingSiteIds.has(_directoryKey_(structure.sede_id));
+    }).map(item => item.id));
+    addSearchMatches('local_id', locals.filter(item =>
+      matchingSiteIds.has(_directoryKey_(item.sede_id))
+    ).map(item => item.id));
+
+    if (relations.some(item => Object.prototype.hasOwnProperty.call(item, 'referencia'))) {
+      const referenceMatches = SUNARPCore.searchRecordsByFields(
+        _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.estructuraLocal),
+        search,
+        ['referencia'],
+        { matchCase: false }
+      );
+      addSearchMatches('estructura_local_id', (referenceMatches.records || []).map(item => item.id));
+    }
+  }
+
+  const authorizationForQuery = {
+    context: authorization.auth,
+    moduleId: authorization.moduleId,
+    permissionCode: 'INFORMACION_PERSONAL_VER',
+    structures: authorization.structures || [],
+    locals: authorization.locals || [],
+    scopeRecordLookups: [
+      {
+        recordField: 'estructura_local_id',
+        values: relationValues,
+        requireEqualFields: ['local_id']
+      },
+      {
+        recordField: 'local_id',
+        values: localValues
+      }
+    ],
+    catalogSources: [
+      getIntranetDataSource('SECURITY', 'Sedes', 1),
+      getIntranetDataSource('SECURITY', 'EstructuraOrg', 1),
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.sedes),
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.locales),
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.estructuraOrg),
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.estructuraLocal),
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.cargos)
+    ]
+  };
+
+  return {
+    source: _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones),
+    queryOptions: {
+      filters: baseFilters,
+      anyOf: groups,
+      search,
+      searchFields: search ? ['condicion_cargo', 'anexo', 'observaciones'] : [],
+      searchAny,
+      authorization: authorizationForQuery,
+      cacheSeconds: 60,
+      schemaVersion: 'directory-assignment-query-v1',
+      sortBy: options.sortBy || 'order',
+      sortDirection: options.sortDirection || 'asc'
+    }
+  };
+}
+
+
+/**
+ * Ejecuta la consulta central de Core y enriquece solo la página devuelta.
+ * idField puede cambiarse para obtener conjuntos distintos (cargos, locales,
+ * personas) sin volver a cargar la tabla completa al servicio consumidor.
+ */
+function _directoryExecuteAssignmentQuery_(context, authorization, options, idField, offset, limit, enrich) {
+  const descriptor = _directoryBuildAssignmentQuery_(context, authorization, options);
+  const pageOffset = Number.isInteger(offset) && offset >= 0 ? offset : 0;
+  const pageLimit = Number.isInteger(limit) && limit >= 1 ? limit : 10;
+  if (!descriptor.queryOptions.anyOf.length) {
+    return {
+      records: [], total: 0, offset: pageOffset, limit: pageLimit,
+      hasMore: false, cacheHit: false
+    };
+  }
+  if (typeof SUNARPCore.queryRecords !== 'function') {
+    throw new Error('Esta operación requiere SUNARP Core v10 con consultas autorizadas y paginadas. No se debe sustituir por una lectura completa.');
+  }
+
+  const result = SUNARPCore.queryRecords(
+    descriptor.source,
+    Object.assign({}, descriptor.queryOptions, {
+      idField: idField || 'asignacion_id',
+      offset: pageOffset,
+      limit: pageLimit
+    })
+  );
+  if (!enrich) return result;
+
+  const assignments = result.records || [];
+  const personaIds = Array.from(new Set(assignments.map(item =>
+    _directoryKey_(item.persona_id)
+  ).filter(Boolean)));
+  const peopleResult = personaIds.length
+    ? SUNARPCore.findRecordsByFields(
+        _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+        { persona_id: personaIds },
+        { searchField: 'persona_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas }
+      )
+    : { records: [], total: 0 };
+  if ((peopleResult.records || []).length !== personaIds.length) {
+    throw new Error('Una o más asignaciones visibles no tienen una persona válida en el directorio.');
+  }
+
+  const relationMap = _directoryCreateMap_(
+    _directoryBuildRelations_(context, false)
+  );
+  const peopleMap = _directoryCreateMap_(peopleResult.records || [], 'persona_id');
+  const enriched = assignments.map(item => {
+    const location = _directoryResolveAssignmentLocation_(item, context, false);
+    return _directoryEnrichAssignment_(item, context, relationMap, peopleMap, location);
+  });
+  return Object.assign({}, result, { records: enriched });
+}
+
+
 function _directoryBuildInitialAssignmentPage_(view, context) {
   const sorted = view.assignments.slice().sort((a, b) =>
     _directoryCompare_(a.order, b.order) ||
