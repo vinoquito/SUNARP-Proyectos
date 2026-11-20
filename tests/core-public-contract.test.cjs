@@ -105,6 +105,7 @@ test('el proyecto Apps Script de Core incluye los archivos JavaScript fuente', (
 
 
 
+
 test('el documento del contrato declara exactamente los métodos públicos y sus parámetros reales', () => {
   const contractPath = path.join(root, 'Documentacion/Contrato público de SUNARP Core.md');
   const contract = fs.readFileSync(contractPath, 'utf8');
