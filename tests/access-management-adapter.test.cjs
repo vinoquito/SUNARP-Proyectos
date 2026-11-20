@@ -9,6 +9,7 @@ const corePath = path.join(root, 'Backend/SUNARP Core/CoreAuthorization.js');
 const accessPath = path.join(root, 'Backend/Gestor de intranet SUNARP/AccessManagementService.js');
 const directoryPath = path.join(root, 'Backend/Gestor de intranet SUNARP/DirectoryService.js');
 const appPath = path.join(root, 'Backend/Gestor de intranet SUNARP/Código.js');
+const configPath = path.join(root, 'Backend/Gestor de intranet SUNARP/AppConfig.js');
 const accessUiPath = path.join(root, 'Backend/Gestor de intranet SUNARP/AccessManagementScripts.html');
 const directoryUiPath = path.join(root, 'Backend/Gestor de intranet SUNARP/DirectoryScripts.html');
 
@@ -16,6 +17,7 @@ const coreSource = fs.readFileSync(corePath, 'utf8');
 const accessSource = fs.readFileSync(accessPath, 'utf8');
 const directorySource = fs.readFileSync(directoryPath, 'utf8');
 const appSource = fs.readFileSync(appPath, 'utf8');
+const configSource = fs.readFileSync(configPath, 'utf8');
 const accessUiSource = fs.readFileSync(accessUiPath, 'utf8');
 const viewPath = path.join(root, 'Backend/Gestor de intranet SUNARP/ViewAccesos.html');
 const viewSource = fs.readFileSync(viewPath, 'utf8');
@@ -169,6 +171,20 @@ function createAdapterSandbox(data, email = 'prueba@sunarp.gob.pe') {
   sandbox._accessWriteAudit_ = () => null;
   return sandbox;
 }
+
+test('AppConfig declara Global parameters como maestro de catálogos y conserva las réplicas', () => {
+  const sandbox = vm.createContext({});
+  vm.runInContext(configSource, sandbox);
+  const directoryStructure = sandbox.getIntranetDataSource('DIRECTORY', 'estructura_org', 1);
+  const securityStructure = sandbox.getIntranetDataSource('SECURITY', 'EstructuraOrg', 1);
+  const directoryPeople = sandbox.getIntranetDataSource('DIRECTORY', 'personas', 1);
+  assert.equal(directoryStructure.dependencies.length, 1);
+  assert.equal(directoryStructure.dependencies[0].spreadsheetId, '1oIAWBuSE0SiwINa0v0KybCYiwKZFootQXoccwKDVBIE');
+  assert.equal(directoryStructure.dependencies[0].sheetName, 'estructura_org');
+  assert.equal(securityStructure.dependencies[0].spreadsheetId, '1oIAWBuSE0SiwINa0v0KybCYiwKZFootQXoccwKDVBIE');
+  assert.equal(securityStructure.dependencies[0].sheetName, 'estructura_org');
+  assert.equal(directoryPeople.dependencies.length, 0);
+});
 
 test('la navegación del shell obtiene Menu mediante la caché central de SUNARP Core', () => {
   const start = appSource.indexOf('function getNavigationItems_() {');
