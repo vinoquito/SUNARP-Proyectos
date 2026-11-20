@@ -49,7 +49,7 @@ test('si CacheService pierde la generación, Core crea una nueva y no reutiliza 
   vm.runInContext(source, sandbox);
   const sourceRef = { spreadsheetId: 'S', sheetName: 'Assignments' };
   const first = sandbox._coreGetSourceGeneration_(sourceRef);
-  values.delete('SUNARP_CORE:cache:generation');
+  values.delete('cache:generation');
   const afterEviction = sandbox._coreGetSourceGeneration_(sourceRef);
   assert.notEqual(afterEviction, first);
 });
