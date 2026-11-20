@@ -292,6 +292,103 @@ test('queryRecords deniega una referencia obligatoria que no existe en su catál
   assert.deepEqual(Array.from(result.records), []);
 });
 
+test('queryRecords incorpora catálogos y relaciones de ámbito en la huella de caché', () => {
+  const sandbox = createSandbox();
+  const sourceRef = { spreadsheetId: 'S', sheetName: 'Assignments' };
+  const authorization = sandbox.authorization('P1', ['DIRECTORY_READ'], [
+    { tipo_ambito_id: 'SEDE', referencia_id: 'S1' }
+  ]);
+  authorization.structures = [];
+  authorization.locals = [];
+  authorization.catalogVersion = 'CATALOG-1';
+  authorization.scopeRecordLookups = [{
+    recordField: 'site_id',
+    values: { S1: { site_id: 'S1' } }
+  }];
+  const options = {
+    idField: 'assignment_id',
+    filters: { assignment_id: 'A' },
+    cacheSeconds: 60,
+    authorization
+  };
+
+  const first = sandbox.context.queryRecords(sourceRef, options);
+  assert.equal(first.total, 1);
+  assert.equal(first.cacheHit, false);
+
+  const changedAuthorization = Object.assign({}, authorization, {
+    scopeRecordLookups: [{
+      recordField: 'site_id',
+      values: { S1: { site_id: 'S2' } }
+    }]
+  });
+  const second = sandbox.context.queryRecords(sourceRef, Object.assign({}, options, {
+    authorization: changedAuthorization
+  }));
+  assert.equal(second.total, 0);
+  assert.equal(second.cacheHit, false);
+  assert.equal(second.candidateCacheHit, true);
+});
+
+test('queryRecords valida las relaciones declaradas antes de devolver un resultado cacheado', () => {
+  const sandbox = createSandbox();
+  const sourceRef = { spreadsheetId: 'S', sheetName: 'Assignments' };
+  const options = {
+    idField: 'assignment_id',
+    filters: { status: 'ACTIVE' },
+    authorization: sandbox.authorization()
+  };
+  sandbox.context.queryRecords(sourceRef, options);
+  assert.throws(() => sandbox.context.queryRecords(sourceRef, Object.assign({}, options, {
+    authorization: Object.assign({}, options.authorization, {
+      scopeRecordLookups: [{ recordField: 'site_id', values: [] }]
+    })
+  })), /scopeRecordLookup/);
+  assert.throws(() => sandbox.context.queryRecords(sourceRef, Object.assign({}, options, {
+    authorization: Object.assign({}, options.authorization, {
+      scopeRecordById: []
+    })
+  })), /scopeRecordById/);
+});
+
+test('queryRecords retiene solo offset + limit al ordenar páginas no distintas', () => {
+  const sandbox = createSandbox();
+  const rows = Array.from({ length: 120 }, (_, index) => ({
+    assignment_id: 'A' + String(index).padStart(3, '0'),
+    status: 'ACTIVE',
+    site_id: 'S1',
+    name: 'Nombre ' + String(index).padStart(3, '0'),
+    allowed: true
+  }));
+  sandbox.context.findRecordsByFields = () => ({ records: rows });
+  let maximumRetained = 0;
+  const insert = sandbox.context._coreQueryInsertPageRecord_;
+  sandbox.context._coreQueryInsertPageRecord_ = function(records, ...args) {
+    const result = insert(records, ...args);
+    maximumRetained = Math.max(maximumRetained, records.length);
+    return result;
+  };
+
+  const result = sandbox.context.queryRecords(
+    { spreadsheetId: 'S', sheetName: 'Assignments' },
+    {
+      idField: 'assignment_id',
+      filters: { status: 'ACTIVE' },
+      sortBy: 'name',
+      offset: 10,
+      limit: 5,
+      cacheSeconds: 0,
+      candidateCacheSeconds: 0,
+      authorization: sandbox.authorization()
+    }
+  );
+  assert.equal(result.total, 120);
+  assert.equal(result.records.length, 5);
+  assert.equal(result.records[0].assignment_id, 'A010');
+  assert.equal(result.records[4].assignment_id, 'A014');
+  assert.equal(maximumRetained, 15);
+});
+
 test('queryRecords reutiliza candidatos entre consultas distintas y prioriza el filtro de ámbito', () => {
   const sandbox = createSandbox();
   let sourceReads = 0;

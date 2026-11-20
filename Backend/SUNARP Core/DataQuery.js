@@ -86,7 +86,16 @@ function _coreQueryValidateAuthorization_(authorization) {
   return { context, moduleId, permissionCode, access, totalOnly };
 }
 
-function _coreQueryAuthorizationFingerprint_(authorization, validated, catalogVersion) {
+function _coreQueryAuthorizationFingerprint_(authorization, validated, catalogVersion, scopeRelations) {
+  // La huella refleja todos los datos que intervienen en la resolución del ámbito.
+  // No se depende exclusivamente de generaciones: también se detectan cambios
+  // en las relaciones/catálogos que el consumidor entrega en esta solicitud.
+  const relationSnapshot = {
+    structures: Array.isArray(authorization.structures) ? authorization.structures : [],
+    locals: Array.isArray(authorization.locals) ? authorization.locals : [],
+    scopeRecordById: scopeRelations.scopeRecordById,
+    scopeRecordLookups: scopeRelations.scopeRecordLookups
+  };
   return _coreQueryDigest_({
     personaId: validated.context.personaId,
     moduleId: validated.moduleId,
@@ -99,6 +108,7 @@ function _coreQueryAuthorizationFingerprint_(authorization, validated, catalogVe
       active: scope.active
     })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
     fields: authorization.fields || {},
+    relationDigest: _coreQueryDigest_(relationSnapshot),
     catalogVersion: catalogVersion || ''
   });
 }
@@ -141,6 +151,101 @@ function _coreQueryMatchesGroup_(record, group) {
     const expected = Array.isArray(group[field]) ? group[field] : [group[field]];
     return expected.some(value => _coreValuesEqual_(record[field], value));
   });
+}
+
+/**
+ * Valida y normaliza las relaciones adicionales que se incorporan al registro
+ * antes de comprobar el ámbito. Esta validación debe ocurrir incluso si existe
+ * un resultado final en caché.
+ */
+function _coreQueryNormalizeScopeRelations_(authorization) {
+  const rawById = authorization.scopeRecordById;
+  const scopeRecordById = rawById === undefined || rawById === null
+    ? {}
+    : rawById;
+  if (!scopeRecordById || typeof scopeRecordById !== 'object' ||
+      Array.isArray(scopeRecordById)) {
+    throw new Error('SUNARP Core: scopeRecordById debe ser un objeto indexado por idField.');
+  }
+
+  Object.keys(scopeRecordById).forEach(id => {
+    const related = scopeRecordById[id];
+    if (related !== null && (typeof related !== 'object' || Array.isArray(related))) {
+      throw new Error('SUNARP Core: cada valor de scopeRecordById debe ser un registro.');
+    }
+  });
+
+  const rawLookups = authorization.scopeRecordLookups;
+  const scopeRecordLookups = rawLookups === undefined ? [] : rawLookups;
+  if (!Array.isArray(scopeRecordLookups)) {
+    throw new Error('SUNARP Core: scopeRecordLookups debe ser un arreglo.');
+  }
+
+  const normalizedLookups = scopeRecordLookups.map(lookup => {
+    if (!lookup || typeof lookup !== 'object' || Array.isArray(lookup) ||
+        typeof lookup.recordField !== 'string' ||
+        !/^[A-Za-z0-9_]+$/.test(lookup.recordField.trim()) ||
+        !lookup.values || typeof lookup.values !== 'object' ||
+        Array.isArray(lookup.values)) {
+      throw new Error('SUNARP Core: cada scopeRecordLookup requiere recordField y values.');
+    }
+    if (lookup.required !== undefined && typeof lookup.required !== 'boolean') {
+      throw new Error('SUNARP Core: scopeRecordLookup.required debe ser booleano.');
+    }
+    const requireEqualFields = lookup.requireEqualFields === undefined
+      ? []
+      : lookup.requireEqualFields;
+    if (!Array.isArray(requireEqualFields) || requireEqualFields.some(field =>
+      typeof field !== 'string' || !/^[A-Za-z0-9_]+$/.test(field.trim())
+    )) {
+      throw new Error('SUNARP Core: scopeRecordLookup.requireEqualFields debe ser un arreglo de campos válidos.');
+    }
+    Object.keys(lookup.values).forEach(id => {
+      const related = lookup.values[id];
+      if (!related || typeof related !== 'object' || Array.isArray(related)) {
+        throw new Error('SUNARP Core: cada referencia de scopeRecordLookup debe contener un registro.');
+      }
+    });
+    return {
+      recordField: lookup.recordField.trim(),
+      values: lookup.values,
+      required: lookup.required === true,
+      requireEqualFields: requireEqualFields.map(field => field.trim())
+    };
+  });
+
+  return { scopeRecordById, scopeRecordLookups: normalizedLookups };
+}
+
+/** Orden total y determinista usado por la página retenida en memoria. */
+function _coreQueryCompareRecords_(recordA, recordB, sortBy, idField, sortDirection) {
+  const compared = _coreCompareValues_(recordA[sortBy], recordB[sortBy]) ||
+    _coreCompareValues_(recordA[idField], recordB[idField]);
+  return compared * (sortDirection === 'desc' ? -1 : 1);
+}
+
+/**
+ * Mantiene únicamente los primeros maxRecords registros según el orden
+ * solicitado. El conjunto completo sigue examinándose para calcular el total,
+ * facetas y autorización; no se conserva todo el resultado autorizado.
+ */
+function _coreQueryInsertPageRecord_(records, record, sortBy, idField, sortDirection, maxRecords) {
+  if (maxRecords < 1) return;
+  let low = 0;
+  let high = records.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (_coreQueryCompareRecords_(
+      records[middle], record, sortBy, idField, sortDirection
+    ) <= 0) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+  if (low >= maxRecords && records.length >= maxRecords) return;
+  records.splice(low, 0, record);
+  if (records.length > maxRecords) records.pop();
 }
 
 function _coreQueryCacheKey_(source, generation, authorizationFingerprint, query) {
@@ -237,8 +342,11 @@ function queryRecords(source, options) {
     distinctFields, distinctCountFields,
     schemaVersion: String(options.schemaVersion || '1')
   };
+  const scopeRelations = _coreQueryNormalizeScopeRelations_(authorization);
   const catalogVersion = _coreQueryGetCatalogVersion_(authorization);
-  const authFingerprint = _coreQueryAuthorizationFingerprint_(authorization, validated, catalogVersion);
+  const authFingerprint = _coreQueryAuthorizationFingerprint_(
+    authorization, validated, catalogVersion, scopeRelations
+  );
   const cacheSeconds = options.cacheSeconds === undefined ? 60 : Number(options.cacheSeconds);
   if (!Number.isInteger(cacheSeconds) || cacheSeconds < 0 || cacheSeconds > 21600) {
     throw new Error('SUNARP Core: cacheSeconds debe ser un entero entre 0 y 21600.');
@@ -259,6 +367,17 @@ function queryRecords(source, options) {
     ? _coreQueryCacheKey_(source, generation, authFingerprint, descriptor)
     : null;
 
+  const requiredHeaders = [idField, distinctBy, sortBy].filter(Boolean)
+    .concat(
+      searchFields,
+      searchAny.map(match => match.field),
+      distinctFields,
+      distinctCountFields,
+      scopeRelations.scopeRecordLookups.map(lookup => lookup.recordField),
+      ...scopeRelations.scopeRecordLookups.map(lookup => lookup.requireEqualFields)
+    );
+  _coreQueryAssertHeaders_(source, requiredHeaders);
+
   // El permiso se comprueba antes de cualquier lectura de caché. Los resultados
   // finales quedan aislados por identidad, permiso, ámbito y versión de catálogo.
   if (cacheKey) {
@@ -278,10 +397,6 @@ function queryRecords(source, options) {
       return cacheResult;
     }
   }
-
-  const requiredHeaders = [idField, distinctBy, sortBy].filter(Boolean)
-    .concat(searchFields, searchAny.map(match => match.field), distinctFields, distinctCountFields);
-  _coreQueryAssertHeaders_(source, requiredHeaders);
 
   // La caché de candidatos contiene filas aún no autorizadas y nunca se entrega
   // directamente: cada consulta vuelve a comprobar permiso y ámbito sobre ellas.
@@ -316,54 +431,35 @@ function queryRecords(source, options) {
     }
   }
 
-  const candidates = new Map();
-  candidateRows.forEach(record => {
-    const id = String(record[idField] === null || record[idField] === undefined ? '' : record[idField]).trim();
-    if (id) candidates.set(id, record);
-  });
+  const maxRetainedRecords = offset + limit;
+  const pageCandidates = [];
+  const distinctRecords = distinctBy ? new Map() : null;
+  const distinctValueSets = {};
+  const distinctCountSets = {};
+  distinctFields.forEach(field => { distinctValueSets[field] = new Set(); });
+  distinctCountFields.forEach(field => { distinctCountSets[field] = new Set(); });
+  let authorizedCount = 0;
 
-  const records = [];
-  const scopeRecordById = authorization.scopeRecordById || {};
-  if (typeof scopeRecordById !== 'object' || Array.isArray(scopeRecordById)) {
-    throw new Error('SUNARP Core: scopeRecordById debe ser un objeto indexado por idField.');
-  }
-  const scopeRecordLookups = authorization.scopeRecordLookups === undefined
-    ? []
-    : authorization.scopeRecordLookups;
-  if (!Array.isArray(scopeRecordLookups)) {
-    throw new Error('SUNARP Core: scopeRecordLookups debe ser un arreglo.');
-  }
-  candidates.forEach(record => {
+  candidateRows.forEach(record => {
     if (!groups.some(group => _coreQueryMatchesGroup_(record, group))) return;
     if (!_coreQueryMatchesSearch_(record, search, searchFields, searchAny)) return;
     const id = String(record[idField] === null || record[idField] === undefined ? '' : record[idField]).trim();
-    const scopeRecord = Object.assign({}, record, scopeRecordById[id] || {});
+    if (!id) return;
+    const scopeRecord = Object.assign(
+      {}, record, scopeRelations.scopeRecordById[id] || {}
+    );
     let relationConsistent = true;
-    scopeRecordLookups.forEach(lookup => {
-      if (!lookup || typeof lookup.recordField !== 'string' ||
-          !lookup.values || typeof lookup.values !== 'object' || Array.isArray(lookup.values)) {
-        throw new Error('SUNARP Core: cada scopeRecordLookup requiere recordField y values.');
-      }
-      if (lookup.required !== undefined && typeof lookup.required !== 'boolean') {
-        throw new Error('SUNARP Core: scopeRecordLookup.required debe ser booleano.');
-      }
+    scopeRelations.scopeRecordLookups.forEach(lookup => {
       const lookupId = String(record[lookup.recordField] === null ||
         record[lookup.recordField] === undefined ? '' : record[lookup.recordField]).trim();
-      const hasRelated = Boolean(
-        lookupId &&
-        lookup.values[lookupId] &&
-        typeof lookup.values[lookupId] === 'object'
-      );
-      if (lookupId && !hasRelated && lookup.required === true) {
+      const related = lookupId ? lookup.values[lookupId] : null;
+      const hasRelated = Boolean(related);
+      if (lookupId && !hasRelated && lookup.required) {
         relationConsistent = false;
         return;
       }
       if (hasRelated) {
-        const related = lookup.values[lookupId];
-        const requiredEqualFields = Array.isArray(lookup.requireEqualFields)
-          ? lookup.requireEqualFields
-          : [];
-        const inconsistent = requiredEqualFields.some(field => {
+        const inconsistent = lookup.requireEqualFields.some(field => {
           const actual = record[field];
           const expected = related[field];
           const actualText = String(actual === null || actual === undefined ? '' : actual).trim();
@@ -386,49 +482,55 @@ function queryRecords(source, options) {
       authorization.fields || {},
       authorization.locals || []
     )) return;
-    records.push(record);
-  });
 
-  const authorizedCount = records.length;
-  const distinctValues = {};
-  distinctFields.forEach(field => {
-    const values = new Set();
-    records.forEach(record => {
+    authorizedCount++;
+    distinctFields.forEach(field => {
       const value = String(record[field] === null || record[field] === undefined
         ? '' : record[field]).trim();
-      if (value) values.add(value);
+      if (value) distinctValueSets[field].add(value);
     });
-    distinctValues[field] = Array.from(values).sort(_coreCompareValues_);
+    distinctCountFields.forEach(field => {
+      const value = String(record[field] === null || record[field] === undefined
+        ? '' : record[field]).trim();
+      if (value) distinctCountSets[field].add(value);
+    });
+
+    if (distinctBy) {
+      const value = String(record[distinctBy] === null || record[distinctBy] === undefined
+        ? '' : record[distinctBy]).trim();
+      if (!value) return;
+      const previous = distinctRecords.get(value);
+      if (!previous || _coreQueryCompareRecords_(
+        record, previous, sortBy, idField, sortDirection
+      ) < 0) {
+        distinctRecords.set(value, record);
+      }
+    } else {
+      _coreQueryInsertPageRecord_(
+        pageCandidates, record, sortBy, idField,
+        sortDirection, maxRetainedRecords
+      );
+    }
+  });
+
+  const distinctValues = {};
+  distinctFields.forEach(field => {
+    distinctValues[field] = Array.from(distinctValueSets[field]).sort(_coreCompareValues_);
   });
   const distinctCounts = {};
   distinctCountFields.forEach(field => {
-    const values = new Set();
-    records.forEach(record => {
-      const value = String(record[field] === null || record[field] === undefined
-        ? '' : record[field]).trim();
-      if (value) values.add(value);
-    });
-    distinctCounts[field] = values.size;
-  });
-  records.sort((a, b) => {
-    const compared = _coreCompareValues_(a[sortBy], b[sortBy]) ||
-      _coreCompareValues_(a[idField], b[idField]);
-    return compared * (sortDirection === 'desc' ? -1 : 1);
+    distinctCounts[field] = distinctCountSets[field].size;
   });
 
+  let total = authorizedCount;
+  let pageSource = pageCandidates;
   if (distinctBy) {
-    const distinctRecords = new Map();
-    records.forEach(record => {
-      const value = String(record[distinctBy] === null || record[distinctBy] === undefined
-        ? '' : record[distinctBy]).trim();
-      if (value && !distinctRecords.has(value)) distinctRecords.set(value, record);
-    });
-    records.length = 0;
-    distinctRecords.forEach(record => records.push(record));
+    pageSource = Array.from(distinctRecords.values()).sort((a, b) =>
+      _coreQueryCompareRecords_(a, b, sortBy, idField, sortDirection)
+    );
+    total = distinctRecords.size;
   }
-
-  const total = records.length;
-  const page = records.slice(offset, offset + limit);
+  const page = pageSource.slice(offset, offset + limit);
   const result = {
     version: 1, records: page, total, offset, limit,
     distinctValues, distinctCounts,
@@ -437,6 +539,7 @@ function queryRecords(source, options) {
     candidateCacheHit,
     candidateCount: candidateRows.length,
     authorizedCount,
+    retainedForPage: pageSource.length,
     durationMs: Date.now() - queryStartedAt
   };
   if (cacheKey) {
@@ -451,6 +554,7 @@ function queryRecords(source, options) {
     candidateCacheHit,
     candidateCount: result.candidateCount,
     authorizedCount,
+    retainedForPage: result.retainedForPage,
     total,
     offset,
     limit,

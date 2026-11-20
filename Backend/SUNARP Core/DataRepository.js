@@ -477,11 +477,6 @@ function listRecords(source, options) {
 
 
 /**
- * Obtiene un registro mediante su identificador.
- *
- * Devuelve null cuando no encuentra coincidencias.
- */
-/**
  * Lee una ventana desde el final de una fuente append-only.
  * offset se cuenta desde la última fila de datos (0 = más recientes).
  */
@@ -564,12 +559,21 @@ function listTailRecords(source, options) {
 }
 
 
+/**
+ * Recupera un registro por identificador sin materializar toda la tabla.
+ * Mantiene la semántica anterior: devuelve la primera coincidencia de hoja
+ * o null cuando no existe. Las búsquedas exactas se resuelven en Sheets.
+ */
 function getRecordById(source, idField, id) {
-  const table = _coreGetTable_(source);
-
-  const entry = _coreFindEntryById_(table, idField, id);
-
-  return entry ? entry.record : null;
+  if (id === null || id === undefined || String(id).trim() === '') {
+    throw new Error('SUNARP Core: debes proporcionar un identificador válido.');
+  }
+  const result = findRecordsByFields(
+    source,
+    { [idField]: id },
+    { searchField: idField }
+  );
+  return (result.records || [])[0] || null;
 }
 
 

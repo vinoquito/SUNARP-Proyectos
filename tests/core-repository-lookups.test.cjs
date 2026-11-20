@@ -10,6 +10,31 @@ const repositorySource = fs.readFileSync(
   'utf8'
 );
 
+test('getRecordById usa una búsqueda exacta y no carga la tabla completa', () => {
+  const sandbox = vm.createContext({});
+  vm.runInContext(repositorySource, sandbox, { filename: 'DataRepository.js' });
+  sandbox._coreGetTable_ = () => {
+    throw new Error('No debe cargar la tabla completa.');
+  };
+  sandbox.findRecordsByFields = (source, filters, options) => {
+    assert.deepEqual(source, { spreadsheetId: 'DIRECTORY', sheetName: 'personas' });
+    assert.deepEqual(filters, { persona_id: 'PER_001' });
+    assert.equal(options.searchField, 'persona_id');
+    return { records: [{ persona_id: 'PER_001', nombres: 'Ana' }], total: 1 };
+  };
+
+  const result = sandbox.getRecordById(
+    { spreadsheetId: 'DIRECTORY', sheetName: 'personas' },
+    'persona_id',
+    'PER_001'
+  );
+  assert.equal(result.persona_id, 'PER_001');
+  assert.throws(
+    () => sandbox.getRecordById({}, 'persona_id', '  '),
+    /identificador válido/
+  );
+});
+
 test('findRecordsByFields respeta matchCase=false al validar filas candidatas', () => {
   const headers = ['persona_id', 'correo_institucional'];
   const rows = [

@@ -224,6 +224,48 @@ function runCoreSelfTests_() {
       'Las consultas distintas reutilizan candidatos, pero vuelven a aplicar autorización.'
     );
 
+    const relationshipCacheBase = {
+      context: queryAuthorizationContext,
+      moduleId: 'MOD_TEST',
+      permissionCode: 'TEST_READ',
+      scopeRecordLookups: [{
+        recordField: 'area',
+        values: { 'Administración': { area: 'Administración' } },
+        required: true
+      }]
+    };
+    const relationshipCacheFirst = queryRecords(source, {
+      idField: 'id',
+      filters: { active: true },
+      authorization: relationshipCacheBase,
+      cacheSeconds: 60
+    });
+    assert(
+      relationshipCacheFirst.total === 1,
+      'La consulta autorizada excluye referencias obligatorias ausentes del catálogo declarado.'
+    );
+    const relationshipCacheSecond = queryRecords(source, {
+      idField: 'id',
+      filters: { active: true },
+      authorization: Object.assign({}, relationshipCacheBase, {
+        scopeRecordLookups: [{
+          recordField: 'area',
+          values: {
+            'Administración': { area: 'Administración' },
+            'Asesoría': { area: 'Asesoría' }
+          },
+          required: true
+        }]
+      }),
+      cacheSeconds: 60
+    });
+    assert(
+      relationshipCacheSecond.total === 2 &&
+      relationshipCacheSecond.cacheHit === false &&
+      relationshipCacheSecond.candidateCacheHit === true,
+      'La caché final distingue relaciones de autorización diferentes y reutiliza solo los candidatos.'
+    );
+
     const deniedQueryContext = {
       authenticated: true,
       personaId: 'TST_DENIED',
