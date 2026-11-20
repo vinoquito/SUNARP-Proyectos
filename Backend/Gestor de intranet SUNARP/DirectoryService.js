@@ -1116,6 +1116,35 @@ function _directoryFindAuthorizedAssignmentById_(context, authorization, asignac
 }
 
 
+function _directoryGetNextOrderForLocation_(context, authorization, structureLocalId, localId) {
+  const queryOptions = { active: 'all' };
+  if (_directoryKey_(structureLocalId)) {
+    queryOptions.estructuraLocalId = _directoryKey_(structureLocalId);
+  } else {
+    queryOptions.localId = _directoryKey_(localId);
+  }
+
+  const result = _directoryExecuteAssignmentQuery_(
+    context,
+    authorization,
+    queryOptions,
+    'asignacion_id',
+    0,
+    1000,
+    false
+  );
+  const records = result.records || [];
+  if (Number(result.total) > records.length) {
+    throw new Error('Hay demasiadas asignaciones en la adscripción de destino para calcular el siguiente orden de forma segura.');
+  }
+  const matching = records.filter(item =>
+    _directoryKey_(item.estructura_local_id) === _directoryKey_(structureLocalId) &&
+    _directoryKey_(item.local_id) === _directoryKey_(localId)
+  );
+  return _directoryGetNextOrder_(matching, structureLocalId, localId);
+}
+
+
 function _directoryBuildInitialAssignmentPage_(view, context) {
   const sorted = view.assignments.slice().sort((a, b) =>
     _directoryCompare_(a.order, b.order) ||
@@ -2089,11 +2118,13 @@ function saveDirectoryAssignment(payload) {
   const context = _directoryLoadContext_({
     includePersonalData: false,
     includePeople: false,
-    includeDocumentTypes: false
+    includeAssignments: !isUpdate,
+    includeDocumentTypes: false,
+    validateSnapshot: !isUpdate
   });
 
   const existing = isUpdate
-    ? context.asignaciones.find(item => _directoryKey_(item.asignacion_id) === assignmentId)
+    ? _directoryFindAuthorizedAssignmentById_(context, authorization, assignmentId)
     : null;
   if (isUpdate && !existing) {
     throw new Error('No se encontró la asignación "' + assignmentId + '".');
@@ -2160,11 +2191,18 @@ function saveDirectoryAssignment(payload) {
   } else if (isUpdate && !locationChanged) {
     record.order = _directoryNormalizeInteger_(existing.order, 'Orden', false);
   } else {
-    record.order = _directoryGetNextOrder_(
-      context.asignaciones,
-      record.estructura_local_id,
-      record.local_id
-    );
+    record.order = isUpdate
+      ? _directoryGetNextOrderForLocation_(
+          context,
+          authorization,
+          record.estructura_local_id,
+          record.local_id
+        )
+      : _directoryGetNextOrder_(
+          context.asignaciones,
+          record.estructura_local_id,
+          record.local_id
+        );
   }
 
   _directoryAssertScope_(
