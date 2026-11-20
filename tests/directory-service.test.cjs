@@ -442,6 +442,8 @@ test('la consulta del Directorio traduce SEDE en relaciones y adscripciones dire
     'EST_1'
   );
   assert.equal(descriptor.queryOptions.authorization.scopeRecordLookups[0].requireEqualFields[0], 'local_id');
+  assert.equal(descriptor.queryOptions.authorization.scopeRecordLookups[0].required, true);
+  assert.equal(descriptor.queryOptions.authorization.scopeRecordLookups[1].required, true);
   assert.ok(descriptor.queryOptions.authorization.catalogSources.some(item =>
     item.sourceKey === 'SECURITY' && item.sheetName === 'EstructuraOrg'
   ));
