@@ -426,6 +426,21 @@ function runCoreSelfTests_() {
       'La invalidación elimina el manifiesto de un valor grande.'
     );
 
+    const incompleteManifestKey = _coreBuildCacheKey_('core-test:missing-checksum');
+    const incompleteChunkKey = 'SUNARP_CORE:core-test:missing-checksum:chunk';
+    const scriptCache = CacheService.getScriptCache();
+    scriptCache.put(incompleteChunkKey, 'abc', 300);
+    scriptCache.put(incompleteManifestKey, JSON.stringify({
+      format: _CORE_CACHE_CHUNK_FORMAT_,
+      storage: 'gzip-chunks',
+      chunkKeys: [incompleteChunkKey],
+      payloadLength: 3
+    }), 300);
+    assert(
+      getCachedValue('core-test:missing-checksum') === null,
+      'Rechaza un manifiesto fragmentado sin checksum y descarta sus fragmentos.'
+    );
+
 
     expectError(() => listRecordsFromSources([{
       key: 'registros',
