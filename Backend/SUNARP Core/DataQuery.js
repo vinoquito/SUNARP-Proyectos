@@ -84,7 +84,7 @@ function _coreQueryValidateAuthorization_(authorization) {
   return { context, moduleId, permissionCode, access, totalOnly };
 }
 
-function _coreQueryAuthorizationFingerprint_(authorization, validated) {
+function _coreQueryAuthorizationFingerprint_(authorization, validated, catalogVersion) {
   return _coreQueryDigest_({
     personaId: validated.context.personaId,
     moduleId: validated.moduleId,
@@ -97,8 +97,22 @@ function _coreQueryAuthorizationFingerprint_(authorization, validated) {
       active: scope.active
     })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
     fields: authorization.fields || {},
-    catalogVersion: authorization.catalogVersion || ''
+    catalogVersion: catalogVersion || ''
   });
+}
+
+function _coreQueryGetCatalogVersion_(authorization) {
+  if (authorization.catalogVersion) return String(authorization.catalogVersion);
+  const sources = authorization.catalogSources;
+  if (!Array.isArray(sources) || !sources.length ||
+      typeof _coreGetSourceGeneration_ !== 'function') return null;
+  const generations = [];
+  for (let i = 0; i < sources.length; i++) {
+    const generation = _coreGetSourceGeneration_(sources[i]);
+    if (!generation) return null;
+    generations.push(generation);
+  }
+  return _coreQueryDigest_(generations);
 }
 
 function _coreQueryMatchesSearch_(record, search, fields) {
@@ -168,7 +182,8 @@ function queryRecords(source, options) {
     groups, search, searchFields, sortBy, sortDirection, offset, limit, idField,
     schemaVersion: String(options.schemaVersion || '1')
   };
-  const authFingerprint = _coreQueryAuthorizationFingerprint_(authorization, validated);
+  const catalogVersion = _coreQueryGetCatalogVersion_(authorization);
+  const authFingerprint = _coreQueryAuthorizationFingerprint_(authorization, validated, catalogVersion);
   const cacheSeconds = options.cacheSeconds === undefined ? 60 : Number(options.cacheSeconds);
   if (!Number.isInteger(cacheSeconds) || cacheSeconds < 0 || cacheSeconds > 21600) {
     throw new Error('SUNARP Core: cacheSeconds debe ser un entero entre 0 y 21600.');
@@ -178,7 +193,7 @@ function queryRecords(source, options) {
     : null;
   // Para ámbitos no globales, el consumidor debe suministrar una versión
   // verificable de los catálogos para no reutilizar permisos con jerarquía obsoleta.
-  const catalogCacheSafe = validated.totalOnly || Boolean(authorization.catalogVersion);
+  const catalogCacheSafe = validated.totalOnly || Boolean(catalogVersion);
   const cacheKey = generation && cacheSeconds > 0 && catalogCacheSafe
     ? _coreQueryCacheKey_(source, generation, authFingerprint, descriptor)
     : null;
@@ -206,13 +221,19 @@ function queryRecords(source, options) {
   });
 
   const records = [];
+  const scopeRecordById = authorization.scopeRecordById || {};
+  if (typeof scopeRecordById !== 'object' || Array.isArray(scopeRecordById)) {
+    throw new Error('SUNARP Core: scopeRecordById debe ser un objeto indexado por idField.');
+  }
   candidates.forEach(record => {
     if (!groups.some(group => _coreQueryMatchesGroup_(record, group))) return;
     if (!_coreQueryMatchesSearch_(record, search, searchFields)) return;
+    const id = String(record[idField] === null || record[idField] === undefined ? '' : record[idField]).trim();
+    const scopeRecord = Object.assign({}, record, scopeRecordById[id] || {});
     if (!authorizationIsRecordInScope(
       validated.context,
       validated.moduleId,
-      record,
+      scopeRecord,
       authorization.structures || [],
       authorization.fields || {},
       authorization.locals || []
