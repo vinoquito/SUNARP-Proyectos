@@ -371,7 +371,11 @@ function _accessLoadAdministratorContinuityData_() {
 function _accessLoadAuthorizationData_(personaId) {
   const s = ACCESS_MANAGEMENT_CONFIG.sheets;
   const users = _accessFindSecurityRecords_(
-    s.users, 'persona_id', [personaId], ACCESS_MANAGEMENT_FIELDS.users
+    s.users,
+    'persona_id',
+    [personaId],
+    ACCESS_MANAGEMENT_FIELDS.users,
+    { projectionFields: ['persona_id', 'active'] }
   );
   const activeUsers = users.filter(item => _accessIsActive_(item.active));
 
@@ -383,22 +387,59 @@ function _accessLoadAuthorizationData_(personaId) {
     };
   }
 
-  const usuarioRol = _accessFindSecurityRecords_(
-    s.userRoles, 'persona_id', [personaId], ACCESS_MANAGEMENT_FIELDS.userRoles
+  // La autorización ordinaria solo necesita relaciones activas de la
+  // identidad solicitante. Las relaciones inactivas se reservan para
+  // mantenimiento e integridad, no para resolver permisos efectivos.
+  const usuarioRol = _accessFindSecurityRecordsByFilters_(
+    s.userRoles,
+    { persona_id: personaId, active: true },
+    'persona_id',
+    ACCESS_MANAGEMENT_FIELDS.userRoles,
+    { matchCase: false, projectionFields: ['persona_id', 'modulo_id', 'rol_id', 'active'] }
   );
-  const ambitosAcceso = _accessFindSecurityRecords_(
-    s.scopes, 'persona_id', [personaId], ACCESS_MANAGEMENT_FIELDS.scopes
+  const ambitosAcceso = _accessFindSecurityRecordsByFilters_(
+    s.scopes,
+    { persona_id: personaId, active: true },
+    'persona_id',
+    ACCESS_MANAGEMENT_FIELDS.scopes,
+    {
+      matchCase: false,
+      projectionFields: [
+        'persona_id', 'modulo_id', 'tipo_ambito_id',
+        'referencia_id', 'incluir_descendientes', 'active'
+      ]
+    }
   );
-  const roleIds = usuarioRol.map(item => item.rol_id);
-  const roles = _accessFindSecurityRecords_(
-    s.roles, 'rol_id', roleIds, ACCESS_MANAGEMENT_FIELDS.roles
+
+  const roleIds = [...new Set(usuarioRol.map(item => _accessText_(item.rol_id)).filter(Boolean))];
+  const roles = _accessFindSecurityRecordsByFilters_(
+    s.roles,
+    { rol_id: roleIds, active: true },
+    'rol_id',
+    ACCESS_MANAGEMENT_FIELDS.roles,
+    { matchCase: false, projectionFields: ['rol_id', 'nombre', 'active'] }
   );
-  const rolPermiso = _accessFindSecurityRecords_(
-    s.rolePermissions, 'rol_id', roleIds, ACCESS_MANAGEMENT_FIELDS.rolePermissions
+  const activeRoleIds = [...new Set(roles.map(item => _accessText_(item.rol_id)).filter(Boolean))];
+  const rolPermiso = _accessFindSecurityRecordsByFilters_(
+    s.rolePermissions,
+    { rol_id: activeRoleIds, active: true },
+    'rol_id',
+    ACCESS_MANAGEMENT_FIELDS.rolePermissions,
+    { matchCase: false, projectionFields: ['rol_id', 'permiso_id', 'active'] }
   );
-  const permissionIds = rolPermiso.map(item => item.permiso_id);
-  const permisos = _accessFindSecurityRecords_(
-    s.permissions, 'permiso_id', permissionIds, ACCESS_MANAGEMENT_FIELDS.permissions
+  const permissionIds = [...new Set(rolPermiso.map(item => _accessText_(item.permiso_id)).filter(Boolean))];
+  const permisos = _accessFindSecurityRecordsByFilters_(
+    s.permissions,
+    { permiso_id: permissionIds, active: true },
+    'permiso_id',
+    ACCESS_MANAGEMENT_FIELDS.permissions,
+    {
+      matchCase: false,
+      projectionFields: [
+        'permiso_id', 'codigo', 'modulo_id',
+        'operacion_id', 'descripcion', 'active'
+      ]
+    }
   );
 
   // El catálogo de módulos es pequeño y permite resolver module_id incluso
@@ -410,7 +451,7 @@ function _accessLoadAuthorizationData_(personaId) {
   }], 300);
 
   return {
-    usuarios: users,
+    usuarios: activeUsers,
     modulos: moduleData.modulos || [],
     roles,
     usuarioRol,

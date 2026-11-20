@@ -1313,3 +1313,35 @@ test('el historial de un permiso deduplica eventos encontrados por ID y por snap
   assert.equal(result.items.length, 1);
   assert.equal(result.items[0].evento_id, 'EVT_002');
 });
+
+
+test('la autorización ordinaria consulta solo relaciones activas y proyecta los campos mínimos de seguridad', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  const calls = [];
+  const originalFind = sandbox.SUNARPCore.findRecordsByFields;
+  sandbox.SUNARPCore.findRecordsByFields = (source, filters, options) => {
+    calls.push({
+      sheet: source.sheetName,
+      filters: Object.assign({}, filters),
+      projectionFields: options && options.projectionFields
+    });
+    return originalFind(source, filters, options);
+  };
+
+  const data = sandbox._accessLoadAuthorizationData_('PER_117');
+  assert.equal(data.usuarios.length, 1);
+  assert.equal(data.usuarioRol.length, 2);
+  assert.equal(data.ambitosAcceso.length, 2);
+  assert.ok(calls.length >= 6);
+  for (const sheet of ['UsuarioRol', 'AmbitosAcceso', 'Roles', 'RolPermiso', 'Permisos']) {
+    const call = calls.find(item => item.sheet === sheet);
+    assert.ok(call, 'Debe consultar ' + sheet);
+    assert.equal(call.filters.active, true, sheet + ' debe limitar la lectura a relaciones activas');
+    assert.ok(Array.isArray(call.projectionFields), sheet + ' debe declarar una proyección mínima');
+  }
+  const userRoleCall = calls.find(item => item.sheet === 'UsuarioRol');
+  assert.deepEqual(userRoleCall.projectionFields, [
+    'persona_id', 'modulo_id', 'rol_id', 'active'
+  ]);
+  assert.equal(calls.some(item => item.sheet === 'Usuarios' && item.filters.active === true), false);
+});
