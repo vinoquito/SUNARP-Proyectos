@@ -63,6 +63,16 @@ test('SUNARP Core ofrece lectura limitada desde el final de una fuente', () => {
   assert.ok(implementation.includes('const startRow = Math.max(dataStartRow, endRow - limit + 1)'));
   assert.ok(!implementation.includes('getDataRange'));
 });
+test('SUNARP Core limita la lectura agrupada al rango realmente ocupado de cada pestaña', () => {
+  const start = coreRepositorySource.indexOf('function listRecordsFromSources(requests) {');
+  const end = coreRepositorySource.indexOf('function ', start + 20);
+  const implementation = coreRepositorySource.slice(start, end);
+  assert.match(implementation, /const lastRow = sheet\.getLastRow\(\)/);
+  assert.match(implementation, /const lastColumn = sheet\.getLastColumn\(\)/);
+  assert.match(implementation, /sheet\.getRange\(1, 1, lastRow, lastColumn\)\.getValues\(\)/);
+  assert.doesNotMatch(implementation, /sheet\.getDataRange\(\)/);
+});
+
 test('SUNARP Core no contiene definiciones globales duplicadas en DataRepository', () => {
   const declarations = [...coreRepositorySource.matchAll(/^function\s+([A-Za-z0-9_$]+)\s*\(/gm)]
     .map(match => match[1]);
