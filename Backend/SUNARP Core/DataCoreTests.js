@@ -177,6 +177,71 @@ function runCoreSelfTests_() {
     );
 
 
+    // 4.15. Consultas autorizadas, distinción y caché de candidatos.
+    const queryAuthorizationContext = {
+      authenticated: true,
+      personaId: 'TST_ADMIN',
+      moduleAccess: [{
+        modulo_id: 'MOD_TEST',
+        permissionCodes: ['TEST_READ'],
+        scopes: [{ tipo_ambito_id: 'TOTAL', referencia_id: '', incluir_descendientes: false }]
+      }]
+    };
+    const authorizedQuery = queryRecords(source, {
+      idField: 'id',
+      distinctBy: 'area',
+      sortBy: 'area',
+      filters: { active: true },
+      authorization: {
+        context: queryAuthorizationContext,
+        moduleId: 'MOD_TEST',
+        permissionCode: 'TEST_READ'
+      },
+      cacheSeconds: 60
+    });
+    assert(
+      authorizedQuery.total === 2 &&
+      authorizedQuery.records.length === 2,
+      'La consulta central filtra, autoriza, ordena y devuelve valores distintos.'
+    );
+
+    const candidateCacheQuery = queryRecords(source, {
+      idField: 'id',
+      distinctBy: 'active',
+      sortBy: 'active',
+      filters: { active: true },
+      authorization: {
+        context: queryAuthorizationContext,
+        moduleId: 'MOD_TEST',
+        permissionCode: 'TEST_READ'
+      },
+      cacheSeconds: 60
+    });
+    assert(
+      candidateCacheQuery.total === 1 &&
+      candidateCacheQuery.candidateCacheHit === true,
+      'Las consultas distintas reutilizan candidatos, pero vuelven a aplicar autorización.'
+    );
+
+    const deniedQueryContext = {
+      authenticated: true,
+      personaId: 'TST_DENIED',
+      moduleAccess: [{
+        modulo_id: 'MOD_TEST',
+        permissionCodes: [],
+        scopes: [{ tipo_ambito_id: 'TOTAL' }]
+      }]
+    };
+    expectError(() => queryRecords(source, {
+      idField: 'id',
+      filters: { active: true },
+      authorization: {
+        context: deniedQueryContext,
+        moduleId: 'MOD_TEST',
+        permissionCode: 'TEST_READ'
+      }
+    }), 'La consulta central rechaza permisos ausentes antes de reutilizar caché.');
+
     // 4.2. Probar almacenamiento centralizado de valores que superan 95 KiB.
     let largeValue = '';
     let seed = 123456789;
