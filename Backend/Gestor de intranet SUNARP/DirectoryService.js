@@ -1041,7 +1041,7 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
  * idField puede cambiarse para obtener conjuntos distintos (cargos, locales,
  * personas) sin volver a cargar la tabla completa al servicio consumidor.
  */
-function _directoryExecuteAssignmentQuery_(context, authorization, options, idField, offset, limit, enrich, distinctBy) {
+function _directoryExecuteAssignmentQuery_(context, authorization, options, idField, offset, limit, enrich, distinctBy, distinctFields, distinctCountFields) {
   const descriptor = _directoryBuildAssignmentQuery_(context, authorization, options);
   const pageOffset = Number.isInteger(offset) && offset >= 0 ? offset : 0;
   const pageLimit = Number.isInteger(limit) && limit >= 1 ? limit : 10;
@@ -1060,6 +1060,8 @@ function _directoryExecuteAssignmentQuery_(context, authorization, options, idFi
     Object.assign({}, descriptor.queryOptions, {
       idField: idField || 'asignacion_id',
       distinctBy: distinctBy || '',
+      distinctFields: Array.isArray(distinctFields) ? distinctFields : [],
+      distinctCountFields: Array.isArray(distinctCountFields) ? distinctCountFields : [],
       offset: pageOffset,
       limit: pageLimit
     })
@@ -1210,25 +1212,22 @@ function getDirectoryInitialData() {
   // La página inicial y los catálogos derivados consultan Core por separado.
   // Ninguna de estas consultas carga todas las asignaciones al servicio Gestor.
   const initialPage = _directoryExecuteAssignmentQuery_(
-    context, authorization, { active: true }, 'asignacion_id', 0, 10, true
+    context,
+    authorization,
+    { active: true },
+    'asignacion_id',
+    0,
+    10,
+    true,
+    '',
+    ['cargo_id', 'estructura_local_id', 'local_id'],
+    ['persona_id']
   );
-  const cargoResult = _directoryExecuteAssignmentQuery_(
-    context, authorization, { active: true, sortBy: 'cargo_id' }, 'asignacion_id', 0, 1000, false, 'cargo_id'
-  );
-  const relationResult = _directoryExecuteAssignmentQuery_(
-    context, authorization, { active: true, sortBy: 'estructura_local_id' },
-    'asignacion_id', 0, 1000, false, 'estructura_local_id'
-  );
-  const localResult = _directoryExecuteAssignmentQuery_(
-    context, authorization, { active: true, sortBy: 'local_id' }, 'asignacion_id', 0, 1000, false, 'local_id'
-  );
-  const peopleResult = _directoryExecuteAssignmentQuery_(
-    context, authorization, { active: true, sortBy: 'persona_id' }, 'asignacion_id', 0, 1, false, 'persona_id'
-  );
-
-  const usedCargoIds = new Set((cargoResult.records || []).map(item => _directoryKey_(item.cargo_id)).filter(Boolean));
-  const usedRelationIds = new Set((relationResult.records || []).map(item => _directoryKey_(item.estructura_local_id)).filter(Boolean));
-  const usedLocalIds = new Set((localResult.records || []).map(item => _directoryKey_(item.local_id)).filter(Boolean));
+  const distinctValues = initialPage.distinctValues || {};
+  const distinctCounts = initialPage.distinctCounts || {};
+  const usedCargoIds = new Set((distinctValues.cargo_id || []).map(_directoryKey_).filter(Boolean));
+  const usedRelationIds = new Set((distinctValues.estructura_local_id || []).map(_directoryKey_).filter(Boolean));
+  const usedLocalIds = new Set((distinctValues.local_id || []).map(_directoryKey_).filter(Boolean));
   const usedStructureIds = new Set();
   usedRelationIds.forEach(id => {
     const relation = (context.estructuraLocal || []).find(item => _directoryKey_(item.id) === id);
@@ -1300,7 +1299,7 @@ function getDirectoryInitialData() {
     records: initialPage.records || [],
     page: { page: 1, pageSize: 10, total: Number(initialPage.total) || 0 },
     summary: {
-      people: Number(peopleResult.total) || 0,
+      people: Number(distinctCounts.persona_id) || 0,
       assignments: Number(initialPage.total) || 0
     }
   };
