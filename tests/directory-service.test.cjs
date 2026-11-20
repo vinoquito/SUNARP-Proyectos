@@ -406,6 +406,130 @@ function assignmentContext() {
   };
 }
 
+function createDirectoryQueryAuthorization(context, scopes) {
+  return {
+    auth: {
+      authenticated: true,
+      personaId: 'PER_ADMIN',
+      moduleAccess: [{
+        modulo_id: 'MOD_INFO_PERSONAL',
+        permissionCodes: ['INFORMACION_PERSONAL_VER'],
+        scopes
+      }]
+    },
+    moduleId: 'MOD_INFO_PERSONAL',
+    structures: context.estructuraOrg,
+    locals: context.locales
+  };
+}
+
+test('la consulta del Directorio traduce SEDE en relaciones y adscripciones directas al local', () => {
+  sandbox.getIntranetDataSource = (sourceKey, sheetName, headerRow) => ({
+    sourceKey, sheetName, headerRow, spreadsheetId: 'SPREADSHEET_' + sourceKey
+  });
+  sandbox.SUNARPCore = {};
+  const context = assignmentContext();
+  const authorization = createDirectoryQueryAuthorization(context, [
+    { tipo_ambito_id: 'SEDE', referencia_id: 'SEDE_1', incluir_descendientes: false }
+  ]);
+  const descriptor = api.buildAssignmentQuery(context, authorization, { active: 'all' });
+  const groups = JSON.parse(JSON.stringify(descriptor.queryOptions.anyOf));
+  assert.equal(groups.length, 2);
+  assert.deepEqual(groups[0], { estructura_local_id: ['REL_1'] });
+  assert.deepEqual(groups[1], { local_id: ['LOC_1'], estructura_local_id: '' });
+  assert.equal(
+    descriptor.queryOptions.authorization.scopeRecordLookups[0].values.REL_1.estructura_id,
+    'EST_1'
+  );
+  assert.equal(descriptor.queryOptions.authorization.scopeRecordLookups[0].requireEqualFields[0], 'local_id');
+  assert.ok(descriptor.queryOptions.authorization.catalogSources.some(item =>
+    item.sourceKey === 'SECURITY' && item.sheetName === 'EstructuraOrg'
+  ));
+});
+
+test('la consulta de ESTRUCTURA_ORG incluye descendientes pero no asignaciones directas a locales', () => {
+  sandbox.getIntranetDataSource = (sourceKey, sheetName, headerRow) => ({
+    sourceKey, sheetName, headerRow, spreadsheetId: 'SPREADSHEET_' + sourceKey
+  });
+  sandbox.SUNARPCore = {};
+  const context = assignmentContext();
+  context.estructuraOrg.push({
+    id: 'EST_CHILD', name: 'Unidad hija', parent_id: 'EST_1',
+    sede_id: 'SEDE_1', tipo_estructura_id: 'TE_1'
+  });
+  context.estructuraLocal.push({
+    id: 'REL_CHILD', estructura_id: 'EST_CHILD', local_id: 'LOC_1'
+  });
+  const authorization = createDirectoryQueryAuthorization(context, [
+    { tipo_ambito_id: 'ESTRUCTURA_ORG', referencia_id: 'EST_1', incluir_descendientes: true }
+  ]);
+  const descriptor = api.buildAssignmentQuery(context, authorization, { active: 'all' });
+  const groups = JSON.parse(JSON.stringify(descriptor.queryOptions.anyOf));
+  assert.equal(groups.length, 1);
+  assert.deepEqual(groups[0], { estructura_local_id: ['REL_1', 'REL_CHILD'] });
+});
+
+test('la consulta de LOCAL solo incluye asignaciones directas sin estructura orgánica', () => {
+  sandbox.getIntranetDataSource = (sourceKey, sheetName, headerRow) => ({
+    sourceKey, sheetName, headerRow, spreadsheetId: 'SPREADSHEET_' + sourceKey
+  });
+  sandbox.SUNARPCore = {};
+  const context = assignmentContext();
+  const authorization = createDirectoryQueryAuthorization(context, [
+    { tipo_ambito_id: 'LOCAL', referencia_id: 'LOC_1', incluir_descendientes: false }
+  ]);
+  const descriptor = api.buildAssignmentQuery(context, authorization, { active: 'all' });
+  const groups = JSON.parse(JSON.stringify(descriptor.queryOptions.anyOf));
+  assert.deepEqual(groups, [{ local_id: ['LOC_1'], estructura_local_id: '' }]);
+});
+
+test('listDirectoryAssignments pagina mediante Core y no carga asignaciones completas', () => {
+  const context = assignmentContext();
+  context.personas = [];
+  context.asignaciones = [];
+  const authorization = createDirectoryQueryAuthorization(context, [
+    { tipo_ambito_id: 'SEDE', referencia_id: 'SEDE_1', incluir_descendientes: false }
+  ]);
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  vmContext._directoryAuthorizationContext_ = () => authorization;
+  vmContext._directoryLoadContext_ = options => {
+    assert.equal(options.includeAssignments, false);
+    return context;
+  };
+  vmContext.getIntranetDataSource = (sourceKey, sheetName, headerRow) => ({
+    sourceKey, sheetName, headerRow, spreadsheetId: 'SPREADSHEET_' + sourceKey
+  });
+  let query;
+  vmContext.SUNARPCore = {
+    queryRecords: (source, options) => {
+      query = { source, options };
+      return {
+        records: [{
+          asignacion_id: 'ASG_001', persona_id: 'PER_001', cargo_id: 'CAR_001',
+          estructura_local_id: 'REL_1', local_id: '', active: true, order: 1
+        }],
+        total: 21,
+        offset: options.offset,
+        limit: options.limit,
+        hasMore: true
+      };
+    },
+    findRecordsByFields: (source, filters) => ({
+      records: context.personas.filter(item => String(item.persona_id) === String(filters.persona_id)),
+      total: 1
+    })
+  };
+  const result = vmContext.listDirectoryAssignments({ page: 2, pageSize: 10 });
+  assert.equal(query.options.offset, 10);
+  assert.equal(query.options.limit, 10);
+  assert.equal(query.options.idField, 'asignacion_id');
+  assert.equal(result.total, 21);
+  assert.equal(result.offset, 10);
+  assert.equal(result.records[0].asignacion_id, 'ASG_001');
+  assert.equal(result.records[0].sede_id, 'SEDE_1');
+});
+
 test('la validación de contexto parcial conserva las relaciones sin exigir cargar todas las personas', () => {
   const context = assignmentContext();
   context.personas = [];
