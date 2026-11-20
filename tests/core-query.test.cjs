@@ -239,7 +239,7 @@ test('queryRecords combina búsqueda textual con coincidencias de entidades rela
     cacheSeconds: 0
   });
   assert.equal(result.total, 2);
-  assert.deepEqual(result.records.map(item => item.assignment_id).sort(), ['A', 'D']);
+  assert.equal(Array.from(result.records, item => item.assignment_id).sort().join(','), 'A,D');
 });
 
 test('queryRecords excluye registros cuyas relaciones declaradas contradicen el registro', () => {
