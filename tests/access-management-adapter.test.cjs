@@ -456,9 +456,10 @@ test('getAccessUsers consulta candidatos por sede o rol sin cargar el snapshot g
     fields.join(',') === 'asignacion_id,persona_id,estructura_local_id,local_id,active'
   ));
   assert.ok(!bySite.items.some(item => item.persona_id === 'PER_119'));
-  assert.deepEqual(peopleProjectionRequests[0], [
-    'persona_id', 'correo_institucional', 'nombres', 'apellidos'
-  ]);
+  assert.equal(
+    peopleProjectionRequests[0].join(','),
+    'persona_id,correo_institucional,nombres,apellidos'
+  );
 
   const byRole = sandbox.getAccessUsers({ rol_id: 'ROL_ADMIN', page: 1, pageSize: 10 });
   assert.equal(byRole.total, 1);
@@ -1340,8 +1341,9 @@ test('la autorización ordinaria consulta solo relaciones activas y proyecta los
     assert.ok(Array.isArray(call.projectionFields), sheet + ' debe declarar una proyección mínima');
   }
   const userRoleCall = calls.find(item => item.sheet === 'UsuarioRol');
-  assert.deepEqual(userRoleCall.projectionFields, [
-    'persona_id', 'modulo_id', 'rol_id', 'active'
-  ]);
+  assert.equal(
+    userRoleCall.projectionFields.join(','),
+    'persona_id,modulo_id,rol_id,active'
+  );
   assert.equal(calls.some(item => item.sheet === 'Usuarios' && item.filters.active === true), false);
 });
