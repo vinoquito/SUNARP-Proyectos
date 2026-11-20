@@ -1432,7 +1432,7 @@ test('el historial de auditoría combina actor, módulo, acción, resultado, reg
     modulo: 'ACCESOS',
     accion: 'ACTUALIZAR',
     resultado: 'OK',
-    registro_id: 'PER_',
+    registro_id: 'PER_117',
     search: 'actualización',
     desde: '2026-11-19',
     hasta: '2026-11-19',
