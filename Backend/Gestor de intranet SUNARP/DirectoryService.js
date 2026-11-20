@@ -1009,7 +1009,7 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
  * idField puede cambiarse para obtener conjuntos distintos (cargos, locales,
  * personas) sin volver a cargar la tabla completa al servicio consumidor.
  */
-function _directoryExecuteAssignmentQuery_(context, authorization, options, idField, offset, limit, enrich) {
+function _directoryExecuteAssignmentQuery_(context, authorization, options, idField, offset, limit, enrich, distinctBy) {
   const descriptor = _directoryBuildAssignmentQuery_(context, authorization, options);
   const pageOffset = Number.isInteger(offset) && offset >= 0 ? offset : 0;
   const pageLimit = Number.isInteger(limit) && limit >= 1 ? limit : 10;
@@ -1027,6 +1027,7 @@ function _directoryExecuteAssignmentQuery_(context, authorization, options, idFi
     descriptor.source,
     Object.assign({}, descriptor.queryOptions, {
       idField: idField || 'asignacion_id',
+      distinctBy: distinctBy || '',
       offset: pageOffset,
       limit: pageLimit
     })
@@ -1180,17 +1181,17 @@ function getDirectoryInitialData() {
     context, authorization, { active: true }, 'asignacion_id', 0, 10, true
   );
   const cargoResult = _directoryExecuteAssignmentQuery_(
-    context, authorization, { active: true, sortBy: 'cargo_id' }, 'cargo_id', 0, 1000, false
+    context, authorization, { active: true, sortBy: 'cargo_id' }, 'asignacion_id', 0, 1000, false, 'cargo_id'
   );
   const relationResult = _directoryExecuteAssignmentQuery_(
     context, authorization, { active: true, sortBy: 'estructura_local_id' },
-    'estructura_local_id', 0, 1000, false
+    'asignacion_id', 0, 1000, false, 'estructura_local_id'
   );
   const localResult = _directoryExecuteAssignmentQuery_(
-    context, authorization, { active: true, sortBy: 'local_id' }, 'local_id', 0, 1000, false
+    context, authorization, { active: true, sortBy: 'local_id' }, 'asignacion_id', 0, 1000, false, 'local_id'
   );
   const peopleResult = _directoryExecuteAssignmentQuery_(
-    context, authorization, { active: true, sortBy: 'persona_id' }, 'persona_id', 0, 1, false
+    context, authorization, { active: true, sortBy: 'persona_id' }, 'asignacion_id', 0, 1, false, 'persona_id'
   );
 
   const usedCargoIds = new Set((cargoResult.records || []).map(item => _directoryKey_(item.cargo_id)).filter(Boolean));
