@@ -84,19 +84,13 @@ Cada llamada debe realizarse después de que la escritura en esa fuente haya ter
 
 La caché puede ser desalojada antes del TTL, pero no debe utilizarse ese comportamiento como mecanismo de invalidación. Sin invalidación explícita, una edición manual o escritura externa puede dejar consultas obsoletas hasta que expiren o sean desalojadas las entradas cacheadas.
 
-## 4. Activadores: qué se puede y qué no se puede afirmar desde el repositorio
+## 4. Activadores dentro del alcance actual
 
-**No se puede determinar desde GitHub si un activador instalable está efectivamente creado en una cuenta de Google.** El código solo demuestra qué funciones podrían instalarlo, no que alguien haya ejecutado la función instaladora ni quién es propietario de los activadores actuales.
+La inspección estática del código no encontró definiciones de activadores en SUNARP Core ni en Gestor de intranet. El responsable comprobó además, directamente en Apps Script, que ninguno de los dos proyectos tiene activadores instalados.
 
-Hallazgos estáticos:
+Los activadores son recursos propios de cada proyecto y de la cuenta que los creó; no se heredan por incluir una biblioteca. Como no hay activadores instalados en Core ni en Gestor, no existe automatización por trigger para invalidar tras ediciones manuales. Esta limitación queda cubierta por el procedimiento explícito de invalidación de la sección 5.
 
-- SUNARP Core: no se encontraron instaladores ni manejadores de activadores en sus archivos de implementación.
-- Gestor de intranet SUNARP: no se encontraron instaladores ni manejadores de activadores de hoja o temporales.
-- Gestor de contenidos Sunarp: no se encontraron instaladores de activadores; las funciones `onChange()` de sus HTML pertenecen a la lógica de interfaz y no son activadores de Apps Script.
-- Agente Sunarp: sí define la instalación de los tres activadores de sincronización descritos en 2.3; su instalación real no está acreditada por el código.
-- SUNARP UI: no se encontraron activadores.
-
-Los activadores instalados son propios del proyecto y de la cuenta que los creó; no se heredan por incluir una biblioteca. Un activador de Agente Sunarp no invalida cachés de Core por el mero hecho de ejecutarse.
+Los demás proyectos Backend todavía no están unificados y permanecen fuera del alcance de esta auditoría. Sus activadores y sus archivos contenedores no condicionan el cierre de Fase 1.
 
 ## 5. Verificaciones manuales completadas
 
