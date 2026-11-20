@@ -580,7 +580,9 @@ function runCoreSelfTests_() {
         source,
         {
           id: 'TST_005',
-          nombre: 'María López',
+          // La prueba anterior editó externamente el nombre de TST_003.
+          // Se reutiliza el valor vigente en la hoja para probar unicidad.
+          nombre: externalName,
           area: 'Otra área',
           anexo: 1005,
           active: true
