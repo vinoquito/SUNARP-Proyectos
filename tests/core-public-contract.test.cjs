@@ -213,4 +213,8 @@ test('el contrato conserva los límites comprobados de consulta, invalidación y
   assert.match(contract, /ejecutar `runCoreTests\(\)`/i);
   assert.match(contract, /no expone el historial de versiones ni los despliegues del proyecto Apps Script/);
   assert.match(contract, /versión 9/);
+  assert.ok(contract.includes('### 10.1 Consumidores comprobados en esta rama'));
+  assert.ok(contract.includes('`_accessLoadSecurityData_()`'));
+  assert.ok(contract.includes('No carga las nueve tablas administrativas completas durante el login.'));
+  assert.ok(contract.includes('no se consideran consumidores directos del Core'));
 });
