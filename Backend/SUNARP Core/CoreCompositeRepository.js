@@ -135,6 +135,14 @@ function syncRecordsByKey(
     if (!parentFields.length) {
       throw new Error('SUNARP Core: parentMatch no puede estar vacío.');
     }
+    parentFields.forEach(field => {
+      const value = parentMatch[field];
+      if (value === null || value === undefined || String(value).trim() === '') {
+        throw new Error(
+          'SUNARP Core: parentMatch requiere un valor no vacío para "' + field + '".'
+        );
+      }
+    });
 
     if (!Array.isArray(keyFields) || !keyFields.length) {
       throw new Error('SUNARP Core: debes indicar keyFields.');
@@ -154,7 +162,19 @@ function syncRecordsByKey(
     desiredRecords.forEach(record => {
       _coreValidateRecordFields_(record, table.headers);
 
-      const complete = Object.assign({}, parentMatch, record);
+      const overriddenParentField = parentFields.find(field =>
+        Object.prototype.hasOwnProperty.call(record, field) &&
+        !_coreValuesEqual_(record[field], parentMatch[field])
+      );
+      if (overriddenParentField) {
+        throw new Error(
+          'SUNARP Core: desiredRecords no puede modificar el campo padre "' +
+          overriddenParentField + '".'
+        );
+      }
+
+      // El padre validado prevalece; el registro deseado solo define la relación.
+      const complete = Object.assign({}, record, parentMatch);
 
       keyFields.forEach(field => {
         const value = complete[field];
