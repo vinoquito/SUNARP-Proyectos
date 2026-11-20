@@ -237,6 +237,114 @@ function _coreRunSourceWrite_(source, writer) {
   }
 }
 
+/**
+ * Ejecuta escrituras directas del consumidor como un lote coordinado por Core.
+ *
+ * El callback recibe markWriteStarted(), que debe invocarse inmediatamente
+ * antes de la primera mutación de Sheets. Core mantiene el mismo ScriptLock
+ * de la biblioteca que utilizan las escrituras CRUD, ejecuta un único flush
+ * y trata de invalidar todas las fuentes declaradas tanto al finalizar con
+ * éxito como después de un error posterior a la primera escritura.
+ *
+ * No ofrece rollback ni transacción entre pestañas. El callback no debe llamar
+ * a otros métodos públicos de escritura o invalidación de Core, porque el
+ * bloqueo ya está adquirido.
+ */
+function runSourceWriteBatch(sources, writer) {
+  if (!Array.isArray(sources) || !sources.length) {
+    throw new Error('SUNARP Core: runSourceWriteBatch requiere al menos una fuente afectada.');
+  }
+  if (typeof writer !== 'function') {
+    throw new Error('SUNARP Core: runSourceWriteBatch requiere una función de escritura.');
+  }
+
+  const uniqueSources = [];
+  const seenSources = new Set();
+
+  sources.forEach(source => {
+    const config = _coreNormalizeSourceConfig_(source);
+    const key = _coreBuildSourceCacheKey_(config, 'generation');
+    if (seenSources.has(key)) return;
+    seenSources.add(key);
+    uniqueSources.push(config);
+  });
+
+  return _coreWithWriteLock_(() => {
+    let writeStarted = false;
+    let finalizationStarted = false;
+
+    const finalize = () => {
+      finalizationStarted = true;
+      let flushError = null;
+      const invalidationErrors = [];
+
+      try {
+        SpreadsheetApp.flush();
+      } catch (error) {
+        flushError = error;
+      }
+
+      // No detenerse ante el primer fallo: cada fuente afectada debe intentar
+      // publicar su propia generación nueva.
+      uniqueSources.forEach(source => {
+        try {
+          _coreInvalidateSourceCacheOrThrow_(source);
+        } catch (error) {
+          invalidationErrors.push(
+            source.label + ': ' + error.message
+          );
+        }
+      });
+
+      if (flushError || invalidationErrors.length) {
+        const details = [];
+        if (flushError) details.push('flush: ' + flushError.message);
+        if (invalidationErrors.length) {
+          details.push('invalidación: ' + invalidationErrors.join(' | '));
+        }
+        throw new Error(
+          'SUNARP Core: el lote pudo haberse aplicado, pero no se pudo completar ' +
+          'su finalización segura. Comprueba todas las fuentes antes de reintentar. ' +
+          details.join(' | ')
+        );
+      }
+    };
+
+    try {
+      const result = writer(() => {
+        writeStarted = true;
+      });
+
+      if (writeStarted) finalize();
+      return result;
+
+    } catch (error) {
+      if (writeStarted && !finalizationStarted) {
+        try {
+          finalize();
+        } catch (finalizationError) {
+          throw new Error(
+            'SUNARP Core: el lote falló después de iniciar una escritura y también ' +
+            'falló la finalización/invalidación. Puede haber cambios parciales; ' +
+            'comprueba todas las fuentes antes de reintentar. Error original: ' +
+            error.message + '. Error de finalización: ' + finalizationError.message
+          );
+        }
+
+        throw new Error(
+          'SUNARP Core: el lote falló después de iniciar una escritura. Se ejecutó ' +
+          'flush y se intentó invalidar todas las fuentes declaradas; puede haber ' +
+          'cambios parciales. Comprueba los datos antes de reintentar. Detalle: ' +
+          error.message
+        );
+      }
+
+      throw error;
+    }
+  });
+}
+
+
 function invalidateSourceCache(source) {
   return _coreWithWriteLock_(() => _coreInvalidateSourceCache_(source));
 }
