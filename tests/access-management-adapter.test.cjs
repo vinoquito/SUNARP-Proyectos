@@ -497,17 +497,23 @@ test('el bootstrap de Administración no descarga las relaciones globales de seg
 test('la configuración del editor consulta solo las relaciones de la persona seleccionada', () => {
   const sandbox = createAdapterSandbox(makeSecurityData());
   const calls = [];
+  const listReads = [];
   const original = sandbox.SUNARPCore.findRecordsByFields;
+  const originalList = sandbox.SUNARPCore.listRecordsFromSourcesCached;
   sandbox.SUNARPCore.findRecordsByFields = (source, filters, options) => {
     calls.push({ sheet: source.sheetName, filters });
     return original(source, filters, options);
+  };
+  sandbox.SUNARPCore.listRecordsFromSourcesCached = requests => {
+    requests.forEach(item => listReads.push(item.source.sheetName));
+    return originalList(requests);
   };
   const configuration = sandbox.getAccessUserConfiguration('PER_117');
   assert.equal(configuration.userRoles.length, 2);
   assert.equal(configuration.scopes.length, 2);
   assert.ok(calls.some(item => item.sheet === 'UsuarioRol' && item.filters.persona_id === 'PER_117'));
   assert.ok(calls.some(item => item.sheet === 'AmbitosAcceso' && item.filters.persona_id === 'PER_117'));
-  assert.doesNotMatch(calls.map(item => item.sheet).join('|'), /Usuarios|Roles|Permisos|RolPermiso/);
+  assert.deepEqual(listReads, ['Modulos']);
 });
 
 test('la validación del snapshot rechaza dos roles activos de la misma persona y módulo', () => {
