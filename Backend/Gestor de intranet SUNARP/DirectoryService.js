@@ -781,7 +781,7 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
   const baseFilters = {};
   if (options.personaId) baseFilters.persona_id = _directoryKey_(options.personaId);
   if (options.estructuraLocalId) baseFilters.estructura_local_id = _directoryKey_(options.estructuraLocalId);
-  if (options.localId) baseFilters.local_id = _directoryKey_(options.localId);
+  const selectedLocalId = _directoryKey_(options.localId);
   if (options.cargoId) baseFilters.cargo_id = _directoryKey_(options.cargoId);
 
   const activeFilter = options.active === undefined ? true : options.active;
@@ -818,6 +818,14 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
       ).map(item => _directoryKey_(item.id)).filter(Boolean);
     } else if (type === 'LOCAL') {
       localIds = [referenceId];
+    }
+
+    if (selectedLocalId) {
+      relationIds = relationIds.filter(id => {
+        const relation = relations.find(item => _directoryKey_(item.id) === id);
+        return relation && _directoryKey_(relation.local_id) === selectedLocalId;
+      });
+      localIds = localIds.filter(id => id === selectedLocalId);
     }
 
     if (selectedSiteId) {
