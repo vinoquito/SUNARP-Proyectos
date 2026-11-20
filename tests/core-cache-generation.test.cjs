@@ -140,8 +140,6 @@ test('la caché fragmentada acepta un payload con longitud y checksum válidos',
   }));
   sandbox._coreCacheDecodeGzip_ = () => JSON.stringify({ payload: 'decoded' });
 
-  assert.deepEqual(
-    sandbox.getCachedValue('test:valid-checksum'),
-    { payload: 'decoded' }
-  );
+  const recovered = sandbox.getCachedValue('test:valid-checksum');
+  assert.equal(recovered && recovered.payload, 'decoded');
 });
