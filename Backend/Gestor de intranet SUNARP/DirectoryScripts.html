@@ -489,21 +489,64 @@ const DirectoryPage = (() => {
    */
   function renderHierarchyFilters() {
     const container = getElements().hierarchyFilters;
-
     if (!container || !state.catalogs) return;
 
-    const visible = state.catalogs.filterVisibility
-      ? state.catalogs.filterVisibility.hierarchy === true
-      : (state.catalogs.estructuraOrg || []).length > 1;
-    container.hidden = !visible;
+    const contract = state.catalogs.filterContract || {};
+    const selectableIds = new Set(contract.selectable && contract.selectable.structureIds || []);
+    const structures = (state.catalogs.estructuraOrg || [])
+      .filter(node => !contract.selectable || selectableIds.has(key(node.id)))
+      .slice()
+      .sort((a, b) =>
+        String(a.path || a.name).localeCompare(String(b.path || b.name), 'es')
+      );
+
+    container.hidden = structures.length < 2;
     container.replaceChildren();
 
-    if (!visible) {
+    if (structures.length < 2) {
       state.hierarchyPath = [];
       return;
     }
 
-    appendHierarchyLevel('', 0);
+    const wrapper = document.createElement('div');
+    wrapper.className = 'sunarp-filter';
+    const label = document.createElement('label');
+    label.htmlFor = 'directoryHierarchyFilter';
+    label.textContent = 'Unidad orgánica';
+
+    const select = document.createElement('select');
+    select.id = 'directoryHierarchyFilter';
+    select.className = 'sunarp-select';
+
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Todas las unidades autorizadas';
+    select.appendChild(placeholder);
+
+    structures.forEach(node => {
+      const option = document.createElement('option');
+      option.value = key(node.id);
+      option.textContent = node.path || node.name;
+      select.appendChild(option);
+    });
+
+    const selectedId = state.hierarchyPath.length
+      ? state.hierarchyPath[state.hierarchyPath.length - 1]
+      : '';
+    select.value = structures.some(node => key(node.id) === key(selectedId))
+      ? key(selectedId)
+      : '';
+
+    select.addEventListener('change', () => {
+      state.hierarchyPath = select.value
+        ? getFormStructurePath(select.value)
+        : [];
+      renderTable();
+    });
+
+    wrapper.appendChild(label);
+    wrapper.appendChild(select);
+    container.appendChild(wrapper);
   }
 
 
