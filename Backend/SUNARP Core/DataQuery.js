@@ -115,17 +115,22 @@ function _coreQueryGetCatalogVersion_(authorization) {
   return _coreQueryDigest_(generations);
 }
 
-function _coreQueryMatchesSearch_(record, search, fields) {
+function _coreQueryMatchesSearch_(record, search, fields, searchAny) {
   if (!search) return true;
   const expected = typeof _coreNormalizeSearchText_ === 'function'
     ? _coreNormalizeSearchText_(search)
     : String(search).toLocaleLowerCase();
-  return fields.some(field => {
+  const textMatch = fields.some(field => {
     const value = record[field];
     const actual = typeof _coreNormalizeSearchText_ === 'function'
       ? _coreNormalizeSearchText_(value)
       : String(value === null || value === undefined ? '' : value).toLocaleLowerCase();
     return actual.includes(expected);
+  });
+  if (textMatch) return true;
+  return (searchAny || []).some(match => {
+    const values = Array.isArray(match.values) ? match.values : [];
+    return values.some(value => _coreValuesEqual_(record[match.field], value));
   });
 }
 
@@ -174,12 +179,22 @@ function queryRecords(source, options) {
   }
   const search = String(options.search || '').trim();
   const searchFields = options.searchFields === undefined ? [] : options.searchFields;
-  if (!Array.isArray(searchFields) || (search && !searchFields.length)) {
-    throw new Error('SUNARP Core: searchFields debe ser un arreglo no vacío cuando se indica search.');
+  const searchAny = options.searchAny === undefined ? [] : options.searchAny;
+  if (!Array.isArray(searchFields) || !Array.isArray(searchAny)) {
+    throw new Error('SUNARP Core: searchFields y searchAny deben ser arreglos.');
+  }
+  searchAny.forEach(match => {
+    if (!match || typeof match.field !== 'string' || !match.field.trim() ||
+        !Array.isArray(match.values) || !match.values.length) {
+      throw new Error('SUNARP Core: cada searchAny requiere field y values no vacío.');
+    }
+  });
+  if (search && !searchFields.length && !searchAny.length) {
+    throw new Error('SUNARP Core: search requiere searchFields o searchAny.');
   }
 
   const descriptor = {
-    groups, search, searchFields, sortBy, sortDirection, offset, limit, idField,
+    groups, search, searchFields, searchAny, sortBy, sortDirection, offset, limit, idField,
     schemaVersion: String(options.schemaVersion || '1')
   };
   const catalogVersion = _coreQueryGetCatalogVersion_(authorization);
@@ -211,7 +226,7 @@ function queryRecords(source, options) {
   groups.forEach(group => {
     const fields = Object.keys(group);
     const result = findRecordsByFields(source, group, {
-      requiredHeaders: [idField, sortBy].concat(searchFields),
+      requiredHeaders: [idField, sortBy].concat(searchFields, searchAny.map(match => match.field)),
       searchField: fields[0]
     });
     (result.records || []).forEach(record => {
@@ -233,7 +248,7 @@ function queryRecords(source, options) {
   }
   candidates.forEach(record => {
     if (!groups.some(group => _coreQueryMatchesGroup_(record, group))) return;
-    if (!_coreQueryMatchesSearch_(record, search, searchFields)) return;
+    if (!_coreQueryMatchesSearch_(record, search, searchFields, searchAny)) return;
     const id = String(record[idField] === null || record[idField] === undefined ? '' : record[idField]).trim();
     const scopeRecord = Object.assign({}, record, scopeRecordById[id] || {});
     scopeRecordLookups.forEach(lookup => {
@@ -245,7 +260,19 @@ function queryRecords(source, options) {
         record[lookup.recordField] === undefined ? '' : record[lookup.recordField]).trim();
       if (lookupId && lookup.values[lookupId] &&
           typeof lookup.values[lookupId] === 'object') {
-        Object.assign(scopeRecord, lookup.values[lookupId]);
+        const related = lookup.values[lookupId];
+        const requiredEqualFields = Array.isArray(lookup.requireEqualFields)
+          ? lookup.requireEqualFields
+          : [];
+        const inconsistent = requiredEqualFields.some(field => {
+          const actual = record[field];
+          const expected = related[field];
+          const actualText = String(actual === null || actual === undefined ? '' : actual).trim();
+          const expectedText = String(expected === null || expected === undefined ? '' : expected).trim();
+          return actualText && expectedText && actualText !== expectedText;
+        });
+        if (inconsistent) return;
+        Object.assign(scopeRecord, related);
       }
     });
     if (!authorizationIsRecordInScope(
