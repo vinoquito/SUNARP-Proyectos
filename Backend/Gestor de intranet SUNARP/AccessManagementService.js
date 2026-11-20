@@ -2100,6 +2100,21 @@ function saveAccessUserConfiguration(payload) {
 }
 
 
+function _accessLoadSecurityRecords_(sheetName, requiredHeaders) {
+  const result = SUNARPCore.listRecordsFromSourcesCached([{
+    key: 'records',
+    source: _accessSecuritySource_(sheetName),
+    requiredHeaders: requiredHeaders || []
+  }], 300);
+  return result.records || [];
+}
+
+
+/**
+ * Bootstrap liviano del panel: catálogos de selección y capacidades.
+ * Las relaciones globales se consultan al abrir la pestaña correspondiente
+ * o al editar la configuración de una persona concreta.
+ */
 function getAccessManagementData() {
   const auth = _accessGetAuthContext_();
   const accessModuleId = _accessResolveModuleId_(
@@ -2122,26 +2137,17 @@ function getAccessManagementData() {
     throw new Error('Tu cuenta no tiene capacidades de administración de accesos ni permiso de auditoría.');
   }
 
-  const needsManagementData =
-    capabilities.users ||
-    capabilities.roles ||
-    capabilities.permissions ||
-    capabilities.scopes;
-
-  const data = needsManagementData
-    ? auth.securityData
-    : {
-        personas: [],
-        usuarios: [],
-        modulos: [],
-        roles: [],
-        usuarioRol: [],
-        permisos: [],
-        rolPermiso: [],
-        ambitosAcceso: [],
-        operaciones: [],
-        tiposAmbito: []
-      };
+  const needsModules = capabilities.permissions || capabilities.scopes || capabilities.userRoles;
+  const needsRoles = capabilities.roles || capabilities.users;
+  const modules = needsModules
+    ? _accessLoadSecurityRecords_(ACCESS_MANAGEMENT_CONFIG.sheets.modules, ACCESS_MANAGEMENT_FIELDS.modules)
+    : [];
+  const roles = needsRoles
+    ? _accessLoadSecurityRecords_(ACCESS_MANAGEMENT_CONFIG.sheets.roles, ACCESS_MANAGEMENT_FIELDS.roles)
+    : [];
+  const scopeTypes = capabilities.scopes
+    ? _accessLoadSecurityRecords_(ACCESS_MANAGEMENT_CONFIG.sheets.scopeTypes, ACCESS_MANAGEMENT_FIELDS.scopeTypes)
+    : [];
 
   const needsCatalogs = capabilities.users || capabilities.scopes;
   const catalogs = needsCatalogs
@@ -2161,131 +2167,60 @@ function getAccessManagementData() {
       }))
     },
     capabilities,
-
     documentTypes: capabilities.users
       ? _accessLoadDocumentTypes_()
           .filter(_accessCatalogIsActive_)
-          .map(item => ({
-            id: _accessText_(item.id),
-            name: _accessText_(item.name)
-          }))
+          .map(item => ({ id: _accessText_(item.id), name: _accessText_(item.name) }))
           .filter(item => item.id && item.name)
       : [],
-
-    // El listado se consulta bajo demanda según los filtros seleccionados.
     users: [],
-
-    modules: capabilities.permissions || capabilities.scopes || capabilities.userRoles
-      ? data.modulos.map(module => ({
-          modulo_id: _accessText_(module.modulo_id),
-          codigo: _accessUpper_(module.codigo),
-          nombre: _accessText_(module.nombre),
-          descripcion: _accessText_(module.descripcion),
-          active: _accessIsActive_(module.active)
-        }))
-      : [],
-
-    roles: capabilities.roles || capabilities.users
-      ? data.roles.map(role => ({
-          rol_id: _accessText_(role.rol_id),
-          nombre: _accessText_(role.nombre),
-          descripcion: _accessText_(role.descripcion),
-          active: _accessIsActive_(role.active)
-        }))
-      : [],
-
-    permissions: capabilities.permissions
-      ? data.permisos.map(permission => {
-          const module = data.modulos.find(item =>
-            _accessText_(item.modulo_id) === _accessText_(permission.modulo_id)
-          ) || {};
-          return {
-            permiso_id: _accessText_(permission.permiso_id),
-            codigo: _accessUpper_(permission.codigo),
-            modulo_id: _accessText_(permission.modulo_id),
-            modulo_codigo: _accessUpper_(module.codigo),
-            modulo_nombre: _accessText_(module.nombre),
-            operacion_id: _accessUpper_(permission.operacion_id),
-            operacion_nombre: _accessText_((data.operaciones.find(item => _accessUpper_(item.operacion_id) === _accessUpper_(permission.operacion_id)) || {}).nombre),
-            descripcion: _accessText_(permission.descripcion),
-            active: _accessIsActive_(permission.active)
-          };
-        })
-      : [],
-
-    rolePermissions: capabilities.assignments
-      ? data.rolPermiso.map(item => ({
-          rol_id: _accessText_(item.rol_id),
-          permiso_id: _accessText_(item.permiso_id),
-          active: _accessIsActive_(item.active)
-        }))
-      : [],
-
-    operations: capabilities.permissions ? _accessGetOperationCatalog_(data.operaciones) : [],
-    scopeTypes: capabilities.scopes ? data.tiposAmbito.filter(_accessCatalogIsActive_).map(item => ({
-      tipo_ambito_id: _accessUpper_(item.tipo_ambito_id), nombre: _accessText_(item.nombre),
-      descripcion: _accessText_(item.descripcion), entidad_referencia: _accessUpper_(item.entidad_referencia),
-      requiere_referencia: _accessFlag_(item.requiere_referencia), permite_descendientes: _accessFlag_(item.permite_descendientes), active: _accessCatalogIsActive_(item)
-    })) : [],
-
-    userRoles: capabilities.userRoles
-      ? data.usuarioRol.map(item => ({
-          persona_id: _accessText_(item.persona_id),
-          modulo_id: _accessText_(item.modulo_id),
-          rol_id: _accessText_(item.rol_id),
-          active: _accessIsActive_(item.active),
-          has_scopes: data.ambitosAcceso.some(scope =>
-            _accessText_(scope.persona_id) === _accessText_(item.persona_id) &&
-            _accessText_(scope.modulo_id) === _accessText_(item.modulo_id) &&
-            _accessIsActive_(scope.active)
-          )
-        }))
-      : [],
-
-    scopes: capabilities.scopes
-      ? data.ambitosAcceso.map(item => ({
-          persona_id: _accessText_(item.persona_id),
-          modulo_id: _accessText_(item.modulo_id),
-          tipo_ambito_id: _accessUpper_(item.tipo_ambito_id),
-          referencia_id: _accessText_(item.referencia_id),
-          incluir_descendientes: _accessText_(item.incluir_descendientes),
-          active: _accessIsActive_(item.active)
-        }))
-      : [],
-
+    modules: modules.map(module => ({
+      modulo_id: _accessText_(module.modulo_id),
+      codigo: _accessUpper_(module.codigo),
+      nombre: _accessText_(module.nombre),
+      descripcion: _accessText_(module.descripcion),
+      active: _accessIsActive_(module.active)
+    })),
+    roles: roles.map(role => ({
+      rol_id: _accessText_(role.rol_id),
+      nombre: _accessText_(role.nombre),
+      descripcion: _accessText_(role.descripcion),
+      active: _accessIsActive_(role.active)
+    })),
+    // Se cargan al entrar a sus pestañas; no forman parte del bootstrap.
+    permissions: [],
+    rolePermissions: [],
+    operations: [],
+    scopeTypes: scopeTypes.filter(_accessCatalogIsActive_).map(item => ({
+      tipo_ambito_id: _accessUpper_(item.tipo_ambito_id),
+      nombre: _accessText_(item.nombre),
+      descripcion: _accessText_(item.descripcion),
+      entidad_referencia: _accessUpper_(item.entidad_referencia),
+      requiere_referencia: _accessFlag_(item.requiere_referencia),
+      permite_descendientes: _accessFlag_(item.permite_descendientes),
+      active: _accessCatalogIsActive_(item)
+    })),
+    userRoles: [],
+    scopes: [],
     catalogs: {
-      sedes: (catalogs.sedes || []).filter(_accessCatalogIsActive_)
-        .map(row => ({
-          id: _accessText_(row.id),
-          name: _accessText_(row.name)
-        })),
-      estructuraOrg: (catalogs.estructuraOrg || []).filter(_accessCatalogIsActive_)
-        .map(row => ({
-          id: _accessText_(row.id),
-          sede_id: _accessText_(row.sede_id),
-          parent_id: _accessText_(row.parent_id),
-          tipo_estructura_id: _accessText_(row.tipo_estructura_id),
-          name: _accessText_(row.name),
-          order: row.order
-        })),
-      locales: (catalogs.locales || []).filter(_accessCatalogIsActive_)
-        .map(row => ({
-          id: _accessText_(row.id),
-          name: _accessText_(row.name),
-          sede_id: _accessText_(row.sede_id)
-        })),
-      tiposEstructura: (catalogs.tiposEstructura || []).filter(_accessCatalogIsActive_)
-        .map(row => ({
-          id: _accessText_(row.id),
-          name: _accessText_(row.name)
-        })),
-      estructuraLocal: (catalogs.estructuraLocal || []).filter(_accessCatalogIsActive_)
-        .map(row => ({
-          id: _accessText_(row.id),
-          estructura_id: _accessText_(row.estructura_id),
-          local_id: _accessText_(row.local_id),
-          referencia: _accessText_(row.referencia)
-        }))
+      sedes: (catalogs.sedes || []).filter(_accessCatalogIsActive_).map(row => ({
+        id: _accessText_(row.id), name: _accessText_(row.name)
+      })),
+      estructuraOrg: (catalogs.estructuraOrg || []).filter(_accessCatalogIsActive_).map(row => ({
+        id: _accessText_(row.id), sede_id: _accessText_(row.sede_id),
+        parent_id: _accessText_(row.parent_id), tipo_estructura_id: _accessText_(row.tipo_estructura_id),
+        name: _accessText_(row.name), order: row.order
+      })),
+      locales: (catalogs.locales || []).filter(_accessCatalogIsActive_).map(row => ({
+        id: _accessText_(row.id), name: _accessText_(row.name), sede_id: _accessText_(row.sede_id)
+      })),
+      tiposEstructura: (catalogs.tiposEstructura || []).filter(_accessCatalogIsActive_).map(row => ({
+        id: _accessText_(row.id), name: _accessText_(row.name)
+      })),
+      estructuraLocal: (catalogs.estructuraLocal || []).filter(_accessCatalogIsActive_).map(row => ({
+        id: _accessText_(row.id), estructura_id: _accessText_(row.estructura_id),
+        local_id: _accessText_(row.local_id), referencia: _accessText_(row.referencia)
+      }))
     }
   };
 }
@@ -2294,48 +2229,132 @@ function getAccessManagementData() {
 /** Devuelve únicamente los datos necesarios para actualizar una pestaña. */
 function getAccessManagementTabData(tabId) {
   const tab = _accessText_(tabId).toLowerCase();
+  const s = ACCESS_MANAGEMENT_CONFIG.sheets;
+
   if (tab === 'roles') {
     const auth = _accessRequirePermission_('ROLES_ADMINISTRAR');
-    const result = auth.securityData;
-    return { roles: (result.roles || []).map(item => ({ rol_id: _accessText_(item.rol_id), nombre: _accessText_(item.nombre), descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active) })) };
+    const roles = _accessLoadSecurityRecords_(s.roles, ACCESS_MANAGEMENT_FIELDS.roles);
+    return { roles: roles.map(item => ({
+      rol_id: _accessText_(item.rol_id), nombre: _accessText_(item.nombre),
+      descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active)
+    })) };
   }
+
   if (tab === 'permissions') {
     const auth = _accessRequirePermission_('PERMISOS_ADMINISTRAR');
-    const result = auth.securityData;
-    const modules = result.modulos || [];
-    const operations = _accessGetOperationCatalog_(result.operaciones);
+    const modules = _accessLoadSecurityRecords_(s.modules, ACCESS_MANAGEMENT_FIELDS.modules);
+    const operations = _accessLoadSecurityRecords_(s.operations, ACCESS_MANAGEMENT_FIELDS.operations);
+    const permissions = _accessLoadSecurityRecords_(s.permissions, ACCESS_MANAGEMENT_FIELDS.permissions);
     return {
-      modules: modules.map(item => ({ modulo_id: _accessText_(item.modulo_id), codigo: _accessUpper_(item.codigo), nombre: _accessText_(item.nombre), active: _accessIsActive_(item.active) })),
-      operations,
-      permissions: (result.permisos || []).map(item => {
+      modules: modules.map(item => ({
+        modulo_id: _accessText_(item.modulo_id), codigo: _accessUpper_(item.codigo),
+        nombre: _accessText_(item.nombre), active: _accessIsActive_(item.active)
+      })),
+      operations: _accessGetOperationCatalog_(operations),
+      permissions: permissions.map(item => {
         const module = modules.find(candidate => _accessText_(candidate.modulo_id) === _accessText_(item.modulo_id)) || {};
-        return { permiso_id: _accessText_(item.permiso_id), codigo: _accessUpper_(item.codigo), modulo_id: _accessText_(item.modulo_id), modulo_codigo: _accessUpper_(module.codigo), modulo_nombre: _accessText_(module.nombre), operacion_id: _accessUpper_(item.operacion_id), operacion_nombre: _accessText_((result.operaciones.find(op => _accessUpper_(op.operacion_id) === _accessUpper_(item.operacion_id)) || {}).nombre), descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active) };
+        return {
+          permiso_id: _accessText_(item.permiso_id), codigo: _accessUpper_(item.codigo),
+          modulo_id: _accessText_(item.modulo_id), modulo_codigo: _accessUpper_(module.codigo),
+          modulo_nombre: _accessText_(module.nombre), operacion_id: _accessUpper_(item.operacion_id),
+          operacion_nombre: _accessText_((operations.find(op => _accessUpper_(op.operacion_id) === _accessUpper_(item.operacion_id)) || {}).nombre),
+          descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active)
+        };
       })
     };
   }
+
   if (tab === 'assignments') {
     const auth = _accessRequirePermission_('ROLES_ADMINISTRAR');
-    const result = auth.securityData;
+    const roles = _accessLoadSecurityRecords_(s.roles, ACCESS_MANAGEMENT_FIELDS.roles);
+    const modules = _accessLoadSecurityRecords_(s.modules, ACCESS_MANAGEMENT_FIELDS.modules);
+    const operations = _accessLoadSecurityRecords_(s.operations, ACCESS_MANAGEMENT_FIELDS.operations);
+    const permissions = _accessLoadSecurityRecords_(s.permissions, ACCESS_MANAGEMENT_FIELDS.permissions);
+    const rolePermissions = _accessLoadSecurityRecords_(s.rolePermissions, ACCESS_MANAGEMENT_FIELDS.rolePermissions);
     return {
-      roles: (result.roles || []).map(item => ({ rol_id: _accessText_(item.rol_id), nombre: _accessText_(item.nombre), descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active) })),
-      modules: (result.modulos || []).map(item => ({ modulo_id: _accessText_(item.modulo_id), codigo: _accessUpper_(item.codigo), nombre: _accessText_(item.nombre), active: _accessIsActive_(item.active) })),
-      permissions: (result.permisos || []).map(item => ({ permiso_id: _accessText_(item.permiso_id), codigo: _accessUpper_(item.codigo), modulo_id: _accessText_(item.modulo_id), operacion_id: _accessUpper_(item.operacion_id), operacion_nombre: _accessText_((result.operaciones.find(op => _accessUpper_(op.operacion_id) === _accessUpper_(item.operacion_id)) || {}).nombre), descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active) })),
-      rolePermissions: (result.rolPermiso || []).map(item => ({ rol_id: _accessText_(item.rol_id), permiso_id: _accessText_(item.permiso_id), active: _accessIsActive_(item.active) }))
+      roles: roles.map(item => ({
+        rol_id: _accessText_(item.rol_id), nombre: _accessText_(item.nombre),
+        descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active)
+      })),
+      modules: modules.map(item => ({
+        modulo_id: _accessText_(item.modulo_id), codigo: _accessUpper_(item.codigo),
+        nombre: _accessText_(item.nombre), active: _accessIsActive_(item.active)
+      })),
+      permissions: permissions.map(item => ({
+        permiso_id: _accessText_(item.permiso_id), codigo: _accessUpper_(item.codigo),
+        modulo_id: _accessText_(item.modulo_id), operacion_id: _accessUpper_(item.operacion_id),
+        operacion_nombre: _accessText_((operations.find(op => _accessUpper_(op.operacion_id) === _accessUpper_(item.operacion_id)) || {}).nombre),
+        descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active)
+      })),
+      rolePermissions: rolePermissions.map(item => ({
+        rol_id: _accessText_(item.rol_id), permiso_id: _accessText_(item.permiso_id),
+        active: _accessIsActive_(item.active)
+      }))
     };
   }
+
   if (tab === 'operations') {
     const auth = _accessRequirePermission_('PERMISOS_ADMINISTRAR');
-    return { operations: _accessGetOperationCatalog_(auth.securityData.operaciones) };
+    return { operations: _accessGetOperationCatalog_(
+      _accessLoadSecurityRecords_(s.operations, ACCESS_MANAGEMENT_FIELDS.operations)
+    ) };
   }
+
   if (tab === 'scopetypes') {
     const auth = _accessRequirePermission_('AMBITOS_ACCESO_ADMINISTRAR');
-    return { scopeTypes: auth.securityData.tiposAmbito.filter(_accessCatalogIsActive_).map(item => ({
-      tipo_ambito_id: _accessUpper_(item.tipo_ambito_id), nombre: _accessText_(item.nombre), descripcion: _accessText_(item.descripcion),
-      entidad_referencia: _accessUpper_(item.entidad_referencia), requiere_referencia: _accessFlag_(item.requiere_referencia),
-      permite_descendientes: _accessFlag_(item.permite_descendientes), active: _accessCatalogIsActive_(item)
-    })) };
+    return {
+      scopeTypes: _accessLoadSecurityRecords_(s.scopeTypes, ACCESS_MANAGEMENT_FIELDS.scopeTypes)
+        .filter(_accessCatalogIsActive_).map(item => ({
+          tipo_ambito_id: _accessUpper_(item.tipo_ambito_id),
+          nombre: _accessText_(item.nombre),
+          descripcion: _accessText_(item.descripcion),
+          entidad_referencia: _accessUpper_(item.entidad_referencia),
+          requiere_referencia: _accessFlag_(item.requiere_referencia),
+          permite_descendientes: _accessFlag_(item.permite_descendientes),
+          active: _accessCatalogIsActive_(item)
+        }))
+    };
   }
   throw new Error('La pestaña solicitada no admite actualización independiente.');
+}
+
+
+/**
+ * Devuelve los roles y ámbitos de una sola persona para abrir su editor.
+ * No carga las relaciones de las demás cuentas.
+ */
+function getAccessUserConfiguration(personaId) {
+  _accessRequirePermission_('USUARIOS_ADMINISTRAR');
+  _accessRequirePermission_('ROLES_ADMINISTRAR');
+  const id = _accessText_(personaId);
+  if (!id) throw new Error('Debes indicar persona_id.');
+
+  const s = ACCESS_MANAGEMENT_CONFIG.sheets;
+  const users = _accessFindSecurityRecords_(s.users, 'persona_id', [id], ACCESS_MANAGEMENT_FIELDS.users);
+  if (!users.some(item => _accessIsActive_(item.active))) {
+    throw new Error('La persona no tiene una cuenta activa.');
+  }
+  const userRoles = _accessFindSecurityRecords_(s.userRoles, 'persona_id', [id], ACCESS_MANAGEMENT_FIELDS.userRoles);
+  const scopes = _accessFindSecurityRecords_(s.scopes, 'persona_id', [id], ACCESS_MANAGEMENT_FIELDS.scopes);
+  const activeScopesByModule = new Set(scopes.filter(item => _accessIsActive_(item.active))
+    .map(item => _accessText_(item.modulo_id)));
+  return {
+    userRoles: userRoles.map(item => ({
+      persona_id: _accessText_(item.persona_id),
+      modulo_id: _accessText_(item.modulo_id),
+      rol_id: _accessText_(item.rol_id),
+      active: _accessIsActive_(item.active),
+      has_scopes: activeScopesByModule.has(_accessText_(item.modulo_id))
+    })),
+    scopes: scopes.map(item => ({
+      persona_id: _accessText_(item.persona_id),
+      modulo_id: _accessText_(item.modulo_id),
+      tipo_ambito_id: _accessUpper_(item.tipo_ambito_id),
+      referencia_id: _accessText_(item.referencia_id),
+      incluir_descendientes: _accessText_(item.incluir_descendientes),
+      active: _accessIsActive_(item.active)
+    }))
+  };
 }
 
 
