@@ -2324,8 +2324,11 @@ function getAccessManagementTabData(tabId) {
  * No carga las relaciones de las demás cuentas.
  */
 function getAccessUserConfiguration(personaId) {
-  _accessRequirePermission_('USUARIOS_ADMINISTRAR');
-  _accessRequirePermission_('ROLES_ADMINISTRAR');
+  const auth = _accessRequirePermission_('USUARIOS_ADMINISTRAR');
+  const accessModuleId = _accessResolveModuleId_(auth, ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses);
+  if (!_accessHasPermission_(auth, 'ROLES_ADMINISTRAR', accessModuleId)) {
+    throw new Error('No tienes autorización para administrar roles por módulo.');
+  }
   const id = _accessText_(personaId);
   if (!id) throw new Error('Debes indicar persona_id.');
 
