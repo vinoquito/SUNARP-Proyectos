@@ -584,8 +584,9 @@ test('getDirectoryInitialData carga solo catálogos y una página, reutilizando 
   const result = vmContext.getDirectoryInitialData();
   assert.equal(queryCalls.length, 5);
   assert.equal(result.records.length, 1);
-  assert.equal(result.records[0].persona_nombre, undefined);
-  assert.equal(result.records[0].nombre_completo, 'Ana Pérez');
+  assert.equal(result.records[0].nombres, 'Ana');
+  assert.equal(result.records[0].apellidos, 'Pérez');
+  assert.equal(result.records[0].cargo_name, 'Analista');
   assert.equal(result.summary.people, 1);
   assert.equal(result.summary.assignments, 1);
   assert.deepEqual(Array.from(result.catalogs.filterContract.selectable.cargoIds), ['CAR_001']);
