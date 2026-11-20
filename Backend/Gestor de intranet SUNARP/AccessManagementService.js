@@ -2334,8 +2334,8 @@ function getAccessUserConfiguration(personaId) {
 
   const s = ACCESS_MANAGEMENT_CONFIG.sheets;
   const users = _accessFindSecurityRecords_(s.users, 'persona_id', [id], ACCESS_MANAGEMENT_FIELDS.users);
-  if (!users.some(item => _accessIsActive_(item.active))) {
-    throw new Error('La persona no tiene una cuenta activa.');
+  if (!users.length) {
+    throw new Error('La persona no tiene una cuenta registrada.');
   }
   const userRoles = _accessFindSecurityRecords_(s.userRoles, 'persona_id', [id], ACCESS_MANAGEMENT_FIELDS.userRoles);
   const scopes = _accessFindSecurityRecords_(s.scopes, 'persona_id', [id], ACCESS_MANAGEMENT_FIELDS.scopes);
