@@ -723,6 +723,11 @@ function findRecordsByFields(source, filters, options) {
             ? actualNormalized.toLocaleLowerCase() === expectedNormalized.toLocaleLowerCase()
             : actualNormalized === expectedNormalized;
         }
+        if (field === searchField && options.matchCase === false) {
+          const actualNormalized = String(record[field] === null || record[field] === undefined ? '' : record[field]).trim();
+          const expectedNormalized = String(value === null || value === undefined ? '' : value).trim();
+          return actualNormalized.toLocaleLowerCase() === expectedNormalized.toLocaleLowerCase();
+        }
         return _coreValuesEqual_(record[field], value);
       });
     });
