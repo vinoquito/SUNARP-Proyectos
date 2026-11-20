@@ -2413,7 +2413,9 @@ function getAccessAuditHistory(filters) {
       limit: pageSize,
       requiredHeaders: ACCESS_MANAGEMENT_FIELDS.audit
     });
-    records = recent.records;
+    records = recent.records.sort((a, b) =>
+      new Date(b.fecha_hora).getTime() - new Date(a.fecha_hora).getTime()
+    );
     total = recent.total;
   }
 
