@@ -187,7 +187,7 @@ test('la tabla de usuarios usa filtros aplicados y reinicia su página al actual
   assert.ok(implementation.includes('appliedSedeId = siteSelect.value'));
   assert.ok(implementation.includes('appliedRoleId = roleSelect.value'));
   assert.ok(implementation.includes('const sedeId = appliedSedeId'));
-  assert.ok(implementation.includes('updateApplyState();\\n      // Recrear'));
+  assert.ok(implementation.includes('renderTable(host, tableConfig)'));
 });
 
 test('la consulta de usuarios aplica paginación en servidor y limita el payload', () => {
