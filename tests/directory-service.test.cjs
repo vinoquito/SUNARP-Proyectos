@@ -75,7 +75,7 @@ test('las lecturas del Directorio no ejecutan validación integral de todas las 
     assert.ok(start >= 0, 'Debe existir ' + name);
     const next = serviceSource.indexOf('\nfunction ', start + 10);
     const implementation = serviceSource.slice(start, next < 0 ? serviceSource.length : next);
-    assert.match(implementation, /validateSnapshot:\\s*false/);
+    assert.match(implementation, /validateSnapshot:\s*false/);
   }
 
   const saveStart = serviceSource.indexOf('function saveDirectoryAssignment(');
@@ -669,7 +669,7 @@ test('la carga inicial no recupera ni entrega datos personales de todos los serv
   const initialDataStart = serviceSource.indexOf('function getDirectoryInitialData() {');
   const initialDataEnd = serviceSource.indexOf('function listDirectoryPeople(', initialDataStart);
   const initialDataSource = serviceSource.slice(initialDataStart, initialDataEnd);
-  assert.match(initialDataSource, /_directoryLoadContext_\(\{ includePersonalData: false, includePeople: false \}\)/);
+  assert.match(initialDataSource, /_directoryLoadContext_\(\{ includePersonalData: false, includePeople: false, validateSnapshot: false \}\)/);
   assert.doesNotMatch(initialDataSource, /context\.datosPersonales|tipo_documento|numero_documento|fecha_nacimiento/);
   assert.match(serviceSource, /function getDirectoryPersonById\([\s\S]*?findRecordsByFields\([\s\S]*?servidor_id/s);
   assert.match(frontendScript, /callServer\('getDirectoryPersonById', record\.persona_id\)/);
