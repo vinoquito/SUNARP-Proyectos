@@ -9,11 +9,13 @@ const servicePath = path.join(root, 'Backend/Gestor de intranet SUNARP/Directory
 const frontendPath = path.join(root, 'Backend/Gestor de intranet SUNARP/DirectoryScripts.html');
 const coreTestsPath = path.join(root, 'Backend/SUNARP Core/DataCoreTests.js');
 const coreRepositoryPath = path.join(root, 'Backend/SUNARP Core/DataRepository.js');
+const uiDataTablePath = path.join(root, 'Backend/SUNARP UI/UIDataTableScripts.html');
 
 const serviceSource = fs.readFileSync(servicePath, 'utf8');
 const frontendSource = fs.readFileSync(frontendPath, 'utf8');
 const coreTestsSource = fs.readFileSync(coreTestsPath, 'utf8');
 const coreRepositorySource = fs.readFileSync(coreRepositoryPath, 'utf8');
+const uiDataTableSource = fs.readFileSync(uiDataTablePath, 'utf8');
 
 const scriptStart = frontendSource.split('<script>')[1];
 assert.ok(scriptStart, 'DirectoryScripts.html debe contener el bloque JavaScript principal');
@@ -763,6 +765,6 @@ test('el contrato de filtros reconoce TOTAL sin convertirlo en una selección re
 test('el DataTable consume la primera página entregada por el bootstrap sin repetir la consulta inicial', () => {
   assert.match(frontendSource, /initialData:\s*state\.initialPage\s*\|\|\s*null/);
   assert.match(frontendSource, /state\.initialPage\s*=\s*result\.page/);
-  assert.match(coreRepositorySource, /hasInitialServerData/);
-  assert.match(coreRepositorySource, /mode === 'server' && !hasInitialServerData/);
+  assert.match(uiDataTableSource, /hasInitialServerData/);
+  assert.match(uiDataTableSource, /mode === 'server' && !hasInitialServerData/);
 });
