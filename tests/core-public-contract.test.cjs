@@ -144,7 +144,7 @@ test('el documento del contrato declara exactamente los métodos públicos y sus
   assert.deepEqual([...documented.keys()].sort(), [...declarations.keys()].sort());
 
   for (const [name, signature] of documented) {
-    const signatureMatch = signature.match(/^\\((.*)\\)$/);
+    const signatureMatch = signature.match(/^\((.*)\)$/);
     assert.ok(signatureMatch, 'Firma documentada inválida para ' + name + '.');
     const documentedParameters = signatureMatch[1].split(',')
       .map(value => value.trim()).filter(Boolean);
