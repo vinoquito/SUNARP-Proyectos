@@ -1,8 +1,8 @@
 # Contrato público de SUNARP Core — extensión de fuente para v11 (base v10)
 
-**Estado:** Fase 1 completada para la arquitectura integrada de SUNARP Core y Gestor de intranet SUNARP. Core v10 está publicada como biblioteca, las pruebas de Core y las 192 pruebas de regresión del repositorio fueron satisfactorias, el Gestor fue sincronizado con la versión 10 y la validación funcional inicial confirmó autenticación y carga de Información de personal. La auditoría confirmó que no hay activadores instalados en Core ni en Gestor; las ediciones manuales requieren invalidación explícita y esta limitación queda aceptada/documentada. Los demás proyectos Backend aún no unificados quedan fuera del alcance de esta fase.  
+**Estado:** Fase 1 completada y Fase 2 implementada en esta rama. SUNARP Core v11 está publicada como biblioteca y el manifiesto del Gestor ya referencia la versión 11. La sincronización del Gestor con Apps Script y su validación mediante el despliegue de pruebas están pendientes. No se ha actualizado el despliegue productivo. La auditoría confirmó que no hay activadores instalados en Core ni en Gestor; las ediciones manuales requieren invalidación explícita y esta limitación queda aceptada/documentada. Los demás proyectos Backend aún no unificados quedan fuera del alcance de esta fase.  
 **Biblioteca:** `1mDzO7uTarQCKYpS5U7pMv5go0Wh76k3JoIh5GvxWPfU0zoUG7Jfp17tD`  
-**Consumidor del repositorio:** Gestor de intranet SUNARP. El manifiesto del repositorio y el proyecto Apps Script consumidor están sincronizados con Core versión 10. La aplicación se probó mediante el mecanismo de pruebas existente; no se actualizó el despliegue productivo.
+**Consumidor del repositorio:** Gestor de intranet SUNARP. El manifiesto del repositorio referencia Core versión 11. Está pendiente sincronizar este manifiesto y el código del Gestor con el proyecto Apps Script consumidor y validar la integración mediante el despliegue de pruebas existente; no se debe actualizar el despliegue productivo.
 
 Este documento enumera la superficie global que Apps Script expone a los proyectos consumidores, describe los parámetros y las respuestas observables en el código y diferencia expresamente las lecturas completas de las consultas selectivas. Las funciones privadas cuyos nombres empiezan y terminan con guion bajo no forman parte de la API de la biblioteca.
 
@@ -536,7 +536,7 @@ Ejecuta la misma validación y lanza un error agregado si `valid` es falso. Devu
 
 ### 10.1 Consumidores comprobados en esta rama
 
-- **Gestor de intranet SUNARP** es el único proyecto de Apps Script que declara e invoca directamente la biblioteca `SUNARPCore` en esta rama. El manifiesto del repositorio referencia la versión 10 publicada. Queda pendiente sincronizarlo con el proyecto Apps Script consumidor y validar la integración mediante el despliegue de pruebas existente; no se debe actualizar el despliegue productivo.
+- **Gestor de intranet SUNARP** es el único proyecto de Apps Script que declara e invoca directamente la biblioteca `SUNARPCore` en esta rama. El manifiesto del repositorio referencia la versión 11 publicada. Queda pendiente sincronizarlo con el proyecto Apps Script consumidor y validar la integración mediante el despliegue de pruebas existente; no se debe actualizar el despliegue productivo.
 - La resolución ordinaria de identidad del Gestor obtiene el correo de sesión, busca una coincidencia exacta en `personas.correo_institucional` mediante `resolveIdentity` y proyecta únicamente `persona_id`, correo, nombres y apellidos. Exige exactamente una coincidencia y entrega `persona_id` a `resolveAuthorizationContext`; Core no busca identidades por correo dentro del motor de autorización.
 - La autorización ordinaria del Gestor consulta las relaciones activas de la persona solicitante, sus ámbitos, roles asociados, relaciones rol-permiso y permisos correspondientes; carga el catálogo de módulos mediante la caché central. No carga las nueve tablas administrativas completas durante el login. `_accessLoadSecurityData_()`, que sí lee el snapshot integral de seguridad, se reserva para la operación explícita de mantenimiento `validateAccessManagementIntegrity()`.
 - La migración excepcional `migrateAccessManagementSchema()` modifica las fuentes `Permisos`, `AmbitosAcceso` y `TiposAmbito`. Ahora utiliza `runSourceWriteBatch`: el bloqueo, `flush` y las invalidaciones se coordinan desde la biblioteca Core para evitar carreras con CRUD de Core. La función exige que la biblioteca exponga ese método y se niega a iniciar escrituras cuando el consumidor permanece en una versión anterior. El callback no tiene rollback; un error tras la primera mutación puede dejar cambios parciales y exige inspección antes de reintentar.
@@ -561,7 +561,7 @@ Este inventario describe los consumidores comprobados en el repositorio y la ram
 
 - `getAccessAuditHistory()` requiere `AUDITORIA_VER`. Cuando no hay filtros de texto, usa `listTailRecords()` con `evento_id` y `fecha_hora`; las fechas `desde` y `hasta` deben ser fechas calendario `YYYY-MM-DD` válidas y se convierten en límites de inicio y fin de día inclusivos. Core obtiene el total y la página ordenada sin recuperar todas las columnas de todas las filas.
 - Cuando hay filtros de texto, el Gestor obtiene candidatos mediante búsquedas exactas o parciales en Core, aplica los filtros restantes, calcula el total exacto y retiene únicamente los primeros `offset + pageSize` eventos en orden cronológico descendente. El rango temporal también se aplica de forma inclusiva.
-- La ruta integral queda únicamente como compatibilidad con consumidores de Core v9 que no exponen `listTailRecords()`. El Gestor versionado en esta rama declara Core v10 y utiliza la ruta indexada.
+- La ruta integral queda únicamente como compatibilidad con consumidores de Core v9 que no exponen `listTailRecords()`. El Gestor versionado en esta rama declara Core v11 y utiliza la ruta indexada.
 
 ### 10.4 Historial por entidad
 
@@ -594,7 +594,7 @@ Se completaron las verificaciones de publicación, sincronización e integració
 
 **Estado: FASE 1 COMPLETADA para la arquitectura actualmente integrada de SUNARP Core y Gestor de intranet SUNARP.** No se debe interpretar como certificación de los proyectos Backend aún no unificados, ni como afirmación de invalidación automática para ediciones manuales.
 
-No se actualizó ningún despliegue productivo. Core v10 permanece como biblioteca versionada; el despliegue productivo de Gestor no fue modificado. **No se afirma que el despliegue productivo de Gestor utilice v10**; la validación se limita al código sincronizado y al mecanismo de pruebas existente.
+No se actualizó ningún despliegue productivo. Core v11 permanece como biblioteca versionada y el manifiesto del repositorio del Gestor ya referencia v11. El código del Gestor aún debe sincronizarse con Apps Script y probarse mediante el despliegue de pruebas. **No se afirma que el despliegue productivo de Gestor utilice v11**; el despliegue productivo no fue modificado.
 
 ## 12. Referencias oficiales de Apps Script
 
@@ -605,4 +605,4 @@ No se actualizó ningún despliegue productivo. Core v10 permanece como bibliote
 
 ## Nota de publicación de la extensión
 
-`getOrBuildCachedValue` forma parte de la fuente de esta rama, pero no de la biblioteca v10 ya publicada. Para habilitar el nuevo listado de usuarios se requiere publicar una nueva versión de SUNARP Core que incluya esta función y actualizar después la dependencia del Gestor a esa versión. La referencia del manifiesto se mantiene en v10 hasta que la nueva versión exista realmente.
+`getOrBuildCachedValue` está incluida en la biblioteca SUNARP Core v11, ya publicada. El manifiesto del Gestor en esta rama referencia la versión 11; resta sincronizar el proyecto Apps Script consumidor y validar la integración en el despliegue de pruebas. No se debe modificar el despliegue productivo.
