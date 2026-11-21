@@ -657,14 +657,33 @@ const DirectoryPage = (() => {
       );
     }
 
+    // El servicio ya entrega la primera página durante el bootstrap.
+    // Consumirla aquí evita repetir inmediatamente la misma consulta al servidor.
+    const initialPage = state.initialPage;
+    state.initialPage = null;
+
     const options = {
 
       containerId: 'directoryTableContainer',
 
       mode: 'server',
-      initialData: state.initialPage || null,
+      initialData: initialPage || null,
 
       loadData: async params => {
+        const elements = getElements();
+        const isUnfilteredFirstPage =
+          initialPage &&
+          Number(params.page || 1) === 1 &&
+          Number(params.pageSize || 10) === 10 &&
+          !String(params.search || '').trim() &&
+          !(elements.sedeFilter && elements.sedeFilter.value) &&
+          !(elements.cargoFilter && elements.cargoFilter.value) &&
+          !state.hierarchyPath.length;
+
+        if (isUnfilteredFirstPage) {
+          return initialPage;
+        }
+
         const requestStartedAt = performance.now();
         const elements = getElements();
         const result = await callServer('listDirectoryAssignments', {
