@@ -1273,7 +1273,7 @@ function getDirectoryInitialData() {
   const initialPage = _directoryExecuteAssignmentQuery_(
     context,
     authorization,
-    { active: true },
+    { active: 'all' },
     'asignacion_id',
     0,
     10,
