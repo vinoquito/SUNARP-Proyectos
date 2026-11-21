@@ -809,7 +809,10 @@ function _coreQueryLoadCandidateRows_(source, groups, requiredHeaders, projectio
     }
   });
 
-  const windowSize = 25;
+  // Leer bloques amplios reduce llamadas a SpreadsheetApp cuando el ámbito
+  // autorizado incluye miles de candidatos. La proyección sigue limitada a
+  // las columnas necesarias y la autorización se evalúa registro por registro.
+  const windowSize = 500;
   const windows = new Map();
   rowNumbers.forEach(rowNumber => {
     const startRow = dataStartRow + Math.floor((rowNumber - dataStartRow) / windowSize) * windowSize;
