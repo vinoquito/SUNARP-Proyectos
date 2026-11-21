@@ -545,21 +545,28 @@ test('la búsqueda documental comprueba la cuenta por persona_id sin cargar el s
   assert.equal(fullLoads, 0);
 });
 
-test('la actualización de filtros invalida respuestas RPC anteriores de usuarios', () => {
-  const start = accessUiSource.indexOf('async function loadFilteredUsers()');
+test('la selección de filtros invalida RPC anteriores y consulta inmediatamente', () => {
+  const start = accessUiSource.indexOf('function loadFilteredUsers()');
   const end = accessUiSource.indexOf('siteSelect.addEventListener', start);
   const implementation = accessUiSource.slice(start, end);
   assert.ok(implementation.includes('requestNumber += 1'));
   assert.ok(implementation.includes('renderTable(host, tableConfig)'));
+  assert.ok(implementation.includes('state.userFilters'));
 });
 
-test('la tabla de usuarios usa filtros aplicados y reinicia su página al actualizar', () => {
+test('la tabla de usuarios conserva filtros y ejecuta la consulta al cambiar sede o rol', () => {
   const start = accessUiSource.indexOf('function renderUsers(host) {');
   const end = accessUiSource.indexOf('function openUserModal(row) {', start);
   const implementation = accessUiSource.slice(start, end);
   assert.ok(implementation.includes('appliedSedeId = siteSelect.value'));
   assert.ok(implementation.includes('appliedRoleId = roleSelect.value'));
-  assert.ok(implementation.includes('const sedeId = appliedSedeId'));
+  assert.ok(implementation.includes("'Selecciona una sede'"));
+  assert.ok(implementation.includes("'Selecciona un rol'"));
+  assert.ok(implementation.includes("{ value: '__ALL__', label: 'Todas las sedes' }"));
+  assert.ok(implementation.includes("{ value: '__ALL__', label: 'Todos los roles' }"));
+  assert.ok(implementation.includes("siteSelect.addEventListener('change', loadFilteredUsers)"));
+  assert.ok(implementation.includes("roleSelect.addEventListener('change', loadFilteredUsers)"));
+  assert.doesNotMatch(implementation, /createButton\(\s*'Actualizar'/);
   assert.ok(implementation.includes('renderTable(host, tableConfig)'));
 });
 
@@ -1204,20 +1211,36 @@ test('los identificadores de roles y permisos se normalizan y autogeneran', () =
   assert.match(accessSource, /operacion_id/);
 });
 
-test('el listado de usuarios se consulta solo con filtro de sede o rol', () => {
+test('el listado de usuarios se consulta al seleccionar un filtro y admite Todas las sedes explícitamente', () => {
   assert.match(accessSource, /users:\s*\[\]/);
   assert.match(accessSource, /function getAccessUsers\(filters\)/);
-  assert.match(accessSource, /if \(!sedeId && !roleId\) return \{ items: \[\], total: 0 \}/);
+  assert.match(accessSource, /const allSitesSelected = filters\.all_sedes === true/);
+  assert.match(accessSource, /if \(!sedeId && !roleId && !allSitesSelected\) return \{ items: \[\], total: 0 \}/);
+  assert.match(accessSource, /if \(!candidateSets\.length\)[\s\S]*?ACCESS_MANAGEMENT_CONFIG\.sheets\.users/);
   assert.match(accessUiSource, /createField\('Sede', siteSelect\)/);
   assert.match(accessUiSource, /createField\('Rol', roleSelect\)/);
   assert.match(accessUiSource, /rpc\('getAccessUsers'/);
-  assert.match(accessUiSource, /createButton\(\s*'Actualizar',[\s\S]*?\(\) => loadFilteredUsers\(true\)/);
-  assert.match(accessUiSource, /siteSelect\.addEventListener\('change', updateApplyState\)/);
-  assert.match(accessUiSource, /roleSelect\.addEventListener\('change', updateApplyState\)/);
-  assert.doesNotMatch(accessUiSource, /siteSelect\.addEventListener\('change', \(\) => loadFilteredUsers/);
-  assert.doesNotMatch(accessUiSource, /roleSelect\.addEventListener\('change', \(\) => loadFilteredUsers/);
+  assert.match(accessUiSource, /all_sedes: allSitesSelected/);
+  assert.match(accessUiSource, /siteSelect\.addEventListener\('change', loadFilteredUsers\)/);
+  assert.match(accessUiSource, /roleSelect\.addEventListener\('change', loadFilteredUsers\)/);
+  assert.doesNotMatch(accessUiSource, /createButton\(\s*'Actualizar',[\s\S]*?loadFilteredUsers/);
   assert.match(accessUiSource, /searchPlaceholder: 'Buscar por nombre o correo institucional/);
   assert.match(accessUiSource, /mode: 'server'/);
+});
+
+test('las pestañas de permisos y asignaciones cargan sus datos al abrirse y conservan la selección', () => {
+  assert.match(accessUiSource, /tabDataLoaded: \{ permissions: false, assignments: false, operations: false \}/);
+  assert.match(accessUiSource, /permissions: async \(\) => \{/);
+  assert.match(accessUiSource, /assignments: async \(\) => \{/);
+  assert.match(accessUiSource, /state\.tabDataLoaded\[tabId\] = true/);
+  assert.match(accessUiSource, /state\.selectedAssignmentRoleId/);
+});
+
+test('la búsqueda de persona muestra un loader transparente dentro del formulario modal', () => {
+  assert.match(accessUiSource, /function beginElementLoading\(target, message\)/);
+  assert.match(accessUiSource, /beginElementLoading\(\s*form,/);
+  assert.match(accessUiSource, /access-element-loader/);
+  assert.match(accessViewSource, /\.access-element-loader\s*\{/);
 });
 
 test('los formularios de rol y permiso no permiten ingresar IDs, códigos ni estados manualmente', () => {
