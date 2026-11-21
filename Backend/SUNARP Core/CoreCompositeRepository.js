@@ -85,12 +85,12 @@ function _coreGetTableForParentMatch_(source, parentMatch) {
   parentFields.forEach(field => {
     const expected = String(parentMatch[field]).trim();
     const regexSpecialCharacters = new Set([
-      '\\\\', '.', '*', '+', '?', '^', '$', '{', '}', '(', ')', '|', '[', ']'
+      '\\', '.', '*', '+', '?', '^', '$', '{', '}', '(', ')', '|', '[', ']'
     ]);
     const escapedExpected = Array.from(expected).map(character =>
-      regexSpecialCharacters.has(character) ? '\\\\' + character : character
+      regexSpecialCharacters.has(character) ? '\\' + character : character
     ).join('');
-    const pattern = '^\\\\s*' + escapedExpected + '\\\\s*$';
+    const pattern = '^\\s*' + escapedExpected + '\\s*$';
     const matches = sheet.getRange(
       dataStartRow,
       headerMap[field] + 1,
