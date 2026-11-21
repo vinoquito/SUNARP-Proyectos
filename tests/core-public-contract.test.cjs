@@ -213,7 +213,7 @@ test('el contrato conserva los límites comprobados de consulta, invalidación y
   assert.doesNotMatch(contract, /fase específica de consistencia externa/i);
   assert.match(contract, /puede haber cambios parciales/);
   assert.match(contract, /`runCoreTests\(\)`/i);
-  assert.match(contract, /No se afirma que el despliegue productivo de Gestor utilice v10/);
+  assert.match(contract, /No se afirma que el despliegue productivo de Gestor utilice v11/);
   assert.match(contract, /versión 9/);
   assert.ok(contract.includes('### 10.1 Consumidores comprobados en esta rama'));
   assert.ok(contract.includes('`_accessLoadSecurityData_()`'));
