@@ -1723,3 +1723,25 @@ test('la paginación del historial por entidad reutiliza el índice cacheado y c
   assert.equal(builds, 1);
   assert.equal(searches, 1);
 });
+
+test('los límites de fecha de auditoría rechazan días inexistentes y conservan el día completo inclusivo', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  const from = sandbox._accessAuditDateBound_('2026-11-20', false);
+  const to = sandbox._accessAuditDateBound_('2026-11-20', true);
+  assert.equal(from.getHours(), 0);
+  assert.equal(from.getMinutes(), 0);
+  assert.equal(from.getSeconds(), 0);
+  assert.equal(from.getMilliseconds(), 0);
+  assert.equal(to.getHours(), 23);
+  assert.equal(to.getMinutes(), 59);
+  assert.equal(to.getSeconds(), 59);
+  assert.equal(to.getMilliseconds(), 999);
+  assert.throws(
+    () => sandbox._accessAuditDateBound_('2026-02-30', false),
+    /filtro de fecha de auditoría no es válido/
+  );
+  assert.throws(
+    () => sandbox._accessAuditDateBound_('20/11/2026', true),
+    /filtro de fecha de auditoría no es válido/
+  );
+});

@@ -3149,8 +3149,22 @@ function _accessInsertAuditPageRecord_(records, record, maxRecords) {
 function _accessAuditDateBound_(value, endOfDay) {
   const text = _accessText_(value);
   if (!text) return null;
+
+  const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!parts) {
+    throw new Error('El filtro de fecha de auditoría no es válido: ' + text + '.');
+  }
+
+  const year = Number(parts[1]);
+  const month = Number(parts[2]);
+  const day = Number(parts[3]);
   const date = new Date(text + (endOfDay ? 'T23:59:59.999' : 'T00:00:00'));
-  if (Number.isNaN(date.getTime())) {
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getFullYear() !== year ||
+    date.getMonth() + 1 !== month ||
+    date.getDate() !== day
+  ) {
     throw new Error('El filtro de fecha de auditoría no es válido: ' + text + '.');
   }
   return date;

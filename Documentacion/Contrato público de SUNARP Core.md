@@ -558,7 +558,7 @@ Este inventario describe los consumidores comprobados en el repositorio y la ram
 
 ### 10.3 Historial general de auditoría
 
-- `getAccessAuditHistory()` requiere `AUDITORIA_VER`. Cuando no hay filtros de texto, usa `listTailRecords()` con `evento_id` y `fecha_hora`; las fechas `desde` y `hasta` se convierten en límites de inicio y fin de día inclusivos. Core obtiene el total y la página ordenada sin recuperar todas las columnas de todas las filas.
+- `getAccessAuditHistory()` requiere `AUDITORIA_VER`. Cuando no hay filtros de texto, usa `listTailRecords()` con `evento_id` y `fecha_hora`; las fechas `desde` y `hasta` deben ser fechas calendario `YYYY-MM-DD` válidas y se convierten en límites de inicio y fin de día inclusivos. Core obtiene el total y la página ordenada sin recuperar todas las columnas de todas las filas.
 - Cuando hay filtros de texto, el Gestor obtiene candidatos mediante búsquedas exactas o parciales en Core, aplica los filtros restantes, calcula el total exacto y retiene únicamente los primeros `offset + pageSize` eventos en orden cronológico descendente. El rango temporal también se aplica de forma inclusiva.
 - La ruta integral queda únicamente como compatibilidad con consumidores de Core v9 que no exponen `listTailRecords()`. El Gestor versionado en esta rama declara Core v10 y utiliza la ruta indexada.
 
