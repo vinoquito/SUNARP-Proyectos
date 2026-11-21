@@ -3071,9 +3071,9 @@ window.SUNARPAccessHistory = Object.freeze({
     try {
       const tab = state.activeTab;
       state.auditPageCache = {};
+      state.userPageCache = {};
 
       if (tab === 'users') {
-        state.userPageCache = {};
         if (state.userListController) {
           await state.userListController.refresh();
         }
