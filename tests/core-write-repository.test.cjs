@@ -103,7 +103,14 @@ function createSandbox(initialRecords = []) {
 
   const context = vm.createContext({
     console: { warn() {}, log() {} },
-    SpreadsheetApp: { flush() {} }
+    SpreadsheetApp: { flush() {} },
+    LockService: {
+      getScriptLock: () => ({
+        waitLock() {},
+        hasLock: () => true,
+        releaseLock() {}
+      })
+    }
   });
   context._coreOpenSource_ = () => ({
     config: { headerRow: 1, sheetName: 'Test' },
