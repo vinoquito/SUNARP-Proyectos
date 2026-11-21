@@ -2606,26 +2606,39 @@ function getAccessManagementData() {
   const needsModules = capabilities.permissions || capabilities.scopes || capabilities.userRoles;
   const needsRoles = capabilities.roles || capabilities.users;
   const catalogsStartedAt = Date.now();
-  const modules = needsModules
-    ? _accessLoadSecurityRecords_(ACCESS_MANAGEMENT_CONFIG.sheets.modules, ACCESS_MANAGEMENT_FIELDS.modules)
-    : [];
-  const roles = needsRoles
-    ? _accessLoadSecurityRecords_(ACCESS_MANAGEMENT_CONFIG.sheets.roles, ACCESS_MANAGEMENT_FIELDS.roles)
-    : [];
-  const scopeTypes = capabilities.scopes
-    ? _accessLoadSecurityRecords_(ACCESS_MANAGEMENT_CONFIG.sheets.scopeTypes, ACCESS_MANAGEMENT_FIELDS.scopeTypes)
-    : [];
+  const bootstrapRequests = [];
+  if (needsModules) bootstrapRequests.push({
+    key: 'modules',
+    source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.modules),
+    requiredHeaders: ACCESS_MANAGEMENT_FIELDS.modules
+  });
+  if (needsRoles) bootstrapRequests.push({
+    key: 'roles',
+    source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.roles),
+    requiredHeaders: ACCESS_MANAGEMENT_FIELDS.roles
+  });
+  if (capabilities.scopes) bootstrapRequests.push({
+    key: 'scopeTypes',
+    source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.scopeTypes),
+    requiredHeaders: ACCESS_MANAGEMENT_FIELDS.scopeTypes
+  });
+  if (capabilities.users) bootstrapRequests.push({
+    key: 'sedes',
+    source: _accessSecuritySource_('Sedes'),
+    requiredHeaders: ['id', 'name']
+  });
 
+  // Agrupar fuentes del mismo libro en una sola lectura Core evita abrir
+  // repetidamente el archivo de Seguridad durante el bootstrap.
+  const bootstrapCatalogs = bootstrapRequests.length
+    ? SUNARPCore.listRecordsFromSourcesCached(bootstrapRequests, 300)
+    : {};
+  const modules = bootstrapCatalogs.modules || [];
+  const roles = bootstrapCatalogs.roles || [];
+  const scopeTypes = bootstrapCatalogs.scopeTypes || [];
+  const siteCatalogData = { sedes: bootstrapCatalogs.sedes || [] };
   const catalogElapsed = Date.now() - catalogsStartedAt;
-  const sitesStartedAt = Date.now();
-  const siteCatalogData = capabilities.users
-    ? SUNARPCore.listRecordsFromSourcesCached([{
-        key: 'sedes',
-        source: _accessSecuritySource_('Sedes'),
-        requiredHeaders: ['id', 'name']
-      }], 30)
-    : { sedes: [] };
-  const sitesElapsed = Date.now() - sitesStartedAt;
+  const sitesElapsed = 0;
   console.log('[AccessManagement] Bootstrap ms:', JSON.stringify({
     authorization: authElapsed,
     catalogs: catalogElapsed,
