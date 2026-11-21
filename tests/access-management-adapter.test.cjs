@@ -1261,7 +1261,14 @@ test('los formularios de rol y permiso no permiten ingresar IDs, códigos ni est
 });
 
 test('la administración incluye filtro de módulo, catálogo de operaciones y selección masiva por bloque', () => {
-  assert.match(accessUiSource, /key: 'modulo_id',[\s\S]*?label: 'Módulo'/);
+  assert.match(accessUiSource, /const moduleSelect = createSelect\(/);
+  assert.match(accessUiSource, /'Selecciona un módulo'/);
+  assert.match(accessUiSource, /label: 'Todos los módulos'/);
+  assert.match(accessUiSource, /moduleSelect\.addEventListener\('change', renderPermissionTable\)/);
+  assert.doesNotMatch(accessUiSource.slice(
+    accessUiSource.indexOf('function renderPermissions(host)'),
+    accessUiSource.indexOf('function renderOperations(host)')
+  ), /filters:\s*\[/);
   assert.match(accessUiSource, /function renderOperations\(host\)/);
   assert.match(accessUiSource, /operations: renderOperations/);
   assert.match(accessUiSource, /function renderScopeTypes\(host\)/);
@@ -1790,4 +1797,35 @@ test('el historial filtrado desempata por evento_id y coloca fechas inválidas a
     ['EVT_002', 'EVT_001', 'EVT_004', 'EVT_003']
   );
   assert.equal(result.total, 4);
+});
+
+
+test('Administración de accesos no presenta botones manuales de Actualizar y conserva resultados de Usuarios y Auditoría', () => {
+  const panelStart = accessUiSource.indexOf('function makeTabPanel(');
+  const panelEnd = accessUiSource.indexOf('function destroyTable(', panelStart);
+  const panel = accessUiSource.slice(panelStart, panelEnd);
+  assert.doesNotMatch(panel, /'Actualizar'/);
+  assert.match(accessUiSource, /userPageCache: \{\}/);
+  assert.match(accessUiSource, /auditPageCache: \{\}/);
+  assert.match(accessUiSource, /state\.userPageCache\[cacheKey\]/);
+  assert.match(accessUiSource, /state\.auditPageCache\[cacheKey\]/);
+  assert.match(accessUiSource, /No existen usuarios para los filtros seleccionados/);
+  assert.match(accessUiSource, /Selecciona una sede o un rol para consultar usuarios/);
+});
+
+test('el catálogo de tipos de documento se carga al abrir Nueva cuenta y no en el bootstrap de accesos', () => {
+  assert.match(accessUiSource, /needsDocumentTypes = !editing && state\.data\.documentTypesLoaded !== true/);
+  assert.match(accessUiSource, /rpc\('getAccessManagementTabData', 'documentTypes'\)/);
+  assert.match(accessSource, /if \(tab === 'documenttypes'\)/);
+  const bootstrap = accessSource.slice(
+    accessSource.indexOf('function getAccessManagementData()'),
+    accessSource.indexOf('function getAccessManagementTabData(', accessSource.indexOf('function getAccessManagementData()'))
+  );
+  assert.doesNotMatch(bootstrap, /_accessLoadDocumentTypes_\(/);
+});
+
+test('Información de personal registra tiempos de autorización, contexto y consultas paginadas', () => {
+  assert.match(directorySource, /\[DirectoryService\] Initial data ms:/);
+  assert.match(directorySource, /\[DirectoryService\] Assignment page ms:/);
+  assert.match(directoryUiSource, /\[DirectoryPage\] DataTable server request ms:/);
 });
