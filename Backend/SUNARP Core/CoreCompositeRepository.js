@@ -16,7 +16,7 @@ function _coreCompositeKey_(record, fields) {
 /**
  * Construye una vista de tabla limitada a las filas de un parentMatch.
  * Usa TextFinder sobre cada columna padre e intersecta números de fila;
- * solo lee las filas completas que realmente pertenecen al conjunto.
+ * recupera las filas candidatas en ventanas acotadas, sin materializar toda la hoja.
  *
  * Los padres de tipo string son el contrato normal de claves de relación.
  * Para valores no textuales se conserva el lector general por compatibilidad

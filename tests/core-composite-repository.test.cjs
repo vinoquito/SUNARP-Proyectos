@@ -118,12 +118,26 @@ function createSandbox(initialRecords = []) {
     spreadsheet: {},
     sheet
   });
-  context._coreReadCandidateRows_ = (_sheet, rowNumbers) => {
-    candidateRowsRead += rowNumbers.length;
-    const result = new Map();
+  context._coreReadCandidateRows_ = (_sheet, rowNumbers, _lastColumn, dataStartRow, windowSize) => {
+    const size = Number(windowSize) || 25;
+    const windows = new Map();
     rowNumbers.forEach(rowNumber => {
-      const entry = entries.find(item => item.rowNumber === rowNumber);
-      if (entry) result.set(rowNumber, entry.values.slice());
+      const startRow = dataStartRow +
+        Math.floor((rowNumber - dataStartRow) / size) * size;
+      if (!windows.has(startRow)) windows.set(startRow, []);
+      windows.get(startRow).push(rowNumber);
+    });
+    const result = new Map();
+    windows.forEach((candidates, startRow) => {
+      const endRow = Math.min(
+        startRow + size - 1,
+        Math.max(...candidates)
+      );
+      candidateRowsRead += endRow - startRow + 1;
+      candidates.forEach(rowNumber => {
+        const entry = entries.find(item => item.rowNumber === rowNumber);
+        if (entry) result.set(rowNumber, entry.values.slice());
+      });
     });
     return result;
   };
@@ -235,7 +249,7 @@ test('syncRecordsByKey conserva el padre validado cuando desiredRecords lo repit
   assert.equal(sandbox.getInvalidations(), 1);
 });
 
-test('syncRecordsByKey lee únicamente las filas del conjunto padre y no materializa la tabla completa', () => {
+test('syncRecordsByKey recupera candidatos del conjunto padre en ventanas acotadas', () => {
   const unrelated = Array.from({ length: 120 }, (_, index) => ({
     persona_id: 'PER_OTHER_' + index,
     modulo_id: 'MOD_OTHER',
@@ -262,7 +276,8 @@ test('syncRecordsByKey lee únicamente las filas del conjunto padre y no materia
   assert.equal(result.updated, 1);
   assert.equal(result.deactivated, 1);
   assert.equal(result.inserted, 0);
-  assert.equal(sandbox.getCandidateRowsRead(), 2);
+  assert.ok(sandbox.getCandidateRowsRead() >= 2);
+  assert.ok(sandbox.getCandidateRowsRead() < unrelated.length + target.length);
   assert.equal(sandbox.getFullTableLoads(), 0);
   assert.equal(sandbox.getInvalidations(), 1);
 });
