@@ -1829,3 +1829,16 @@ test('Información de personal registra tiempos de autorización, contexto y con
   assert.match(directorySource, /\[DirectoryService\] Assignment page ms:/);
   assert.match(directoryUiSource, /\[DirectoryPage\] DataTable server request ms:/);
 });
+
+
+test('el editor de permisos recibe el catálogo de operaciones al cargar Permisos', () => {
+  assert.match(accessUiSource, /state\.data\.operations = result\.operations \|\| \[\]/);
+  assert.match(accessUiSource, /state\.tabDataLoaded\.operations = true/);
+});
+
+test('Nueva cuenta abre el formulario sin esperar los catálogos organizacionales ni tipos de documento', () => {
+  assert.match(accessUiSource, /if \(editing \|\| needsScopeCatalogs\)/);
+  assert.match(accessUiSource, /Cargando tipos de documento/);
+  assert.match(accessUiSource, /rpc\('getAccessManagementTabData', 'documentTypes'\)\.then/);
+  assert.match(accessUiSource, /await rpc\('getAccessScopeCatalogs'\)/);
+});
