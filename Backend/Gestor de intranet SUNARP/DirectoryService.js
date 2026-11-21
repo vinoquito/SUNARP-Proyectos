@@ -1033,6 +1033,7 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
       searchAny,
       authorization: authorizationForQuery,
       cacheSeconds: 60,
+      candidateCacheSeconds: 300,
       schemaVersion: 'directory-assignment-query-v1',
       sortBy: options.sortBy || 'order',
       sortDirection: options.sortDirection || 'asc'
