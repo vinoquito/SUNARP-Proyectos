@@ -1490,9 +1490,12 @@ test('el contrato de filtros reconoce TOTAL sin convertirlo en una selección re
   assert.equal(JSON.stringify(contract.selectable.sedeIds), JSON.stringify(['SEDE_1']));
 });
 
-test('el DataTable consume la primera página entregada por el bootstrap sin repetir la consulta inicial', () => {
-  assert.match(frontendSource, /initialData:\s*state\.initialPage\s*\|\|\s*null/);
-  assert.match(frontendSource, /state\.initialPage\s*=\s*result\.page/);
+test('el DataTable consume la primera página del bootstrap y no repite la consulta inicial', () => {
+  assert.match(frontendSource, /const initialPage = state\.initialPage/);
+  assert.match(frontendSource, /state\.initialPage = null/);
+  assert.match(frontendSource, /initialData: initialPage \|\| null/);
+  assert.match(frontendSource, /if \(isUnfilteredFirstPage\) \{\s*return initialPage;/);
+  assert.match(serviceSource, /\{ active: 'all' \},\s*'asignacion_id'/);
   assert.match(uiDataTableSource, /hasInitialServerData/);
   assert.match(uiDataTableSource, /mode === 'server' && !hasInitialServerData/);
 });
