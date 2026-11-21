@@ -49,6 +49,117 @@ function _coreWithWriteLock_(callback) {
  * Cada registro conserva su número de fila real en la hoja
  * para permitir operaciones de actualización y eliminación.
  */
+/**
+ * Obtiene metadatos de una pestaña sin materializar sus filas.
+ */
+function _coreGetTableMetadata_(source) {
+  const context = _coreOpenSource_(source);
+  const { config, sheet } = context;
+  const lastColumn = sheet.getLastColumn();
+  const lastRow = sheet.getLastRow();
+
+  if (lastColumn === 0 || lastRow < config.headerRow) {
+    throw new Error(
+      'SUNARP Core: la pestaña "' + config.sheetName + '" no contiene encabezados.'
+    );
+  }
+
+  const headers = sheet.getRange(
+    config.headerRow, 1, 1, lastColumn
+  ).getDisplayValues()[0].map(header => String(header).trim());
+  const headerMap = {};
+  headers.forEach((header, index) => {
+    if (!header) {
+      throw new Error(
+        'SUNARP Core: existe un encabezado vacío en la columna ' + (index + 1) + '.'
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(headerMap, header)) {
+      throw new Error('SUNARP Core: el encabezado "' + header + '" está duplicado.');
+    }
+    headerMap[header] = index;
+  });
+
+  return {
+    source,
+    config,
+    spreadsheet: context.spreadsheet,
+    sheet,
+    headers,
+    headerMap,
+    entries: []
+  };
+}
+
+/**
+ * Localiza registros por igualdad exacta en campos textuales.
+ * Lee las columnas de búsqueda y después solo las filas candidatas.
+ * Para criterios no textuales o vacíos conserva el lector integral anterior.
+ */
+function _coreFindRowsByFields_(table, criteria) {
+  const fields = Object.keys(criteria || {});
+  if (!fields.length) {
+    throw new Error('SUNARP Core: debes indicar campos de búsqueda.');
+  }
+  fields.forEach(field => _coreGetFieldIndex_(table, field));
+
+  const requiresFallback = fields.some(field =>
+    typeof criteria[field] !== 'string' || String(criteria[field]).trim() === ''
+  );
+  if (requiresFallback) {
+    const fullTable = _coreGetTable_(table.source);
+    return fullTable.entries.filter(entry =>
+      !_coreIsEmptyRow_(entry.values) &&
+      fields.every(field =>
+        _coreValuesEqual_(entry.record[field], criteria[field])
+      )
+    );
+  }
+
+  const lastRow = table.sheet.getLastRow();
+  const dataStartRow = table.config.headerRow + 1;
+  const rowCount = Math.max(0, lastRow - table.config.headerRow);
+  if (!rowCount) return [];
+
+  let candidateRows = null;
+  fields.forEach(field => {
+    const expected = String(criteria[field]).trim();
+    const matches = table.sheet.getRange(
+      dataStartRow,
+      _coreGetFieldIndex_(table, field) + 1,
+      rowCount,
+      1
+    ).createTextFinder(expected)
+      .matchEntireCell(true)
+      .matchCase(true)
+      .findAll();
+    const rows = new Set(matches.map(cell => cell.getRow()));
+    candidateRows = candidateRows === null
+      ? rows
+      : new Set([...candidateRows].filter(row => rows.has(row)));
+  });
+
+  const orderedRows = [...(candidateRows || [])].sort((a, b) => a - b);
+  if (!orderedRows.length) return [];
+  const valuesByRow = _coreReadCandidateRows_(
+    table.sheet,
+    orderedRows,
+    table.headers.length,
+    dataStartRow,
+    25
+  );
+
+  return orderedRows.reduce((matches, rowNumber) => {
+    const values = valuesByRow.get(rowNumber);
+    if (!values || _coreIsEmptyRow_(values)) return matches;
+    const record = _coreRowToRecord_(table.headers, values);
+    if (fields.every(field => _coreValuesEqual_(record[field], criteria[field]))) {
+      matches.push({ rowNumber, values, record });
+    }
+    return matches;
+  }, []);
+}
+
 function _coreGetTable_(source) {
   const context = _coreOpenSource_(source);
 
@@ -1133,7 +1244,7 @@ function insertRecord(source, record, options) {
   options = options || {};
 
   return _coreWithWriteLock_(() => {
-    const table = _coreGetTable_(source);
+    const table = _coreGetTableMetadata_(source);
 
     const fields = _coreValidateRecordFields_(
       record,
@@ -1157,7 +1268,7 @@ function insertRecord(source, record, options) {
         );
       }
 
-      if (_coreFindEntryById_(table, idField, id)) {
+      if (_coreFindRowsByFields_(table, { [idField]: id }).length) {
         throw new Error(
           `SUNARP Core: el identificador "${id}" ya existe.`
         );
@@ -1174,12 +1285,9 @@ function insertRecord(source, record, options) {
     uniqueFields.forEach(field => _coreGetFieldIndex_(table, field));
 
     if (uniqueFields.length) {
-      const duplicate = table.entries.some(entry =>
-        !_coreIsEmptyRow_(entry.values) &&
-        uniqueFields.every(field =>
-          _coreValuesEqual_(entry.record[field], record[field])
-        )
-      );
+      const criteria = {};
+      uniqueFields.forEach(field => { criteria[field] = record[field]; });
+      const duplicate = _coreFindRowsByFields_(table, criteria).length > 0;
 
       if (duplicate) {
         throw new Error(
@@ -1229,11 +1337,11 @@ function insertRecord(source, record, options) {
 function updateRecord(source, idField, id, updates, options) {
   options = options || {};
   return _coreWithWriteLock_(() => {
-    const table = _coreGetTable_(source);
+    const table = _coreGetTableMetadata_(source);
 
     const idIndex = _coreGetFieldIndex_(table, idField);
 
-    const entry = _coreFindEntryById_(table, idField, id);
+    const entry = _coreFindRowsByFields_(table, { [idField]: id })[0];
 
     if (!entry) {
       throw new Error(
@@ -1268,12 +1376,10 @@ function updateRecord(source, idField, id, updates, options) {
 
     if (uniqueFields.length) {
       const candidate = Object.assign({}, entry.record, updates);
-      const duplicate = table.entries.some(other =>
-        other.rowNumber !== entry.rowNumber &&
-        !_coreIsEmptyRow_(other.values) &&
-        uniqueFields.every(field =>
-          _coreValuesEqual_(other.record[field], candidate[field])
-        )
+      const criteria = {};
+      uniqueFields.forEach(field => { criteria[field] = candidate[field]; });
+      const duplicate = _coreFindRowsByFields_(table, criteria).some(other =>
+        other.rowNumber !== entry.rowNumber
       );
 
       if (duplicate) {
@@ -1356,9 +1462,9 @@ function setRecordStatus(
  */
 function deleteRecord(source, idField, id) {
   return _coreWithWriteLock_(() => {
-    const table = _coreGetTable_(source);
+    const table = _coreGetTableMetadata_(source);
 
-    const entry = _coreFindEntryById_(table, idField, id);
+    const entry = _coreFindRowsByFields_(table, { [idField]: id })[0];
 
     if (!entry) {
       throw new Error(

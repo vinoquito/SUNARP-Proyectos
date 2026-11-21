@@ -131,7 +131,7 @@ function updateRecordByFields(source, criteria, updates, options) {
   options = options || {};
 
   return _coreWithWriteLock_(() => {
-    const table = _coreGetTable_(source);
+    const table = _coreGetTableMetadata_(source);
     const criteriaFields = Object.keys(criteria || {});
 
     if (!criteriaFields.length) {
@@ -142,12 +142,7 @@ function updateRecordByFields(source, criteria, updates, options) {
 
     const updateFields = _coreValidateRecordFields_(updates, table.headers);
 
-    const matches = table.entries.filter(entry =>
-      !_coreIsEmptyRow_(entry.values) &&
-      criteriaFields.every(field =>
-        _coreValuesEqual_(entry.record[field], criteria[field])
-      )
-    );
+    const matches = _coreFindRowsByFields_(table, criteria);
 
     if (matches.length !== 1) {
       throw new Error(
@@ -168,18 +163,13 @@ function updateRecordByFields(source, criteria, updates, options) {
     if (uniqueFields.length) {
       const candidate = Object.assign({}, entry.record, updates);
 
-      const duplicate = table.entries.some(other => {
-        if (
-          other.rowNumber === entry.rowNumber ||
-          _coreIsEmptyRow_(other.values)
-        ) {
-          return false;
-        }
-
-        return uniqueFields.every(field =>
-          _coreValuesEqual_(other.record[field], candidate[field])
-        );
+      const uniqueCriteria = {};
+      uniqueFields.forEach(field => {
+        uniqueCriteria[field] = candidate[field];
       });
+      const duplicate = _coreFindRowsByFields_(table, uniqueCriteria).some(other =>
+        other.rowNumber !== entry.rowNumber
+      );
 
       if (duplicate) {
         throw new Error(
