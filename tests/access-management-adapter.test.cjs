@@ -649,14 +649,19 @@ test('el historial general evita leer la tabla completa cuando no hay filtros', 
   assert.ok(implementation.includes("idField: 'evento_id'"));
   assert.ok(implementation.includes('if (!hasNonDateFilters && hasIndexedTail)'));
 });
-test('el historial por entidad consulta candidatos mediante SUNARP Core sin leer toda Auditoria', () => {
-  const start = accessSource.indexOf('function getAccessEntityHistory(payload) {');
-  const end = accessSource.indexOf('function _accessChangeStatus_(', start);
-  const implementation = accessSource.slice(start, end);
-  assert.ok(implementation.includes('findRecordsByFields'));
-  assert.ok(implementation.includes('searchRecordsByFields'));
-  assert.ok(!implementation.includes('listRecordsFromSourcesCached'));
-  assert.ok(implementation.includes("entityType === 'PERMISO'"));
+test('el historial por entidad consulta candidatos y pagina sobre un índice por generación', () => {
+  const builderStart = accessSource.indexOf('function _accessBuildEntityHistoryIndex_(');
+  const endpointStart = accessSource.indexOf('function getAccessEntityHistory(payload) {');
+  const endpointEnd = accessSource.indexOf('function _accessChangeStatus_(', endpointStart);
+  const builder = accessSource.slice(builderStart, endpointStart);
+  const endpoint = accessSource.slice(endpointStart, endpointEnd);
+  assert.ok(builderStart >= 0 && endpointStart > builderStart && endpointEnd > endpointStart);
+  assert.ok(builder.includes('findRecordsByFields'));
+  assert.ok(builder.includes('searchRecordsByFields'));
+  assert.ok(builder.includes("_accessAuditContainsPermission_(event, recordId)"));
+  assert.ok(!builder.includes('listRecordsFromSourcesCached'));
+  assert.ok(endpoint.includes('getOrBuildCachedValue'));
+  assert.ok(endpoint.includes('events.slice(offset, offset + pageSize)'));
 });
 test('los servicios y scripts de interfaz tienen sintaxis válida', () => {
   for (const [label, source] of [
@@ -1675,4 +1680,46 @@ test('la edición conjunta de accesos consulta solo referencias organizacionales
   assert.match(implementation, /_accessFindOrgCatalogByIds_\s*\(\s*'ESTRUCTURA_ORG'/);
   assert.match(implementation, /_accessFindOrgCatalogByIds_\s*\(\s*'SEDE'/);
   assert.match(implementation, /_accessFindOrgCatalogByIds_\s*\(\s*'LOCAL'/);
+});
+
+test('la paginación del historial por entidad reutiliza el índice cacheado y conserva total y orden', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  sandbox._accessRequirePermission_ = () => ({ authenticated: true });
+  sandbox._accessSecuritySource_ = sheet => ({ sheetName: sheet });
+  const rows = [
+    { evento_id: 'EVT_001', fecha_hora: new Date('2026-11-20T09:00:00Z'), tipo_entidad: 'USUARIO', registro_id: 'PER_001', modulo: 'ACCESOS' },
+    { evento_id: 'EVT_002', fecha_hora: new Date('2026-11-20T11:00:00Z'), tipo_entidad: 'USUARIO_ROL', registro_id: 'PER_001', modulo: 'ACCESOS' },
+    { evento_id: 'EVT_003', fecha_hora: new Date('2026-11-20T10:00:00Z'), tipo_entidad: 'AMBITO_ACCESO', registro_id: 'PER_001', modulo: 'ACCESOS' }
+  ];
+  const cache = new Map();
+  let builds = 0;
+  let searches = 0;
+  sandbox.SUNARPCore.getOrBuildCachedValue = (key, sources, builder, ttl) => {
+    assert.equal(sources.length, 1);
+    assert.equal(sources[0].sheetName, 'Auditoria');
+    assert.equal(ttl, 300);
+    if (cache.has(key)) return { value: cache.get(key), cacheHit: true, cacheStored: true };
+    builds++;
+    const value = builder();
+    cache.set(key, value);
+    return { value, cacheHit: false, cacheStored: true };
+  };
+  sandbox.SUNARPCore.findRecordsByFields = () => {
+    searches++;
+    return { records: rows, total: rows.length };
+  };
+
+  const first = sandbox.getAccessEntityHistory({
+    tipo_entidad: 'USUARIO', registro_id: 'PER_001', page: 1, pageSize: 1
+  });
+  const second = sandbox.getAccessEntityHistory({
+    tipo_entidad: 'USUARIO', registro_id: 'PER_001', page: 2, pageSize: 1
+  });
+
+  assert.equal(first.total, 3);
+  assert.equal(second.total, 3);
+  assert.equal(first.items[0].evento_id, 'EVT_002');
+  assert.equal(second.items[0].evento_id, 'EVT_003');
+  assert.equal(builds, 1);
+  assert.equal(searches, 1);
 });

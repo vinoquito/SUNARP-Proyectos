@@ -3378,6 +3378,84 @@ function _accessAuditContainsPermission_(event, permissionId) {
  *
  * Requiere AUDITORIA_VER.
  */
+/**
+ * Construye el índice de eventos de una entidad concreta. Solo consulta
+ * coincidencias por registro_id y, para permisos, candidatos en snapshots.
+ * La caché por generación permite que la paginación posterior no repita
+ * búsquedas ni vuelva a descargar esos eventos.
+ */
+function _accessBuildEntityHistoryIndex_(source, entityType, recordId, relatedTypes) {
+  const events = [];
+  const seenEventIds = new Set();
+
+  const consumeEvents = candidates => {
+    (candidates || []).forEach(event => {
+      const eventId = _accessText_(event.evento_id);
+      if (eventId && seenEventIds.has(eventId)) return;
+      if (eventId) seenEventIds.add(eventId);
+
+      const eventType = _accessUpper_(event.tipo_entidad);
+      const eventRecordId = _accessText_(event.registro_id);
+      const eventModule = _accessUpper_(event.modulo);
+
+      if (
+        entityType === 'SERVIDOR' &&
+        !['DIRECTORIOS', 'INFORMACION_PERSONAL'].includes(eventModule)
+      ) return;
+
+      let matches = relatedTypes[entityType].includes(eventType) &&
+        eventRecordId === recordId;
+
+      if (!matches && entityType === 'PERMISO' && eventType === 'ROL_PERMISO') {
+        matches = _accessAuditContainsPermission_(event, recordId);
+      }
+      if (matches) events.push(event);
+    });
+  };
+
+  const directMatches = SUNARPCore.findRecordsByFields(
+    source,
+    { registro_id: recordId },
+    {
+      searchField: 'registro_id',
+      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.audit
+    }
+  );
+  consumeEvents(directMatches.records);
+
+  if (entityType === 'PERMISO') {
+    const relatedMatches = SUNARPCore.searchRecordsByFields(
+      source,
+      recordId,
+      ['datos_antes', 'datos_despues'],
+      { matchCase: false }
+    );
+    consumeEvents(relatedMatches.records);
+  }
+
+  events.sort((left, right) => {
+    const leftTime = _accessAuditTimestamp_(left);
+    const rightTime = _accessAuditTimestamp_(right);
+    if (leftTime !== rightTime) {
+      if (Number.isNaN(leftTime)) return 1;
+      if (Number.isNaN(rightTime)) return -1;
+      return rightTime - leftTime;
+    }
+    return _accessText_(right.evento_id).localeCompare(
+      _accessText_(left.evento_id), 'es'
+    );
+  });
+
+  return events;
+}
+
+
+/**
+ * Consulta el historial de un registro específico.
+ *
+ * Tipos contemplados: USUARIO, ROL, PERMISO y SERVIDOR.
+ * Requiere AUDITORIA_VER.
+ */
 function getAccessEntityHistory(payload) {
   _accessRequirePermission_('AUDITORIA_VER');
 
@@ -3406,62 +3484,31 @@ function getAccessEntityHistory(payload) {
   const page = Math.max(1, Number.parseInt(payload.page, 10) || 1);
   const pageSize = Math.min(100, Math.max(1, Number.parseInt(payload.pageSize, 10) || 20));
   const offset = (page - 1) * pageSize;
-  const retained = [];
-  const seenEventIds = new Set();
-  let total = 0;
-
-  const consumeEvents = events => {
-    (events || []).forEach(event => {
-      const eventId = _accessText_(event.evento_id);
-      if (eventId && seenEventIds.has(eventId)) return;
-      if (eventId) seenEventIds.add(eventId);
-
-      const eventType = _accessUpper_(event.tipo_entidad);
-      const eventRecordId = _accessText_(event.registro_id);
-      const eventModule = _accessUpper_(event.modulo);
-
-      if (
-        entityType === 'SERVIDOR' &&
-        !['DIRECTORIOS', 'INFORMACION_PERSONAL'].includes(eventModule)
-      ) return;
-
-      let matches = relatedTypes[entityType].includes(eventType) &&
-        eventRecordId === recordId;
-
-      if (!matches && entityType === 'PERMISO' && eventType === 'ROL_PERMISO') {
-        matches = _accessAuditContainsPermission_(event, recordId);
-      }
-      if (!matches) return;
-
-      total++;
-      _accessInsertAuditPageRecord_(retained, event, offset + pageSize);
-    });
-  };
-
-  // Procesa el resultado exacto antes de la búsqueda en snapshots: si un
-  // evento aparece en ambas consultas se conserva una sola vez.
-  const directMatches = SUNARPCore.findRecordsByFields(
-    source,
-    { registro_id: recordId },
-    {
-      searchField: 'registro_id',
-      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.audit
-    }
+  const buildIndex = () => _accessBuildEntityHistoryIndex_(
+    source, entityType, recordId, relatedTypes
   );
-  consumeEvents(directMatches.records);
-  directMatches.records = [];
 
-  if (entityType === 'PERMISO') {
-    const relatedMatches = SUNARPCore.searchRecordsByFields(
-      source,
-      recordId,
-      ['datos_antes', 'datos_despues'],
-      { matchCase: false }
+  const cacheKey = 'access-entity-history-v1:' + entityType + ':' + recordId;
+  let events;
+  if (
+    cacheKey.length <= 180 &&
+    typeof SUNARPCore.getOrBuildCachedValue === 'function'
+  ) {
+    const cached = SUNARPCore.getOrBuildCachedValue(
+      cacheKey,
+      [source],
+      buildIndex,
+      300
     );
-    consumeEvents(relatedMatches.records);
+    events = cached && Array.isArray(cached.value)
+      ? cached.value
+      : buildIndex();
+  } else {
+    events = buildIndex();
   }
 
-  const records = retained.slice(offset, offset + pageSize);
+  const total = events.length;
+  const records = events.slice(offset, offset + pageSize);
   return {
     items: records.map(event => {
       const date = event.fecha_hora instanceof Date
@@ -3494,6 +3541,7 @@ function getAccessEntityHistory(payload) {
     totalPages: Math.max(1, Math.ceil(total / pageSize))
   };
 }
+
 function _accessChangeStatus_(config) {
   const auth = _accessRequirePermission_(config.permission);
   const nextActive = _accessNormalizeActive_(config.active, 'El estado solicitado');

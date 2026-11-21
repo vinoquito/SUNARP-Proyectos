@@ -556,6 +556,18 @@ Este inventario describe los consumidores comprobados en el repositorio y la ram
 - `saveAccessUserRole()`, `saveRolePermissions()`, `saveAccessScopes()` y `saveAccessUserConfiguration()` conservan la sincronización compuesta protegida por bloqueo. `syncRecordsByKey()` localiza filas por cada campo de `parentMatch` con `TextFinder`, intersecta los números de fila y recupera las filas candidatas en ventanas acotadas; no materializa la hoja completa para claves padre textuales. Para padres no textuales mantiene el lector anterior por compatibilidad.
 - `validateAccessManagementIntegrity()` sigue siendo la operación explícita que carga y valida el snapshot integral de las nueve tablas de seguridad. Los listados completos de catálogos de una pestaña se mantienen bajo demanda para presentar esa pestaña, no como requisito previo de cada mutación.
 
+### 10.3 Historial general de auditoría
+
+- `getAccessAuditHistory()` requiere `AUDITORIA_VER`. Cuando no hay filtros de texto, usa `listTailRecords()` con `evento_id` y `fecha_hora`; las fechas `desde` y `hasta` se convierten en límites de inicio y fin de día inclusivos. Core obtiene el total y la página ordenada sin recuperar todas las columnas de todas las filas.
+- Cuando hay filtros de texto, el Gestor obtiene candidatos mediante búsquedas exactas o parciales en Core, aplica los filtros restantes, calcula el total exacto y retiene únicamente los primeros `offset + pageSize` eventos en orden cronológico descendente. El rango temporal también se aplica de forma inclusiva.
+- La ruta integral queda únicamente como compatibilidad con consumidores de Core v9 que no exponen `listTailRecords()`. El Gestor versionado en esta rama declara Core v10 y utiliza la ruta indexada.
+
+### 10.4 Historial por entidad
+
+- `getAccessEntityHistory()` consulta `Auditoria` por `registro_id`; para `PERMISO` añade candidatos encontrados en `datos_antes` y `datos_despues`, interpreta los snapshots y conserva solo relaciones que contienen exactamente el permiso solicitado.
+- Los eventos encontrados por ambas rutas se deduplican por `evento_id`, se ordenan por fecha descendente y, ante empate, por identificador descendente. El índice resultante se cachea durante 300 segundos por entidad e identidad y por generación de la fuente `Auditoria`; cada solicitud devuelve únicamente la página pedida.
+- Las escrituras de auditoría realizadas mediante Core invalidan la generación de la fuente y hacen inaccesible el índice anterior. La primera consulta construye el índice a partir de candidatos de la entidad; no descarga la hoja completa de auditoría.
+
 ## 11. Verificación de versión y publicación
 
 ### 11.1 Comprobaciones completadas
