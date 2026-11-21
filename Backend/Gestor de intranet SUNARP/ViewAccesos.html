@@ -109,6 +109,22 @@
     position: relative;
   }
 
+  .access-element-loader {
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    border-radius: inherit;
+    background: rgba(255, 255, 255, 0.68);
+    backdrop-filter: blur(2px);
+    color: var(--ui-muted);
+    pointer-events: all;
+  }
+
   .access-person-search-result .sunarp-alert-message {
     white-space: pre-line;
     line-height: 1.38;
