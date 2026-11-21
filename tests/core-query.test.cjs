@@ -863,3 +863,8 @@ test('queryRecords rechaza grupos que solo pueden localizar celdas vacías', () 
     }
   ), /columna conductora con valores no vacíos/);
 });
+
+
+test('queryRecords agrupa candidatos en ventanas amplias para reducir llamadas a Sheets', () => {
+  assert.match(source, /const windowSize = 500;/);
+});
