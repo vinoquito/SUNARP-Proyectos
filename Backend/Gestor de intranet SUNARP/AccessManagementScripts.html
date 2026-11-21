@@ -17,6 +17,8 @@
     tabDataLoaded: { permissions: false, assignments: false, operations: false },
     tabLoadPromises: {},
     userFilters: { sedeId: '', roleId: '' },
+    userPageCache: {},
+    auditPageCache: {},
     selectedAssignmentRoleId: ''
   };
 
@@ -359,15 +361,6 @@
 
     if (actionLabel && action) {
       actions.appendChild(createButton(actionLabel, 'primary', action, 'add'));
-    }
-
-    if (!options.hideRefresh) {
-      actions.appendChild(createButton(
-        'Actualizar',
-        'outline',
-        () => refreshCurrentTabData(true),
-        'refresh'
-      ));
     }
 
     if (actions.childElementCount) heading.appendChild(actions);
@@ -1564,21 +1557,34 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         return lastPageResult;
       }
 
+      const request = {
+        sede_id: sedeId,
+        rol_id: rolId,
+        all_sedes: allSitesSelected,
+        search: params && params.search || '',
+        page: params && params.page || 1,
+        pageSize: params && params.pageSize || 10
+      };
+      const cacheKey = JSON.stringify(request);
+      const cached = state.userPageCache[cacheKey];
+      if (cached && Date.now() - cached.timestamp < 120000) {
+        lastPageResult = cached.value;
+        state.data.users = lastPageResult.items;
+        return lastPageResult;
+      }
+
       const currentRequest = ++requestNumber;
       const finishLoading = beginAccessPanelLoading();
       try {
-        const result = await rpc('getAccessUsers', {
-          sede_id: sedeId,
-          rol_id: rolId,
-          all_sedes: allSitesSelected,
-          search: params && params.search || '',
-          page: params && params.page || 1,
-          pageSize: params && params.pageSize || 10
-        });
+        const result = await rpc('getAccessUsers', request);
         if (currentRequest !== requestNumber) return lastPageResult;
         lastPageResult = {
           items: Array.isArray(result.items) ? result.items : [],
           total: Number(result.total) || 0
+        };
+        state.userPageCache[cacheKey] = {
+          timestamp: Date.now(),
+          value: lastPageResult
         };
         state.data.users = lastPageResult.items;
         return lastPageResult;
@@ -1598,6 +1604,9 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       appliedSedeId = siteSelect.value;
       appliedRoleId = roleSelect.value;
       state.userFilters = { sedeId: appliedSedeId, roleId: appliedRoleId };
+      tableConfig.emptyMessage = appliedSedeId || appliedRoleId
+        ? 'No existen usuarios para los filtros seleccionados.'
+        : 'Selecciona una sede o un rol para consultar usuarios.';
       renderTable(host, tableConfig);
     }
     siteSelect.addEventListener('change', loadFilteredUsers);
@@ -1635,7 +1644,9 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         }] : [])
       ],
       searchPlaceholder: 'Buscar por nombre o correo institucional...',
-      emptyMessage: 'Selecciona una sede o un rol para consultar usuarios.'
+      emptyMessage: appliedSedeId || appliedRoleId
+        ? 'No existen usuarios para los filtros seleccionados.'
+        : 'Selecciona una sede o un rol para consultar usuarios.'
     };
     renderTable(host, tableConfig);
     state.userListController = { refresh: () => loadFilteredUsers() };
@@ -1647,7 +1658,8 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     const needsScopeCatalogs = state.data.capabilities.scopes === true &&
       state.data.scopeCatalogsLoaded !== true;
 
-    if (editing || needsScopeCatalogs) {
+    const needsDocumentTypes = !editing && state.data.documentTypesLoaded !== true;
+    if (editing || needsScopeCatalogs || needsDocumentTypes) {
       const finishLoading = beginAccessPanelLoading(
         needsScopeCatalogs
           ? 'Consultando catálogos organizacionales...'
@@ -1655,10 +1667,15 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       );
       try {
         const requests = [];
+        if (needsDocumentTypes) requests.push(rpc('getAccessManagementTabData', 'documentTypes'));
         if (needsScopeCatalogs) requests.push(rpc('getAccessScopeCatalogs'));
         if (editing) requests.push(rpc('getAccessUserConfiguration', row.persona_id));
         const results = await Promise.all(requests);
         let index = 0;
+        if (needsDocumentTypes) {
+          state.data.documentTypes = results[index++].documentTypes || [];
+          state.data.documentTypesLoaded = true;
+        }
         if (needsScopeCatalogs) {
           state.data.catalogs = Object.assign(
             {},
@@ -2107,8 +2124,25 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     );
     host.appendChild(section);
 
-    renderTable(host, {
-      data: state.data.permissions || [],
+    const moduleSelect = createSelect(
+      [
+        { value: '__ALL__', label: 'Todos los módulos' },
+        ...(state.data.modules || [])
+          .filter(item => item.active)
+          .map(item => ({ value: item.modulo_id, label: item.nombre }))
+      ],
+      '',
+      'Selecciona un módulo'
+    );
+    host.appendChild(createField('Módulo', moduleSelect));
+
+    const renderPermissionTable = () => {
+      const selectedModule = moduleSelect.value;
+      const permissions = (state.data.permissions || []).filter(item =>
+        selectedModule === '__ALL__' || (selectedModule && item.modulo_id === selectedModule)
+      );
+      renderTable(host, {
+      data: permissions,
       columns: [
         { key: 'modulo_nombre', label: 'Módulo' },
         { key: 'operacion_nombre', label: 'Operación' },
@@ -2134,17 +2168,14 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           onClick: row => openEntityHistory('PERMISO', row.permiso_id, row.codigo)
         }] : [])
       ],
-      filters: [{
-        key: 'modulo_id',
-        label: 'Módulo',
-        allLabel: 'Todos los módulos',
-        options: (state.data.modules || [])
-          .filter(item => item.active)
-          .map(item => ({ value: item.modulo_id, label: item.nombre }))
-      }],
       searchPlaceholder: 'Buscar permiso...',
-      emptyMessage: 'No hay permisos registrados.'
-    });
+      emptyMessage: selectedModule
+        ? 'No hay permisos registrados para el módulo seleccionado.'
+        : 'Selecciona un módulo o Todos los módulos para consultar permisos.'
+      });
+    };
+    moduleSelect.addEventListener('change', renderPermissionTable);
+    renderPermissionTable();
   }
 
 
@@ -2766,17 +2797,24 @@ window.SUNARPAccessHistory = Object.freeze({
       mode: 'server',
 
       loadData: async params => {
+        const request = {
+          search: params.search,
+          ...params.filters,
+          page: params.page,
+          pageSize: params.pageSize
+        };
+        const cacheKey = JSON.stringify(request);
+        const cached = state.auditPageCache[cacheKey];
+        if (cached && Date.now() - cached.timestamp < 120000) return cached.value;
+
         const finishLoading = beginAccessPanelLoading();
         try {
-          return await rpc(
-            'getAccessAuditHistory',
-            {
-              search: params.search,
-              ...params.filters,
-              page: params.page,
-              pageSize: params.pageSize
-            }
-          );
+          const result = await rpc('getAccessAuditHistory', request);
+          state.auditPageCache[cacheKey] = {
+            timestamp: Date.now(),
+            value: result
+          };
+          return result;
         } finally {
           finishLoading();
         }
@@ -3032,8 +3070,10 @@ window.SUNARPAccessHistory = Object.freeze({
 
     try {
       const tab = state.activeTab;
+      state.auditPageCache = {};
 
       if (tab === 'users') {
+        state.userPageCache = {};
         if (state.userListController) {
           await state.userListController.refresh();
         }

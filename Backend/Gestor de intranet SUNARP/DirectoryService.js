@@ -1189,13 +1189,18 @@ function _directoryBuildInitialAssignmentPage_(view, context) {
 }
 
 function getDirectoryInitialData() {
+  const totalStartedAt = Date.now();
+  const authStartedAt = Date.now();
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
+  const authElapsed = Date.now() - authStartedAt;
+  const contextStartedAt = Date.now();
   const context = _directoryLoadContext_({
     includePersonalData: false,
     includePeople: false,
     includeAssignments: false,
     validateSnapshot: false
   });
+  const contextElapsed = Date.now() - contextStartedAt;
 
   const structureMap = _directoryCreateMap_(context.estructuraOrg);
   const structureTypeMap = _directoryCreateMap_(context.tiposEstructura);
@@ -1264,6 +1269,7 @@ function getDirectoryInitialData() {
 
   // La página inicial y los catálogos derivados consultan Core por separado.
   // Ninguna de estas consultas carga todas las asignaciones al servicio Gestor.
+  const queryStartedAt = Date.now();
   const initialPage = _directoryExecuteAssignmentQuery_(
     context,
     authorization,
@@ -1276,6 +1282,7 @@ function getDirectoryInitialData() {
     ['cargo_id', 'estructura_local_id', 'local_id'],
     ['persona_id']
   );
+  const queryElapsed = Date.now() - queryStartedAt;
   const distinctValues = initialPage.distinctValues || {};
   const distinctCounts = initialPage.distinctCounts || {};
   const usedCargoIds = new Set((distinctValues.cargo_id || []).map(_directoryKey_).filter(Boolean));
@@ -1325,6 +1332,18 @@ function getDirectoryInitialData() {
   const scopedCargos = context.cargos.filter(item =>
     _directoryIsActive_(item) && usedCargoIds.has(_directoryKey_(item.id))
   );
+  console.log('[DirectoryService] Initial data ms:', JSON.stringify({
+    authorization: authElapsed,
+    context: contextElapsed,
+    firstPageQueryAndHydration: queryElapsed,
+    derivationAndResponse: Date.now() - queryStartedAt - queryElapsed,
+    total: Date.now() - totalStartedAt,
+    structures: context.estructuraOrg.length,
+    relations: context.estructuraLocal.length,
+    locals: context.locales.length,
+    pageRows: (initialPage.records || []).length,
+    totalAssignments: Number(initialPage.total) || 0
+  }));
 
   return {
     catalogs: {
@@ -1494,8 +1513,12 @@ function listDirectoryPeople(options) {
 }
 
 function listDirectoryAssignments(options) {
+  const totalStartedAt = Date.now();
   options = options || {};
+  const authStartedAt = Date.now();
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
+  const authElapsed = Date.now() - authStartedAt;
+  const contextStartedAt = Date.now();
   const context = _directoryLoadContext_({
     includePersonalData: false,
     includePeople: false,
@@ -1503,6 +1526,7 @@ function listDirectoryAssignments(options) {
     includeDocumentTypes: false,
     validateSnapshot: false
   });
+  const contextElapsed = Date.now() - contextStartedAt;
 
   let offset;
   let limit;
@@ -1525,6 +1549,7 @@ function listDirectoryAssignments(options) {
     }
   }
 
+  const queryStartedAt = Date.now();
   const result = _directoryExecuteAssignmentQuery_(
     context,
     authorization,
@@ -1534,6 +1559,16 @@ function listDirectoryAssignments(options) {
     limit,
     true
   );
+  console.log('[DirectoryService] Assignment page ms:', JSON.stringify({
+    authorization: authElapsed,
+    context: contextElapsed,
+    queryAndHydration: Date.now() - queryStartedAt,
+    total: Date.now() - totalStartedAt,
+    page: page || 1,
+    pageSize: limit,
+    rows: (result.records || []).length,
+    totalRows: Number(result.total) || 0
+  }));
   return {
     records: result.records || [],
     total: Number(result.total) || 0,

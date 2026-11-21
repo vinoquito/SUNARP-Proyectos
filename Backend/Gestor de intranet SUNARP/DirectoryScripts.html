@@ -665,6 +665,7 @@ const DirectoryPage = (() => {
       initialData: state.initialPage || null,
 
       loadData: async params => {
+        const requestStartedAt = performance.now();
         const elements = getElements();
         const result = await callServer('listDirectoryAssignments', {
           active: 'all',
@@ -676,6 +677,13 @@ const DirectoryPage = (() => {
           estructuraId: state.hierarchyPath.length
             ? state.hierarchyPath[state.hierarchyPath.length - 1]
             : ''
+        });
+        const elapsed = performance.now() - requestStartedAt;
+        console.info('[DirectoryPage] DataTable server request ms:', Math.round(elapsed), {
+          page: params.page,
+          rows: (result.records || []).length,
+          total: Number(result.total) || 0,
+          initialPageWasProvided: Boolean(state.initialPage)
         });
         return {
           items: prepareRows(result.records || []),

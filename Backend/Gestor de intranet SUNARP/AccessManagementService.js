@@ -2579,7 +2579,10 @@ function _accessLoadSecurityRecords_(sheetName, requiredHeaders) {
  * o al editar la configuración de una persona concreta.
  */
 function getAccessManagementData() {
+  const startedAt = Date.now();
+  const authStartedAt = Date.now();
   const auth = _accessGetAuthContext_();
+  const authElapsed = Date.now() - authStartedAt;
   const accessModuleId = _accessResolveModuleId_(
     auth,
     ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses
@@ -2602,6 +2605,7 @@ function getAccessManagementData() {
 
   const needsModules = capabilities.permissions || capabilities.scopes || capabilities.userRoles;
   const needsRoles = capabilities.roles || capabilities.users;
+  const catalogsStartedAt = Date.now();
   const modules = needsModules
     ? _accessLoadSecurityRecords_(ACCESS_MANAGEMENT_CONFIG.sheets.modules, ACCESS_MANAGEMENT_FIELDS.modules)
     : [];
@@ -2612,6 +2616,8 @@ function getAccessManagementData() {
     ? _accessLoadSecurityRecords_(ACCESS_MANAGEMENT_CONFIG.sheets.scopeTypes, ACCESS_MANAGEMENT_FIELDS.scopeTypes)
     : [];
 
+  const catalogElapsed = Date.now() - catalogsStartedAt;
+  const sitesStartedAt = Date.now();
   const siteCatalogData = capabilities.users
     ? SUNARPCore.listRecordsFromSourcesCached([{
         key: 'sedes',
@@ -2619,6 +2625,13 @@ function getAccessManagementData() {
         requiredHeaders: ['id', 'name']
       }], 30)
     : { sedes: [] };
+  const sitesElapsed = Date.now() - sitesStartedAt;
+  console.log('[AccessManagement] Bootstrap ms:', JSON.stringify({
+    authorization: authElapsed,
+    catalogs: catalogElapsed,
+    sites: sitesElapsed,
+    totalBeforeResponse: Date.now() - startedAt
+  }));
 
   return {
     currentUser: {
@@ -2633,12 +2646,8 @@ function getAccessManagementData() {
       }))
     },
     capabilities,
-    documentTypes: capabilities.users
-      ? _accessLoadDocumentTypes_()
-          .filter(_accessCatalogIsActive_)
-          .map(item => ({ id: _accessText_(item.id), name: _accessText_(item.name) }))
-          .filter(item => item.id && item.name)
-      : [],
+    documentTypes: [],
+    documentTypesLoaded: false,
     users: [],
     modules: modules.map(module => ({
       modulo_id: _accessText_(module.modulo_id),
@@ -2686,6 +2695,17 @@ function getAccessManagementData() {
 function getAccessManagementTabData(tabId) {
   const tab = _accessText_(tabId).toLowerCase();
   const s = ACCESS_MANAGEMENT_CONFIG.sheets;
+
+  if (tab === 'documenttypes') {
+    _accessRequirePermission_('USUARIOS_ADMINISTRAR');
+    const startedAt = Date.now();
+    const documentTypes = _accessLoadDocumentTypes_()
+      .filter(_accessCatalogIsActive_)
+      .map(item => ({ id: _accessText_(item.id), name: _accessText_(item.name) }))
+      .filter(item => item.id && item.name);
+    console.log('[AccessManagement] Document types loaded in', Date.now() - startedAt, 'ms.');
+    return { documentTypes };
+  }
 
   if (tab === 'roles') {
     const auth = _accessRequirePermission_('ROLES_ADMINISTRAR');
