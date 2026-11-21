@@ -1655,11 +1655,12 @@ function createAccessStatusCell(row, method, id, entityLabel) {
   async function openUserModal(row) {
     const editing = Boolean(row);
     let userConfiguration = { userRoles: [], scopes: [] };
-    const needsScopeCatalogs = state.data.capabilities.scopes === true &&
+    const needsScopeCatalogs = editing &&
+      state.data.capabilities.scopes === true &&
       state.data.scopeCatalogsLoaded !== true;
 
     const needsDocumentTypes = !editing && state.data.documentTypesLoaded !== true;
-    if (editing || needsScopeCatalogs || needsDocumentTypes) {
+    if (editing || needsScopeCatalogs) {
       const finishLoading = beginAccessPanelLoading(
         needsScopeCatalogs
           ? 'Consultando catálogos organizacionales...'
@@ -1667,15 +1668,10 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       );
       try {
         const requests = [];
-        if (needsDocumentTypes) requests.push(rpc('getAccessManagementTabData', 'documentTypes'));
         if (needsScopeCatalogs) requests.push(rpc('getAccessScopeCatalogs'));
         if (editing) requests.push(rpc('getAccessUserConfiguration', row.persona_id));
         const results = await Promise.all(requests);
         let index = 0;
-        if (needsDocumentTypes) {
-          state.data.documentTypes = results[index++].documentTypes || [];
-          state.data.documentTypesLoaded = true;
-        }
         if (needsScopeCatalogs) {
           state.data.catalogs = Object.assign(
             {},
@@ -1706,6 +1702,10 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     let selectedPersonCanEnable = false;
     let selectedConfiguration = null;
     let saveButton = null;
+    let documentTypeControl = null;
+    let documentNumberControl = null;
+    let documentSearchButton = null;
+    let documentClearButton = null;
 
     const resultHost = document.createElement('div');
     resultHost.className = 'access-person-search-result';
@@ -1774,9 +1774,10 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           label: item.name
         })),
         '',
-        'Selecciona un tipo de documento'
+        needsDocumentTypes ? 'Cargando tipos de documento...' : 'Selecciona un tipo de documento'
       );
       documentType.required = true;
+      documentTypeControl = documentType;
 
       const documentNumber = createInput('text', '', {
         required: true,
@@ -1888,6 +1889,13 @@ function createAccessStatusCell(row, method, id, entityLabel) {
                 personDetails
               );
 
+              if (state.data.capabilities.scopes === true &&
+                  state.data.scopeCatalogsLoaded !== true) {
+                const catalogs = await rpc('getAccessScopeCatalogs');
+                state.data.catalogs = Object.assign({}, state.data.catalogs || {}, catalogs);
+                state.data.scopeCatalogsLoaded = true;
+              }
+
               selectedConfiguration = createUserModuleAccessEditor(
                 selectedPerson.persona_id,
                 false,
@@ -1928,6 +1936,8 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         'search'
       );
 
+      documentSearchButton = searchButton;
+
       const clearButton = createButton(
         'Limpiar',
         'outline',
@@ -1939,6 +1949,8 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         },
         'backspace'
       );
+
+      documentClearButton = clearButton;
 
       const searchActions = document.createElement('div');
       searchActions.className = 'access-modal-actions access-search-actions';
@@ -1954,6 +1966,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       documentType.addEventListener('change', resetSearchResult);
       documentNumber.addEventListener('input', resetSearchResult);
 
+      documentNumberControl = documentNumber;
       if (!documentTypes.length) {
         documentType.disabled = true;
         documentNumber.disabled = true;
@@ -1961,11 +1974,19 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         clearButton.disabled = true;
         resultHost.appendChild(alertHost);
 
-        showSearchAlert(
-          'error',
-          'Catálogo no disponible',
-          'No se encontraron tipos de documento en la pestaña tipo_documento_identidad.'
-        );
+        if (needsDocumentTypes) {
+          showSearchAlert(
+            'info',
+            'Cargando catálogo',
+            'El formulario ya está disponible. Se están cargando los tipos de documento.'
+          );
+        } else {
+          showSearchAlert(
+            'error',
+            'Catálogo no disponible',
+            'No se encontraron tipos de documento en la pestaña tipo_documento_identidad.'
+          );
+        }
       }
     }
 
@@ -2020,6 +2041,52 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           : selectedPersonCanEnable
       }
     );
+
+    // No bloquear la apertura del formulario por una lectura del catálogo.
+    // Los controles se habilitan cuando termina la consulta en segundo plano.
+    if (!editing && needsDocumentTypes) {
+      rpc('getAccessManagementTabData', 'documentTypes').then(result => {
+        const loadedTypes = (result.documentTypes || []).filter(item => item && item.id && item.name);
+        state.data.documentTypes = loadedTypes;
+        state.data.documentTypesLoaded = true;
+        if (!documentTypeControl || !documentTypeControl.isConnected) return;
+
+        documentTypeControl.replaceChildren();
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = 'Selecciona un tipo de documento';
+        documentTypeControl.appendChild(placeholder);
+        loadedTypes.forEach(item => {
+          const option = document.createElement('option');
+          option.value = item.id;
+          option.textContent = item.name;
+          documentTypeControl.appendChild(option);
+        });
+
+        documentTypeControl.disabled = !loadedTypes.length;
+        documentNumberControl.disabled = !loadedTypes.length;
+        documentSearchButton.disabled = !loadedTypes.length;
+        documentClearButton.disabled = !loadedTypes.length;
+        if (!loadedTypes.length) {
+          resultHost.appendChild(alertHost);
+          showSearchAlert(
+            'error',
+            'Catálogo no disponible',
+            'No se encontraron tipos de documento en la pestaña tipo_documento_identidad.'
+          );
+        } else {
+          resultHost.replaceChildren();
+        }
+      }).catch(error => {
+        if (!documentTypeControl || !documentTypeControl.isConnected) return;
+        resultHost.appendChild(alertHost);
+        showSearchAlert(
+          'error',
+          'No se pudo cargar el catálogo',
+          error.message || 'No se pudieron cargar los tipos de documento.'
+        );
+      });
+    }
   }
 
 
@@ -2978,6 +3045,8 @@ window.SUNARPAccessHistory = Object.freeze({
       permissions: async () => {
         const result = await rpc('getAccessManagementTabData', 'permissions');
         state.data.modules = result.modules || [];
+        state.data.operations = result.operations || [];
+        state.tabDataLoaded.operations = true;
         state.data.permissions = result.permissions || [];
       },
       assignments: async () => {
@@ -3084,6 +3153,8 @@ window.SUNARPAccessHistory = Object.freeze({
       } else if (tab === 'permissions') {
         const result = await rpc('getAccessManagementTabData', 'permissions');
         state.data.modules = result.modules || [];
+        state.data.operations = result.operations || [];
+        state.tabDataLoaded.operations = true;
         state.data.permissions = result.permissions || [];
         state.tabDataLoaded.permissions = true;
         renderActiveTab('permissions');
