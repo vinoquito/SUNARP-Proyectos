@@ -13,7 +13,11 @@
     table: null,
     userListController: null,
     localLoadingCount: 0,
-    localLoadingElement: null
+    localLoadingElement: null,
+    tabDataLoaded: { permissions: false, assignments: false, operations: false },
+    tabLoadPromises: {},
+    userFilters: { sedeId: '', roleId: '' },
+    selectedAssignmentRoleId: ''
   };
 
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -52,6 +56,28 @@
         state.localLoadingElement = null;
         card.removeAttribute('aria-busy');
       }
+    };
+  }
+
+
+  function beginElementLoading(target, message) {
+    if (!target) return () => {};
+    const overlay = document.createElement('div');
+    overlay.className = 'access-element-loader';
+    overlay.setAttribute('role', 'status');
+    overlay.setAttribute('aria-live', 'polite');
+    const spinner = document.createElement('span');
+    spinner.className = 'access-local-loader-spinner';
+    spinner.setAttribute('aria-hidden', 'true');
+    const label = document.createElement('span');
+    label.className = 'access-local-loader-message';
+    label.textContent = message || 'Consultando información...';
+    overlay.append(spinner, label);
+    target.appendChild(overlay);
+    target.setAttribute('aria-busy', 'true');
+    return function finishElementLoading() {
+      overlay.remove();
+      if (!target.querySelector('.access-element-loader')) target.removeAttribute('aria-busy');
     };
   }
 
@@ -1507,55 +1533,32 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
     const filters = document.createElement('div');
     filters.className = 'access-users-filters';
-
-    const siteSelect = createSelect(
-      (state.data.catalogs && state.data.catalogs.sedes || []).map(item => ({
-        value: item.id,
-        label: item.name
-      })),
-      '',
-      'Todas las sedes'
-    );
-
-    const roleSelect = createSelect(
-      activeRoles().map(role => ({
-        value: role.rol_id,
-        label: role.nombre
-      })),
-      '',
-      'Todos los roles'
-    );
-
-    const applyButton = createButton(
-      'Actualizar',
-      'outline',
-      () => loadFilteredUsers(true),
-      'refresh'
-    );
-    applyButton.disabled = true;
-
-    filters.append(
-      createField('Sede', siteSelect),
-      createField('Rol', roleSelect),
-      applyButton
-    );
+    const siteOptions = [
+      { value: '__ALL__', label: 'Todas las sedes' },
+      ...((state.data.catalogs && state.data.catalogs.sedes) || []).map(item => ({
+        value: item.id, label: item.name
+      }))
+    ];
+    const roleOptions = [
+      { value: '__ALL__', label: 'Todos los roles' },
+      ...activeRoles().map(role => ({ value: role.rol_id, label: role.nombre }))
+    ];
+    const siteSelect = createSelect(siteOptions, state.userFilters.sedeId, 'Selecciona una sede');
+    const roleSelect = createSelect(roleOptions, state.userFilters.roleId, 'Selecciona un rol');
+    filters.append(createField('Sede', siteSelect), createField('Rol', roleSelect));
     host.appendChild(filters);
 
-    let loadingUsers = false;
     let requestNumber = 0;
     let tableConfig = null;
-    let appliedSedeId = '';
-    let appliedRoleId = '';
+    let appliedSedeId = state.userFilters.sedeId || '';
+    let appliedRoleId = state.userFilters.roleId || '';
     let lastPageResult = { items: [], total: 0 };
 
-    function updateApplyState() {
-      applyButton.disabled = loadingUsers || (!siteSelect.value && !roleSelect.value && !appliedSedeId && !appliedRoleId);
-    }
-
     async function loadUserPage(params) {
-      const sedeId = appliedSedeId;
-      const rolId = appliedRoleId;
-      if (!sedeId && !rolId) {
+      const allSitesSelected = appliedSedeId === '__ALL__' || appliedRoleId === '__ALL__';
+      const sedeId = appliedSedeId === '__ALL__' ? '' : appliedSedeId;
+      const rolId = appliedRoleId === '__ALL__' ? '' : appliedRoleId;
+      if (!sedeId && !rolId && !allSitesSelected) {
         lastPageResult = { items: [], total: 0 };
         state.data.users = [];
         return lastPageResult;
@@ -1563,20 +1566,16 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
       const currentRequest = ++requestNumber;
       const finishLoading = beginAccessPanelLoading();
-      loadingUsers = true;
-      updateApplyState();
-
       try {
         const result = await rpc('getAccessUsers', {
           sede_id: sedeId,
           rol_id: rolId,
+          all_sedes: allSitesSelected,
           search: params && params.search || '',
           page: params && params.page || 1,
           pageSize: params && params.pageSize || 10
         });
-
         if (currentRequest !== requestNumber) return lastPageResult;
-
         lastPageResult = {
           items: Array.isArray(result.items) ? result.items : [],
           total: Number(result.total) || 0
@@ -1585,36 +1584,24 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         return lastPageResult;
       } catch (error) {
         if (currentRequest === requestNumber) {
-          SUNARPUI.notify(
-            'error',
-            error.message || 'No se pudieron consultar los usuarios.'
-          );
+          SUNARPUI.notify('error', error.message || 'No se pudieron consultar los usuarios.');
         }
         return lastPageResult;
       } finally {
         finishLoading();
-        if (currentRequest === requestNumber) {
-          loadingUsers = false;
-          updateApplyState();
-        }
       }
     }
 
-    async function loadFilteredUsers() {
+    function loadFilteredUsers() {
       if (!tableConfig) return;
-      // Invalida respuestas pendientes de la tabla anterior.
       requestNumber += 1;
       appliedSedeId = siteSelect.value;
       appliedRoleId = roleSelect.value;
-      updateApplyState();
-      // Recrear la tabla reinicia la página a 1 cuando cambian sede o rol.
+      state.userFilters = { sedeId: appliedSedeId, roleId: appliedRoleId };
       renderTable(host, tableConfig);
     }
-
-    // Los selectores solo actualizan el estado del botón.
-    // La consulta se ejecuta al pulsar Actualizar o al cambiar página/búsqueda.
-    siteSelect.addEventListener('change', updateApplyState);
-    roleSelect.addEventListener('change', updateApplyState);
+    siteSelect.addEventListener('change', loadFilteredUsers);
+    roleSelect.addEventListener('change', loadFilteredUsers);
 
     tableConfig = {
       data: [],
@@ -1633,23 +1620,17 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           }).join(' · ') || 'Sin roles asignados'
         },
         {
-          key: 'active',
-          label: 'Estado',
-          align: 'center',
+          key: 'active', label: 'Estado', align: 'center',
           render: (value, row) => createAccessStatusCell(row, 'setAccessUserStatus', row.persona_id, 'la cuenta')
         }
       ],
       rowActions: [
         ...(canConfigure ? [{
-          label: 'Configurar accesos',
-          icon: 'tune',
-          variant: 'outline',
+          label: 'Configurar accesos', icon: 'tune', variant: 'outline',
           onClick: row => openUserModal(row)
         }] : []),
         ...(state.data.capabilities.audit ? [{
-          label: 'Historial',
-          icon: 'history',
-          variant: 'outline',
+          label: 'Historial', icon: 'history', variant: 'outline',
           onClick: row => openEntityHistory('USUARIO', row.persona_id, row.nombre_completo)
         }] : [])
       ],
@@ -1657,11 +1638,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       emptyMessage: 'Selecciona una sede o un rol para consultar usuarios.'
     };
     renderTable(host, tableConfig);
-
-    state.userListController = {
-      refresh: () => loadFilteredUsers(false)
-    };
-    updateApplyState();
+    state.userListController = { refresh: () => loadFilteredUsers() };
   }
 
   async function openUserModal(row) {
@@ -1822,12 +1799,9 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           documentNumber.disabled = true;
 
           resultHost.appendChild(alertHost);
-          const finishLoading = beginAccessPanelLoading();
-
-          showSearchAlert(
-            'info',
-            'Buscando persona',
-            'Consultando el documento en el directorio institucional.'
+          const finishLoading = beginElementLoading(
+            form,
+            'Buscando persona en el directorio institucional...'
           );
 
           try {
@@ -2330,7 +2304,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         value: role.rol_id,
         label: role.nombre + ' (' + role.rol_id + ')'
       })),
-      '',
+      state.selectedAssignmentRoleId,
       'Selecciona un rol'
     );
     panel.appendChild(createField('Rol', roleSelect));
@@ -2452,7 +2426,10 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       });
     }
 
-    roleSelect.addEventListener('change', paintChecklist);
+    roleSelect.addEventListener('change', () => {
+      state.selectedAssignmentRoleId = roleSelect.value;
+      paintChecklist();
+    });
     paintChecklist();
   }
 
@@ -2947,32 +2924,65 @@ window.SUNARPAccessHistory = Object.freeze({
 
   function renderActiveTab(tabId) {
     const panel = $('#accessTabPanel');
-
     if (!panel || !state.data) return;
-
     destroyTable();
-
     panel.replaceChildren();
-
     const renderers = {
-      users: renderUsers,
-      roles: renderRoles,
-      permissions: renderPermissions,
-      operations: renderOperations,
-      scopeTypes: renderScopeTypes,
-      assignments: renderAssignments,
-      audit: renderAudit
+      users: renderUsers, roles: renderRoles, permissions: renderPermissions,
+      operations: renderOperations, scopeTypes: renderScopeTypes,
+      assignments: renderAssignments, audit: renderAudit
     };
-
     const renderer = renderers[tabId];
-
     if (!renderer) return;
-
     state.activeTab = tabId;
 
+    const tabLoaders = {
+      permissions: async () => {
+        const result = await rpc('getAccessManagementTabData', 'permissions');
+        state.data.modules = result.modules || [];
+        state.data.permissions = result.permissions || [];
+      },
+      assignments: async () => {
+        const result = await rpc('getAccessManagementTabData', 'assignments');
+        state.data.roles = result.roles || [];
+        state.data.modules = result.modules || [];
+        state.data.permissions = result.permissions || [];
+        state.data.rolePermissions = result.rolePermissions || [];
+      },
+      operations: async () => {
+        const result = await rpc('getAccessManagementTabData', 'operations');
+        state.data.operations = result.operations || [];
+      }
+    };
+    const loader = tabLoaders[tabId];
+    if (loader && state.tabDataLoaded[tabId] !== true) {
+      panel.textContent = 'Consultando información...';
+      if (!state.tabLoadPromises[tabId]) {
+        const finishLoading = beginAccessPanelLoading('Consultando información de la pestaña...');
+        state.tabLoadPromises[tabId] = (async () => {
+          try {
+            await loader();
+            state.tabDataLoaded[tabId] = true;
+            if (state.activeTab === tabId) {
+              destroyTable();
+              panel.replaceChildren();
+              renderer(panel);
+            }
+          } catch (error) {
+            if (state.activeTab === tabId) {
+              panel.textContent = error.message || 'No se pudo cargar la información.';
+              SUNARPUI.notify('error', error.message || 'No se pudo cargar la pestaña.');
+            }
+          } finally {
+            finishLoading();
+            delete state.tabLoadPromises[tabId];
+          }
+        })();
+      }
+      return;
+    }
     renderer(panel);
   }
-
 
   function renderPage() {
     const tabs = getAvailableTabs();
