@@ -3045,10 +3045,12 @@ window.SUNARPAccessHistory = Object.freeze({
         const result = await rpc('getAccessManagementTabData', 'permissions');
         state.data.modules = result.modules || [];
         state.data.permissions = result.permissions || [];
+        state.tabDataLoaded.permissions = true;
         renderActiveTab('permissions');
       } else if (tab === 'operations') {
         const result = await rpc('getAccessManagementTabData', 'operations');
         state.data.operations = result.operations || [];
+        state.tabDataLoaded.operations = true;
         renderActiveTab('operations');
       } else if (tab === 'scopeTypes') {
         const result = await rpc('getAccessManagementTabData', 'scopeTypes');
@@ -3060,6 +3062,7 @@ window.SUNARPAccessHistory = Object.freeze({
         state.data.modules = result.modules || [];
         state.data.permissions = result.permissions || [];
         state.data.rolePermissions = result.rolePermissions || [];
+        state.tabDataLoaded.assignments = true;
         renderActiveTab('assignments');
       } else if (tab === 'audit') {
         if (state.table && typeof state.table.refresh === 'function') {
