@@ -1762,7 +1762,7 @@ test('el historial filtrado desempata por evento_id y coloca fechas inválidas a
     actor: 'ana@sunarp.gob.pe', page: 1, pageSize: 10
   });
   assert.deepEqual(
-    result.items.map(item => item.evento_id),
+    Array.from(result.items, item => item.evento_id),
     ['EVT_002', 'EVT_001', 'EVT_004', 'EVT_003']
   );
   assert.equal(result.total, 4);
