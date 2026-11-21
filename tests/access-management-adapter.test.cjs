@@ -1223,7 +1223,8 @@ test('el listado de usuarios se consulta al seleccionar un filtro y admite Todas
   assert.match(accessUiSource, /all_sedes: allSitesSelected/);
   assert.match(accessUiSource, /siteSelect\.addEventListener\('change', loadFilteredUsers\)/);
   assert.match(accessUiSource, /roleSelect\.addEventListener\('change', loadFilteredUsers\)/);
-  assert.doesNotMatch(accessUiSource, /createButton\(\s*'Actualizar',[\s\S]*?loadFilteredUsers/);
+  assert.doesNotMatch(accessUiSource, /loadFilteredUsers\(true\)/);
+  assert.doesNotMatch(accessUiSource, /applyButton/);
   assert.match(accessUiSource, /searchPlaceholder: 'Buscar por nombre o correo institucional/);
   assert.match(accessUiSource, /mode: 'server'/);
 });
