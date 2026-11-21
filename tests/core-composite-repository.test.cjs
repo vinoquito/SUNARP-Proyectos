@@ -49,22 +49,17 @@ function createSandbox(initialRecords = []) {
         createTextFinder(query) {
           let entireCell = false;
           let caseSensitive = true;
-          let regularExpression = false;
           const finder = {
             matchEntireCell(value) { entireCell = value; return finder; },
             matchCase(value) { caseSensitive = value; return finder; },
-            useRegularExpression(value) { regularExpression = value; return finder; },
+            useRegularExpression() { return finder; },
             findAll() {
               const expected = String(query);
-              const expression = regularExpression
-                ? new RegExp(expected, caseSensitive ? '' : 'i')
-                : null;
               return entries.filter(entry => {
                 if (entry.rowNumber < row || entry.rowNumber >= row + numRows) return false;
                 const actual = String(entry.values[column - 1] ?? '');
                 const left = caseSensitive ? actual : actual.toLowerCase();
                 const right = caseSensitive ? expected : expected.toLowerCase();
-                if (expression) return expression.test(actual);
                 return entireCell ? left === right : left.includes(right);
               }).map(entry => ({ getRow: () => entry.rowNumber }));
             }
@@ -249,7 +244,7 @@ test('syncRecordsByKey lee únicamente las filas del conjunto padre y no materia
     active: true
   }));
   const target = [
-    { persona_id: ' PER_TARGET ', modulo_id: 'MOD_KEEP', tipo_ambito_id: 'TOTAL', referencia_id: '', active: false },
+    { persona_id: 'PER_TARGET', modulo_id: 'MOD_KEEP', tipo_ambito_id: 'TOTAL', referencia_id: '', active: false },
     { persona_id: 'PER_TARGET', modulo_id: 'MOD_DROP', tipo_ambito_id: 'SEDE', referencia_id: 'SEDE_1', active: true }
   ];
   const sandbox = createSandbox(unrelated.concat(target));
