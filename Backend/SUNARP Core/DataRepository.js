@@ -242,12 +242,14 @@ function _coreListTailByIndex_(context, options) {
   const compare = (left, right) => {
     const leftTime = left.sortTimestamp;
     const rightTime = right.sortTimestamp;
-    if (leftTime !== rightTime) {
-      if (Number.isNaN(leftTime)) return 1;
-      if (Number.isNaN(rightTime)) return -1;
-      return rightTime - leftTime;
-    }
-    return right.rowNumber - left.rowNumber;
+    const leftInvalid = Number.isNaN(leftTime);
+    const rightInvalid = Number.isNaN(rightTime);
+
+    if (leftInvalid !== rightInvalid) return leftInvalid ? 1 : -1;
+    if (!leftInvalid && leftTime !== rightTime) return rightTime - leftTime;
+
+    const idOrder = String(right.id).localeCompare(String(left.id), 'es');
+    return idOrder || right.rowNumber - left.rowNumber;
   };
 
   for (let index = 0; index < rowCount; index++) {
@@ -262,6 +264,7 @@ function _coreListTailByIndex_(context, options) {
 
     total++;
     const candidate = {
+      id: String(id).trim(),
       rowNumber: dataStartRow + index,
       sortTimestamp: sortBy ? timestamp : NaN
     };

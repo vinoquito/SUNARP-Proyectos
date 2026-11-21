@@ -289,3 +289,38 @@ test('findRecordsByFields admite proyección de columnas sin leer el ancho compl
     /projectionFields/
   );
 });
+
+test('listTailRecords ordena empates por identificador y deja fechas inválidas al final de forma estable', () => {
+  const headers = ['evento_id', 'fecha_hora', 'detalle'];
+  const sameTime = new Date('2026-11-20T12:00:00Z');
+  const values = [
+    ['EVT_001', sameTime, 'primero'],
+    ['EVT_003', new Date('invalid'), 'fecha inválida'],
+    ['EVT_002', sameTime, 'segundo'],
+    ['EVT_004', new Date('invalid'), 'fecha inválida']
+  ];
+  const sheet = {
+    getLastRow: () => 5,
+    getLastColumn: () => 3,
+    getRange(row, column, numRows, numColumns) {
+      if (row === 1) return { getDisplayValues: () => [headers] };
+      return {
+        getValues: () => values.slice(row - 2, row - 2 + numRows)
+          .map(item => item.slice(column - 1, column - 1 + numColumns))
+      };
+    }
+  };
+  const sandbox = vm.createContext({
+    _coreOpenSource_: () => ({ config: { headerRow: 1, sheetName: 'Auditoria' }, sheet })
+  });
+  vm.runInContext(repositorySource, sandbox, { filename: 'DataRepository.js' });
+  const result = sandbox.listTailRecords(
+    { spreadsheetId: 'SECURITY', sheetName: 'Auditoria' },
+    { idField: 'evento_id', dateField: 'fecha_hora', sortBy: 'fecha_hora', offset: 0, limit: 10 }
+  );
+  assert.deepEqual(
+    Array.from(result.records, item => item.evento_id),
+    ['EVT_002', 'EVT_001', 'EVT_004', 'EVT_003']
+  );
+  assert.equal(result.total, 4);
+});

@@ -1745,3 +1745,25 @@ test('los límites de fecha de auditoría rechazan días inexistentes y conserva
     /filtro de fecha de auditoría no es válido/
   );
 });
+
+test('el historial filtrado desempata por evento_id y coloca fechas inválidas al final', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  sandbox._accessRequirePermission_ = () => ({ authenticated: true });
+  sandbox._accessSecuritySource_ = sheet => ({ sheetName: sheet });
+  const sameTime = new Date('2026-11-20T12:00:00Z');
+  const rows = [
+    { evento_id: 'EVT_001', fecha_hora: sameTime, actor_correo: 'ana@sunarp.gob.pe' },
+    { evento_id: 'EVT_003', fecha_hora: new Date('invalid'), actor_correo: 'ana@sunarp.gob.pe' },
+    { evento_id: 'EVT_002', fecha_hora: sameTime, actor_correo: 'ana@sunarp.gob.pe' },
+    { evento_id: 'EVT_004', fecha_hora: new Date('invalid'), actor_correo: 'ana@sunarp.gob.pe' }
+  ];
+  sandbox.SUNARPCore.searchRecordsByFields = () => ({ records: rows, total: rows.length });
+  const result = sandbox.getAccessAuditHistory({
+    actor: 'ana@sunarp.gob.pe', page: 1, pageSize: 10
+  });
+  assert.deepEqual(
+    result.items.map(item => item.evento_id),
+    ['EVT_002', 'EVT_001', 'EVT_004', 'EVT_003']
+  );
+  assert.equal(result.total, 4);
+});

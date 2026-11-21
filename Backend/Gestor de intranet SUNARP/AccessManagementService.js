@@ -3119,20 +3119,23 @@ function _accessAuditTimestamp_(record) {
   return Number.isNaN(date.getTime()) ? NaN : date.getTime();
 }
 
+function _accessCompareAuditEvents_(left, right) {
+  const leftTime = _accessAuditTimestamp_(left);
+  const rightTime = _accessAuditTimestamp_(right);
+  const leftInvalid = Number.isNaN(leftTime);
+  const rightInvalid = Number.isNaN(rightTime);
+
+  if (leftInvalid !== rightInvalid) return leftInvalid ? 1 : -1;
+  if (!leftInvalid && leftTime !== rightTime) return rightTime - leftTime;
+
+  return _accessText_(right.evento_id).localeCompare(
+    _accessText_(left.evento_id), 'es'
+  );
+}
+
 function _accessInsertAuditPageRecord_(records, record, maxRecords) {
   if (maxRecords < 1) return;
-  const compare = (left, right) => {
-    const leftTime = _accessAuditTimestamp_(left);
-    const rightTime = _accessAuditTimestamp_(right);
-    if (leftTime !== rightTime) {
-      if (Number.isNaN(leftTime)) return 1;
-      if (Number.isNaN(rightTime)) return -1;
-      return rightTime - leftTime;
-    }
-    return _accessText_(right.evento_id).localeCompare(
-      _accessText_(left.evento_id), 'es'
-    );
-  };
+  const compare = _accessCompareAuditEvents_;
 
   let low = 0;
   let high = records.length;
@@ -3447,18 +3450,7 @@ function _accessBuildEntityHistoryIndex_(source, entityType, recordId, relatedTy
     consumeEvents(relatedMatches.records);
   }
 
-  events.sort((left, right) => {
-    const leftTime = _accessAuditTimestamp_(left);
-    const rightTime = _accessAuditTimestamp_(right);
-    if (leftTime !== rightTime) {
-      if (Number.isNaN(leftTime)) return 1;
-      if (Number.isNaN(rightTime)) return -1;
-      return rightTime - leftTime;
-    }
-    return _accessText_(right.evento_id).localeCompare(
-      _accessText_(left.evento_id), 'es'
-    );
-  });
+  events.sort(_accessCompareAuditEvents_);
 
   return events;
 }
