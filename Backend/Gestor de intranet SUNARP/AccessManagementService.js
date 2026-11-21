@@ -2230,10 +2230,35 @@ function saveAccessUserConfiguration(payload) {
   let scopesChanged = false;
 
   if (canManageScopes) {
-    const catalogs = _accessOrgCatalog_();
-    const structures = catalogs.estructuraOrg || [];
-    const sites = catalogs.sedes || [];
-    const locals = catalogs.locales || [];
+    const referenceIdsByEntity = {
+      SEDE: new Set(),
+      ESTRUCTURA_ORG: new Set(),
+      LOCAL: new Set()
+    };
+    requestedByModule.forEach(requested => {
+      (requested.ambitos || []).forEach(scopeInput => {
+        const type = _accessUpper_(
+          scopeInput && (scopeInput.tipo_ambito_id || scopeInput.scopeType)
+        );
+        const typeConfig = _accessScopeType_(data, type);
+        const entity = typeConfig && _accessUpper_(typeConfig.entidad_referencia);
+        const referenceId = _accessText_(
+          scopeInput && (scopeInput.referencia_id || scopeInput.referenceId)
+        );
+        if (referenceId && referenceIdsByEntity[entity]) {
+          referenceIdsByEntity[entity].add(referenceId);
+        }
+      });
+    });
+    const structures = _accessFindOrgCatalogByIds_(
+      'ESTRUCTURA_ORG', Array.from(referenceIdsByEntity.ESTRUCTURA_ORG)
+    );
+    const sites = _accessFindOrgCatalogByIds_(
+      'SEDE', Array.from(referenceIdsByEntity.SEDE)
+    );
+    const locals = _accessFindOrgCatalogByIds_(
+      'LOCAL', Array.from(referenceIdsByEntity.LOCAL)
+    );
 
     const normalizedScopes = [];
 

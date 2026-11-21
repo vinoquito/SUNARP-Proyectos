@@ -1665,3 +1665,14 @@ test('la continuidad del administrador global restringe las relaciones por módu
   assert.equal(userRoleQuery.filters.modulo_id, 'MOD_ACCESOS');
   assert.equal(scopeQuery.filters.tipo_ambito_id, 'TOTAL');
 });
+
+test('la edición conjunta de accesos consulta solo referencias organizacionales seleccionadas', () => {
+  const start = accessSource.indexOf('function saveAccessUserConfiguration(');
+  const end = accessSource.indexOf('function _accessLoadSecurityRecords_(', start);
+  assert.ok(start >= 0 && end > start);
+  const implementation = accessSource.slice(start, end);
+  assert.doesNotMatch(implementation, /_accessOrgCatalog_\s*\(/);
+  assert.match(implementation, /_accessFindOrgCatalogByIds_\s*\(\s*'ESTRUCTURA_ORG'/);
+  assert.match(implementation, /_accessFindOrgCatalogByIds_\s*\(\s*'SEDE'/);
+  assert.match(implementation, /_accessFindOrgCatalogByIds_\s*\(\s*'LOCAL'/);
+});
