@@ -1842,3 +1842,14 @@ test('Nueva cuenta abre el formulario sin esperar los catálogos organizacionale
   assert.match(accessUiSource, /rpc\('getAccessManagementTabData', 'documentTypes'\)\.then/);
   assert.match(accessUiSource, /await rpc\('getAccessScopeCatalogs'\)/);
 });
+
+
+test('el bootstrap de accesos agrupa catálogos del libro de Seguridad en una lectura', () => {
+  const bootstrap = accessSource.slice(
+    accessSource.indexOf('function getAccessManagementData()'),
+    accessSource.indexOf('function getAccessManagementTabData(', accessSource.indexOf('function getAccessManagementData()'))
+  );
+  assert.match(bootstrap, /bootstrapRequests/);
+  assert.match(bootstrap, /listRecordsFromSourcesCached\(bootstrapRequests, 300\)/);
+  assert.doesNotMatch(bootstrap, /_accessLoadSecurityRecords_\(/);
+});
