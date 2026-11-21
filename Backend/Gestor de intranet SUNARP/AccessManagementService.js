@@ -2991,6 +2991,16 @@ function _accessBuildUserListingIndex_(sedeId, roleId) {
       candidateSets.push(new Set(sitesByPerson.keys()));
     }
 
+    if (!candidateSets.length) {
+      const allAccounts = _accessLoadSecurityRecords_(
+        ACCESS_MANAGEMENT_CONFIG.sheets.users,
+        ACCESS_MANAGEMENT_FIELDS.users
+      );
+      candidateSets.push(new Set(
+        allAccounts.map(item => _accessText_(item.persona_id)).filter(Boolean)
+      ));
+    }
+
     let candidateIds = candidateSets.length ? new Set(candidateSets[0]) : new Set();
     candidateSets.slice(1).forEach(set => {
       candidateIds = new Set(Array.from(candidateIds).filter(id => set.has(id)));
@@ -3077,7 +3087,8 @@ function getAccessUsers(filters) {
   const sedeId = _accessText_(filters.sede_id);
   const roleId = _accessUpper_(filters.rol_id);
   const query = _accessText_(filters.search).toLocaleLowerCase();
-  if (!sedeId && !roleId) return { items: [], total: 0 };
+  const allSitesSelected = filters.all_sedes === true;
+  if (!sedeId && !roleId && !allSitesSelected) return { items: [], total: 0 };
 
   const page = Math.max(1, Number.parseInt(filters.page, 10) || 1);
   const pageSize = Math.min(100, Math.max(1, Number.parseInt(filters.pageSize, 10) || 10));
