@@ -555,12 +555,21 @@ function queryRecords(source, options) {
     }
     if (candidateCacheKey) {
       try {
-        putCachedValue(candidateCacheKey, {
+        const storedCandidates = putCachedValue(candidateCacheKey, {
           version: 3,
           requestedFields: candidateProjectionFields.slice(),
           projectedFields: actualCandidateProjectedFields.slice(),
           candidates: candidateRows
         }, candidateCacheSeconds);
+        if (!storedCandidates || storedCandidates.success !== true) {
+          console.warn('[SUNARP Core] Caché de candidatos no almacenada:', {
+            reason: storedCandidates && storedCandidates.reason || 'unknown',
+            candidateCount: candidateRows.length,
+            sizeBytes: storedCandidates && storedCandidates.sizeBytes,
+            compressedBytes: storedCandidates && storedCandidates.compressedBytes,
+            chunkCount: storedCandidates && storedCandidates.chunkCount
+          });
+        }
       } catch (error) {
         console.warn('[SUNARP Core] No se pudo almacenar la caché de candidatos:', error.message);
       }
