@@ -1240,7 +1240,7 @@ test('la búsqueda de persona muestra un loader transparente dentro del formular
   assert.match(accessUiSource, /function beginElementLoading\(target, message\)/);
   assert.match(accessUiSource, /beginElementLoading\(\s*form,/);
   assert.match(accessUiSource, /access-element-loader/);
-  assert.match(accessViewSource, /\.access-element-loader\s*\{/);
+  assert.match(viewSource, /\.access-element-loader\s*\{/);
 });
 
 test('los formularios de rol y permiso no permiten ingresar IDs, códigos ni estados manualmente', () => {
