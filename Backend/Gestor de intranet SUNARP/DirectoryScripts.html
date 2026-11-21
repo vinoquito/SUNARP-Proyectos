@@ -670,14 +670,14 @@ const DirectoryPage = (() => {
       initialData: initialPage || null,
 
       loadData: async params => {
-        const elements = getElements();
+        const initialElements = getElements();
         const isUnfilteredFirstPage =
           initialPage &&
           Number(params.page || 1) === 1 &&
           Number(params.pageSize || 10) === 10 &&
           !String(params.search || '').trim() &&
-          !(elements.sedeFilter && elements.sedeFilter.value) &&
-          !(elements.cargoFilter && elements.cargoFilter.value) &&
+          !(initialElements.sedeFilter && initialElements.sedeFilter.value) &&
+          !(initialElements.cargoFilter && initialElements.cargoFilter.value) &&
           !state.hierarchyPath.length;
 
         if (isUnfilteredFirstPage) {
