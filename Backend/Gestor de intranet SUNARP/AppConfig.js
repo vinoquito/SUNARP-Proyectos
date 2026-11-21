@@ -37,6 +37,28 @@ const INTRANET_DATA_SOURCES = Object.freeze({
 
 
 /**
+ * Dependencias de catálogos replicados mediante IMPORTRANGE.
+ * Se conservan las hojas consumidoras; Core solo recibe la relación lógica
+ * maestro -> réplica para componer generaciones e invalidar resultados.
+ */
+const INTRANET_SOURCE_DEPENDENCIES = Object.freeze({
+  DIRECTORY: Object.freeze({
+    sede: Object.freeze([['MASTER_DATA', 'sede']]),
+    tipos_local: Object.freeze([['MASTER_DATA', 'tipos_local']]),
+    locales: Object.freeze([['MASTER_DATA', 'locales']]),
+    tipos_estructura: Object.freeze([['MASTER_DATA', 'tipos_estructura']]),
+    estructura_org: Object.freeze([['MASTER_DATA', 'estructura_org']]),
+    estructura_local: Object.freeze([['MASTER_DATA', 'estructura_local']]),
+    cargos: Object.freeze([['MASTER_DATA', 'cargos']])
+  }),
+  SECURITY: Object.freeze({
+    Sedes: Object.freeze([['MASTER_DATA', 'sede']]),
+    EstructuraOrg: Object.freeze([['MASTER_DATA', 'estructura_org']])
+  })
+});
+
+
+/**
  * Construye la configuración de una fuente de datos
  * compatible con SUNARP Core.
  *
@@ -69,10 +91,19 @@ function getIntranetDataSource(sourceKey, sheetName, headerRow) {
     );
   }
 
+  const dependencyDefinitions = (
+    INTRANET_SOURCE_DEPENDENCIES[sourceKey] &&
+    INTRANET_SOURCE_DEPENDENCIES[sourceKey][normalizedSheetName]
+  ) || [];
+  const dependencies = dependencyDefinitions.map(([dependencySourceKey, dependencySheetName]) =>
+    getIntranetDataSource(dependencySourceKey, dependencySheetName, 1)
+  );
+
   return {
     spreadsheetId: source.spreadsheetId,
     sheetName: normalizedSheetName,
     headerRow: resolvedHeaderRow,
-    label: `${source.label} - ${normalizedSheetName}`
+    label: `${source.label} - ${normalizedSheetName}`,
+    dependencies
   };
 }

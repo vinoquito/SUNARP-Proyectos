@@ -1,3 +1,292 @@
+<style>
+  /* Estilos propios de Administración de accesos. */
+  /* El loader interno pertenece únicamente a esta tarjeta. */
+  .access-card {
+    position: relative;
+  }
+
+  .access-local-loader {
+    position: absolute;
+    inset: 0;
+    z-index: 120;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    border-radius: inherit;
+    background: rgba(255, 255, 255, 0.66);
+    backdrop-filter: blur(2px);
+    color: var(--ui-muted);
+    pointer-events: all;
+  }
+
+  .access-local-loader-spinner {
+    width: 34px;
+    height: 34px;
+    border: 3px solid #E5E9E3;
+    border-top-color: var(--sunarp-green);
+    border-radius: 50%;
+    animation: access-local-loader-spin 0.8s linear infinite;
+  }
+
+  .access-local-loader-message {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  @keyframes access-local-loader-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* El selector de módulo queda alineado a la izquierda del buscador. */
+  .access-card .sunarp-datatable-toolbar {
+    justify-content: flex-start !important;
+  }
+
+  .access-section-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .access-users-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+    align-items: end;
+    gap: 12px;
+    margin: 12px 0 16px;
+    padding: 12px;
+    border: 1px solid var(--ui-border);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.55);
+  }
+
+  .access-permission-group-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--ui-border);
+    background: var(--ui-background);
+  }
+
+  .access-permission-group-heading h4 {
+    margin: 0;
+  }
+
+  .access-check-row--group {
+    margin: 0;
+    font-weight: 600;
+  }
+
+  .access-check-row--group input {
+    width: 16px;
+    height: 16px;
+  }
+
+  @media (max-width: 720px) {
+    .access-users-filters {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .access-section-heading {
+      align-items: flex-start;
+    }
+  }
+
+
+  .access-form {
+    position: relative;
+  }
+
+  .access-element-loader {
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    border-radius: inherit;
+    background: rgba(255, 255, 255, 0.68);
+    backdrop-filter: blur(2px);
+    color: var(--ui-muted);
+    pointer-events: all;
+  }
+
+  .access-person-search-result .sunarp-alert-message {
+    white-space: pre-line;
+    line-height: 1.38;
+  }
+
+  .access-person-identity {
+    display: grid;
+    gap: 3px;
+    padding: 11px 13px;
+    border: 1px solid var(--ui-border);
+    border-radius: 7px;
+    background: #fff;
+    color: var(--ui-ink);
+    font-size: 13px;
+    line-height: 1.4;
+  }
+
+  .access-person-identity strong {
+    font-size: 14px;
+  }
+
+  .access-user-configuration,
+  .access-user-modules {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .access-user-modules-heading h3 {
+    margin: 0 0 3px;
+    font-size: 15px;
+  }
+
+  .access-user-modules-heading p {
+    margin: 0;
+  }
+
+  .access-user-module-picker {
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 480px;
+  }
+
+  .access-user-module-editor-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid var(--ui-border);
+    border-radius: 8px;
+    background: var(--ui-background);
+  }
+
+  .access-user-module-editor-heading h4 {
+    margin: 0 0 3px;
+    color: var(--ui-ink);
+    font-size: 14px;
+  }
+
+  .access-user-module-editor-heading p {
+    margin: 0;
+  }
+
+  .access-user-scope-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 12px;
+    border-top: 1px solid var(--ui-border);
+  }
+
+  .access-user-scope-editor h5,
+  .access-user-assignment-heading {
+    margin: 0;
+    color: var(--ui-ink);
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .access-user-scope-grid {
+    gap: 10px;
+  }
+
+  .access-user-scope-context,
+  .access-user-scope-levels {
+    display: grid;
+    grid-column: 1 / -1;
+    gap: 10px;
+  }
+
+  .access-user-scope-context-note {
+    margin: 0;
+    line-height: 1.4;
+  }
+
+  .access-user-scope-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .access-user-scope-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--ui-border);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--ui-ink);
+    font-size: 12px;
+  }
+
+  .access-user-assignment-table-host {
+    width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--ui-border);
+    border-radius: 7px;
+  }
+
+  .access-user-assignment-table {
+    width: 100%;
+    min-width: 680px;
+    border-collapse: collapse;
+    background: #fff;
+    color: var(--ui-ink);
+    font-size: 12px;
+  }
+
+  .access-user-assignment-table th,
+  .access-user-assignment-table td {
+    padding: 10px 11px;
+    border-bottom: 1px solid var(--ui-border);
+    text-align: left;
+    vertical-align: middle;
+    line-height: 1.45;
+  }
+
+  .access-user-assignment-table th {
+    background: var(--ui-background);
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .access-user-assignment-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .access-user-assignment-actions {
+    display: flex;
+    gap: 6px;
+    white-space: nowrap;
+  }
+
+  .access-user-assignment-empty {
+    margin: 0;
+    padding: 14px;
+  }
+
+  .access-search-actions {
+    justify-content: flex-start;
+  }
+
+
+</style>
+
 <section
   class="access-page"
   id="viewAccesos"
@@ -14,17 +303,7 @@
         </p>
       </div>
 
-      <button
-        type="button"
-        class="sunarp-btn sunarp-btn--outline"
-        id="accessRefreshButton">
 
-        <span
-          class="material-symbols-outlined"
-          aria-hidden="true">refresh</span>
-
-        <span>Actualizar</span>
-      </button>
     </div>
 
     <div

@@ -11,13 +11,77 @@
     activeTab: '',
     tabs: null,
     table: null,
-    draftScopes: []
+    userListController: null,
+    localLoadingCount: 0,
+    localLoadingElement: null,
+    tabDataLoaded: { permissions: false, assignments: false, operations: false },
+    tabLoadPromises: {},
+    userFilters: { sedeId: '', roleId: '' },
+    userPageCache: {},
+    auditPageCache: {},
+    selectedAssignmentRoleId: ''
   };
 
   const $ = (selector, root = document) => root.querySelector(selector);
 
-  const $$ = (selector, root = document) =>
+  const queryAll = (selector, root = document) =>
     Array.from(root.querySelectorAll(selector));
+
+
+  function beginAccessPanelLoading(message) {
+    const card = $('.access-card');
+    if (!card) return () => {};
+    state.localLoadingCount += 1;
+    if (!state.localLoadingElement) {
+      const overlay = document.createElement('div');
+      overlay.className = 'access-local-loader';
+      overlay.setAttribute('role', 'status');
+      overlay.setAttribute('aria-live', 'polite');
+      const spinner = document.createElement('span');
+      spinner.className = 'access-local-loader-spinner';
+      spinner.setAttribute('aria-hidden', 'true');
+      const label = document.createElement('span');
+      label.className = 'access-local-loader-message';
+      label.textContent = message || 'Actualizando información...';
+      overlay.append(spinner, label);
+      card.appendChild(overlay);
+      card.setAttribute('aria-busy', 'true');
+      state.localLoadingElement = overlay;
+    }
+    let finished = false;
+    return function finishAccessPanelLoading() {
+      if (finished) return;
+      finished = true;
+      state.localLoadingCount = Math.max(0, state.localLoadingCount - 1);
+      if (!state.localLoadingCount && state.localLoadingElement) {
+        state.localLoadingElement.remove();
+        state.localLoadingElement = null;
+        card.removeAttribute('aria-busy');
+      }
+    };
+  }
+
+
+  function beginElementLoading(target, message) {
+    if (!target) return () => {};
+    const overlay = document.createElement('div');
+    overlay.className = 'access-element-loader';
+    overlay.setAttribute('role', 'status');
+    overlay.setAttribute('aria-live', 'polite');
+    const spinner = document.createElement('span');
+    spinner.className = 'access-local-loader-spinner';
+    spinner.setAttribute('aria-hidden', 'true');
+    const label = document.createElement('span');
+    label.className = 'access-local-loader-message';
+    label.textContent = message || 'Consultando información...';
+    overlay.append(spinner, label);
+    target.appendChild(overlay);
+    target.setAttribute('aria-busy', 'true');
+    return function finishElementLoading() {
+      overlay.remove();
+      if (!target.querySelector('.access-element-loader')) target.removeAttribute('aria-busy');
+    };
+  }
 
 
   function rpc(method, ...args) {
@@ -93,6 +157,7 @@
 
       first.value = '';
       first.textContent = placeholder;
+      first.selected = true;
 
       select.appendChild(first);
     }
@@ -119,6 +184,10 @@
 
       select.appendChild(option);
     });
+
+    if (selectedValue === null || selectedValue === undefined || String(selectedValue) === '') {
+      select.selectedIndex = 0;
+    }
 
     return select;
   }
@@ -196,7 +265,8 @@
   }
 
 
-  function openFormModal(title, form, onSave, saveLabel) {
+  function openFormModal(title, form, onSave, saveLabel, options) {
+    options = options || {};
     const footer = document.createElement('div');
 
     footer.className = 'access-modal-actions';
@@ -209,20 +279,25 @@
       )
     );
 
+    const canSave = () => typeof options.canSave === 'function'
+      ? options.canSave()
+      : true;
+
     const save = createButton(
       saveLabel || 'Guardar',
       'primary',
       async () => {
-        if (!form.reportValidity()) return;
+        if (save.disabled || !form.reportValidity() || !canSave()) return;
 
         save.disabled = true;
+        const finishLoading = beginAccessPanelLoading();
 
         try {
           await onSave();
 
           SUNARPUI.closeModal();
 
-          await refreshData(false);
+          await refreshCurrentTabData(false);
 
           SUNARPUI.notify(
             'success',
@@ -237,65 +312,59 @@
           );
 
         } finally {
+          finishLoading();
           if (save.isConnected) {
-            save.disabled = false;
+            save.disabled = !canSave();
           }
         }
       },
       'save'
     );
 
+    save.disabled = !canSave();
     footer.appendChild(save);
 
     SUNARPUI.openModal({
       title,
       content: form,
       footer,
-      size: 'lg'
+      size: options.size || 'lg'
     });
+
+    return save;
   }
 
 
-  function makeTabPanel(title, description, actionLabel, action) {
+  function makeTabPanel(title, description, actionLabel, action, options) {
+    options = options || {};
     const wrapper = document.createElement('div');
-
     wrapper.className = 'access-section';
 
     const heading = document.createElement('div');
-
     heading.className = 'access-section-heading';
 
     const copy = document.createElement('div');
-
     const titleNode = document.createElement('h3');
-
     titleNode.textContent = title;
-
     copy.appendChild(titleNode);
 
     if (description) {
       const paragraph = document.createElement('p');
-
       paragraph.textContent = description;
-
       copy.appendChild(paragraph);
     }
 
     heading.appendChild(copy);
 
+    const actions = document.createElement('div');
+    actions.className = 'access-section-actions';
+
     if (actionLabel && action) {
-      heading.appendChild(
-        createButton(
-          actionLabel,
-          'primary',
-          action,
-          'add'
-        )
-      );
+      actions.appendChild(createButton(actionLabel, 'primary', action, 'add'));
     }
 
+    if (actions.childElementCount) heading.appendChild(actions);
     wrapper.appendChild(heading);
-
     return wrapper;
   }
 
@@ -313,13 +382,14 @@
 
 
   function renderTable(host, config) {
-    const tableHost = document.createElement('div');
-
-    tableHost.id = 'accessDataTableHost';
-
-    host.appendChild(tableHost);
-
     destroyTable();
+
+    const previousHost = host.querySelector('#accessDataTableHost');
+    if (previousHost) previousHost.remove();
+
+    const tableHost = document.createElement('div');
+    tableHost.id = 'accessDataTableHost';
+    host.appendChild(tableHost);
 
     state.table = SUNARPUI.createDataTable({
       containerId: tableHost.id,
@@ -344,9 +414,7 @@
 
 
   function activeRoles() {
-    return (state.data.roles || []).filter(
-      role => role.estado === 'ACTIVO'
-    );
+    return (state.data.roles || []).filter(role => role.active === true);
   }
 
 
@@ -355,404 +423,1709 @@
       item => item.rol_id === roleId
     );
 
-    return role
-      ? role.nombre
-      : roleId || '—';
+    return role ? role.nombre : 'Rol no disponible';
   }
 
 
-  function structureName(structureId) {
-    const structure = (
-      (state.data.catalogs || {}).estructuraOrg || []
-    ).find(item => item.id === structureId);
-
-    return structure
-      ? structure.name
-      : structureId || '—';
+  function generatedToken(value) {
+    return String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
   }
+
+
+  function previewIdentifier(prefix, value, maxLength) {
+    const token = generatedToken(value);
+    return token ? (prefix + token).slice(0, maxLength || 50) : '';
+  }
+
+
+  function previewPermissionCode(moduleCode, operation) {
+    const moduleToken = generatedToken(moduleCode);
+    const operationToken = generatedToken(operation);
+    return moduleToken && operationToken
+      ? (moduleToken + '_' + operationToken).slice(0, 80)
+      : '';
+  }
+
+
 
   /**
  * Cambia el estado y actualiza la tabla.
  */
 async function changeAccessStatus(method, id, row, entityLabel) {
-  const isActive = _accessUiIsActive(row.estado);
-
-  const nextStatus = isActive
-    ? 'INACTIVO'
-    : 'ACTIVO';
-
-  const action = isActive
-    ? 'desactivar'
-    : 'activar';
-
-  const confirmed = window.confirm(
-    `¿Deseas ${action} ${entityLabel}?\n\n${id}`
-  );
-
+  const isActive = _accessUiIsActive(row.active);
+  const nextActive = !isActive;
+  const action = isActive ? 'desactivar' : 'activar';
+  const confirmed = window.confirm('¿Deseas ' + action + ' ' + entityLabel + '?\n\n' + id);
   if (!confirmed) return;
-
-  const result = await rpc(
-    method,
-    id,
-    nextStatus
-  );
-
-  await refreshData(false);
-
-  SUNARPUI.notify(
-    'success',
-    result.message || 'Estado actualizado correctamente.'
-  );
+  const finishLoading = beginAccessPanelLoading();
+  let result;
+  try {
+    result = await rpc(method, id, nextActive);
+    await refreshCurrentTabData(false);
+  } finally {
+    finishLoading();
+  }
+  SUNARPUI.notify('success', result.message || 'Estado actualizado correctamente.');
 }
 
 
-/**
- * Comprueba el estado sin depender de la presentación.
- */
 function _accessUiIsActive(value) {
-  return String(value || '').trim().toUpperCase() === 'ACTIVO';
+  return value === true || String(value || '').trim().toUpperCase() === 'TRUE';
 }
 
 
-/**
- * Construye la celda Estado:
- * badge con icono + texto y enlace debajo.
- */
 function createAccessStatusCell(row, method, id, entityLabel) {
-  const active = _accessUiIsActive(row.estado);
-
+  const active = _accessUiIsActive(row.active);
   const wrapper = document.createElement('div');
-
   wrapper.className = 'access-status-cell';
-
-  // Badge: icono y estado dentro del mismo elemento.
-  const badge = SUNARPUI.createBadge({
+  wrapper.appendChild(SUNARPUI.createBadge({
     label: active ? 'Activo' : 'Inactivo',
     variant: active ? 'success' : 'danger',
     icon: active ? 'check_circle' : 'cancel'
-  });
-
-  wrapper.appendChild(badge);
-
-  // Enlace de activación/desactivación debajo del badge.
+  }));
   const link = document.createElement('button');
-
   link.type = 'button';
-
   link.className = active
     ? 'access-status-link access-status-link--deactivate'
     : 'access-status-link access-status-link--activate';
-
-  link.textContent = active
-    ? 'Desactivar'
-    : 'Activar';
-
+  link.textContent = active ? 'Desactivar' : 'Activar';
   link.addEventListener('click', async () => {
     link.disabled = true;
-
     try {
-      await changeAccessStatus(
-        method,
-        id,
-        row,
-        entityLabel
-      );
-
+      await changeAccessStatus(method, id, row, entityLabel);
     } catch (error) {
-      SUNARPUI.notify(
-        'error',
-        error.message || 'No se pudo cambiar el estado.'
-      );
-
+      SUNARPUI.notify('error', error.message || 'No se pudo cambiar el estado.');
     } finally {
-      if (link.isConnected) {
-        link.disabled = false;
-      }
+      if (link.isConnected) link.disabled = false;
     }
   });
-
   wrapper.appendChild(link);
-
   return wrapper;
 }
 
-  function renderUsers(host) {
-    const canManage = state.data.capabilities.users;
 
-    const section = makeTabPanel(
-      'Usuarios',
-      'Cuentas institucionales habilitadas para acceder al gestor.',
-      canManage ? 'Nuevo usuario' : '',
-      canManage ? () => openUserModal(null) : null
+
+  /**
+   * Editor unificado de roles por módulo y ámbitos de acceso.
+   * Reutiliza los catálogos y asignaciones que ya entrega getAccessManagementData().
+   */
+
+  function createUserModuleAccessEditor(personaId, disabled, userConfiguration) {
+    const capabilities = state.data.capabilities || {};
+    const canManageRoles = capabilities.userRoles === true;
+    const canManageScopes = canManageRoles && capabilities.scopes === true;
+
+    const host = document.createElement('div');
+    host.className = 'access-user-modules';
+
+    const heading = document.createElement('div');
+    heading.className = 'access-user-modules-heading';
+
+    const title = document.createElement('h3');
+    title.textContent = 'Accesos por módulo';
+
+    const description = document.createElement('p');
+    description.className = 'access-muted';
+    description.textContent = 'Agrega únicamente los módulos que esta persona necesita utilizar y define sus ámbitos de acceso.';
+
+    heading.append(title, description);
+    host.appendChild(heading);
+
+    if (!canManageRoles) {
+      const note = document.createElement('p');
+      note.className = 'access-muted';
+      note.textContent = 'Tu cuenta no tiene permiso para administrar roles por módulo.';
+      host.appendChild(note);
+      return {
+        element: host,
+        getAssignments: () => []
+      };
+    }
+
+    const allModules = (state.data.modules || []).slice();
+    const modules = allModules
+      .filter(item => item.active === true)
+      .sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es'));
+
+    const catalogs = state.data.catalogs || {};
+    const typeLabels = Object.fromEntries((state.data.scopeTypes || []).map(item => [item.tipo_ambito_id, item.nombre]));
+
+    const roleAssignments = ((userConfiguration && userConfiguration.userRoles) || []).filter(item =>
+      item.persona_id === personaId && item.active === true
     );
 
-    host.appendChild(section);
+    const user = (state.data.users || []).find(item =>
+      item.persona_id === personaId
+    );
 
-    const rows = state.data.users || [];
+    const fallbackRoles = user && Array.isArray(user.roles)
+      ? user.roles
+      : [];
 
-    renderTable(host, {
-      data: rows,
+    const scopeAssignments = ((userConfiguration && userConfiguration.scopes) || []).filter(item =>
+      item.persona_id === personaId && item.active === true
+    );
 
-      columns: [
-        {
-          key: 'nombre_completo',
-          label: 'Usuario'
-        },
-        {
-          key: 'correo_institucional',
-          label: 'Correo institucional'
-        },
-        {
-          key: 'rol_id',
-          label: 'Rol',
-          render: value => roleName(value)
-        },
-        {
-          key: 'sede_name',
-          label: 'Sede',
-          render: value => value || '—'
-        },
-        {
-          key: 'estructura_org_id',
-          label: 'Unidad orgánica',
-          render: value => structureName(value)
-        },
-        {
-          key: 'estado',
-          label: 'Estado',
-          align: 'center',
-          render: (value, row) => createAccessStatusCell(
-            row,
-            'setAccessUserStatus',
-            row.correo_institucional,
-            'el usuario'
-          )
+    const draft = new Map();
+
+    roleAssignments.forEach(item => {
+      const module = allModules.find(candidate =>
+        candidate.modulo_id === item.modulo_id
+      );
+      if (!module) return;
+
+      draft.set(item.modulo_id, {
+        modulo_id: item.modulo_id,
+        rol_id: item.rol_id,
+        has_scopes: item.has_scopes === true,
+        ambitos: scopeAssignments
+          .filter(scope => scope.modulo_id === item.modulo_id)
+          .map(scope => ({
+            tipo_ambito_id: scope.tipo_ambito_id,
+            referencia_id: scope.referencia_id,
+            incluir_descendientes: scope.incluir_descendientes || 'NO'
+          }))
+      });
+    });
+
+    fallbackRoles.forEach(item => {
+      if (draft.has(item.modulo_id)) return;
+
+      const module = allModules.find(candidate =>
+        candidate.modulo_id === item.modulo_id
+      );
+      if (!module) return;
+
+      draft.set(item.modulo_id, {
+        modulo_id: item.modulo_id,
+        rol_id: item.rol_id,
+        has_scopes: roleAssignments.some(role =>
+          role.modulo_id === item.modulo_id && role.has_scopes === true
+        ),
+        ambitos: scopeAssignments
+          .filter(scope => scope.modulo_id === item.modulo_id)
+          .map(scope => ({
+            tipo_ambito_id: scope.tipo_ambito_id,
+            referencia_id: scope.referencia_id,
+            incluir_descendientes: scope.incluir_descendientes || 'NO'
+          }))
+      });
+    });
+
+    const modulePicker = createSelect(
+      [],
+      '',
+      'Seleccionar el módulo que deseas agregar'
+    );
+
+    const pickerGrid = createFormGrid();
+    pickerGrid.classList.add('access-user-module-picker');
+    pickerGrid.append(
+      createField('Agregar módulo', modulePicker)
+    );
+    host.appendChild(pickerGrid);
+
+    const editorHost = document.createElement('div');
+    editorHost.className = 'access-user-module-editor';
+    host.appendChild(editorHost);
+
+    const tableHeading = document.createElement('h4');
+    tableHeading.className = 'access-user-assignment-heading';
+    tableHeading.textContent = 'Accesos asignados';
+    host.appendChild(tableHeading);
+
+    const tableHost = document.createElement('div');
+    tableHost.className = 'access-user-assignment-table-host';
+    host.appendChild(tableHost);
+
+    function moduleName(moduleId) {
+      const match = allModules.find(item => item.modulo_id === moduleId);
+      if (!match) return 'Módulo no disponible';
+      return match.active === true
+        ? match.nombre
+        : match.nombre + ' (inactivo)';
+    }
+
+    function sedeName(sedeId) {
+      const sede = (catalogs.sedes || []).find(item =>
+        String(item.id) === String(sedeId)
+      );
+      return sede ? sede.name : 'Sede no disponible';
+    }
+
+    function structurePathName(structureId) {
+      const byId = new Map((catalogs.estructuraOrg || []).map(item => [
+        String(item.id),
+        item
+      ]));
+      const parts = [];
+      const visited = new Set();
+      let current = byId.get(String(structureId));
+
+      while (current) {
+        const id = String(current.id);
+        if (!id || visited.has(id)) break;
+        visited.add(id);
+        const structureType = (catalogs.tiposEstructura || []).find(item =>
+          String(item.id) === String(current.tipo_estructura_id)
+        );
+        parts.unshift(
+          structureType
+            ? structureType.name + ': ' + current.name
+            : current.name
+        );
+        current = current.parent_id
+          ? byId.get(String(current.parent_id)) || null
+          : null;
+      }
+
+      return parts.join(' / ');
+    }
+
+    function localStructurePaths(localId) {
+      return (catalogs.estructuraLocal || [])
+        .filter(item => String(item.local_id) === String(localId))
+        .map(item => structurePathName(item.estructura_id))
+        .filter(Boolean)
+        .filter((path, index, all) => all.indexOf(path) === index);
+    }
+
+    function scopeReferenceName(scope) {
+      if (scope.tipo_ambito_id === 'TOTAL') {
+        return 'Todos los registros del módulo';
+      }
+
+      if (scope.tipo_ambito_id === 'SEDE') {
+        return sedeName(scope.referencia_id);
+      }
+
+      if (scope.tipo_ambito_id === 'ESTRUCTURA_ORG') {
+        const structure = (catalogs.estructuraOrg || []).find(item =>
+          String(item.id) === String(scope.referencia_id)
+        );
+        if (!structure) return 'Unidad orgánica no disponible';
+
+        const structureById = new Map((catalogs.estructuraOrg || []).map(item => [
+          String(item.id),
+          item
+        ]));
+        const relatedLocalIds = new Set();
+        const visited = new Set();
+        let current = structure;
+
+        while (current) {
+          const currentId = String(current.id);
+          if (!currentId || visited.has(currentId)) break;
+          visited.add(currentId);
+
+          (catalogs.estructuraLocal || [])
+            .filter(relation => String(relation.estructura_id) === currentId)
+            .forEach(relation => relatedLocalIds.add(String(relation.local_id)));
+
+          current = current.parent_id
+            ? structureById.get(String(current.parent_id)) || null
+            : null;
         }
-      ],
 
-      rowActions: [
+        const localContext = Array.from(relatedLocalIds)
+          .map(localId => (catalogs.locales || []).find(item =>
+            String(item.id) === localId
+          ))
+          .filter(Boolean)
+          .map(local => sedeName(local.sede_id) + ' — ' + local.name)
+          .filter((value, index, all) => all.indexOf(value) === index)
+          .sort((a, b) => a.localeCompare(b, 'es'));
 
-        ...(canManage ? [{
-          label: 'Editar usuario',
-          icon: 'edit',
-          variant: 'outline',
-          onClick: row => openUserModal(row)
-        }] : []),
+        return [
+          localContext.length ? localContext.join(' | ') : sedeName(structure.sede_id),
+          structurePathName(structure.id)
+        ].filter(Boolean).join(' / ');
+      }
 
-        ...(state.data.capabilities.audit ? [{
-          label: 'Historial',
-          icon: 'history',
-          variant: 'outline',
+      const local = (catalogs.locales || []).find(item =>
+        String(item.id) === String(scope.referencia_id)
+      );
+      if (!local) return 'Local no disponible';
 
-          onClick: row => openEntityHistory(
-            'USUARIO',
-            row.correo_institucional,
-            row.nombre_completo
-          )
-        }] : [])
+      const paths = localStructurePaths(local.id);
+      return [sedeName(local.sede_id), local.name].filter(Boolean).join(' / ') +
+        (paths.length ? ' · Vinculado a: ' + paths.join(' | ') : ' · Sin unidad orgánica vinculada');
+    }
 
-      ],
+    function scopeLabel(scope) {
+      const label = typeLabels[scope.tipo_ambito_id] || 'Ámbito';
+      const reference = scopeReferenceName(scope);
 
-      searchPlaceholder:
-        'Buscar por nombre, correo, rol o unidad...',
+      return label + ': ' + reference +
+        (scope.tipo_ambito_id === 'ESTRUCTURA_ORG' &&
+          scope.incluir_descendientes === 'SI'
+          ? ' (incluye descendientes)'
+          : '');
+    }
 
-      emptyMessage: 'No hay usuarios registrados.'
+    function refreshModulePicker() {
+      const options = modules
+        .filter(module => !draft.has(module.modulo_id))
+        .map(module => ({
+          value: module.modulo_id,
+          label: module.nombre
+        }));
+
+      const next = createSelect(
+        options,
+        '',
+        options.length ? 'Seleccionar el módulo que deseas agregar' : 'No hay más módulos disponibles'
+      );
+
+      modulePicker.replaceChildren(...Array.from(next.childNodes));
+      modulePicker.value = '';
+      modulePicker.selectedIndex = 0;
+      modulePicker.disabled = Boolean(disabled) || !options.length;
+    }
+
+    function renderTable() {
+      tableHost.replaceChildren();
+
+      if (!draft.size) {
+        const empty = document.createElement('p');
+        empty.className = 'access-muted access-user-assignment-empty';
+        empty.textContent = 'Todavía no se ha agregado ningún módulo.';
+        tableHost.appendChild(empty);
+        return;
+      }
+
+      const table = document.createElement('table');
+      table.className = 'access-user-assignment-table';
+
+      const thead = document.createElement('thead');
+      const headerRow = document.createElement('tr');
+
+      [
+        'Módulo',
+        'Rol',
+        'Ámbitos de acceso',
+        'Acciones'
+      ].forEach(label => {
+        const th = document.createElement('th');
+        th.scope = 'col';
+        th.textContent = label;
+        headerRow.appendChild(th);
+      });
+
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement('tbody');
+
+      Array.from(draft.values())
+        .sort((a, b) => moduleName(a.modulo_id).localeCompare(moduleName(b.modulo_id), 'es'))
+        .forEach(assignment => {
+          const row = document.createElement('tr');
+
+          const moduleCell = document.createElement('td');
+          moduleCell.textContent = moduleName(assignment.modulo_id);
+
+          const roleCell = document.createElement('td');
+          const role = (state.data.roles || []).find(item =>
+            item.rol_id === assignment.rol_id
+          );
+          roleCell.textContent = role
+            ? role.nombre + (role.active === true ? '' : ' (inactivo)')
+            : 'Rol no disponible';
+
+          const scopesCell = document.createElement('td');
+          const scopes = assignment.ambitos || [];
+          scopesCell.textContent = canManageScopes
+            ? scopes.length
+              ? scopes.map(scopeLabel).join(' · ')
+              : 'Sin ámbitos asignados'
+            : 'Sin permiso para consultar ámbitos';
+
+          const actionsCell = document.createElement('td');
+          actionsCell.className = 'access-user-assignment-actions';
+
+          const moduleIsActive = modules.some(item =>
+            item.modulo_id === assignment.modulo_id
+          );
+
+          const editButton = createButton(
+            'Editar',
+            'outline',
+            () => openModuleEditor(assignment.modulo_id, assignment),
+            'edit'
+          );
+          editButton.classList.add('access-small-button');
+          editButton.disabled = Boolean(disabled) || !moduleIsActive;
+
+          const removeButton = createButton(
+            'Eliminar',
+            'outline',
+            () => {
+              if (!canManageScopes && assignment.has_scopes === true) {
+                SUNARPUI.notify(
+                  'warning',
+                  'No puedes retirar este acceso porque tiene ámbitos asignados y tu cuenta no tiene permiso para administrarlos.'
+                );
+                return;
+              }
+
+              if (editorHost.childElementCount) {
+                SUNARPUI.notify(
+                  'warning',
+                  'Termina o cancela la edición actual antes de eliminar otra asignación.'
+                );
+                return;
+              }
+
+              draft.delete(assignment.modulo_id);
+              refreshModulePicker();
+              renderTable();
+            },
+            'delete'
+          );
+          removeButton.classList.add('access-small-button');
+          removeButton.disabled = Boolean(disabled) || !moduleIsActive;
+
+          actionsCell.append(editButton, removeButton);
+          row.append(moduleCell, roleCell, scopesCell, actionsCell);
+          tbody.appendChild(row);
+        });
+
+      table.appendChild(tbody);
+      tableHost.appendChild(table);
+    }
+
+    function openModuleEditor(moduleId, existingAssignment) {
+      if (disabled) return;
+
+      if (editorHost.childElementCount) {
+        SUNARPUI.notify(
+          'warning',
+          'Termina o cancela la edición actual antes de abrir otra asignación.'
+        );
+        return;
+      }
+
+      const module = modules.find(item =>
+        item.modulo_id === moduleId
+      );
+
+      if (!module) {
+        SUNARPUI.notify('warning', 'El módulo seleccionado ya no está disponible.');
+        return;
+      }
+
+      modulePicker.disabled = true;
+
+      const editing = Boolean(existingAssignment);
+      const original = existingAssignment || {
+        modulo_id: moduleId,
+        rol_id: '',
+        ambitos: []
+      };
+
+      editorHost.replaceChildren();
+
+      const panel = document.createElement('section');
+      panel.className = 'access-user-module-editor-panel';
+
+      const panelHeading = document.createElement('div');
+      panelHeading.className = 'access-user-module-editor-heading';
+
+      const panelTitle = document.createElement('h4');
+      panelTitle.textContent = module.nombre;
+
+      const panelDescription = document.createElement('p');
+      panelDescription.className = 'access-muted';
+      panelDescription.textContent = editing
+        ? 'Modifica el rol o los ámbitos y actualiza esta asignación.'
+        : 'Define el rol y los ámbitos antes de agregar este acceso.';
+
+      panelHeading.append(panelTitle, panelDescription);
+
+      const roleOptions = activeRoles().map(role => ({
+        value: role.rol_id,
+        label: role.nombre
+      }));
+
+      if (
+        original.rol_id &&
+        !roleOptions.some(option => option.value === original.rol_id)
+      ) {
+        const inactiveRole = (state.data.roles || []).find(role =>
+          role.rol_id === original.rol_id
+        );
+
+        roleOptions.unshift({
+          value: original.rol_id,
+          label: (inactiveRole ? inactiveRole.nombre : 'Rol no disponible') +
+            ' (inactivo)'
+        });
+      }
+
+      const roleSelect = createSelect(
+        [{ value: '', label: 'Selecciona un rol' }].concat(roleOptions),
+        original.rol_id
+      );
+      roleSelect.required = true;
+
+      const fields = createFormGrid();
+      fields.appendChild(createField('Rol para este módulo', roleSelect));
+      panel.append(panelHeading, fields);
+
+      let scopeDraft = (original.ambitos || []).map(item => ({
+        tipo_ambito_id: item.tipo_ambito_id,
+        referencia_id: item.referencia_id,
+        incluir_descendientes: item.incluir_descendientes || 'NO'
+      }));
+
+      // El botón de confirmación está fuera del bloque canManageScopes.
+      // Se expone un recolector de ámbitos en el ámbito léxico del editor para
+      // que el manejador del botón no acceda a controles locales inaccesibles.
+      let collectScopes = () => ({
+        valid: true,
+        scopes: (original.ambitos || []).map(item => Object.assign({}, item))
+      });
+
+      if (canManageScopes) {
+        const scopesPanel = document.createElement('div');
+        scopesPanel.className = 'access-user-scope-editor';
+
+        const scopesTitle = document.createElement('h5');
+        scopesTitle.textContent = scopeDraft.length
+          ? 'Ámbitos actualmente asignados'
+          : 'Ámbito del acceso';
+
+        const scopeTypeOptions = (state.data.scopeTypes || []).map(item => ({
+          value: item.tipo_ambito_id,
+          label: item.nombre
+        }));
+        const scopeType = createSelect(scopeTypeOptions, '', 'Selecciona un ámbito (opcional)');
+
+        const descendants = createInput('checkbox', '', {});
+        descendants.className = 'access-checkbox';
+
+        const descendantsLabel = document.createElement('label');
+        descendantsLabel.className = 'access-inline-check';
+        descendantsLabel.append(
+          descendants,
+          document.createTextNode('Incluir unidades orgánicas descendientes')
+        );
+
+        const scopeFields = createFormGrid();
+        scopeFields.classList.add('access-user-scope-grid');
+        scopeFields.appendChild(createField('Tipo de ámbito', scopeType));
+
+        const scopeContextHost = document.createElement('div');
+        scopeContextHost.className = 'access-user-scope-context';
+        scopeFields.appendChild(scopeContextHost);
+
+        const scopeList = document.createElement('div');
+        scopeList.className = 'access-user-scope-list';
+
+        const scopeHelp = document.createElement('p');
+        scopeHelp.className = 'access-muted access-user-scope-context-note';
+        scopeHelp.textContent = 'Selecciona el ámbito aquí y pulsa Agregar acceso para guardar conjuntamente el módulo, el rol y el ámbito. Si no necesitas restringir el acceso, puedes dejarlo sin ámbito.';
+
+        let selectedReferenceId = '';
+
+        function structureHierarchyForLocal(localId) {
+          const structures = catalogs.estructuraOrg || [];
+          const structureById = new Map(structures.map(item => [
+            String(item.id),
+            item
+          ]));
+
+          const linkedStructureIds = new Set(
+            (catalogs.estructuraLocal || [])
+              .filter(relation => String(relation.local_id) === String(localId))
+              .map(relation => String(relation.estructura_id || ''))
+              .filter(id => id && structureById.has(id))
+          );
+
+          // Si el local tiene relaciones con varios niveles de una misma rama,
+          // iniciar únicamente en el ancestro vinculado más alto evita mezclar
+          // unidades, subunidades y áreas en el primer selector.
+          const roots = Array.from(linkedStructureIds)
+            .map(id => structureById.get(id))
+            .filter(structure => {
+              let parentId = String(structure.parent_id || '');
+              const visited = new Set([String(structure.id)]);
+
+              while (parentId && !visited.has(parentId)) {
+                if (linkedStructureIds.has(parentId)) return false;
+
+                visited.add(parentId);
+                const parent = structureById.get(parentId);
+                if (!parent) break;
+
+                parentId = String(parent.parent_id || '');
+              }
+
+              return true;
+            })
+            .sort(compareStructures);
+
+          return { structures, roots };
+        }
+
+        function compareStructures(a, b) {
+          return (Number(a.order) || 0) - (Number(b.order) || 0) ||
+            String(a.name || '').localeCompare(String(b.name || ''), 'es');
+        }
+
+        function structureTypeName(structure) {
+          const structureType = (catalogs.tiposEstructura || []).find(type =>
+            String(type.id) === String(structure.tipo_estructura_id)
+          );
+          return structureType ? structureType.name : '';
+        }
+
+        function structureOptionLabel(structure) {
+          const typeName = structureTypeName(structure);
+          return typeName
+            ? typeName + ' — ' + structure.name
+            : structure.name;
+        }
+
+        function renderStructureLevels(localId, levelsHost, selectedChain, type) {
+          levelsHost.replaceChildren();
+
+          const hierarchy = structureHierarchyForLocal(localId);
+          let options = hierarchy.roots;
+          let level = 1;
+
+          if (!options.length) {
+            const note = document.createElement('p');
+            note.className = 'access-muted';
+            note.textContent = type === 'LOCAL'
+              ? 'Este local no tiene unidades orgánicas vinculadas. El ámbito se aplicará directamente al local.'
+              : 'Este local no tiene unidades orgánicas vinculadas; no es posible asignar un ámbito de unidad orgánica.';
+            levelsHost.appendChild(note);
+
+            selectedReferenceId = type === 'LOCAL' ? String(localId) : '';
+            return;
+          }
+
+          while (options.length && level <= 20) {
+            const currentLevel = level;
+            const selectedId = selectedChain[currentLevel - 1] || '';
+            const levelTypeNames = Array.from(new Set(
+              options.map(structureTypeName).filter(Boolean)
+            ));
+            const fieldLabel = currentLevel === 1
+              ? 'Unidades orgánicas del local'
+              : 'Nivel ' + currentLevel + (
+                levelTypeNames.length === 1
+                  ? ' — ' + levelTypeNames[0]
+                  : ''
+              );
+
+            const levelSelect = createSelect(
+              options.map(item => ({
+                value: item.id,
+                label: structureOptionLabel(item)
+              })),
+              selectedId,
+              currentLevel === 1
+                ? 'Selecciona una unidad del local'
+                : 'Selecciona el nivel siguiente'
+            );
+            levelSelect.required = type === 'ESTRUCTURA_ORG';
+            levelSelect.disabled = !roleSelect.value;
+
+            levelsHost.appendChild(createField(fieldLabel, levelSelect));
+
+            levelSelect.addEventListener('change', () => {
+              selectedChain.splice(currentLevel - 1);
+              if (levelSelect.value) selectedChain.push(levelSelect.value);
+
+              selectedReferenceId = type === 'LOCAL'
+                ? String(localId)
+                : selectedChain.length
+                  ? selectedChain[selectedChain.length - 1]
+                  : '';
+
+              renderStructureLevels(localId, levelsHost, selectedChain, type);
+            });
+
+            if (
+              !selectedId ||
+              !options.some(item => String(item.id) === String(selectedId))
+            ) {
+              break;
+            }
+
+            options = hierarchy.structures
+              .filter(item => String(item.parent_id || '') === String(selectedId))
+              .sort(compareStructures);
+            level += 1;
+          }
+
+          selectedReferenceId = type === 'LOCAL'
+            ? String(localId)
+            : selectedChain.length
+              ? selectedChain[selectedChain.length - 1]
+              : '';
+        }
+
+        function updateReferenceOptions() {
+          const type = scopeType.value;
+          const canSelect = Boolean(roleSelect.value);
+
+          selectedReferenceId = '';
+          scopeContextHost.replaceChildren();
+          const selectedScopeType = (state.data.scopeTypes || []).find(item => item.tipo_ambito_id === type);
+          descendantsLabel.hidden = !(selectedScopeType && selectedScopeType.permite_descendientes === true);
+          descendants.checked = false;
+
+          if (!type) {
+            const note = document.createElement('p');
+            note.className = 'access-muted';
+            note.textContent = 'El ámbito es opcional. Selecciona uno únicamente cuando necesites limitar los registros a los que tendrá acceso este módulo.';
+            scopeContextHost.appendChild(note);
+            return;
+          }
+
+          if (type === 'TOTAL') {
+            const note = document.createElement('p');
+            note.className = 'access-muted';
+            note.textContent = 'Incluye todos los registros del módulo. No requiere sede ni referencia.';
+            scopeContextHost.appendChild(note);
+            return;
+          }
+
+          if (type === 'SEDE') {
+            const siteSelect = createSelect(
+              (catalogs.sedes || []).map(item => ({
+                value: item.id,
+                label: item.name
+              })),
+              '',
+              'Selecciona una sede'
+            );
+            siteSelect.required = true;
+            siteSelect.disabled = !canSelect;
+            scopeContextHost.appendChild(createField('Sede', siteSelect));
+
+            siteSelect.addEventListener('change', () => {
+              selectedReferenceId = siteSelect.value;
+            });
+            return;
+          }
+
+          if (type === 'ESTRUCTURA_ORG' || type === 'LOCAL') {
+            const availableLocals = (catalogs.locales || [])
+              .slice()
+              .sort((a, b) =>
+                sedeName(a.sede_id).localeCompare(sedeName(b.sede_id), 'es') ||
+                String(a.name || '').localeCompare(String(b.name || ''), 'es')
+              );
+
+            const localSelect = createSelect(
+              availableLocals.map(item => ({
+                value: item.id,
+                label: sedeName(item.sede_id) + ' — ' + item.name
+              })),
+              '',
+              'Selecciona un local'
+            );
+            localSelect.required = true;
+            localSelect.disabled = !canSelect;
+            scopeContextHost.appendChild(createField('Local', localSelect));
+
+            const hierarchyNote = document.createElement('p');
+            hierarchyNote.className = 'access-muted access-user-scope-context-note';
+            hierarchyNote.hidden = true;
+            scopeContextHost.appendChild(hierarchyNote);
+
+            const levelsHost = document.createElement('div');
+            levelsHost.className = 'access-user-scope-levels';
+            scopeContextHost.appendChild(levelsHost);
+
+            let selectedChain = [];
+
+            localSelect.addEventListener('change', () => {
+              const localId = String(localSelect.value || '');
+              selectedChain = [];
+              selectedReferenceId = type === 'LOCAL' ? localId : '';
+              levelsHost.replaceChildren();
+
+              if (!localId) {
+                hierarchyNote.hidden = true;
+                hierarchyNote.textContent = '';
+                return;
+              }
+
+              hierarchyNote.textContent = type === 'LOCAL'
+                ? 'El ámbito se aplicará directamente al local. La jerarquía se muestra como contexto y se guardará únicamente el ID del local.'
+                : 'Selecciona la unidad orgánica recorriendo la jerarquía de este local. Se guardará únicamente el ID de la unidad seleccionada.';
+              hierarchyNote.hidden = false;
+
+              renderStructureLevels(localId, levelsHost, selectedChain, type);
+            });
+          }
+        }
+
+        function paintScopes() {
+          scopeList.replaceChildren();
+
+          if (!scopeDraft.length) {
+            const note = document.createElement('p');
+            note.className = 'access-muted';
+            note.textContent = 'No se han agregado ámbitos para este módulo.';
+            scopeList.appendChild(note);
+            return;
+          }
+
+          scopeDraft.forEach((scope, index) => {
+            const item = document.createElement('div');
+            item.className = 'access-user-scope-item';
+
+            const label = document.createElement('span');
+            label.textContent = scopeLabel(scope);
+
+            const remove = createButton(
+              'Quitar',
+              'outline',
+              () => {
+                scopeDraft.splice(index, 1);
+                paintScopes();
+              },
+              'close'
+            );
+            remove.classList.add('access-small-button');
+
+            item.append(label, remove);
+            scopeList.appendChild(item);
+          });
+        }
+
+        // Captura y valida el ámbito en el mismo momento en que se confirma
+        // Agregar acceso / Actualizar acceso.
+        collectScopes = function () {
+          const nextScopes = scopeDraft.map(item => Object.assign({}, item));
+          const type = scopeType.value;
+
+          // No seleccionar un tipo es válido: el acceso puede no tener ámbito.
+          if (!type) {
+            return { valid: true, scopes: nextScopes };
+          }
+
+          const referenceId = type === 'TOTAL' ? '' : selectedReferenceId;
+
+          if (type !== 'TOTAL' && !referenceId) {
+            const requiredControl = Array.from(
+              scopeContextHost.querySelectorAll('select[required]')
+            ).find(control => !control.value);
+
+            if (requiredControl) {
+              requiredControl.reportValidity();
+            } else {
+              SUNARPUI.notify(
+                'warning',
+                'Selecciona la referencia correspondiente para el ámbito.'
+              );
+            }
+            return { valid: false, scopes: nextScopes };
+          }
+
+          if (type === 'TOTAL' && nextScopes.length) {
+            SUNARPUI.notify(
+              'warning',
+              'TOTAL es exclusivo dentro del mismo módulo. Quita los ámbitos existentes antes de seleccionar Total.'
+            );
+            return { valid: false, scopes: nextScopes };
+          }
+
+          if (type !== 'TOTAL' && nextScopes.some(item =>
+            item.tipo_ambito_id === 'TOTAL'
+          )) {
+            SUNARPUI.notify(
+              'warning',
+              'Quita el ámbito Total antes de agregar un ámbito específico.'
+            );
+            return { valid: false, scopes: nextScopes };
+          }
+
+          if (nextScopes.some(item =>
+            item.tipo_ambito_id === type &&
+            String(item.referencia_id || '') === String(referenceId || '')
+          )) {
+            SUNARPUI.notify(
+              'warning',
+              'Ese ámbito ya está asignado a este módulo.'
+            );
+            return { valid: false, scopes: nextScopes };
+          }
+
+          nextScopes.push({
+            tipo_ambito_id: type,
+            referencia_id: referenceId,
+            incluir_descendientes:
+              type === 'ESTRUCTURA_ORG' && descendants.checked
+                ? 'SI'
+                : 'NO'
+          });
+
+          return { valid: true, scopes: nextScopes };
+        };
+
+        roleSelect.addEventListener('change', () => {
+          const enabled = Boolean(roleSelect.value);
+          scopeType.disabled = !enabled;
+          descendants.disabled = !enabled;
+          updateReferenceOptions();
+        });
+
+        scopeType.addEventListener('change', updateReferenceOptions);
+
+        panel.append(
+          scopesPanel
+        );
+        scopesPanel.append(
+          scopesTitle,
+          scopeFields,
+          scopeHelp,
+          descendantsLabel,
+          scopeList
+        );
+
+        updateReferenceOptions();
+        paintScopes();
+        scopeType.disabled = !roleSelect.value;
+        descendants.disabled = !roleSelect.value;
+      } else {
+        const note = document.createElement('p');
+        note.className = 'access-muted';
+        note.textContent = (original.ambitos || []).length
+          ? 'Ámbitos existentes: ' + original.ambitos.map(scopeLabel).join(' · ') +
+            '. No tienes permiso para modificarlos.'
+          : 'No tienes permiso para administrar los ámbitos de acceso.';
+        panel.appendChild(note);
+      }
+
+      const actions = document.createElement('div');
+      actions.className = 'access-modal-actions';
+
+      const cancelButton = createButton(
+        'Cancelar',
+        'outline',
+        () => {
+          editorHost.replaceChildren();
+          refreshModulePicker();
+        }
+      );
+
+      const confirmButton = createButton(
+        editing ? 'Actualizar acceso' : 'Agregar acceso',
+        'primary',
+        () => {
+          if (!roleSelect.value) {
+            roleSelect.reportValidity();
+            return;
+          }
+
+          if (
+            !canManageScopes &&
+            existingAssignment &&
+            String(existingAssignment.rol_id || '') !== String(roleSelect.value || '') &&
+            (existingAssignment.ambitos || []).length
+          ) {
+            SUNARPUI.notify(
+              'warning',
+              'No puedes cambiar el rol de esta asignación porque tiene ámbitos que no puedes administrar.'
+            );
+            return;
+          }
+
+          const scopeResult = collectScopes();
+          if (!scopeResult.valid) return;
+
+          draft.set(moduleId, {
+            modulo_id: moduleId,
+            rol_id: roleSelect.value,
+            has_scopes: existingAssignment
+              ? existingAssignment.has_scopes === true
+              : false,
+            ambitos: scopeResult.scopes
+          });
+
+          editorHost.replaceChildren();
+          refreshModulePicker();
+          renderTable();
+        },
+        editing ? 'save' : 'add'
+      );
+
+      actions.append(cancelButton, confirmButton);
+      panel.appendChild(actions);
+      editorHost.appendChild(panel);
+    }
+
+    modulePicker.addEventListener('change', () => {
+      if (modulePicker.value) {
+        openModuleEditor(modulePicker.value, null);
+      }
+    });
+
+    if (disabled) {
+      modulePicker.disabled = true;
+
+      const note = document.createElement('p');
+      note.className = 'access-muted';
+      note.textContent = 'La cuenta está inactiva. Actívala desde el listado para modificar sus accesos.';
+      host.appendChild(note);
+    } else {
+      refreshModulePicker();
+    }
+
+    renderTable();
+
+    return {
+      element: host,
+      getAssignments: () => Array.from(draft.values()).map(item => ({
+        modulo_id: item.modulo_id,
+        rol_id: item.rol_id,
+        ambitos: (item.ambitos || []).map(scope => Object.assign({}, scope))
+      }))
+    };
+  }
+
+
+  /**
+   * Envía todas las asignaciones de la persona en una sola solicitud.
+   * El backend valida y sincroniza roles y ámbitos en bloque.
+   */
+  async function saveUserModuleAccess(personaId, editor) {
+    if (!editor || !state.data.capabilities.userRoles) return;
+
+    return rpc('saveAccessUserConfiguration', {
+      persona_id: personaId,
+      accesos: editor.getAssignments()
     });
   }
 
 
-  function openUserModal(row) {
-    const editing = Boolean(row);
-
-    const form = document.createElement('form');
-
-    form.className = 'access-form';
-
-    form.addEventListener(
-      'submit',
-      event => event.preventDefault()
+  function renderUsers(host) {
+    const canManage = state.data.capabilities.users;
+    const canConfigure = state.data.capabilities.userRoles;
+    const section = makeTabPanel(
+      'Usuarios',
+      'Selecciona una sede o un rol para consultar las cuentas. El buscador y la paginación consultan el servidor.',
+      canManage ? 'Nueva cuenta' : '',
+      canManage ? () => openUserModal(null) : null,
+      { hideRefresh: true }
     );
+    host.appendChild(section);
 
-    const grid = createFormGrid();
+    const filters = document.createElement('div');
+    filters.className = 'access-users-filters';
+    const siteOptions = [
+      { value: '__ALL__', label: 'Todas las sedes' },
+      ...((state.data.catalogs && state.data.catalogs.sedes) || []).map(item => ({
+        value: item.id, label: item.name
+      }))
+    ];
+    const roleOptions = [
+      { value: '__ALL__', label: 'Todos los roles' },
+      ...activeRoles().map(role => ({ value: role.rol_id, label: role.nombre }))
+    ];
+    const siteSelect = createSelect(siteOptions, state.userFilters.sedeId, 'Selecciona una sede');
+    const roleSelect = createSelect(roleOptions, state.userFilters.roleId, 'Selecciona un rol');
+    filters.append(createField('Sede', siteSelect), createField('Rol', roleSelect));
+    host.appendChild(filters);
 
-    const email = createInput(
-      'email',
-      row && row.correo_institucional,
-      {
-        required: true,
-        readOnly: editing,
-        maxlength: 150,
-        placeholder: 'usuario@sunarp.gob.pe',
-        pattern: '[^\\s@]+@sunarp\\.gob\\.pe'
+    let requestNumber = 0;
+    let tableConfig = null;
+    let appliedSedeId = state.userFilters.sedeId || '';
+    let appliedRoleId = state.userFilters.roleId || '';
+    let lastPageResult = { items: [], total: 0 };
+
+    async function loadUserPage(params) {
+      const allSitesSelected = appliedSedeId === '__ALL__' || appliedRoleId === '__ALL__';
+      const sedeId = appliedSedeId === '__ALL__' ? '' : appliedSedeId;
+      const rolId = appliedRoleId === '__ALL__' ? '' : appliedRoleId;
+      if (!sedeId && !rolId && !allSitesSelected) {
+        lastPageResult = { items: [], total: 0 };
+        state.data.users = [];
+        return lastPageResult;
       }
-    );
 
-    const names = createInput(
-      'text',
-      row && row.nombres,
-      {
-        required: true,
-        maxlength: 100
+      const request = {
+        sede_id: sedeId,
+        rol_id: rolId,
+        all_sedes: allSitesSelected,
+        search: params && params.search || '',
+        page: params && params.page || 1,
+        pageSize: params && params.pageSize || 10
+      };
+      const cacheKey = JSON.stringify(request);
+      const cached = state.userPageCache[cacheKey];
+      if (cached && Date.now() - cached.timestamp < 120000) {
+        lastPageResult = cached.value;
+        state.data.users = lastPageResult.items;
+        return lastPageResult;
       }
-    );
 
-    const surnames = createInput(
-      'text',
-      row && row.apellidos,
-      {
-        maxlength: 120
+      const currentRequest = ++requestNumber;
+      const finishLoading = beginAccessPanelLoading();
+      try {
+        const result = await rpc('getAccessUsers', request);
+        if (currentRequest !== requestNumber) return lastPageResult;
+        lastPageResult = {
+          items: Array.isArray(result.items) ? result.items : [],
+          total: Number(result.total) || 0
+        };
+        state.userPageCache[cacheKey] = {
+          timestamp: Date.now(),
+          value: lastPageResult
+        };
+        state.data.users = lastPageResult.items;
+        return lastPageResult;
+      } catch (error) {
+        if (currentRequest === requestNumber) {
+          SUNARPUI.notify('error', error.message || 'No se pudieron consultar los usuarios.');
+        }
+        return lastPageResult;
+      } finally {
+        finishLoading();
       }
-    );
+    }
 
-    const roles = createSelect(
-      activeRoles().map(item => ({
-        value: item.rol_id,
-        label: `${item.nombre} (${item.rol_id})`
-      })),
-      row && row.rol_id,
-      'Selecciona un rol'
-    );
+    function loadFilteredUsers() {
+      if (!tableConfig) return;
+      requestNumber += 1;
+      appliedSedeId = siteSelect.value;
+      appliedRoleId = roleSelect.value;
+      state.userFilters = { sedeId: appliedSedeId, roleId: appliedRoleId };
+      tableConfig.emptyMessage = appliedSedeId || appliedRoleId
+        ? 'No existen usuarios para los filtros seleccionados.'
+        : 'Selecciona una sede o un rol para consultar usuarios.';
+      renderTable(host, tableConfig);
+    }
+    siteSelect.addEventListener('change', loadFilteredUsers);
+    roleSelect.addEventListener('change', loadFilteredUsers);
 
-    const structures = createSelect(
-      [{
-        value: '',
-        label: 'Sin unidad orgánica asignada'
-      }].concat(
-        (
-          (state.data.catalogs || {}).estructuraOrg || []
-        ).map(item => ({
-          value: item.id,
-          label: item.name
-        }))
-      ),
-      row && row.estructura_org_id,
-      null
-    );
-
-    const status = createSelect(
-      [
+    tableConfig = {
+      data: [],
+      mode: 'server',
+      loadData: loadUserPage,
+      columns: [
+        { key: 'nombre_completo', label: 'Nombre' },
+        { key: 'correo_institucional', label: 'Correo institucional' },
+        { key: 'sede_nombre', label: 'Sede' },
         {
-          value: 'ACTIVO',
-          label: 'Activo'
+          key: 'roles',
+          label: 'Roles por módulo',
+          render: roles => (roles || []).map(item => {
+            const module = (state.data.modules || []).find(m => m.modulo_id === item.modulo_id);
+            return (module ? module.nombre : 'Módulo no disponible') + ': ' + roleName(item.rol_id);
+          }).join(' · ') || 'Sin roles asignados'
         },
         {
-          value: 'INACTIVO',
-          label: 'Inactivo'
+          key: 'active', label: 'Estado', align: 'center',
+          render: (value, row) => createAccessStatusCell(row, 'setAccessUserStatus', row.persona_id, 'la cuenta')
         }
       ],
-      row ? row.estado : 'ACTIVO'
-    );
+      rowActions: [
+        ...(canConfigure ? [{
+          label: 'Configurar accesos', icon: 'tune', variant: 'outline',
+          onClick: row => openUserModal(row)
+        }] : []),
+        ...(state.data.capabilities.audit ? [{
+          label: 'Historial', icon: 'history', variant: 'outline',
+          onClick: row => openEntityHistory('USUARIO', row.persona_id, row.nombre_completo)
+        }] : [])
+      ],
+      searchPlaceholder: 'Buscar por nombre o correo institucional...',
+      emptyMessage: appliedSedeId || appliedRoleId
+        ? 'No existen usuarios para los filtros seleccionados.'
+        : 'Selecciona una sede o un rol para consultar usuarios.'
+    };
+    renderTable(host, tableConfig);
+    state.userListController = { refresh: () => loadFilteredUsers() };
+  }
 
-    grid.append(
-      createField('Correo institucional', email),
-      createField('Nombres', names),
-      createField('Apellidos', surnames),
-      createField('Rol', roles),
+  async function openUserModal(row) {
+    const editing = Boolean(row);
+    let userConfiguration = { userRoles: [], scopes: [] };
+    const needsScopeCatalogs = editing &&
+      state.data.capabilities.scopes === true &&
+      state.data.scopeCatalogsLoaded !== true;
 
-      createField(
-        'Unidad orgánica',
-        structures,
-        'Es la adscripción orgánica del usuario; no concede ámbitos de acceso.'
-      ),
+    const needsDocumentTypes = !editing && state.data.documentTypesLoaded !== true;
+    if (editing || needsScopeCatalogs) {
+      const finishLoading = beginAccessPanelLoading(
+        needsScopeCatalogs
+          ? 'Consultando catálogos organizacionales...'
+          : 'Consultando los accesos de la persona...'
+      );
+      try {
+        const requests = [];
+        if (needsScopeCatalogs) requests.push(rpc('getAccessScopeCatalogs'));
+        if (editing) requests.push(rpc('getAccessUserConfiguration', row.persona_id));
+        const results = await Promise.all(requests);
+        let index = 0;
+        if (needsScopeCatalogs) {
+          state.data.catalogs = Object.assign(
+            {},
+            state.data.catalogs || {},
+            results[index++]
+          );
+          state.data.scopeCatalogsLoaded = true;
+        }
+        if (editing) userConfiguration = results[index];
+      } catch (error) {
+        SUNARPUI.notify(
+          'error',
+          error.message || 'No se pudieron consultar los catálogos o accesos de la persona.'
+        );
+        return;
+      } finally {
+        finishLoading();
+      }
+    }
+    const documentTypes = (state.data.documentTypes || [])
+      .filter(item => item && item.id && item.name);
 
-      createField('Estado', status)
-    );
+    const form = document.createElement('form');
+    form.className = 'access-form';
+    form.addEventListener('submit', event => event.preventDefault());
 
-    form.appendChild(grid);
+    let selectedPerson = null;
+    let selectedPersonCanEnable = false;
+    let selectedConfiguration = null;
+    let saveButton = null;
+    let documentTypeControl = null;
+    let documentNumberControl = null;
+    let documentSearchButton = null;
+    let documentClearButton = null;
 
-    openFormModal(
-      editing ? 'Editar usuario' : 'Registrar usuario',
+    const resultHost = document.createElement('div');
+    resultHost.className = 'access-person-search-result';
+    resultHost.setAttribute('aria-live', 'polite');
+
+    const alertHost = document.createElement('div');
+    alertHost.id = 'accessUserDocumentSearchAlert';
+
+    function showSearchAlert(type, title, message, details) {
+      SUNARPUI.showAlert({
+        containerId: alertHost.id,
+        type,
+        title,
+        details,
+        message,
+        dismissible: false,
+        replace: true
+      });
+    }
+
+    function updateSaveState() {
+      if (saveButton && !editing) {
+        saveButton.disabled = !selectedPersonCanEnable;
+      }
+    }
+
+    function resetSearchResult() {
+      selectedPerson = null;
+      selectedPersonCanEnable = false;
+      selectedConfiguration = null;
+      resultHost.replaceChildren();
+      configHost.replaceChildren();
+      updateSaveState();
+    }
+
+    const configHost = document.createElement('div');
+    configHost.className = 'access-user-configuration';
+
+    if (editing) {
+      const identity = document.createElement('div');
+      identity.className = 'access-person-identity';
+
+      const name = document.createElement('strong');
+      name.textContent = row.nombre_completo || 'Persona';
+
+      const email = document.createElement('span');
+      email.textContent = row.correo_institucional || 'Sin correo institucional';
+
+      identity.append(name, email);
+
+      selectedConfiguration = createUserModuleAccessEditor(
+        row.persona_id,
+        row.active !== true,
+        userConfiguration
+      );
+
+      configHost.appendChild(selectedConfiguration.element);
+      form.append(identity, configHost);
+
+    } else {
+      const grid = createFormGrid();
+
+      const documentType = createSelect(
+        documentTypes.map(item => ({
+          value: item.id,
+          label: item.name
+        })),
+        '',
+        needsDocumentTypes ? 'Cargando tipos de documento...' : 'Selecciona un tipo de documento'
+      );
+      documentType.required = true;
+      documentTypeControl = documentType;
+
+      const documentNumber = createInput('text', '', {
+        required: true,
+        maxlength: 30,
+        autocomplete: 'off',
+        spellcheck: 'false',
+        inputmode: 'text'
+      });
+
+      const searchButton = createButton(
+        'Buscar persona',
+        'outline',
+        async () => {
+          if (!documentType.value) {
+            documentType.reportValidity();
+            return;
+          }
+          if (!documentNumber.value.trim()) {
+            documentNumber.reportValidity();
+            return;
+          }
+
+          resetSearchResult();
+          searchButton.disabled = true;
+          clearButton.disabled = true;
+
+          if (searchButton.lastElementChild) {
+            searchButton.lastElementChild.textContent = 'Buscando...';
+          }
+
+          const searchCriteria = {
+            tipo_documento: documentType.value,
+            numero_documento: documentNumber.value.trim()
+          };
+
+          documentType.disabled = true;
+          documentNumber.disabled = true;
+
+          resultHost.appendChild(alertHost);
+          const finishLoading = beginElementLoading(
+            form,
+            'Buscando persona en el directorio institucional...'
+          );
+
+          try {
+            const result = await rpc('searchAccessPersonByDocument', searchCriteria);
+
+            resultHost.replaceChildren(alertHost);
+
+            if (!result || result.found !== true || !result.person) {
+              showSearchAlert(
+                'info',
+                'Sin coincidencias',
+                result && result.message
+                  ? result.message
+                  : 'No se encontró una persona con esos datos.'
+              );
+              return;
+            }
+
+            selectedPerson = result.person;
+
+            const existingAccount = result.existingAccount || {
+              exists: false,
+              active: false
+            };
+
+            const accountExists = existingAccount.exists === true;
+
+            selectedPersonCanEnable = Boolean(
+              result.canEnableAccount && !accountExists
+            );
+
+            const personDetails = [
+              selectedPerson.nombre_completo || 'Persona localizada',
+              (selectedPerson.tipo_documento_name || 'Documento') +
+                ': ' + selectedPerson.numero_documento +
+                ' · Correo institucional: ' +
+                (selectedPerson.correo_institucional || 'No registrado'),
+              'Identificador: ' + selectedPerson.persona_id
+            ];
+
+            if (accountExists && existingAccount.active) {
+              showSearchAlert(
+                'warning',
+                'La cuenta ya está habilitada',
+                'Esta persona ya tiene una cuenta activa. No se puede crear otra cuenta.',
+                personDetails
+              );
+            } else if (accountExists) {
+              showSearchAlert(
+                'warning',
+                'La cuenta ya está registrada',
+                'La cuenta de esta persona está inactiva. Actívala desde el listado de usuarios y luego utiliza «Configurar accesos».',
+                personDetails
+              );
+            } else if (!result.canEnableAccount) {
+              showSearchAlert(
+                'warning',
+                'No es posible habilitar la cuenta',
+                result.reason || 'La persona no cumple las condiciones para habilitar una cuenta.',
+                personDetails
+              );
+            } else {
+              showSearchAlert(
+                'success',
+                'Persona localizada',
+                'Configura los roles y ámbitos de acceso antes de habilitar la cuenta.',
+                personDetails
+              );
+
+              if (state.data.capabilities.scopes === true &&
+                  state.data.scopeCatalogsLoaded !== true) {
+                const catalogs = await rpc('getAccessScopeCatalogs');
+                state.data.catalogs = Object.assign({}, state.data.catalogs || {}, catalogs);
+                state.data.scopeCatalogsLoaded = true;
+              }
+
+              selectedConfiguration = createUserModuleAccessEditor(
+                selectedPerson.persona_id,
+                false,
+                { userRoles: [], scopes: [] }
+              );
+              configHost.replaceChildren(selectedConfiguration.element);
+            }
+
+            updateSaveState();
+
+          } catch (error) {
+            selectedPerson = null;
+            selectedPersonCanEnable = false;
+            selectedConfiguration = null;
+            configHost.replaceChildren();
+
+            showSearchAlert(
+              'error',
+              'No se pudo completar la búsqueda',
+              error.message || 'Ocurrió un error al consultar el directorio.'
+            );
+
+            updateSaveState();
+
+          } finally {
+            finishLoading();
+
+            documentType.disabled = false;
+            documentNumber.disabled = false;
+            searchButton.disabled = false;
+            clearButton.disabled = false;
+
+            if (searchButton.lastElementChild) {
+              searchButton.lastElementChild.textContent = 'Buscar persona';
+            }
+          }
+        },
+        'search'
+      );
+
+      documentSearchButton = searchButton;
+
+      const clearButton = createButton(
+        'Limpiar',
+        'outline',
+        () => {
+          documentType.value = '';
+          documentNumber.value = '';
+          resetSearchResult();
+          documentType.focus();
+        },
+        'backspace'
+      );
+
+      documentClearButton = clearButton;
+
+      const searchActions = document.createElement('div');
+      searchActions.className = 'access-modal-actions access-search-actions';
+      searchActions.append(searchButton, clearButton);
+
+      grid.append(
+        createField('Tipo de documento', documentType),
+        createField('Número de documento', documentNumber)
+      );
+
+      form.append(grid, searchActions, resultHost, configHost);
+
+      documentType.addEventListener('change', resetSearchResult);
+      documentNumber.addEventListener('input', resetSearchResult);
+
+      documentNumberControl = documentNumber;
+      if (!documentTypes.length) {
+        documentType.disabled = true;
+        documentNumber.disabled = true;
+        searchButton.disabled = true;
+        clearButton.disabled = true;
+        resultHost.appendChild(alertHost);
+
+        if (needsDocumentTypes) {
+          showSearchAlert(
+            'info',
+            'Cargando catálogo',
+            'El formulario ya está disponible. Se están cargando los tipos de documento.'
+          );
+        } else {
+          showSearchAlert(
+            'error',
+            'Catálogo no disponible',
+            'No se encontraron tipos de documento en la pestaña tipo_documento_identidad.'
+          );
+        }
+      }
+    }
+
+    saveButton = openFormModal(
+      editing ? 'Configurar accesos' : 'Habilitar cuenta',
       form,
+      async () => {
+        if (editing) {
+          if (row.active !== true) {
+            throw new Error('Activa la cuenta desde el listado antes de modificar sus accesos.');
+          }
 
-      () => rpc('saveAccessUser', {
-        action: editing ? 'edit' : 'create',
+          await saveUserModuleAccess(row.persona_id, selectedConfiguration);
+          return;
+        }
 
-        correo_original: editing
-          ? row.correo_institucional
-          : '',
+        if (!selectedPerson || !selectedPersonCanEnable) {
+          throw new Error('Primero busca una persona que no tenga una cuenta registrada.');
+        }
 
-        correo_institucional:
-          email.value.trim().toLowerCase(),
+        await rpc('saveAccessUser', {
+          action: 'create',
+          persona_id: selectedPerson.persona_id,
+          tipo_documento: selectedPerson.tipo_documento,
+          numero_documento: selectedPerson.numero_documento,
+          active: true
+        });
 
-        nombres: names.value.trim(),
-        apellidos: surnames.value.trim(),
-        rol_id: roles.value,
-        estructura_org_id: structures.value,
-        estado: status.value
-      }),
+        try {
+          await saveUserModuleAccess(
+            selectedPerson.persona_id,
+            selectedConfiguration
+          );
+        } catch (error) {
+          try {
+            await refreshCurrentTabData(false);
+          } catch (refreshError) {
+            // Se conserva el error de la configuración.
+          }
 
-      editing ? 'Guardar cambios' : 'Registrar usuario'
+          throw new Error(
+            'La cuenta fue habilitada, pero no se completó toda la configuración de accesos. ' +
+            (error.message || '')
+          );
+        }
+      },
+      editing ? 'Guardar accesos' : 'Habilitar cuenta',
+      {
+        size: 'xl',
+        canSave: () => editing
+          ? row.active === true
+          : selectedPersonCanEnable
+      }
     );
+
+    // No bloquear la apertura del formulario por una lectura del catálogo.
+    // Los controles se habilitan cuando termina la consulta en segundo plano.
+    if (!editing && needsDocumentTypes) {
+      rpc('getAccessManagementTabData', 'documentTypes').then(result => {
+        const loadedTypes = (result.documentTypes || []).filter(item => item && item.id && item.name);
+        state.data.documentTypes = loadedTypes;
+        state.data.documentTypesLoaded = true;
+        if (!documentTypeControl || !documentTypeControl.isConnected) return;
+
+        documentTypeControl.replaceChildren();
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = 'Selecciona un tipo de documento';
+        documentTypeControl.appendChild(placeholder);
+        loadedTypes.forEach(item => {
+          const option = document.createElement('option');
+          option.value = item.id;
+          option.textContent = item.name;
+          documentTypeControl.appendChild(option);
+        });
+
+        documentTypeControl.disabled = !loadedTypes.length;
+        documentNumberControl.disabled = !loadedTypes.length;
+        documentSearchButton.disabled = !loadedTypes.length;
+        documentClearButton.disabled = !loadedTypes.length;
+        if (!loadedTypes.length) {
+          resultHost.appendChild(alertHost);
+          showSearchAlert(
+            'error',
+            'Catálogo no disponible',
+            'No se encontraron tipos de documento en la pestaña tipo_documento_identidad.'
+          );
+        } else {
+          resultHost.replaceChildren();
+        }
+      }).catch(error => {
+        if (!documentTypeControl || !documentTypeControl.isConnected) return;
+        resultHost.appendChild(alertHost);
+        showSearchAlert(
+          'error',
+          'No se pudo cargar el catálogo',
+          error.message || 'No se pudieron cargar los tipos de documento.'
+        );
+      });
+    }
   }
 
 
   function renderRoles(host) {
     const canManage = state.data.capabilities.roles;
-
     const section = makeTabPanel(
       'Roles',
-      'Define perfiles funcionales. Los ámbitos de datos se administran por separado.',
+      'Define perfiles funcionales reutilizables. Su asignación se realiza por módulo.',
       canManage ? 'Nuevo rol' : '',
       canManage ? () => openRoleModal(null) : null
     );
-
     host.appendChild(section);
-
     renderTable(host, {
       data: state.data.roles || [],
-
       columns: [
+        { key: 'nombre', label: 'Nombre' },
+        { key: 'descripcion', label: 'Descripción' },
         {
-          key: 'rol_id',
-          label: 'ID'
-        },
-        {
-          key: 'nombre',
-          label: 'Nombre'
-        },
-        {
-          key: 'descripcion',
-          label: 'Descripción'
-        },
-        {
-          key: 'estado',
+          key: 'active',
           label: 'Estado',
           align: 'center',
-          render: (value, row) => createAccessStatusCell(
-            row,
-            'setAccessRoleStatus',
-            row.rol_id,
-            'el rol'
-          )
+          render: (value, row) => createAccessStatusCell(row, 'setAccessRoleStatus', row.rol_id, 'el rol')
         }
       ],
-
       rowActions: [
-
         ...(canManage ? [{
           label: 'Editar rol',
           icon: 'edit',
           variant: 'outline',
           onClick: row => openRoleModal(row)
         }] : []),
-
         ...(state.data.capabilities.audit ? [{
           label: 'Historial',
           icon: 'history',
           variant: 'outline',
-
-          onClick: row => openEntityHistory(
-            'ROL',
-            row.rol_id,
-            row.nombre
-          )
+          onClick: row => openEntityHistory('ROL', row.rol_id, row.nombre)
         }] : [])
-
       ],
-
-      searchPlaceholder:
-        'Buscar por ID, nombre o descripción...',
-
+      searchPlaceholder: 'Buscar por nombre o descripción...',
       emptyMessage: 'No hay roles registrados.'
     });
   }
@@ -760,88 +2133,49 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
   function openRoleModal(row) {
     const editing = Boolean(row);
-
     const form = document.createElement('form');
-
     form.className = 'access-form';
-
-    form.addEventListener(
-      'submit',
-      event => event.preventDefault()
-    );
-
+    form.addEventListener('submit', event => event.preventDefault());
     const grid = createFormGrid();
 
-    const id = createInput(
-      'text',
-      row && row.rol_id,
-      {
-        required: true,
-        maxlength: 50,
-        pattern: '[A-Za-z0-9_-]{2,50}',
-        readOnly: editing
-      }
-    );
+    const id = createInput('text', row && row.rol_id, {
+      required: true,
+      maxlength: 50,
+      readOnly: true
+    });
+    const name = createInput('text', row && row.nombre, {
+      required: true,
+      maxlength: 100
+    });
+    const description = createTextarea(row && row.descripcion, 3);
 
-    const name = createInput(
-      'text',
-      row && row.nombre,
-      {
-        required: true,
-        maxlength: 100
-      }
-    );
+    function updateRoleIdPreview() {
+      id.value = editing
+        ? row.rol_id
+        : previewIdentifier('ROL_', name.value, 50);
+    }
 
-    const description = createTextarea(
-      row && row.descripcion,
-      3
-    );
-
-    const status = createSelect(
-      [
-        {
-          value: 'ACTIVO',
-          label: 'Activo'
-        },
-        {
-          value: 'INACTIVO',
-          label: 'Inactivo'
-        }
-      ],
-      row ? row.estado : 'ACTIVO'
-    );
+    if (!editing) name.addEventListener('input', updateRoleIdPreview);
+    updateRoleIdPreview();
 
     grid.append(
-      createField(
-        'Identificador del rol',
-        id,
-        'Ejemplo: ROL_EDITOR.'
-      ),
-
+      createField('ID generado automáticamente', id, 'Se construye a partir del nombre del rol y no puede editarse.'),
       createField('Nombre', name),
-      createField('Descripción', description),
-      createField('Estado', status)
+      createField('Descripción', description)
     );
-
     form.appendChild(grid);
 
     openFormModal(
       editing ? 'Editar rol' : 'Crear rol',
       form,
-
       () => rpc('saveAccessRole', {
         action: editing ? 'edit' : 'create',
-        rol_id: id.value.trim().toUpperCase(),
-
-        rol_id_original: editing
-          ? row.rol_id
-          : '',
-
+        rol_id: id.value,
+        rol_id_original: editing ? row.rol_id : '',
         nombre: name.value.trim(),
         descripcion: description.value.trim(),
-        estado: status.value
+        active: editing ? row.active : true
       }),
-
       editing ? 'Guardar cambios' : 'Crear rol'
     );
   }
@@ -849,185 +2183,206 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
   function renderPermissions(host) {
     const canManage = state.data.capabilities.permissions;
-
     const section = makeTabPanel(
       'Permisos',
-      'Catálogo de operaciones que pueden asignarse a los roles.',
+      'Define las operaciones habilitadas por módulo. Los identificadores y códigos se generan automáticamente.',
       canManage ? 'Nuevo permiso' : '',
       canManage ? () => openPermissionModal(null) : null
     );
-
     host.appendChild(section);
 
-    renderTable(host, {
-      data: state.data.permissions || [],
+    const moduleSelect = createSelect(
+      [
+        { value: '__ALL__', label: 'Todos los módulos' },
+        ...(state.data.modules || [])
+          .filter(item => item.active)
+          .map(item => ({ value: item.modulo_id, label: item.nombre }))
+      ],
+      '',
+      'Selecciona un módulo'
+    );
+    host.appendChild(createField('Módulo', moduleSelect));
 
+    const renderPermissionTable = () => {
+      const selectedModule = moduleSelect.value;
+      const permissions = (state.data.permissions || []).filter(item =>
+        selectedModule === '__ALL__' || (selectedModule && item.modulo_id === selectedModule)
+      );
+      renderTable(host, {
+      data: permissions,
       columns: [
+        { key: 'modulo_nombre', label: 'Módulo' },
+        { key: 'operacion_nombre', label: 'Operación' },
+        { key: 'descripcion', label: 'Descripción' },
         {
-          key: 'codigo',
-          label: 'Código'
-        },
-        {
-          key: 'modulo',
-          label: 'Módulo'
-        },
-        {
-          key: 'operacion',
-          label: 'Operación'
-        },
-        {
-          key: 'descripcion',
-          label: 'Descripción'
-        },
-        {
-          key: 'estado',
+          key: 'active',
           label: 'Estado',
           align: 'center',
-          render: (value, row) => createAccessStatusCell(
-            row,
-            'setAccessPermissionStatus',
-            row.permiso_id,
-            'el permiso'
-          )
+          render: (value, row) => createAccessStatusCell(row, 'setAccessPermissionStatus', row.permiso_id, 'el permiso')
         }
       ],
-
       rowActions: [
-
         ...(canManage ? [{
           label: 'Editar permiso',
           icon: 'edit',
           variant: 'outline',
           onClick: row => openPermissionModal(row)
         }] : []),
-
         ...(state.data.capabilities.audit ? [{
           label: 'Historial',
           icon: 'history',
           variant: 'outline',
-
-          onClick: row => openEntityHistory(
-            'PERMISO',
-            row.permiso_id,
-            row.codigo
-          )
+          onClick: row => openEntityHistory('PERMISO', row.permiso_id, row.codigo)
         }] : [])
-
       ],
+      searchPlaceholder: 'Buscar permiso...',
+      emptyMessage: selectedModule
+        ? 'No hay permisos registrados para el módulo seleccionado.'
+        : 'Selecciona un módulo o Todos los módulos para consultar permisos.'
+      });
+    };
+    moduleSelect.addEventListener('change', renderPermissionTable);
+    renderPermissionTable();
+  }
 
-      searchPlaceholder:
-        'Buscar por código, módulo u operación...',
 
-      emptyMessage: 'No hay permisos registrados.'
+  function renderOperations(host) {
+    const section = makeTabPanel(
+      'Operaciones',
+      'Catálogo controlado de operaciones disponibles para construir permisos sin variaciones de escritura.'
+    );
+    host.appendChild(section);
+
+    renderTable(host, {
+      data: state.data.operations || [],
+      columns: [
+        { key: 'operacion_id', label: 'ID de operación' },
+        { key: 'nombre', label: 'Nombre' },
+        { key: 'descripcion', label: 'Descripción' },
+        { key: 'active', label: 'Estado', render: value => value ? 'Activa' : 'Inactiva' }
+      ],
+      searchPlaceholder: 'Buscar operación...',
+      emptyMessage: 'No hay operaciones registradas.'
     });
   }
 
 
+  function renderScopeTypes(host) {
+    const section = makeTabPanel(
+      'Tipos de ámbito',
+      'Catálogo cerrado de los cuatro tipos admitidos. Define la referencia y si permite incluir unidades orgánicas descendientes; esta pantalla es de solo lectura.'
+    );
+    host.appendChild(section);
+    renderTable(host, {
+      data: state.data.scopeTypes || [],
+      columns: [
+        { key: 'tipo_ambito_id', label: 'ID' },
+        { key: 'nombre', label: 'Nombre' },
+        { key: 'descripcion', label: 'Descripción' },
+        { key: 'entidad_referencia', label: 'Referencia' },
+        { key: 'requiere_referencia', label: 'Requiere referencia', render: value => value ? 'Sí' : 'No' },
+        { key: 'permite_descendientes', label: 'Permite descendientes', render: value => value ? 'Sí' : 'No' }
+      ],
+      searchPlaceholder: 'Buscar tipo de ámbito...',
+      emptyMessage: 'No hay tipos de ámbito registrados.'
+    });
+  }
+
   function openPermissionModal(row) {
     const editing = Boolean(row);
-
     const form = document.createElement('form');
-
     form.className = 'access-form';
-
-    form.addEventListener(
-      'submit',
-      event => event.preventDefault()
-    );
-
+    form.addEventListener('submit', event => event.preventDefault());
     const grid = createFormGrid();
 
-    const id = createInput(
-      'text',
-      row && row.permiso_id,
-      {
-        required: true,
-        maxlength: 50,
-        readOnly: editing
-      }
-    );
+    const id = createInput('text', row && row.permiso_id, {
+      required: true,
+      maxlength: 50,
+      readOnly: true
+    });
+    const code = createInput('text', row && row.codigo, {
+      required: true,
+      maxlength: 80,
+      readOnly: true
+    });
 
-    const code = createInput(
-      'text',
-      row && row.codigo,
-      {
-        required: true,
-        maxlength: 80,
-        pattern: '[A-Za-z0-9_]{3,80}',
-        readOnly: editing
-      }
+    const modules = (state.data.modules || []).filter(item => item.active);
+    const module = createSelect(
+      modules.map(item => ({
+        value: item.modulo_id,
+        label: item.nombre + ' (' + item.codigo + ')'
+      })),
+      row && row.modulo_id,
+      'Selecciona un módulo'
     );
+    if (editing) module.disabled = true;
 
-    const module = createInput(
-      'text',
-      row && row.modulo,
-      {
-        required: true,
-        maxlength: 60
-      }
+    const operationOptions = (state.data.operations || []).filter(item => item.active !== false).map(item => ({
+      value: item.operacion_id,
+      label: item.nombre + ' (' + item.operacion_id + ')'
+    }));
+
+    if (editing && row.operacion_id && !operationOptions.some(item => item.value === row.operacion_id)) {
+      operationOptions.unshift({
+        value: row.operacion_id,
+        label: (row.operacion_nombre || row.operacion_id) + ' (' + row.operacion_id + ') — inactiva'
+      });
+    }
+
+    const operation = createSelect(
+      operationOptions,
+      row && row.operacion_id,
+      'Selecciona una operación'
     );
+    if (editing) operation.disabled = true;
 
-    const operation = createInput(
-      'text',
-      row && row.operacion,
-      {
-        required: true,
-        maxlength: 60
-      }
-    );
-
-    const description = createTextarea(
-      row && row.descripcion,
-      3
-    );
-
+    const description = createTextarea(row && row.descripcion, 3);
     description.required = true;
 
-    const status = createSelect(
-      [
-        {
-          value: 'ACTIVO',
-          label: 'Activo'
-        },
-        {
-          value: 'INACTIVO',
-          label: 'Inactivo'
-        }
-      ],
-      row ? row.estado : 'ACTIVO'
-    );
+    function updatePermissionPreview() {
+      if (editing) {
+        id.value = row.permiso_id;
+        code.value = row.codigo;
+        return;
+      }
+
+      const selectedModule = modules.find(item => item.modulo_id === module.value);
+      const generatedCode = selectedModule
+        ? previewPermissionCode(selectedModule.codigo, operation.value)
+        : '';
+      code.value = generatedCode;
+      id.value = generatedCode
+        ? previewIdentifier('PERM_', generatedCode, 50)
+        : '';
+    }
+
+    if (!editing) {
+      module.addEventListener('change', updatePermissionPreview);
+      operation.addEventListener('change', updatePermissionPreview);
+    }
+    updatePermissionPreview();
 
     grid.append(
-      createField('ID del permiso', id),
-
-      createField(
-        'Código',
-        code,
-        'Ejemplo: DIRECTORIOS_VER.'
-      ),
-
+      createField('ID generado automáticamente', id, 'Se genera a partir del módulo y la operación.'),
+      createField('Código generado automáticamente', code, 'Convención: MODULO_OPERACION.'),
       createField('Módulo', module),
       createField('Operación', operation),
-      createField('Descripción', description),
-      createField('Estado', status)
+      createField('Descripción', description)
     );
-
     form.appendChild(grid);
 
     openFormModal(
       editing ? 'Editar permiso' : 'Crear permiso',
       form,
-
       () => rpc('saveAccessPermission', {
         action: editing ? 'edit' : 'create',
-        permiso_id: id.value.trim().toUpperCase(),
-        codigo: code.value.trim().toUpperCase(),
-        modulo: module.value.trim().toUpperCase(),
-        operacion: operation.value.trim().toUpperCase(),
+        permiso_id: editing ? row.permiso_id : '',
+        codigo: editing ? row.codigo : '',
+        modulo_id: editing ? row.modulo_id : module.value,
+        operacion_id: operation.value.trim().toUpperCase(),
         descripcion: description.value.trim(),
-        estado: status.value
+        active: editing ? row.active : true
       }),
-
       editing ? 'Guardar cambios' : 'Crear permiso'
     );
   }
@@ -1038,606 +2393,142 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       'Asignación de permisos',
       'Selecciona un rol y marca las operaciones que tendrá habilitadas.'
     );
-
     host.appendChild(section);
-
     const panel = document.createElement('div');
-
     panel.className = 'access-assignment';
 
     const roleSelect = createSelect(
       activeRoles().map(role => ({
         value: role.rol_id,
-        label: `${role.nombre} (${role.rol_id})`
+        label: role.nombre + ' (' + role.rol_id + ')'
       })),
-      '',
+      state.selectedAssignmentRoleId,
       'Selecciona un rol'
     );
-
-    panel.appendChild(
-      createField('Rol', roleSelect)
-    );
+    panel.appendChild(createField('Rol', roleSelect));
 
     const checklist = document.createElement('div');
-
     checklist.className = 'access-permission-groups';
     checklist.id = 'accessPermissionChecklist';
-
     panel.appendChild(checklist);
 
-    const save = createButton(
-      'Guardar asignaciones',
-      'primary',
-
-      async () => {
-        if (!roleSelect.value) {
-          SUNARPUI.notify(
-            'warning',
-            'Selecciona un rol.'
-          );
-
-          return;
-        }
-
-        const selected = $$(
-          'input[type="checkbox"][data-permission-id]:checked',
-          checklist
-        ).map(input => input.dataset.permissionId);
-
-        save.disabled = true;
-
-        try {
-          await rpc('saveRolePermissions', {
-            rol_id: roleSelect.value,
-            permiso_ids: selected
-          });
-
-          await refreshData(false);
-
-          SUNARPUI.notify(
-            'success',
-            'Asignaciones actualizadas correctamente.'
-          );
-
-          renderActiveTab('assignments');
-
-        } catch (error) {
-          SUNARPUI.notify(
-            'error',
-            error.message
-          );
-
-        } finally {
-          save.disabled = false;
-        }
-      },
-
-      'save'
-    );
-
+    const save = createButton('Guardar asignaciones', 'primary', async () => {
+      if (!roleSelect.value) {
+        SUNARPUI.notify('warning', 'Selecciona un rol.');
+        return;
+      }
+      const selected = queryAll('input[type="checkbox"][data-permission-id]:checked', checklist)
+        .map(input => input.dataset.permissionId);
+      save.disabled = true;
+      const finishLoading = beginAccessPanelLoading();
+      try {
+        await rpc('saveRolePermissions', {
+          rol_id: roleSelect.value,
+          permiso_ids: selected
+        });
+        await refreshCurrentTabData(false);
+        SUNARPUI.notify('success', 'Asignaciones actualizadas correctamente.');
+      } catch (error) {
+        SUNARPUI.notify('error', error.message);
+      } finally {
+        finishLoading();
+        save.disabled = false;
+      }
+    }, 'save');
     panel.appendChild(save);
     host.appendChild(panel);
 
-
     function paintChecklist() {
       checklist.replaceChildren();
-
       if (!roleSelect.value) {
         const note = document.createElement('p');
-
         note.className = 'access-muted';
-
-        note.textContent =
-          'Selecciona un rol para consultar sus permisos.';
-
+        note.textContent = 'Selecciona un rol para consultar sus permisos.';
         checklist.appendChild(note);
-
         return;
       }
 
-      const assigned = new Set(
-        (state.data.rolePermissions || [])
-          .filter(item =>
-            item.rol_id === roleSelect.value &&
-            item.estado === 'ACTIVO'
-          )
-          .map(item => item.permiso_id)
-      );
-
-      const permissions = (
-        state.data.permissions || []
-      ).filter(item => item.estado === 'ACTIVO');
-
+      const assigned = new Set((state.data.rolePermissions || [])
+        .filter(item => item.rol_id === roleSelect.value && item.active === true)
+        .map(item => item.permiso_id));
+      const permissions = (state.data.permissions || []).filter(item => item.active === true);
+      const modules = new Map((state.data.modules || []).map(item => [item.modulo_id, item]));
       const groups = new Map();
 
       permissions.forEach(permission => {
-        if (!groups.has(permission.modulo)) {
-          groups.set(permission.modulo, []);
-        }
-
-        groups.get(permission.modulo).push(permission);
+        if (!groups.has(permission.modulo_id)) groups.set(permission.modulo_id, []);
+        groups.get(permission.modulo_id).push(permission);
       });
 
       if (!permissions.length) {
         const note = document.createElement('p');
-
         note.className = 'access-muted';
-
-        note.textContent =
-          'No hay permisos activos en el catálogo.';
-
+        note.textContent = 'No hay permisos activos en el catálogo.';
         checklist.appendChild(note);
-
         return;
       }
 
-      groups.forEach((items, moduleCode) => {
+      groups.forEach((items, moduleId) => {
         const group = document.createElement('section');
-
         group.className = 'access-permission-group';
+        const heading = document.createElement('div');
+        heading.className = 'access-permission-group-heading';
 
-        const heading = document.createElement('h4');
+        const module = modules.get(moduleId);
+        const title = document.createElement('h4');
+        title.textContent = module ? module.nombre : moduleId;
 
-        heading.textContent = moduleCode;
-
+        const groupToggleLabel = document.createElement('label');
+        groupToggleLabel.className = 'access-check-row access-check-row--group';
+        const groupToggle = document.createElement('input');
+        groupToggle.type = 'checkbox';
+        groupToggle.setAttribute('aria-label', 'Seleccionar todos los permisos de ' + (module ? module.nombre : moduleId));
+        const groupToggleText = document.createElement('span');
+        groupToggleText.textContent = 'Seleccionar todo el bloque';
+        groupToggleLabel.append(groupToggle, groupToggleText);
+        heading.append(title, groupToggleLabel);
         group.appendChild(heading);
+
+        function syncGroupToggle() {
+          const checkboxes = Array.from(group.querySelectorAll('input[data-permission-id]'));
+          const selectedCount = checkboxes.filter(input => input.checked).length;
+          groupToggle.checked = checkboxes.length > 0 && selectedCount === checkboxes.length;
+          groupToggle.indeterminate = selectedCount > 0 && selectedCount < checkboxes.length;
+        }
 
         items.forEach((permission, index) => {
           const label = document.createElement('label');
-
           label.className = 'access-check-row';
-
           const checkbox = document.createElement('input');
-
           checkbox.type = 'checkbox';
           checkbox.checked = assigned.has(permission.permiso_id);
           checkbox.dataset.permissionId = permission.permiso_id;
-
-          checkbox.id =
-            `access-permission-${moduleCode}-${index}`;
-
+          checkbox.id = 'access-permission-' + moduleId + '-' + index;
+          checkbox.addEventListener('change', syncGroupToggle);
           const text = document.createElement('span');
-
-          text.textContent =
-            `${permission.descripcion} (${permission.codigo})`;
-
+          const operationLabel = permission.operacion_nombre || permission.operacion_id || permission.codigo;
+          text.textContent = permission.descripcion + ' — ' + operationLabel + ' (' + permission.codigo + ')';
           label.append(checkbox, text);
-
           group.appendChild(label);
         });
 
+        groupToggle.addEventListener('change', () => {
+          group.querySelectorAll('input[data-permission-id]').forEach(checkbox => {
+            checkbox.checked = groupToggle.checked;
+          });
+          syncGroupToggle();
+        });
+
+        syncGroupToggle();
         checklist.appendChild(group);
       });
     }
 
-
-    roleSelect.addEventListener(
-      'change',
-      paintChecklist
-    );
-
+    roleSelect.addEventListener('change', () => {
+      state.selectedAssignmentRoleId = roleSelect.value;
+      paintChecklist();
+    });
     paintChecklist();
-  }
-
-
-  function renderScopes(host) {
-    const section = makeTabPanel(
-      'Ámbitos de acceso',
-      'Asigna a cada usuario los datos que podrá consultar o gestionar en cada módulo.'
-    );
-
-    host.appendChild(section);
-
-    const panel = document.createElement('div');
-
-    panel.className = 'access-scopes-editor';
-
-    const userOptions = (state.data.users || []).map(user => ({
-      value: user.correo_institucional,
-      label: `${user.nombre_completo} — ${user.correo_institucional}`
-    }));
-
-    const userSelect = createSelect(
-      userOptions,
-      '',
-      'Selecciona un usuario'
-    );
-
-    const moduleSelect = createSelect(
-      (state.data.modules || []).map(item => ({
-        value: item,
-        label: item
-      })),
-      '',
-      'Selecciona un módulo'
-    );
-
-    const typeSelect = createSelect(
-      [
-        {
-          value: 'TOTAL',
-          label: 'Total — todos los registros del módulo'
-        },
-        {
-          value: 'SEDE',
-          label: 'Sede'
-        },
-        {
-          value: 'ESTRUCTURA_ORG',
-          label: 'Unidad orgánica'
-        }
-      ],
-      'TOTAL'
-    );
-
-    const referenceSelect = createSelect(
-      [],
-      '',
-      'No requiere referencia'
-    );
-
-    const descendants = createInput(
-      'checkbox',
-      '',
-      {}
-    );
-
-    descendants.className = 'access-checkbox';
-
-    const descendantsLabel = document.createElement('label');
-
-    descendantsLabel.className = 'access-inline-check';
-
-    descendantsLabel.append(
-      descendants,
-      document.createTextNode(
-        'Incluir unidades orgánicas descendientes'
-      )
-    );
-
-    const grid = createFormGrid();
-
-    grid.append(
-      createField('Usuario', userSelect),
-      createField('Módulo', moduleSelect),
-      createField('Tipo de ámbito', typeSelect),
-      createField('Referencia', referenceSelect)
-    );
-
-    panel.appendChild(grid);
-    panel.appendChild(descendantsLabel);
-
-    const add = createButton(
-      'Agregar ámbito',
-      'outline',
-      addScope,
-      'add'
-    );
-
-    const actionBar = document.createElement('div');
-
-    actionBar.className = 'access-scope-actions';
-    actionBar.appendChild(add);
-
-    panel.appendChild(actionBar);
-
-    const listHeading = document.createElement('h4');
-
-    listHeading.className = 'access-subheading';
-    listHeading.textContent = 'Ámbitos seleccionados';
-
-    panel.appendChild(listHeading);
-
-    const list = document.createElement('div');
-
-    list.id = 'accessScopeDraftList';
-    list.className = 'access-scope-list';
-
-    panel.appendChild(list);
-
-    const save = createButton(
-      'Guardar ámbitos',
-      'primary',
-      saveScopes,
-      'save'
-    );
-
-    save.classList.add('access-scope-save');
-
-    panel.appendChild(save);
-    host.appendChild(panel);
-
-
-    function currentScopeName(scope) {
-      if (scope.tipo_ambito === 'TOTAL') {
-        return 'Todos los registros del módulo';
-      }
-
-      const items = scope.tipo_ambito === 'SEDE'
-        ? ((state.data.catalogs || {}).sedes || [])
-        : ((state.data.catalogs || {}).estructuraOrg || []);
-
-      const match = items.find(
-        item => item.id === scope.referencia_id
-      );
-
-      return match
-        ? match.name
-        : scope.referencia_id;
-    }
-
-
-    function updateReferenceOptions() {
-      const type = typeSelect.value;
-
-      const useReference = type !== 'TOTAL';
-
-      const options = type === 'SEDE'
-        ? (
-            (state.data.catalogs || {}).sedes || []
-          ).map(item => ({
-            value: item.id,
-            label: item.name
-          }))
-
-        : type === 'ESTRUCTURA_ORG'
-          ? (
-              (state.data.catalogs || {}).estructuraOrg || []
-            ).map(item => ({
-              value: item.id,
-              label: item.name
-            }))
-
-          : [];
-
-      const next = createSelect(
-        options,
-        '',
-        useReference
-          ? 'Selecciona una referencia'
-          : 'No requiere referencia'
-      );
-
-      referenceSelect.replaceChildren(
-        ...Array.from(next.childNodes)
-      );
-
-      referenceSelect.disabled = !useReference;
-
-      descendantsLabel.hidden =
-        type !== 'ESTRUCTURA_ORG';
-
-      descendants.checked = false;
-    }
-
-
-    function loadDraft() {
-      const email = userSelect.value;
-      const moduleCode = moduleSelect.value;
-
-      state.draftScopes = (
-        state.data.scopes || []
-      )
-        .filter(item =>
-          item.correo_institucional === email &&
-          item.modulo === moduleCode &&
-          item.estado === 'ACTIVO'
-        )
-        .map(item => ({
-          tipo_ambito: item.tipo_ambito,
-          referencia_id: item.referencia_id,
-          incluir_descendientes:
-            item.incluir_descendientes || 'NO'
-        }));
-
-      paintDraft();
-    }
-
-
-    function paintDraft() {
-      list.replaceChildren();
-
-      if (!userSelect.value || !moduleSelect.value) {
-        const note = document.createElement('p');
-
-        note.className = 'access-muted';
-
-        note.textContent =
-          'Selecciona un usuario y un módulo para administrar sus ámbitos.';
-
-        list.appendChild(note);
-
-        return;
-      }
-
-      if (!state.draftScopes.length) {
-        const note = document.createElement('p');
-
-        note.className = 'access-muted';
-
-        note.textContent =
-          'No hay ámbitos asignados. El usuario no tendrá acceso a registros de este módulo.';
-
-        list.appendChild(note);
-
-        return;
-      }
-
-      state.draftScopes.forEach((scope, index) => {
-        const row = document.createElement('div');
-
-        row.className = 'access-scope-item';
-
-        const text = document.createElement('div');
-
-        const strong = document.createElement('strong');
-
-        strong.textContent = scope.tipo_ambito;
-
-        const detail = document.createElement('span');
-
-        detail.textContent =
-          currentScopeName(scope) +
-          (
-            scope.tipo_ambito === 'ESTRUCTURA_ORG' &&
-            scope.incluir_descendientes === 'SI'
-              ? ' (incluye descendientes)'
-              : ''
-          );
-
-        text.append(strong, detail);
-
-        const remove = createButton(
-          'Quitar',
-          'outline',
-
-          () => {
-            state.draftScopes.splice(index, 1);
-            paintDraft();
-          },
-
-          'close'
-        );
-
-        remove.classList.add('access-small-button');
-
-        row.append(text, remove);
-
-        list.appendChild(row);
-      });
-    }
-
-
-    function addScope() {
-      if (!userSelect.value || !moduleSelect.value) {
-        SUNARPUI.notify(
-          'warning',
-          'Selecciona un usuario y un módulo.'
-        );
-
-        return;
-      }
-
-      const type = typeSelect.value;
-
-      const referenceId = type === 'TOTAL'
-        ? ''
-        : referenceSelect.value;
-
-      if (type !== 'TOTAL' && !referenceId) {
-        SUNARPUI.notify(
-          'warning',
-          'Selecciona una referencia para el ámbito.'
-        );
-
-        return;
-      }
-
-      if (
-        type === 'TOTAL' &&
-        state.draftScopes.length
-      ) {
-        SUNARPUI.notify(
-          'warning',
-          'El ámbito TOTAL no puede combinarse con otros ámbitos.'
-        );
-
-        return;
-      }
-
-      if (
-        type !== 'TOTAL' &&
-        state.draftScopes.some(
-          item => item.tipo_ambito === 'TOTAL'
-        )
-      ) {
-        SUNARPUI.notify(
-          'warning',
-          'Quita el ámbito TOTAL antes de agregar otros ámbitos.'
-        );
-
-        return;
-      }
-
-      if (
-        state.draftScopes.some(
-          item =>
-            item.tipo_ambito === type &&
-            item.referencia_id === referenceId
-        )
-      ) {
-        SUNARPUI.notify(
-          'warning',
-          'Ese ámbito ya está agregado.'
-        );
-
-        return;
-      }
-
-      state.draftScopes.push({
-        tipo_ambito: type,
-        referencia_id: referenceId,
-
-        incluir_descendientes:
-          type === 'ESTRUCTURA_ORG' && descendants.checked
-            ? 'SI'
-            : 'NO'
-      });
-
-      paintDraft();
-    }
-
-
-    async function saveScopes() {
-      if (!userSelect.value || !moduleSelect.value) {
-        SUNARPUI.notify(
-          'warning',
-          'Selecciona un usuario y un módulo.'
-        );
-
-        return;
-      }
-
-      save.disabled = true;
-
-      try {
-        await rpc('saveAccessScopes', {
-          correo_institucional: userSelect.value,
-          modulo: moduleSelect.value,
-          ambitos: state.draftScopes
-        });
-
-        await refreshData(false);
-
-        renderActiveTab('scopes');
-
-        SUNARPUI.notify(
-          'success',
-          'Ámbitos de acceso actualizados correctamente.'
-        );
-
-      } catch (error) {
-        SUNARPUI.notify(
-          'error',
-          error.message
-        );
-
-      } finally {
-        save.disabled = false;
-      }
-    }
-
-
-    userSelect.addEventListener('change', loadDraft);
-    moduleSelect.addEventListener('change', loadDraft);
-
-    typeSelect.addEventListener(
-      'change',
-      updateReferenceOptions
-    );
-
-    updateReferenceOptions();
-    paintDraft();
   }
 
 
@@ -1972,15 +2863,29 @@ window.SUNARPAccessHistory = Object.freeze({
     renderTable(host, {
       mode: 'server',
 
-      loadData: params => rpc(
-        'getAccessAuditHistory',
-        {
+      loadData: async params => {
+        const request = {
           search: params.search,
           ...params.filters,
           page: params.page,
           pageSize: params.pageSize
+        };
+        const cacheKey = JSON.stringify(request);
+        const cached = state.auditPageCache[cacheKey];
+        if (cached && Date.now() - cached.timestamp < 120000) return cached.value;
+
+        const finishLoading = beginAccessPanelLoading();
+        try {
+          const result = await rpc('getAccessAuditHistory', request);
+          state.auditPageCache[cacheKey] = {
+            timestamp: Date.now(),
+            value: result
+          };
+          return result;
+        } finally {
+          finishLoading();
         }
-      ),
+      },
 
       columns: [
         {
@@ -1998,7 +2903,13 @@ window.SUNARPAccessHistory = Object.freeze({
         },
         {
           key: 'modulo',
-          label: 'Módulo'
+          label: 'Módulo',
+          render: value => {
+            const module = (state.data.modules || []).find(item =>
+              item.codigo === String(value || '').toUpperCase()
+            );
+            return module ? module.nombre : 'Módulo no disponible';
+          }
         },
         {
           key: 'registro_nombre',
@@ -2049,8 +2960,8 @@ window.SUNARPAccessHistory = Object.freeze({
           label: 'Módulo',
 
           options: (state.data.modules || []).map(item => ({
-            value: item,
-            label: item
+            value: item.codigo,
+            label: item.nombre
           }))
         }
       ],
@@ -2088,6 +2999,10 @@ window.SUNARPAccessHistory = Object.freeze({
         id: 'permissions',
         label: 'Permisos'
       });
+      tabs.push({
+        id: 'operations',
+        label: 'Operaciones'
+      });
     }
 
     if (caps.assignments) {
@@ -2098,10 +3013,7 @@ window.SUNARPAccessHistory = Object.freeze({
     }
 
     if (caps.scopes) {
-      tabs.push({
-        id: 'scopes',
-        label: 'Ámbitos de acceso'
-      });
+      tabs.push({ id: 'scopeTypes', label: 'Tipos de ámbito' });
     }
 
     if (caps.audit) {
@@ -2117,31 +3029,67 @@ window.SUNARPAccessHistory = Object.freeze({
 
   function renderActiveTab(tabId) {
     const panel = $('#accessTabPanel');
-
     if (!panel || !state.data) return;
-
     destroyTable();
-
     panel.replaceChildren();
-
     const renderers = {
-      users: renderUsers,
-      roles: renderRoles,
-      permissions: renderPermissions,
-      assignments: renderAssignments,
-      scopes: renderScopes,
-      audit: renderAudit
+      users: renderUsers, roles: renderRoles, permissions: renderPermissions,
+      operations: renderOperations, scopeTypes: renderScopeTypes,
+      assignments: renderAssignments, audit: renderAudit
     };
-
     const renderer = renderers[tabId];
-
     if (!renderer) return;
-
     state.activeTab = tabId;
 
+    const tabLoaders = {
+      permissions: async () => {
+        const result = await rpc('getAccessManagementTabData', 'permissions');
+        state.data.modules = result.modules || [];
+        state.data.operations = result.operations || [];
+        state.tabDataLoaded.operations = true;
+        state.data.permissions = result.permissions || [];
+      },
+      assignments: async () => {
+        const result = await rpc('getAccessManagementTabData', 'assignments');
+        state.data.roles = result.roles || [];
+        state.data.modules = result.modules || [];
+        state.data.permissions = result.permissions || [];
+        state.data.rolePermissions = result.rolePermissions || [];
+      },
+      operations: async () => {
+        const result = await rpc('getAccessManagementTabData', 'operations');
+        state.data.operations = result.operations || [];
+      }
+    };
+    const loader = tabLoaders[tabId];
+    if (loader && state.tabDataLoaded[tabId] !== true) {
+      panel.textContent = 'Consultando información...';
+      if (!state.tabLoadPromises[tabId]) {
+        const finishLoading = beginAccessPanelLoading('Consultando información de la pestaña...');
+        state.tabLoadPromises[tabId] = (async () => {
+          try {
+            await loader();
+            state.tabDataLoaded[tabId] = true;
+            if (state.activeTab === tabId) {
+              destroyTable();
+              panel.replaceChildren();
+              renderer(panel);
+            }
+          } catch (error) {
+            if (state.activeTab === tabId) {
+              panel.textContent = error.message || 'No se pudo cargar la información.';
+              SUNARPUI.notify('error', error.message || 'No se pudo cargar la pestaña.');
+            }
+          } finally {
+            finishLoading();
+            delete state.tabLoadPromises[tabId];
+          }
+        })();
+      }
+      return;
+    }
     renderer(panel);
   }
-
 
   function renderPage() {
     const tabs = getAvailableTabs();
@@ -2180,6 +3128,73 @@ window.SUNARPAccessHistory = Object.freeze({
     });
 
     renderActiveTab(active);
+  }
+
+
+  async function refreshCurrentTabData(showNotification) {
+    if (!state.data || state.tabRefreshing) return;
+
+    state.tabRefreshing = true;
+    const finishLoading = beginAccessPanelLoading();
+
+    try {
+      const tab = state.activeTab;
+      state.auditPageCache = {};
+      state.userPageCache = {};
+
+      if (tab === 'users') {
+        if (state.userListController) {
+          await state.userListController.refresh();
+        }
+      } else if (tab === 'roles') {
+        const result = await rpc('getAccessManagementTabData', 'roles');
+        state.data.roles = result.roles || [];
+        renderActiveTab('roles');
+      } else if (tab === 'permissions') {
+        const result = await rpc('getAccessManagementTabData', 'permissions');
+        state.data.modules = result.modules || [];
+        state.data.operations = result.operations || [];
+        state.tabDataLoaded.operations = true;
+        state.data.permissions = result.permissions || [];
+        state.tabDataLoaded.permissions = true;
+        renderActiveTab('permissions');
+      } else if (tab === 'operations') {
+        const result = await rpc('getAccessManagementTabData', 'operations');
+        state.data.operations = result.operations || [];
+        state.tabDataLoaded.operations = true;
+        renderActiveTab('operations');
+      } else if (tab === 'scopeTypes') {
+        const result = await rpc('getAccessManagementTabData', 'scopeTypes');
+        state.data.scopeTypes = result.scopeTypes || [];
+        renderActiveTab('scopeTypes');
+      } else if (tab === 'assignments') {
+        const result = await rpc('getAccessManagementTabData', 'assignments');
+        state.data.roles = result.roles || [];
+        state.data.modules = result.modules || [];
+        state.data.permissions = result.permissions || [];
+        state.data.rolePermissions = result.rolePermissions || [];
+        state.tabDataLoaded.assignments = true;
+        renderActiveTab('assignments');
+      } else if (tab === 'audit') {
+        if (state.table && typeof state.table.refresh === 'function') {
+          await state.table.refresh();
+        } else {
+          renderActiveTab('audit');
+        }
+      }
+
+      if (showNotification) {
+        SUNARPUI.notify('success', 'Pestaña actualizada.');
+      }
+    } catch (error) {
+      SUNARPUI.notify(
+        'error',
+        error.message || 'No se pudo actualizar la pestaña.'
+      );
+    } finally {
+      state.tabRefreshing = false;
+      finishLoading();
+    }
   }
 
 
@@ -2248,16 +3263,7 @@ window.SUNARPAccessHistory = Object.freeze({
   });
 
 
-  document.addEventListener('DOMContentLoaded', () => {
-    const refreshButton = $('#accessRefreshButton');
-
-    if (refreshButton) {
-      refreshButton.addEventListener(
-        'click',
-        () => refreshData(true)
-      );
-    }
-  });
+  // Cada pestaña administra su propio botón de actualización.
 
 
   return Object.freeze({

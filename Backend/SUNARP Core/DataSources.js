@@ -61,11 +61,22 @@ function _coreNormalizeSourceConfig_(source) {
     );
   }
 
+  const dependencies = source.dependencies === undefined ? [] : source.dependencies;
+  if (!Array.isArray(dependencies)) {
+    throw new Error('SUNARP Core: dependencies debe ser un arreglo de fuentes.');
+  }
+  if (dependencies.some(dependency =>
+    !dependency || typeof dependency !== 'object' || Array.isArray(dependency)
+  )) {
+    throw new Error('SUNARP Core: cada dependencia debe ser una configuración de fuente.');
+  }
+
   return {
     spreadsheetId,
     sheetName,
     headerRow,
-    label
+    label,
+    dependencies
   };
 }
 
@@ -73,9 +84,35 @@ function _coreNormalizeSourceConfig_(source) {
 /**
  * Abre un archivo de Google Sheets.
  */
+const _CORE_SPREADSHEET_RUNTIME_CACHE_ = new Map();
+const _CORE_SPREADSHEET_RUNTIME_CACHE_LIMIT_ = 12;
+
+/**
+ * Reutiliza objetos Spreadsheet dentro de la ejecución actual.
+ * Esta caché de manejadores no conserva datos ni sustituye CacheService.
+ */
 function _coreOpenSpreadsheet_(spreadsheetId, label) {
+  const id = String(spreadsheetId || '').trim();
+  if (!id) {
+    throw new Error(`SUNARP Core: falta el ID del archivo de la fuente "${label}".`);
+  }
+
+  if (_CORE_SPREADSHEET_RUNTIME_CACHE_.has(id)) {
+    const cached = _CORE_SPREADSHEET_RUNTIME_CACHE_.get(id);
+    // Actualiza el orden LRU para mantener los archivos usados recientemente.
+    _CORE_SPREADSHEET_RUNTIME_CACHE_.delete(id);
+    _CORE_SPREADSHEET_RUNTIME_CACHE_.set(id, cached);
+    return cached;
+  }
+
   try {
-    return SpreadsheetApp.openById(spreadsheetId);
+    const spreadsheet = SpreadsheetApp.openById(id);
+    if (_CORE_SPREADSHEET_RUNTIME_CACHE_.size >= _CORE_SPREADSHEET_RUNTIME_CACHE_LIMIT_) {
+      const oldestId = _CORE_SPREADSHEET_RUNTIME_CACHE_.keys().next().value;
+      _CORE_SPREADSHEET_RUNTIME_CACHE_.delete(oldestId);
+    }
+    _CORE_SPREADSHEET_RUNTIME_CACHE_.set(id, spreadsheet);
+    return spreadsheet;
   } catch (error) {
     throw new Error(
       `SUNARP Core: no se pudo acceder a "${label}". ` +
@@ -158,6 +195,39 @@ function _coreReadRange_(sheet, startRow, startColumn, numRows, numColumns) {
  * Función pública para comprobar la conexión
  * desde una aplicación que utilice SUNARP Core.
  */
+/**
+ * Consulta metadatos de una fuente utilizando la caché compartida.
+ * La instantánea se invalida automáticamente al escribir mediante Core.
+ */
+function getSourceInfoCached(source, expirationSeconds) {
+  const ttl = expirationSeconds === undefined ? 300 : Number(expirationSeconds);
+  if (!Number.isInteger(ttl) || ttl < 1 || ttl > 21600) {
+    throw new Error('SUNARP Core: el TTL de metadatos debe estar entre 1 y 21600 segundos.');
+  }
+
+  const generation = typeof _coreGetSourceGeneration_ === 'function'
+    ? _coreGetSourceGeneration_(source)
+    : null;
+  const key = generation
+    ? _coreBuildSourceCacheKey_(source, 'info') + ':' + generation
+    : null;
+  const cached = key ? getCachedValue(key) : null;
+  if (cached && typeof cached === 'object' && Array.isArray(cached.headers)) {
+    return cached;
+  }
+
+  const info = getSourceInfo(source);
+  if (key) {
+    try {
+      putCachedValue(key, info, ttl);
+    } catch (error) {
+      console.warn('[SUNARP Core] No se pudieron almacenar metadatos en caché:', error.message);
+    }
+  }
+  return info;
+}
+
+
 function getSourceInfo(source) {
   const context = _coreOpenSource_(source);
 
