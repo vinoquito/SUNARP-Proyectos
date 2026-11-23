@@ -1,5 +1,62 @@
 <script>
   /**
+   * Devuelve las estructuras reales que deben aparecer en los filtros:
+   * las unidades con asignaciones coincidentes y sus ancestros reales.
+   * Los ancestros son seleccionables; nunca se crean opciones de contexto.
+   */
+  function _directoryBuildHierarchyFilterSets_(records, structures, siteId, localId) {
+    const site = String(siteId || '').trim();
+    const local = String(localId || '').trim();
+    const structureMap = new Map((structures || []).map(node => [
+      String(node.id || '').trim(), node
+    ]));
+    const selectableIds = new Set();
+    if (!site || !local) return selectableIds;
+
+    (records || []).forEach(record => {
+      const recordSite = String(record.filter_sede_id || record.sede_id || '').trim();
+      const recordLocal = String(record.filter_local_id || record.local_id || '').trim();
+      const structureId = String(record.estructura_id || '').trim();
+      if (recordSite !== site || recordLocal !== local || !structureId) return;
+
+      let current = structureMap.get(structureId);
+      const visited = new Set();
+      while (current) {
+        const currentId = String(current.id || '').trim();
+        if (!currentId || visited.has(currentId)) break;
+        if (String(current.sede_id || '').trim() !== site) break;
+        visited.add(currentId);
+        selectableIds.add(currentId);
+        const parentId = String(current.parent_id || '').trim();
+        current = parentId ? structureMap.get(parentId) || null : null;
+      }
+    });
+    return selectableIds;
+  }
+
+  /** Devuelve la ruta completa de una estructura real de la misma sede. */
+  function _directoryGetHierarchyDisplayPath_(node, structures) {
+    const structureMap = new Map((structures || []).map(item => [
+      String(item.id || '').trim(), item
+    ]));
+    const parts = [];
+    const visited = new Set();
+    const expectedSiteId = String(node && node.sede_id || '').trim();
+    let current = node;
+    while (current) {
+      const id = String(current.id || '').trim();
+      if (!id || visited.has(id)) break;
+      if (String(current.sede_id || '').trim() !== expectedSiteId) break;
+      visited.add(id);
+      const name = String(current.name || '').trim();
+      if (name) parts.unshift(name);
+      const parentId = String(current.parent_id || '').trim();
+      current = parentId ? structureMap.get(parentId) || null : null;
+    }
+    return parts.join(' / ');
+  }
+
+  /**
  * GESTOR DE INTRANET SUNARP
  * Módulo: Información de personal
  *
@@ -357,37 +414,19 @@ const DirectoryPage = (() => {
     const siteId = key(elements.sedeFilter && elements.sedeFilter.value);
     const localId = key(elements.localFilter && elements.localFilter.value);
     const structures = state.catalogs && state.catalogs.estructuraOrg || [];
-    const structureMap = new Map(structures.map(item => [key(item.id), item]));
 
     if (!siteId || siteId !== state.activeSedeId || !localId) {
-      return { selectableIds: new Set(), contextualIds: new Set() };
+      return { selectableIds: new Set() };
     }
 
-    const selectableIds = new Set();
-    state.records.forEach(record => {
-      const recordSiteId = key(record.filter_sede_id || record.sede_id);
-      const recordLocalId = key(record.filter_local_id || record.local_id);
-      const structureId = key(record.estructura_id);
-      if (recordSiteId === siteId && recordLocalId === localId && structureId) {
-        selectableIds.add(structureId);
-      }
-    });
-
-    const contextualIds = new Set();
-    selectableIds.forEach(id => {
-      let current = structureMap.get(id);
-      const visited = new Set();
-      while (current && key(current.parent_id)) {
-        const currentId = key(current.id);
-        if (!currentId || visited.has(currentId)) break;
-        visited.add(currentId);
-        const parentId = key(current.parent_id);
-        if (!selectableIds.has(parentId)) contextualIds.add(parentId);
-        current = structureMap.get(parentId);
-      }
-    });
-
-    return { selectableIds, contextualIds };
+    return {
+      selectableIds: _directoryBuildHierarchyFilterSets_(
+        state.records,
+        structures,
+        siteId,
+        localId
+      )
+    };
   }
 
 
@@ -396,7 +435,7 @@ const DirectoryPage = (() => {
     return (state.catalogs.estructuraOrg || [])
       .filter(node =>
         key(node.parent_id) === key(parentId) &&
-        (sets.selectableIds.has(key(node.id)) || sets.contextualIds.has(key(node.id)))
+        sets.selectableIds.has(key(node.id))
       )
       .slice()
       .sort((a, b) => {
@@ -473,11 +512,11 @@ const DirectoryPage = (() => {
     nodes.forEach(node => {
       const option = document.createElement('option');
       const id = key(node.id);
-      const contextualOnly = sets.contextualIds.has(id) && !sets.selectableIds.has(id);
-
       option.value = id;
-      option.textContent = contextualOnly ? node.name + ' (contexto)' : node.name;
-      option.disabled = contextualOnly;
+      option.textContent = _directoryGetHierarchyDisplayPath_(
+        node,
+        state.catalogs.estructuraOrg || []
+      ) || node.name;
       select.appendChild(option);
     });
 
@@ -519,13 +558,6 @@ const DirectoryPage = (() => {
 
     if (selectedValue) {
       appendHierarchyLevel(selectedValue, level + 1);
-    } else {
-      // Los ancestros se muestran solo como contexto: no se pueden
-      // seleccionar, pero permiten llegar a las ramas autorizadas.
-      nodes.filter(node =>
-        sets.contextualIds.has(key(node.id)) &&
-        !sets.selectableIds.has(key(node.id))
-      ).forEach(node => appendHierarchyLevel(key(node.id), level + 1));
     }
   }
 

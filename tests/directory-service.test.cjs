@@ -51,6 +51,53 @@ vm.runInContext(
 
 const api = sandbox.directoryTestApi;
 
+const hierarchyHelperMatch = frontendScript.match(/function _directoryBuildHierarchyFilterSets_\([\s\S]*?\n  \}/);
+assert.ok(hierarchyHelperMatch, 'El frontend debe incluir el cálculo puro de estructuras seleccionables');
+const hierarchySandbox = vm.createContext({});
+vm.runInContext(
+  hierarchyHelperMatch[0] + '\nthis.buildHierarchyFilterSets = _directoryBuildHierarchyFilterSets_;',
+  hierarchySandbox,
+  { filename: 'DirectoryHierarchyFilters.js' }
+);
+
+test('los filtros jerárquicos incluyen ancestros reales seleccionables y descendientes con asignaciones', () => {
+  const structures = [
+    { id: 'ORG_ROOT', name: 'Gerencia Registral', parent_id: '', sede_id: 'SEDE_A' },
+    { id: 'ORG_DIR', name: 'Dirección Técnica Registral', parent_id: 'ORG_ROOT', sede_id: 'SEDE_A' },
+    { id: 'ORG_UNIT', name: 'Unidad X', parent_id: 'ORG_DIR', sede_id: 'SEDE_A' },
+    { id: 'ORG_OTHER', name: 'Unidad sin asignaciones', parent_id: 'ORG_DIR', sede_id: 'SEDE_A' },
+    { id: 'ORG_SITE_B', name: 'Órgano de otra sede', parent_id: '', sede_id: 'SEDE_B' }
+  ];
+  const records = [
+    { estructura_id: 'ORG_UNIT', filter_sede_id: 'SEDE_A', filter_local_id: 'LOCAL_A' },
+    { estructura_id: 'ORG_SITE_B', filter_sede_id: 'SEDE_B', filter_local_id: 'LOCAL_B' }
+  ];
+  const ids = hierarchySandbox.buildHierarchyFilterSets(records, structures, 'SEDE_A', 'LOCAL_A');
+  assert.deepEqual([...ids].sort(), ['ORG_DIR', 'ORG_ROOT', 'ORG_UNIT']);
+});
+
+test('los filtros jerárquicos excluyen estructuras de otras sedes y locales', () => {
+  const structures = [
+    { id: 'ROOT_A', name: 'Gerencia A', parent_id: '', sede_id: 'SEDE_A' },
+    { id: 'UNIT_A', name: 'Unidad A', parent_id: 'ROOT_A', sede_id: 'SEDE_A' },
+    { id: 'ROOT_B', name: 'Gerencia B', parent_id: '', sede_id: 'SEDE_B' },
+    { id: 'UNIT_B', name: 'Unidad B', parent_id: 'ROOT_B', sede_id: 'SEDE_B' }
+  ];
+  const records = [
+    { estructura_id: 'UNIT_A', filter_sede_id: 'SEDE_A', filter_local_id: 'LOCAL_A' },
+    { estructura_id: 'UNIT_B', filter_sede_id: 'SEDE_B', filter_local_id: 'LOCAL_B' },
+    { estructura_id: 'UNIT_A', filter_sede_id: 'SEDE_A', filter_local_id: 'LOCAL_OTHER' }
+  ];
+  const ids = hierarchySandbox.buildHierarchyFilterSets(records, structures, 'SEDE_A', 'LOCAL_A');
+  assert.deepEqual([...ids].sort(), ['ROOT_A', 'UNIT_A']);
+  assert.deepEqual([...hierarchySandbox.buildHierarchyFilterSets(records, structures, '', 'LOCAL_A')], []);
+});
+
+test('la interfaz no genera opciones artificiales de contexto ni deshabilita ancestros reales', () => {
+  assert.doesNotMatch(frontendScript, /contextualIds|\(contexto\)|option\.disabled\s*=\s*contextualOnly/);
+  assert.match(frontendScript, /_directoryGetHierarchyDisplayPath_\(/);
+});
+
 test('el servicio, el frontend y las pruebas Core tienen sintaxis válida', () => {
   assert.doesNotThrow(() => new vm.Script(serviceSource));
   assert.doesNotThrow(() => new vm.Script(frontendScript));
