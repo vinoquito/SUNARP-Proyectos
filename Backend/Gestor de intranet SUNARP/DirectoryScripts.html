@@ -23,6 +23,8 @@ const DirectoryPage = (() => {
     catalogs: null,
     table: null,
     hierarchyPath: [],
+    filteredCargoOptions: null,
+    cargoOptionsNeedRefresh: false,
     loading: false,
     loaded: false,
     eventsBound: false,
@@ -88,6 +90,10 @@ const DirectoryPage = (() => {
     return {
       sedeFilter: document.getElementById(
         'directorySedeFilter'
+      ),
+
+      localFilter: document.getElementById(
+        'directoryLocalFilter'
       ),
 
       hierarchyFilters: document.getElementById(
@@ -193,6 +199,10 @@ const DirectoryPage = (() => {
       ? key(elements.sedeFilter.value)
       : '';
 
+    const localId = elements.localFilter
+      ? key(elements.localFilter.value)
+      : '';
+
     const cargoId = elements.cargoFilter
       ? key(elements.cargoFilter.value)
       : '';
@@ -203,6 +213,14 @@ const DirectoryPage = (() => {
         !excluded.has('sede') &&
         sedeId &&
         key(record.sede_id) !== sedeId
+      ) {
+        return false;
+      }
+
+      if (
+        !excluded.has('local') &&
+        localId &&
+        key(record.local_id) !== localId
       ) {
         return false;
       }
@@ -305,6 +323,56 @@ const DirectoryPage = (() => {
 
 
   /**
+   * Locales autorizados que tienen asignaciones y respetan la sede y,
+   * cuando existe, la unidad orgánica seleccionada.
+   */
+  function populateLocalFilter() {
+    const select = getElements().localFilter;
+    if (!select || !state.catalogs) return;
+
+    const contract = state.catalogs.filterContract || {};
+    const selectableIds = new Set(contract.selectable && contract.selectable.localIds || []);
+    const siteId = key(getElements().sedeFilter && getElements().sedeFilter.value);
+    let locals = (state.catalogs.locales || [])
+      .filter(item => !contract.selectable || selectableIds.has(key(item.id)));
+
+    if (siteId) {
+      locals = locals.filter(item => key(item.sede_id) === siteId);
+    }
+
+    if (state.hierarchyPath.length) {
+      const selectedStructureId = key(state.hierarchyPath[state.hierarchyPath.length - 1]);
+      const structures = state.catalogs.estructuraOrg || [];
+      const structureMap = new Map(structures.map(item => [key(item.id), item]));
+      const descendantIds = new Set([selectedStructureId]);
+      structures.forEach(node => {
+        let current = node;
+        const visited = new Set();
+        while (current && key(current.parent_id) && !visited.has(key(current.id))) {
+          visited.add(key(current.id));
+          if (key(current.parent_id) === selectedStructureId) {
+            descendantIds.add(key(current.id));
+            break;
+          }
+          current = structureMap.get(key(current.parent_id));
+        }
+      });
+      const linkedLocalIds = new Set((state.catalogs.estructuraLocal || [])
+        .filter(relation => descendantIds.has(key(relation.estructura_id)))
+        .map(relation => key(relation.local_id)));
+      locals = locals.filter(item => linkedLocalIds.has(key(item.id)));
+    }
+
+    locals = locals.slice().sort(sortByName);
+    updateFilterOptions(select, 'Todos los locales', locals);
+
+    const wrapper = select.closest('.sunarp-filter');
+    if (wrapper) wrapper.hidden = locals.length < 2;
+    if (locals.length < 2) select.value = locals.length === 1 ? key(locals[0].id) : '';
+  }
+
+
+  /**
    * Cargos utilizados por los registros que cumplen
    * los filtros de sede y jerarquía.
    */
@@ -314,8 +382,12 @@ const DirectoryPage = (() => {
 
     const contract = state.catalogs.filterContract || {};
     const selectableIds = new Set(contract.selectable && contract.selectable.cargoIds || []);
-    const cargos = (state.catalogs.cargos || [])
-      .filter(item => !contract.selectable || selectableIds.has(key(item.id)))
+    const source = Array.isArray(state.filteredCargoOptions)
+      ? state.filteredCargoOptions
+      : (state.catalogs.cargos || []);
+    const cargos = source
+      .filter(item => !contract.selectable || selectableIds.has(key(item.id)) ||
+        (state.filteredCargoOptions && state.filteredCargoOptions.some(option => key(option.id) === key(item.id))))
       .slice().sort(sortByName);
     updateFilterOptions(select, 'Todos los cargos', cargos);
 
@@ -338,14 +410,58 @@ const DirectoryPage = (() => {
    * Incluye los órganos superiores necesarios para llegar
    * a las unidades que sí tienen servidores registrados.
    */
-  function getHierarchyNodes(parentId) {
+  function getHierarchyFilterSets() {
     const contract = state.catalogs && state.catalogs.filterContract || {};
-    const selectable = new Set(contract.selectable && contract.selectable.structureIds || []);
-    const contextual = new Set(contract.contextStructureIds || []);
+    const hasSelectableContract = Boolean(contract.selectable);
+    const allSelectable = new Set(
+      contract.selectable && contract.selectable.structureIds || []
+    );
+    const structures = state.catalogs && state.catalogs.estructuraOrg || [];
+    const structureMap = new Map(structures.map(item => [key(item.id), item]));
+    const siteId = key(getElements().sedeFilter && getElements().sedeFilter.value);
+    const localId = key(getElements().localFilter && getElements().localFilter.value);
+    let selectableIds = new Set(
+      structures.filter(node => !hasSelectableContract || allSelectable.has(key(node.id)))
+        .map(node => key(node.id))
+    );
+
+    if (siteId) {
+      selectableIds = new Set(Array.from(selectableIds).filter(id => {
+        const node = structureMap.get(id);
+        return node && key(node.sede_id) === siteId;
+      }));
+    }
+
+    if (localId) {
+      const linkedStructureIds = new Set((state.catalogs.estructuraLocal || [])
+        .filter(relation => key(relation.local_id) === localId)
+        .map(relation => key(relation.estructura_id)));
+      selectableIds = new Set(Array.from(selectableIds).filter(id =>
+        linkedStructureIds.has(id)
+      ));
+    }
+
+    const contextualIds = new Set();
+    selectableIds.forEach(id => {
+      let current = structureMap.get(id);
+      const visited = new Set();
+      while (current && key(current.parent_id) && !visited.has(key(current.id))) {
+        visited.add(key(current.id));
+        const parentId = key(current.parent_id);
+        if (!selectableIds.has(parentId)) contextualIds.add(parentId);
+        current = structureMap.get(parentId);
+      }
+    });
+
+    return { selectableIds, contextualIds };
+  }
+
+  function getHierarchyNodes(parentId) {
+    const sets = getHierarchyFilterSets();
     return (state.catalogs.estructuraOrg || [])
       .filter(node =>
         key(node.parent_id) === key(parentId) &&
-        (!contract.selectable || selectable.has(key(node.id)) || contextual.has(key(node.id)))
+        (sets.selectableIds.has(key(node.id)) || sets.contextualIds.has(key(node.id)))
       )
       .slice()
       .sort((a, b) => {
@@ -418,18 +534,15 @@ const DirectoryPage = (() => {
 
     select.appendChild(placeholder);
 
-    const contract = state.catalogs.filterContract || {};
-    const selectable = new Set(contract.selectable && contract.selectable.structureIds || []);
-    const contextual = new Set(contract.contextStructureIds || []);
+    const sets = getHierarchyFilterSets();
     nodes.forEach(node => {
       const option = document.createElement('option');
+      const id = key(node.id);
+      const contextualOnly = sets.contextualIds.has(id) && !sets.selectableIds.has(id);
 
-      option.value = key(node.id);
-      option.textContent = contextual.has(key(node.id)) && !selectable.has(key(node.id))
-        ? node.name + ' (contexto)'
-        : node.name;
-      option.disabled = contextual.has(key(node.id)) && !selectable.has(key(node.id));
-
+      option.value = id;
+      option.textContent = contextualOnly ? node.name + ' (contexto)' : node.name;
+      option.disabled = contextualOnly;
       select.appendChild(option);
     });
 
@@ -490,63 +603,10 @@ const DirectoryPage = (() => {
   function renderHierarchyFilters() {
     const container = getElements().hierarchyFilters;
     if (!container || !state.catalogs) return;
-
-    const contract = state.catalogs.filterContract || {};
-    const selectableIds = new Set(contract.selectable && contract.selectable.structureIds || []);
-    const structures = (state.catalogs.estructuraOrg || [])
-      .filter(node => !contract.selectable || selectableIds.has(key(node.id)))
-      .slice()
-      .sort((a, b) =>
-        String(a.path || a.name).localeCompare(String(b.path || b.name), 'es')
-      );
-
-    container.hidden = structures.length < 2;
     container.replaceChildren();
-
-    if (structures.length < 2) {
-      state.hierarchyPath = [];
-      return;
-    }
-
-    const wrapper = document.createElement('div');
-    wrapper.className = 'sunarp-filter';
-    const label = document.createElement('label');
-    label.htmlFor = 'directoryHierarchyFilter';
-    label.textContent = 'Unidad orgánica';
-
-    const select = document.createElement('select');
-    select.id = 'directoryHierarchyFilter';
-    select.className = 'sunarp-select';
-
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = 'Todas las unidades autorizadas';
-    select.appendChild(placeholder);
-
-    structures.forEach(node => {
-      const option = document.createElement('option');
-      option.value = key(node.id);
-      option.textContent = node.path || node.name;
-      select.appendChild(option);
-    });
-
-    const selectedId = state.hierarchyPath.length
-      ? state.hierarchyPath[state.hierarchyPath.length - 1]
-      : '';
-    select.value = structures.some(node => key(node.id) === key(selectedId))
-      ? key(selectedId)
-      : '';
-
-    select.addEventListener('change', () => {
-      state.hierarchyPath = select.value
-        ? getFormStructurePath(select.value)
-        : [];
-      renderTable();
-    });
-
-    wrapper.appendChild(label);
-    wrapper.appendChild(select);
-    container.appendChild(wrapper);
+    appendHierarchyLevel('', 0);
+    container.hidden = container.childElementCount === 0;
+    if (container.hidden) state.hierarchyPath = [];
   }
 
 
@@ -586,11 +646,24 @@ const DirectoryPage = (() => {
    * compatibles con las nuevas selecciones.
    */
   function refreshDependentFilters(changedFilter) {
+    const elements = getElements();
+    const parentChanged = ['sede', 'local', 'hierarchy'].includes(changedFilter);
+
     if (changedFilter === 'sede') {
+      if (elements.localFilter) elements.localFilter.value = '';
+      state.hierarchyPath = [];
+    } else if (changedFilter === 'local') {
       state.hierarchyPath = [];
     }
 
+    if (parentChanged) {
+      if (elements.cargoFilter) elements.cargoFilter.value = '';
+      state.filteredCargoOptions = null;
+      state.cargoOptionsNeedRefresh = true;
+    }
+
     populateSedeFilter();
+    populateLocalFilter();
     populateCargoFilter();
     renderHierarchyFilters();
     renderTable();
@@ -677,6 +750,7 @@ const DirectoryPage = (() => {
           Number(params.pageSize || 10) === 10 &&
           !String(params.search || '').trim() &&
           !(initialElements.sedeFilter && initialElements.sedeFilter.value) &&
+          !(initialElements.localFilter && initialElements.localFilter.value) &&
           !(initialElements.cargoFilter && initialElements.cargoFilter.value) &&
           !state.hierarchyPath.length;
 
@@ -686,17 +760,27 @@ const DirectoryPage = (() => {
 
         const requestStartedAt = performance.now();
         const elements = getElements();
+        const includeCargoOptions = state.cargoOptionsNeedRefresh;
         const result = await callServer('listDirectoryAssignments', {
           active: 'all',
           page: params.page,
           pageSize: params.pageSize,
           search: params.search,
           sedeId: elements.sedeFilter ? elements.sedeFilter.value : '',
+          localId: elements.localFilter ? elements.localFilter.value : '',
           cargoId: elements.cargoFilter ? elements.cargoFilter.value : '',
           estructuraId: state.hierarchyPath.length
             ? state.hierarchyPath[state.hierarchyPath.length - 1]
-            : ''
+            : '',
+          includeCargoOptions
         });
+        if (includeCargoOptions) {
+          state.filteredCargoOptions = Array.isArray(result.cargoOptions)
+            ? result.cargoOptions
+            : [];
+          state.cargoOptionsNeedRefresh = false;
+          populateCargoFilter();
+        }
         const elapsed = performance.now() - requestStartedAt;
         console.info('[DirectoryPage] DataTable server request ms:', Math.round(elapsed), {
           page: params.page,
@@ -1822,6 +1906,7 @@ async function deleteDirectoryEntry(record) {
 
     if (
       !elements.sedeFilter ||
+      !elements.localFilter ||
       !elements.cargoFilter
     ) {
       return;
@@ -1830,6 +1915,11 @@ async function deleteDirectoryEntry(record) {
     // Cambio de sede.
     elements.sedeFilter.addEventListener('change', () => {
       refreshDependentFilters('sede');
+    });
+
+    // Cambio de local: reinicia la jerarquía dependiente.
+    elements.localFilter.addEventListener('change', () => {
+      refreshDependentFilters('local');
     });
 
     // Cambio de cargo.
@@ -1908,11 +1998,14 @@ async function deleteDirectoryEntry(record) {
         ? { items: prepareRows(result.records), total: Number(result.page.total) || 0 }
         : null;
       state.catalogs = result.catalogs;
+      state.filteredCargoOptions = null;
+      state.cargoOptionsNeedRefresh = false;
 
       // 2. Preparar filtros.
       const filtersStart = performance.now();
 
       populateSedeFilter();
+      populateLocalFilter();
       populateCargoFilter();
 
       renderHierarchyFilters();
