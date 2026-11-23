@@ -163,7 +163,7 @@ test('el documento del contrato declara exactamente los métodos públicos y sus
   }
 });
 
-test('solo los consumidores que declaran SUNARPCore invocan la biblioteca y Gestor referencia v12', () => {
+test('solo los consumidores que declaran SUNARPCore invocan la biblioteca y Gestor referencia v13', () => {
   const gestorManifest = JSON.parse(fs.readFileSync(
     path.join(gestorDir, 'appsscript.json'),
     'utf8'
