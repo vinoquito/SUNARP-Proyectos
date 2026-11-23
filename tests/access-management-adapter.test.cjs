@@ -646,7 +646,7 @@ test('la consulta de usuarios reutiliza la vista materializada, pagina en servid
   assert.ok(implementation.includes('totalPages'));
   assert.ok(implementation.includes('items.length < pageSize'));
   assert.ok(implementation.includes('indexed.value.rows.forEach'));
-  assert.ok(implementation.includes('if (!query)'));
+  assert.ok(implementation.includes('if (query && !['));
   assert.doesNotMatch(implementation, /rows\\.splice|rows\\.slice/);
   const uiStart = accessUiSource.indexOf('function renderUsers(host) {');
   const uiEnd = accessUiSource.indexOf('function openUserModal(row) {', uiStart);
