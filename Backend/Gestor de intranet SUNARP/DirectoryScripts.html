@@ -588,7 +588,8 @@ const DirectoryPage = (() => {
       // Los ancestros se muestran solo como contexto: no se pueden
       // seleccionar, pero permiten llegar a las ramas autorizadas.
       nodes.filter(node =>
-        contextual.has(key(node.id)) && !selectable.has(key(node.id))
+        sets.contextualIds.has(key(node.id)) &&
+        !sets.selectableIds.has(key(node.id))
       ).forEach(node => appendHierarchyLevel(key(node.id), level + 1));
     }
   }

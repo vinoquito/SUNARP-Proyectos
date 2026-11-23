@@ -147,7 +147,29 @@
     text.textContent = label;
 
     button.appendChild(text);
-    button.addEventListener('click', onClick);
+    button.addEventListener('click', event => {
+      if (typeof onClick !== 'function') return;
+
+      const reportError = error => {
+        const message = error && error.message
+          ? error.message
+          : 'No se pudo completar la acción.';
+        if (window.SUNARPUI && typeof window.SUNARPUI.notify === 'function') {
+          window.SUNARPUI.notify('error', message);
+        } else {
+          console.error('[AccessManagement] Error de acción:', error);
+        }
+      };
+
+      try {
+        const result = onClick(event);
+        if (result && typeof result.then === 'function') {
+          Promise.resolve(result).catch(reportError);
+        }
+      } catch (error) {
+        reportError(error);
+      }
+    });
 
     return button;
   }
@@ -1112,10 +1134,16 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             note.className = 'access-muted';
             note.textContent = type === 'LOCAL'
               ? 'Este local no tiene unidades orgánicas vinculadas. El ámbito se aplicará directamente al local.'
-              : 'Este local no tiene unidades orgánicas vinculadas; no es posible asignar un ámbito de unidad orgánica.';
+              : type === 'ESTRUCTURA_ORG'
+                ? 'Este local no tiene unidades orgánicas vinculadas; no es posible asignar un ámbito de unidad orgánica.'
+                : 'Este local no tiene unidades orgánicas vinculadas.';
             levelsHost.appendChild(note);
 
-            selectedReferenceId = type === 'LOCAL' ? String(localId) : '';
+            if (type === 'LOCAL') {
+              selectedReferenceId = String(localId);
+            } else if (type === 'ESTRUCTURA_ORG') {
+              selectedReferenceId = '';
+            }
             return;
           }
 
@@ -1174,11 +1202,13 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             level += 1;
           }
 
-          selectedReferenceId = type === 'LOCAL'
-            ? String(localId)
-            : selectedChain.length
+          if (type === 'LOCAL') {
+            selectedReferenceId = String(localId);
+          } else if (type === 'ESTRUCTURA_ORG') {
+            selectedReferenceId = selectedChain.length
               ? selectedChain[selectedChain.length - 1]
               : '';
+          }
         }
 
         function updateReferenceOptions() {
@@ -1187,8 +1217,14 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
           selectedReferenceId = '';
           scopeContextHost.replaceChildren();
-          const selectedScopeType = (state.data.scopeTypes || []).find(item => item.tipo_ambito_id === type);
-          descendantsLabel.hidden = !(selectedScopeType && selectedScopeType.permite_descendientes === true);
+
+          const selectedScopeType = (state.data.scopeTypes || []).find(item =>
+            item.tipo_ambito_id === type
+          );
+          descendantsLabel.hidden = !(
+            selectedScopeType &&
+            selectedScopeType.permite_descendientes === true
+          );
           descendants.checked = false;
 
           if (!type) {
@@ -1207,61 +1243,77 @@ function createAccessStatusCell(row, method, id, entityLabel) {
             return;
           }
 
-          if (type === 'SEDE') {
-            const siteSelect = createSelect(
-              (catalogs.sedes || []).map(item => ({
-                value: item.id,
-                label: item.name
-              })),
-              '',
-              'Selecciona una sede'
-            );
-            siteSelect.required = true;
-            siteSelect.disabled = !canSelect;
-            scopeContextHost.appendChild(createField('Sede', siteSelect));
-
-            siteSelect.addEventListener('change', () => {
-              selectedReferenceId = siteSelect.value;
-            });
+          if (!['SEDE', 'LOCAL', 'ESTRUCTURA_ORG'].includes(type)) {
             return;
           }
 
-          if (type === 'ESTRUCTURA_ORG' || type === 'LOCAL') {
-            const availableLocals = (catalogs.locales || [])
+          // Todos los ámbitos organizacionales recorren el mismo contexto.
+          // Solo cambia la referencia que se persiste al confirmar el ámbito.
+          const siteSelect = createSelect(
+            (catalogs.sedes || [])
               .slice()
-              .sort((a, b) =>
-                sedeName(a.sede_id).localeCompare(sedeName(b.sede_id), 'es') ||
-                String(a.name || '').localeCompare(String(b.name || ''), 'es')
-              );
+              .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es'))
+              .map(item => ({
+                value: item.id,
+                label: item.name
+              })),
+            '',
+            'Selecciona una sede'
+          );
+          siteSelect.required = true;
+          siteSelect.disabled = !canSelect;
+          scopeContextHost.appendChild(createField('Sede', siteSelect));
+
+          const localHost = document.createElement('div');
+          scopeContextHost.appendChild(localHost);
+
+          const hierarchyNote = document.createElement('p');
+          hierarchyNote.className = 'access-muted access-user-scope-context-note';
+          hierarchyNote.hidden = true;
+          scopeContextHost.appendChild(hierarchyNote);
+
+          const levelsHost = document.createElement('div');
+          levelsHost.className = 'access-user-scope-levels';
+          scopeContextHost.appendChild(levelsHost);
+
+          let selectedChain = [];
+
+          function renderLocals() {
+            localHost.replaceChildren();
+            levelsHost.replaceChildren();
+            hierarchyNote.hidden = true;
+            hierarchyNote.textContent = '';
+
+            const siteId = String(siteSelect.value || '');
+            const availableLocals = (catalogs.locales || [])
+              .filter(item => siteId && String(item.sede_id) === siteId)
+              .slice()
+              .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es'));
 
             const localSelect = createSelect(
               availableLocals.map(item => ({
                 value: item.id,
-                label: sedeName(item.sede_id) + ' — ' + item.name
+                label: item.name
               })),
               '',
-              'Selecciona un local'
+              siteId ? 'Selecciona un local' : 'Selecciona primero una sede'
             );
-            localSelect.required = true;
-            localSelect.disabled = !canSelect;
-            scopeContextHost.appendChild(createField('Local', localSelect));
-
-            const hierarchyNote = document.createElement('p');
-            hierarchyNote.className = 'access-muted access-user-scope-context-note';
-            hierarchyNote.hidden = true;
-            scopeContextHost.appendChild(hierarchyNote);
-
-            const levelsHost = document.createElement('div');
-            levelsHost.className = 'access-user-scope-levels';
-            scopeContextHost.appendChild(levelsHost);
-
-            let selectedChain = [];
+            localSelect.required = type !== 'SEDE';
+            localSelect.disabled = !canSelect || !siteId;
+            localHost.appendChild(createField('Local', localSelect));
 
             localSelect.addEventListener('change', () => {
               const localId = String(localSelect.value || '');
               selectedChain = [];
-              selectedReferenceId = type === 'LOCAL' ? localId : '';
               levelsHost.replaceChildren();
+
+              if (type === 'SEDE') {
+                selectedReferenceId = String(siteSelect.value || '');
+              } else if (type === 'LOCAL') {
+                selectedReferenceId = localId;
+              } else {
+                selectedReferenceId = '';
+              }
 
               if (!localId) {
                 hierarchyNote.hidden = true;
@@ -1269,14 +1321,26 @@ function createAccessStatusCell(row, method, id, entityLabel) {
                 return;
               }
 
-              hierarchyNote.textContent = type === 'LOCAL'
-                ? 'El ámbito se aplicará directamente al local. La jerarquía se muestra como contexto y se guardará únicamente el ID del local.'
-                : 'Selecciona la unidad orgánica recorriendo la jerarquía de este local. Se guardará únicamente el ID de la unidad seleccionada.';
+              hierarchyNote.textContent = type === 'SEDE'
+                ? 'La sede es el ámbito que se guardará. El local y la unidad orgánica se muestran como contexto.'
+                : type === 'LOCAL'
+                  ? 'El local es el ámbito que se guardará. La unidad orgánica se muestra como contexto.'
+                  : 'Selecciona la unidad orgánica recorriendo la jerarquía de este local. Se guardará únicamente el ID de la unidad seleccionada.';
               hierarchyNote.hidden = false;
 
               renderStructureLevels(localId, levelsHost, selectedChain, type);
             });
           }
+
+          siteSelect.addEventListener('change', () => {
+            selectedChain = [];
+            selectedReferenceId = type === 'SEDE'
+              ? String(siteSelect.value || '')
+              : '';
+            renderLocals();
+          });
+
+          renderLocals();
         }
 
         function paintScopes() {

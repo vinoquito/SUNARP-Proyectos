@@ -1933,3 +1933,45 @@ test('el bootstrap de accesos agrupa catálogos del libro de Seguridad en una le
   assert.match(bootstrap, /listRecordsFromSourcesCached\(bootstrapRequests, 300\)/);
   assert.doesNotMatch(bootstrap, /_accessLoadSecurityRecords_\(/);
 });
+
+
+test('la jerarquía del Directorio recorre los ancestros contextuales sin referencias indefinidas', () => {
+  const start = directoryUiSource.indexOf('function appendHierarchyLevel(');
+  const end = directoryUiSource.indexOf('function renderHierarchyFilters()', start);
+  assert.ok(start >= 0 && end > start);
+  const implementation = directoryUiSource.slice(start, end);
+  assert.match(implementation, /sets\\.contextualIds\\.has\\(key\\(node\\.id\\)\\)/);
+  assert.match(implementation, /!sets\\.selectableIds\\.has\\(key\\(node\\.id\\)\\)/);
+  assert.doesNotMatch(implementation, /\\bcontextual\\.has\\(/);
+  assert.doesNotMatch(implementation, /\\bselectable\\.has\\(/);
+});
+
+test('los ámbitos recorren Sede -> Local -> Unidad orgánica filtrando cada nivel por su padre', () => {
+  const start = accessUiSource.indexOf('function updateReferenceOptions() {');
+  const end = accessUiSource.indexOf('function paintScopes()', start);
+  assert.ok(start >= 0 && end > start);
+  const implementation = accessUiSource.slice(start, end);
+  assert.match(implementation, /createField\\('Sede', siteSelect\\)/);
+  assert.match(implementation, /String\\(item\\.sede_id\\) === siteId/);
+  assert.match(implementation, /siteSelect\\.addEventListener\\('change'/);
+  assert.match(implementation, /localSelect\\.addEventListener\\('change'/);
+  assert.match(implementation, /renderStructureLevels\\(localId, levelsHost, selectedChain, type\\)/);
+  assert.match(implementation, /localSelect\\.required = type !== 'SEDE'/);
+  assert.match(implementation, /type === 'ESTRUCTURA_ORG'/);
+});
+
+test('los botones de Administración de accesos notifican errores sincrónicos y asíncronos', () => {
+  const start = accessUiSource.indexOf('function createButton(');
+  const end = accessUiSource.indexOf('function createSelect(', start);
+  assert.ok(start >= 0 && end > start);
+  const implementation = accessUiSource.slice(start, end);
+  assert.match(implementation, /button\\.addEventListener\\('click', event =>/);
+  assert.match(implementation, /const result = onClick\\(event\\)/);
+  assert.match(implementation, /Promise\\.resolve\\(result\\)\\.catch\\(reportError\\)/);
+  assert.match(implementation, /window\\.SUNARPUI\\.notify\\('error'/);
+  const usersStart = accessUiSource.indexOf('function renderUsers(host)');
+  const usersEnd = accessUiSource.indexOf('async function openUserModal(row)', usersStart);
+  const users = accessUiSource.slice(usersStart, usersEnd);
+  assert.match(users, /canManage \\? 'Nueva cuenta'/);
+  assert.match(users, /canManage \\? \\(\\) => openUserModal\\(null\\) : null/);
+});
