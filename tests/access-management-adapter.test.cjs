@@ -1838,6 +1838,30 @@ test('el catálogo de tipos de documento se carga al abrir Nueva cuenta y no en 
   assert.doesNotMatch(bootstrap, /_accessLoadDocumentTypes_\(/);
 });
 
+test('Información de personal presenta filtros en cascada Sede, Local, Unidad orgánica y Cargo', () => {
+  assert.match(viewSource, /id="directorySedeFilter"/);
+  assert.match(viewSource, /id="directoryLocalFilter"/);
+  assert.match(viewSource, /id="directoryHierarchyFilters"/);
+  assert.match(viewSource, /id="directoryCargoFilter"/);
+  assert.match(directoryUiSource, /localFilter: document\.getElementById\(/);
+  assert.match(directoryUiSource, /function populateLocalFilter\(\)/);
+  assert.match(directoryUiSource, /function getHierarchyFilterSets\(\)/);
+  assert.match(directoryUiSource, /appendHierarchyLevel\('', 0\)/);
+  assert.match(directoryUiSource, /localId: elements\.localFilter \? elements\.localFilter\.value : ''/);
+});
+
+test('el cambio de sede, local o unidad orgánica recalcula cargos autorizados en la consulta paginada', () => {
+  const listStart = directorySource.indexOf('function listDirectoryAssignments(options)');
+  const listEnd = directorySource.indexOf('function getDirectoryPersonById(', listStart);
+  const implementation = directorySource.slice(listStart, listEnd);
+  assert.match(implementation, /options\.includeCargoOptions === true/);
+  assert.match(implementation, /includeCargoOptions \? \['cargo_id'\] : \[\]/);
+  assert.match(implementation, /result\.distinctValues && result\.distinctValues\.cargo_id/);
+  assert.match(directoryUiSource, /state\.cargoOptionsNeedRefresh/);
+  assert.match(directoryUiSource, /includeCargoOptions/);
+  assert.match(directoryUiSource, /state\.filteredCargoOptions = Array\.isArray\(result\.cargoOptions\)/);
+});
+
 test('Información de personal registra tiempos de autorización, contexto y consultas paginadas', () => {
   assert.match(directorySource, /\[DirectoryService\] Initial data ms:/);
   assert.match(directorySource, /\[DirectoryService\] Assignment page ms:/);
