@@ -3010,10 +3010,12 @@ function _accessBuildUserListingIndex_() {
     }
   ];
 
+  const indexStartedAt = Date.now();
   const cached = SUNARPCore.getOrBuildCachedValue(
     'access-users-index-v2',
     sources,
     () => {
+      const buildStartedAt = Date.now();
       const data = SUNARPCore.listRecordsFromSourcesCached(requests, 60);
       const accounts = data.users || [];
       const userRoles = data.userRoles || [];
@@ -3210,7 +3212,8 @@ function _accessBuildUserListingIndex_() {
         missingStructure: integrity.missingStructure,
         missingLocal: integrity.missingLocal,
         missingSite: integrity.missingSite,
-        invalidAssignments: integrity.invalidAssignments
+        invalidAssignments: integrity.invalidAssignments,
+        durationMs: Date.now() - buildStartedAt
       }));
       if (integrity.crossSite || integrity.missingStructure ||
           integrity.missingLocal || integrity.missingSite ||
@@ -3225,6 +3228,12 @@ function _accessBuildUserListingIndex_() {
   if (!cached || !cached.value || !Array.isArray(cached.value.rows)) {
     throw new Error('SUNARP Core no devolvió un índice compartido válido para el listado de usuarios.');
   }
+  console.log('[AccessManagement] Shared user index response:', JSON.stringify({
+    cacheHit: cached.cacheHit === true,
+    cacheStored: cached.cacheStored === true,
+    users: cached.value.rows.length,
+    durationMs: Date.now() - indexStartedAt
+  }));
   return cached;
 }
 
@@ -3255,6 +3264,15 @@ function getAccessUsers(filters) {
     total++;
   });
 
+  console.log('[AccessManagement] Users page:', JSON.stringify({
+    sedeFilter: sedeId || null,
+    roleFilter: roleId || null,
+    searchApplied: Boolean(query),
+    total,
+    page,
+    pageSize,
+    cacheHit: indexed.cacheHit === true
+  }));
   return {
     items,
     total,

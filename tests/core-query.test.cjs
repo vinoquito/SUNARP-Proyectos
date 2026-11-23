@@ -534,6 +534,40 @@ test('la instantánea autorizada queda aislada por identidad y cambia al cambiar
   assert.equal(refreshed.authorizedSnapshotCacheHit, false);
 });
 
+test('las instantáneas autorizadas se aíslan también por permiso y ámbito', () => {
+  const sandbox = createSandbox();
+  const sourceRef = { spreadsheetId: 'S', sheetName: 'Assignments' };
+  const base = {
+    idField: 'assignment_id',
+    filters: { status: 'ACTIVE' },
+    offset: 0,
+    limit: 1,
+    authorization: sandbox.authorization('P1', ['DIRECTORY_READ', 'DIRECTORY_ADMIN'], [
+      { tipo_ambito_id: 'SEDE', referencia_id: 'S1' }
+    ]),
+    cacheSeconds: 60
+  };
+  const first = sandbox.context.queryRecords(sourceRef, base);
+  assert.equal(first.authorizedSnapshotCacheHit, false);
+
+  const otherPermission = sandbox.context.queryRecords(sourceRef, Object.assign({}, base, {
+    permissionCode: 'DIRECTORY_ADMIN'
+  }));
+  assert.equal(otherPermission.authorizedSnapshotCacheHit, false);
+
+  const otherScope = sandbox.context.queryRecords(sourceRef, Object.assign({}, base, {
+    authorization: sandbox.authorization('P1', ['DIRECTORY_READ'], [
+      { tipo_ambito_id: 'SEDE', referencia_id: 'S2' }
+    ])
+  }));
+  assert.equal(otherScope.authorizedSnapshotCacheHit, false);
+
+  const secondBasePage = sandbox.context.queryRecords(sourceRef, Object.assign({}, base, {
+    offset: 1
+  }));
+  assert.equal(secondBasePage.authorizedSnapshotCacheHit, true);
+});
+
 test('las cachés de consultas se limitan a 60 segundos para acotar cambios externos a Core', () => {
   const sandbox = createSandbox();
   const stored = [];

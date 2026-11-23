@@ -629,6 +629,17 @@ test('la tabla de usuarios conserva filtros y ejecuta la consulta al cambiar sed
   assert.ok(implementation.includes('renderTable(host, tableConfig)'));
 });
 
+test('el despliegue de prueba del Gestor referencia la nueva versión de SUNARP Core', () => {
+  const manifest = JSON.parse(fs.readFileSync(
+    path.join(root, 'Backend/Gestor de intranet SUNARP/appsscript.json'),
+    'utf8'
+  ));
+  const coreLibrary = manifest.dependencies.libraries.find(item => item.userSymbol === 'SUNARPCore');
+  assert.ok(coreLibrary);
+  assert.equal(coreLibrary.version, '14');
+  assert.equal(coreLibrary.developmentMode, undefined);
+});
+
 test('la consulta de usuarios reutiliza la vista materializada, pagina en servidor y limita el payload', () => {
   const helperStart = accessSource.indexOf('function _accessBuildUserListingIndex_() {');
   const helperEnd = accessSource.indexOf('function getAccessUsers(filters) {', helperStart);
