@@ -1633,6 +1633,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         pageSize: Number(previousTableState && previousTableState.pageSize) || 10,
         search: String(previousTableState && previousTableState.search || '')
       };
+      tableConfig.initialState = state.userListParams;
       requestNumber += 1;
       appliedSedeId = siteSelect.value;
       appliedRoleId = roleSelect.value;
