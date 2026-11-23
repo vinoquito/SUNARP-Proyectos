@@ -1198,6 +1198,15 @@ test('la cascada de ámbitos parte del local y recorre solo la jerarquía vincul
   assert.ok(referenceOptions.includes("else if (type === 'LOCAL')"));
   assert.ok(referenceOptions.includes('selectedReferenceId = localId;'));
   assert.ok(referenceOptions.includes('renderStructureLevels(localId, levelsHost, selectedChain, type)'));
+  const levelsStart = accessUiSource.indexOf('function renderStructureLevels(');
+  const levelsEnd = accessUiSource.indexOf('function updateReferenceOptions()', levelsStart);
+  assert.ok(levelsStart >= 0 && levelsEnd > levelsStart);
+  const hierarchyLevels = accessUiSource.slice(levelsStart, levelsEnd);
+  assert.ok(hierarchyLevels.includes("if (type === 'SEDE')"));
+  assert.ok(hierarchyLevels.includes('selectedReferenceId = selectedSiteReferenceId;'));
+  assert.ok(hierarchyLevels.includes("else if (type === 'LOCAL')"));
+  assert.ok(hierarchyLevels.includes('selectedReferenceId = String(localId);'));
+  assert.ok(hierarchyLevels.includes('selectedReferenceId = selectedChain.length'));
   assert.match(accessUiSource, /String\(item\.parent_id \|\| ''\) === String\(selectedId\)/);
   assert.doesNotMatch(referenceOptions, /sedeName\(item\.sede_id\) \+ ' — ' \+ item\.name/);
 });
