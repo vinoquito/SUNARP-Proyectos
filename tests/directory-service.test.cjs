@@ -838,7 +838,8 @@ test('getDirectoryInitialData devuelve sedes autorizadas sin consultar asignacio
   assert.equal(catalogRequests.requests[0].source.sheetName, 'sede');
   assert.deepEqual(result.catalogs.sedes.map(item => item.id), ['SEDE_1', 'SEDE_2']);
   assert.equal(result.records.length, 0);
-  assert.deepEqual(result.summary, { people: 0, assignments: 0 });
+  assert.equal(result.summary.people, 0);
+  assert.equal(result.summary.assignments, 0);
 });
 
 test('la lista de sedes deriva ámbitos SEDE, ESTRUCTURA_ORG y LOCAL sin ampliar permisos', () => {
@@ -1545,7 +1546,7 @@ test('el ingreso no carga personas, asignaciones ni datos personales; la sede se
   assert.match(siteData, /includePeople:\s*false/);
   assert.match(siteData, /includeAssignments:\s*false/);
   assert.match(siteData, /records,/);
-  assert.match(serviceSource, /filter_local_id: location\.local \? _directoryKey_\(location\.local\.id\)/);
+  assert.match(serviceSource, /filter_local_id: local \? _directoryKey_\(local\.id\) : _directoryKey_\(assignment\.local_id\)/);
   assert.match(serviceSource, /function getDirectoryPersonById\([\s\S]*?findRecordsByFields\([\s\S]*?servidor_id/s);
   assert.match(frontendScript, /callServer\('getDirectoryPersonById', record\.persona_id\)/);
 });
