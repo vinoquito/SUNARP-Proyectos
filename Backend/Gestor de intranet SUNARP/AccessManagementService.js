@@ -721,12 +721,50 @@ function _accessOrgManagementCatalog_() {
 }
 
 
+/**
+ * Recupera el contexto de autorización con una clave aislada por identidad.
+ * Las generaciones de todas las fuentes de seguridad invalidan la entrada
+ * cuando una operación Core cambia usuarios, roles, permisos o ámbitos.
+ * El TTL corto limita el desfase si una hoja se edita fuera de Core.
+ */
 function _accessGetAuthContext_() {
   const email = SUNARPCore.getCurrentUserEmail();
   if (!email) {
     throw new Error('No se pudo identificar tu cuenta institucional. Verifica la implementación de la aplicación web.');
   }
 
+  const sheets = ACCESS_MANAGEMENT_CONFIG.sheets;
+  const sources = [
+    _accessDirectorySource_(sheets.people),
+    _accessSecuritySource_(sheets.users),
+    _accessSecuritySource_(sheets.modules),
+    _accessSecuritySource_(sheets.roles),
+    _accessSecuritySource_(sheets.userRoles),
+    _accessSecuritySource_(sheets.permissions),
+    _accessSecuritySource_(sheets.rolePermissions),
+    _accessSecuritySource_(sheets.scopes)
+  ];
+
+  if (typeof SUNARPCore.getOrBuildCachedValue === 'function') {
+    const digest = Utilities.computeDigest(
+      Utilities.DigestAlgorithm.SHA_256,
+      String(email).trim().toLowerCase()
+    );
+    const identityKey = Utilities.base64EncodeWebSafe(digest).replace(/=+$/g, '');
+    const cached = SUNARPCore.getOrBuildCachedValue(
+      'access-auth-context:v1:' + identityKey,
+      sources,
+      () => _accessBuildAuthContext_(email),
+      60
+    );
+    if (cached && cached.value) return cached.value;
+  }
+
+  return _accessBuildAuthContext_(email);
+}
+
+
+function _accessBuildAuthContext_(email) {
   const identityResult = SUNARPCore.resolveIdentity(
     _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
     email,
@@ -805,7 +843,6 @@ function _accessGetAuthContext_() {
   // ya consultadas. No expone getters que puedan disparar lecturas globales.
   return auth;
 }
-
 
 function getAuthContext_() {
   return _accessGetAuthContext_();
