@@ -2290,6 +2290,9 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
   function openPermissionModal(row) {
     const editing = Boolean(row);
+    const needsPermissionCatalogs =
+      state.tabDataLoaded.permissions !== true ||
+      state.tabDataLoaded.operations !== true;
     const form = document.createElement('form');
     form.className = 'access-form';
     form.addEventListener('submit', event => event.preventDefault());
@@ -2306,18 +2309,18 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       readOnly: true
     });
 
-    const modules = (state.data.modules || []).filter(item => item.active);
+    let modules = (state.data.modules || []).filter(item => item.active);
     const module = createSelect(
       modules.map(item => ({
         value: item.modulo_id,
         label: item.nombre + ' (' + item.codigo + ')'
       })),
       row && row.modulo_id,
-      'Selecciona un módulo'
+      needsPermissionCatalogs && !modules.length ? 'Cargando módulos...' : 'Selecciona un módulo'
     );
-    if (editing) module.disabled = true;
+    if (editing || needsPermissionCatalogs) module.disabled = true;
 
-    const operationOptions = (state.data.operations || []).filter(item => item.active !== false).map(item => ({
+    let operationOptions = (state.data.operations || []).filter(item => item.active !== false).map(item => ({
       value: item.operacion_id,
       label: item.nombre + ' (' + item.operacion_id + ')'
     }));
@@ -2332,9 +2335,9 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     const operation = createSelect(
       operationOptions,
       row && row.operacion_id,
-      'Selecciona una operación'
+      needsPermissionCatalogs && !operationOptions.length ? 'Cargando operaciones...' : 'Selecciona una operación'
     );
-    if (editing) operation.disabled = true;
+    if (editing || needsPermissionCatalogs) operation.disabled = true;
 
     const description = createTextarea(row && row.descripcion, 3);
     description.required = true;
@@ -2374,17 +2377,95 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     openFormModal(
       editing ? 'Editar permiso' : 'Crear permiso',
       form,
-      () => rpc('saveAccessPermission', {
-        action: editing ? 'edit' : 'create',
-        permiso_id: editing ? row.permiso_id : '',
-        codigo: editing ? row.codigo : '',
-        modulo_id: editing ? row.modulo_id : module.value,
-        operacion_id: operation.value.trim().toUpperCase(),
-        descripcion: description.value.trim(),
-        active: editing ? row.active : true
-      }),
+      () => {
+        if (!editing && (!module.value || !operation.value)) {
+          throw new Error('Selecciona un módulo y una operación para crear el permiso.');
+        }
+        return rpc('saveAccessPermission', {
+          action: editing ? 'edit' : 'create',
+          permiso_id: editing ? row.permiso_id : '',
+          codigo: editing ? row.codigo : '',
+          modulo_id: editing ? row.modulo_id : module.value,
+          operacion_id: operation.value.trim().toUpperCase(),
+          descripcion: description.value.trim(),
+          active: editing ? row.active : true
+        });
+      },
       editing ? 'Guardar cambios' : 'Crear permiso'
     );
+
+    // El formulario se muestra de inmediato. Si la pestaña aún no cargó
+    // los catálogos, se consultan en segundo plano sin exigir visitar otra.
+    if (needsPermissionCatalogs) {
+      rpc('getAccessManagementTabData', 'permissions').then(result => {
+        state.data.modules = result.modules || [];
+        state.data.operations = result.operations || [];
+        state.data.permissions = result.permissions || [];
+        state.tabDataLoaded.permissions = true;
+        state.tabDataLoaded.operations = true;
+
+        modules = state.data.modules.filter(item => item.active);
+        operationOptions = state.data.operations
+          .filter(item => item.active !== false)
+          .map(item => ({
+            value: item.operacion_id,
+            label: item.nombre + ' (' + item.operacion_id + ')'
+          }));
+        if (editing && row.operacion_id &&
+            !operationOptions.some(item => item.value === row.operacion_id)) {
+          operationOptions.unshift({
+            value: row.operacion_id,
+            label: (row.operacion_nombre || row.operacion_id) +
+              ' (' + row.operacion_id + ') — inactiva'
+          });
+        }
+
+        const setOptions = (select, options, selectedValue, placeholder) => {
+          select.replaceChildren();
+          const empty = document.createElement('option');
+          empty.value = '';
+          empty.textContent = placeholder;
+          select.appendChild(empty);
+          options.forEach(item => {
+            const option = document.createElement('option');
+            option.value = item.value;
+            option.textContent = item.label;
+            select.appendChild(option);
+          });
+          select.value = options.some(item => item.value === selectedValue)
+            ? selectedValue
+            : '';
+        };
+        setOptions(
+          module,
+          modules.map(item => ({
+            value: item.modulo_id,
+            label: item.nombre + ' (' + item.codigo + ')'
+          })),
+          row && row.modulo_id || module.value,
+          'Selecciona un módulo'
+        );
+        setOptions(
+          operation,
+          operationOptions,
+          row && row.operacion_id || operation.value,
+          'Selecciona una operación'
+        );
+        module.disabled = editing;
+        operation.disabled = editing;
+        updatePermissionPreview();
+        if (!operationOptions.length) {
+          SUNARPUI.notify('warning', 'No hay operaciones activas disponibles para crear permisos.');
+        }
+      }).catch(error => {
+        module.disabled = true;
+        operation.disabled = true;
+        SUNARPUI.notify(
+          'error',
+          error.message || 'No se pudieron cargar los módulos y operaciones del permiso.'
+        );
+      });
+    }
   }
 
 
