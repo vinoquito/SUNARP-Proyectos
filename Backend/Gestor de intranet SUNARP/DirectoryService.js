@@ -36,8 +36,9 @@ const DIRECTORY_SERVICE_CONFIG = Object.freeze({
   })
 });
 
-const DIRECTORY_DATA_CACHE_TTL = 300;
-const DIRECTORY_CATALOG_CACHE_TTL = 60;
+const DIRECTORY_DATA_CACHE_TTL = 3600;
+const DIRECTORY_CATALOG_CACHE_TTL = 3600;
+const DIRECTORY_SITE_SNAPSHOT_CACHE_TTL = 3600;
 
 const DIRECTORY_REQUIRED_HEADERS = Object.freeze({
   personas: ['persona_id', 'nombres', 'apellidos', 'correo_institucional'],
@@ -258,8 +259,24 @@ function _directoryResolveAssignmentLocation_(assignment, context, onlyActive) {
   if (relation && onlyActive && (!_directoryIsActive_(structure) || !_directoryIsActive_(resolvedLocal))) {
     throw new Error('La estructura o el local de la relación no existe o está inactivo.');
   }
+
+  // Una relación estructura_local solo define una adscripción válida cuando
+  // la estructura y el local pertenecen a la misma sede.
+  const structureSedeId = relation ? _directoryKey_(structure.sede_id) : '';
+  const localSedeId = resolvedLocal ? _directoryKey_(resolvedLocal.sede_id) : '';
+  if (!localSedeId) {
+    throw new Error('La adscripción no puede resolverse porque el local no tiene sede_id.');
+  }
+  if (relation && (!structureSedeId || structureSedeId !== localSedeId)) {
+    throw new Error(
+      'La relación estructura-local "' + relationId +
+      '" no es coherente: la estructura pertenece a la sede "' +
+      (structureSedeId || 'sin sede') +
+      '" y el local pertenece a la sede "' + localSedeId + '".'
+    );
+  }
   return { relation, local: resolvedLocal, estructura_id: relation ? _directoryKey_(relation.estructura_id) : '',
-    sede_id: relation ? _directoryKey_(structure.sede_id) : (resolvedLocal ? _directoryKey_(resolvedLocal.sede_id) : '') };
+    sede_id: relation ? structureSedeId : localSedeId };
 }
 
 function _directoryGetStructurePath_(node, structureMap) {
@@ -361,6 +378,12 @@ function _directoryBuildRelations_(context, onlyActive) {
     const local = localMap.get(_directoryKey_(relation.local_id));
 
     if (!structure || !local) return null;
+
+    const structureSedeId = _directoryKey_(structure.sede_id);
+    const localSedeId = _directoryKey_(local.sede_id);
+    if (!structureSedeId || !localSedeId || structureSedeId !== localSedeId) {
+      return null;
+    }
 
     const isActive =
       _directoryIsActive_(relation) &&
@@ -864,6 +887,14 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
   const structureMap = _directoryCreateMap_(structures);
   const relationMap = _directoryCreateMap_(relations);
   const localMap = _directoryCreateMap_(locals);
+  const consistentRelations = relations.filter(relation => {
+    const structure = structureMap.get(_directoryKey_(relation.estructura_id));
+    const local = localMap.get(_directoryKey_(relation.local_id));
+    const structureSedeId = _directoryKey_(structure && structure.sede_id);
+    const localSedeId = _directoryKey_(local && local.sede_id);
+    return Boolean(structure && local && structureSedeId &&
+      localSedeId && structureSedeId === localSedeId);
+  });
   const moduleAccess = (authorization.auth.moduleAccess || []).find(item =>
     _directoryKey_(item.modulo_id) === _directoryKey_(authorization.moduleId)
   );
@@ -904,10 +935,10 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
     let localIds = [];
 
     if (type === 'TOTAL') {
-      relationIds = relations.map(item => _directoryKey_(item.id)).filter(Boolean);
+      relationIds = consistentRelations.map(item => _directoryKey_(item.id)).filter(Boolean);
       localIds = locals.map(item => _directoryKey_(item.id)).filter(Boolean);
     } else if (type === 'SEDE') {
-      relationIds = relations.filter(relation => {
+      relationIds = consistentRelations.filter(relation => {
         const structure = structureMap.get(_directoryKey_(relation.estructura_id));
         return structure && _directoryKey_(structure.sede_id) === referenceId;
       }).map(item => _directoryKey_(item.id)).filter(Boolean);
@@ -916,7 +947,7 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
       ).map(item => _directoryKey_(item.id)).filter(Boolean);
     } else if (type === 'ESTRUCTURA_ORG') {
       const allowedIds = _directoryGetStructureIds_(structures, [referenceId], includeDescendants);
-      relationIds = relations.filter(relation =>
+      relationIds = consistentRelations.filter(relation =>
         allowedIds.has(_directoryKey_(relation.estructura_id))
       ).map(item => _directoryKey_(item.id)).filter(Boolean);
     } else if (type === 'LOCAL') {
@@ -935,7 +966,10 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
       relationIds = relationIds.filter(id => {
         const relation = relationMap.get(id);
         const structure = relation && structureMap.get(_directoryKey_(relation.estructura_id));
-        return structure && _directoryKey_(structure.sede_id) === selectedSiteId;
+        const local = relation && localMap.get(_directoryKey_(relation.local_id));
+        return structure && local &&
+          _directoryKey_(structure.sede_id) === selectedSiteId &&
+          _directoryKey_(local.sede_id) === selectedSiteId;
       });
       localIds = localIds.filter(id => {
         const local = localMap.get(id);
@@ -976,7 +1010,7 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
   });
 
   const relationValues = {};
-  relations.forEach(relation => {
+  consistentRelations.forEach(relation => {
     const relationId = _directoryKey_(relation.id);
     const structure = structureMap.get(_directoryKey_(relation.estructura_id));
     const local = localMap.get(_directoryKey_(relation.local_id));
@@ -1028,7 +1062,7 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
     );
     const matchedLocalIds = new Set((localMatches.records || []).map(item => _directoryKey_(item.id)));
     addSearchMatches('local_id', Array.from(matchedLocalIds));
-    addSearchMatches('estructura_local_id', relations.filter(item =>
+    addSearchMatches('estructura_local_id', consistentRelations.filter(item =>
       matchedLocalIds.has(_directoryKey_(item.local_id))
     ).map(item => item.id));
 
@@ -1043,7 +1077,7 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
       (structureMatches.records || []).map(item => item.id),
       true
     );
-    addSearchMatches('estructura_local_id', relations.filter(item =>
+    addSearchMatches('estructura_local_id', consistentRelations.filter(item =>
       matchingStructureIds.has(_directoryKey_(item.estructura_id))
     ).map(item => item.id));
 
@@ -1054,7 +1088,7 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
       { matchCase: false }
     );
     const matchingSiteIds = new Set((siteMatches.records || []).map(item => _directoryKey_(item.id)));
-    addSearchMatches('estructura_local_id', relations.filter(item => {
+    addSearchMatches('estructura_local_id', consistentRelations.filter(item => {
       const structure = structureMap.get(_directoryKey_(item.estructura_id));
       return structure && matchingSiteIds.has(_directoryKey_(structure.sede_id));
     }).map(item => item.id));
@@ -1112,8 +1146,8 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
       searchFields: search ? ['condicion_cargo', 'anexo', 'observaciones'] : [],
       searchAny,
       authorization: authorizationForQuery,
-      cacheSeconds: 60,
-      candidateCacheSeconds: 300,
+      cacheSeconds: 3600,
+      candidateCacheSeconds: 3600,
       schemaVersion: 'directory-assignment-query-v1',
       sortBy: options.sortBy || 'order',
       sortDirection: options.sortDirection || 'asc'
@@ -1418,6 +1452,28 @@ function getDirectoryInitialData() {
  * Los filtros, la búsqueda y la paginación posteriores se ejecutan en el
  * navegador sobre esta instantánea; este endpoint no recibe filtros de tabla.
  */
+function _directoryGetSiteDataCacheSources_() {
+  const directorySheetKeys = [
+    'personas', 'asignaciones', 'sedes', 'tiposLocal', 'locales',
+    'tiposEstructura', 'estructuraOrg', 'estructuraLocal', 'cargos'
+  ];
+  const sources = directorySheetKeys.map(key =>
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets[key])
+  );
+  sources.push(_directorySource_(
+    DIRECTORY_SERVICE_CONFIG.sheets.documentTypes,
+    'MASTER_DATA'
+  ));
+  [
+    'Sedes', 'EstructuraOrg', 'Usuarios', 'Modulos', 'Roles',
+    'UsuarioRol', 'Permisos', 'RolPermiso', 'AmbitosAcceso'
+  ].forEach(sheetName => {
+    sources.push(getIntranetDataSource('SECURITY', sheetName, 1));
+  });
+  return sources;
+}
+
+
 function getDirectorySiteData(sedeId) {
   const startedAt = Date.now();
   const selectedSedeId = _directoryKey_(sedeId);
@@ -1427,6 +1483,56 @@ function getDirectorySiteData(sedeId) {
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
   const authorizationElapsed = Date.now() - authorizationStartedAt;
 
+  // Se comprueba la autorización y que la sede siga activa antes de usar caché.
+  if (typeof SUNARPCore !== 'undefined' &&
+      typeof SUNARPCore.listRecordsFromSourcesCached === 'function') {
+    const siteCatalog = SUNARPCore.listRecordsFromSourcesCached([{
+      key: 'sedes',
+      source: _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.sedes),
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.sedes
+    }], DIRECTORY_CATALOG_CACHE_TTL);
+    const allowedSiteIds = _directoryGetAuthorizedSedeIds_(
+      authorization, siteCatalog.sedes || []
+    );
+    const activeSite = (siteCatalog.sedes || []).some(item =>
+      _directoryKey_(item.id) === selectedSedeId &&
+      allowedSiteIds.has(selectedSedeId) &&
+      _directoryIsActive_(item)
+    );
+    if (!activeSite) {
+      throw new Error('No tienes permiso para consultar la sede seleccionada o la sede ya no está activa.');
+    }
+  }
+
+  if (typeof SUNARPCore !== 'undefined' &&
+      typeof SUNARPCore.getOrBuildCachedValue === 'function' &&
+      _directoryKey_(authorization.auth && authorization.auth.personaId)) {
+    const cacheKey = 'directory-site-snapshot:v1:' +
+      _directoryKey_(authorization.auth.personaId) + ':' + selectedSedeId;
+    const cached = SUNARPCore.getOrBuildCachedValue(
+      cacheKey,
+      _directoryGetSiteDataCacheSources_(),
+      () => _directoryBuildSiteData_(
+        selectedSedeId, authorization, startedAt, authorizationElapsed
+      ),
+      DIRECTORY_SITE_SNAPSHOT_CACHE_TTL
+    );
+    console.log('[DirectoryService] Site snapshot cache:', JSON.stringify({
+      cacheHit: Boolean(cached && cached.cacheHit),
+      cacheStored: Boolean(cached && cached.cacheStored),
+      selectedSedeId,
+      durationMs: Date.now() - startedAt
+    }));
+    if (cached && cached.value) return cached.value;
+  }
+
+  return _directoryBuildSiteData_(
+    selectedSedeId, authorization, startedAt, authorizationElapsed
+  );
+}
+
+
+function _directoryBuildSiteData_(selectedSedeId, authorization, startedAt, authorizationElapsed) {
   const contextStartedAt = Date.now();
   const context = _directoryLoadContext_({
     includePersonalData: false,
@@ -1479,6 +1585,23 @@ function getDirectorySiteData(sedeId) {
   if (records.length !== (expectedTotal || 0)) {
     throw new Error('La carga de asignaciones de la sede quedó incompleta. No se mostrarán resultados parciales.');
   }
+  const recordsOutsideSelectedSite = records.filter(record =>
+    _directoryKey_(record.filter_sede_id || record.sede_id) !== selectedSedeId
+  );
+  if (recordsOutsideSelectedSite.length) {
+    console.error('[DirectoryService] Consulta por sede con adscripciones resueltas fuera de la sede:', JSON.stringify({
+      selectedSedeId,
+      count: recordsOutsideSelectedSite.length,
+      sample: recordsOutsideSelectedSite.slice(0, 10).map(record => ({
+        asignacion_id: _directoryKey_(record.asignacion_id),
+        estructura_local_id: _directoryKey_(record.estructura_local_id),
+        local_id: _directoryKey_(record.local_id),
+        resolvedSedeId: _directoryKey_(record.filter_sede_id || record.sede_id),
+        resolvedLocalId: _directoryKey_(record.filter_local_id || record.local_id)
+      }))
+    }));
+    throw new Error('La consulta de la sede seleccionada devolvió asignaciones cuya adscripción se resuelve en otra sede. No se mostrarán resultados inconsistentes.');
+  }
   const queryElapsed = Date.now() - queryStartedAt;
 
   const structureMap = _directoryCreateMap_(context.estructuraOrg);
@@ -1495,7 +1618,12 @@ function getDirectorySiteData(sedeId) {
 
   // La autorización consulta la réplica del libro Seguridad; la vista y sus
   // catálogos continúan utilizando la réplica de Directorios telefónicos.
-  const permittedStructures = activeStructure.filter(node =>
+  // Los catálogos de esta respuesta pertenecen exclusivamente a la sede
+  // seleccionada, incluso cuando los ámbitos del usuario incluyen TOTAL.
+  const siteActiveStructure = activeStructure.filter(node =>
+    _directoryKey_(node.sede_id) === selectedSedeId
+  );
+  const permittedStructures = siteActiveStructure.filter(node =>
     _accessRecordIsAllowed_(
       authorization.auth,
       'MOD_INFO_PERSONAL',
@@ -1510,7 +1638,7 @@ function getDirectorySiteData(sedeId) {
   permittedStructures.forEach(node => {
     let current = structureMap.get(_directoryKey_(node.parent_id));
     const visited = new Set();
-    while (current) {
+    while (current && _directoryKey_(current.sede_id) === selectedSedeId) {
       const id = _directoryKey_(current.id);
       if (!id || visited.has(id)) break;
       hierarchyDisplayIds.add(id);
@@ -1518,16 +1646,20 @@ function getDirectorySiteData(sedeId) {
       current = structureMap.get(_directoryKey_(current.parent_id));
     }
   });
-  const scopedStructures = activeStructure.filter(node =>
+  const scopedStructures = siteActiveStructure.filter(node =>
     hierarchyDisplayIds.has(_directoryKey_(node.id))
   );
 
   const relations = _directoryBuildRelations_(context, false);
   const scopedRelations = relations.filter(item =>
-    item.active && allowedStructureIds.has(_directoryKey_(item.estructura_id))
+    item.active &&
+    _directoryKey_(item.sede_id) === selectedSedeId &&
+    _directoryKey_(item.local_sede_id) === selectedSedeId &&
+    allowedStructureIds.has(_directoryKey_(item.estructura_id))
   );
   const scopedLocals = (context.locales || []).filter(local =>
     _directoryIsActive_(local) &&
+    _directoryKey_(local.sede_id) === selectedSedeId &&
     _accessRecordIsAllowed_(
       authorization.auth,
       'MOD_INFO_PERSONAL',
@@ -1544,6 +1676,7 @@ function getDirectorySiteData(sedeId) {
   );
   const catalogLocals = (context.locales || []).filter(local =>
     _directoryIsActive_(local) &&
+    _directoryKey_(local.sede_id) === selectedSedeId &&
     (relationLocalIds.has(_directoryKey_(local.id)) ||
       scopedLocalIds.has(_directoryKey_(local.id)))
   );
@@ -1563,9 +1696,42 @@ function getDirectorySiteData(sedeId) {
   const usedStructureIds = new Set(selectable.structureIds || []);
   const usedLocalIds = new Set(selectable.localIds || []);
   const scopedSedes = (context.sedes || []).filter(item =>
-    _directoryIsActive_(item) && allowedSedeIds.has(_directoryKey_(item.id))
+    _directoryIsActive_(item) &&
+    _directoryKey_(item.id) === selectedSedeId &&
+    allowedSedeIds.has(_directoryKey_(item.id))
   );
   const scopedCargos = (context.cargos || []).filter(_directoryIsActive_);
+
+  const structureCatalogMap = _directoryCreateMap_(context.estructuraOrg);
+  const localCatalogMap = _directoryCreateMap_(context.locales);
+  const relationIntegrity = {
+    total: (context.estructuraLocal || []).length,
+    missingStructure: 0,
+    missingLocal: 0,
+    missingSite: 0,
+    crossSite: 0,
+    sample: []
+  };
+  (context.estructuraLocal || []).forEach(relation => {
+    const structure = structureCatalogMap.get(_directoryKey_(relation.estructura_id));
+    const local = localCatalogMap.get(_directoryKey_(relation.local_id));
+    if (!structure) relationIntegrity.missingStructure++;
+    if (!local) relationIntegrity.missingLocal++;
+    if (!structure || !local) return;
+    const structureSedeId = _directoryKey_(structure.sede_id);
+    const localSedeId = _directoryKey_(local.sede_id);
+    if (!structureSedeId || !localSedeId) relationIntegrity.missingSite++;
+    else if (structureSedeId !== localSedeId) {
+      relationIntegrity.crossSite++;
+      if (relationIntegrity.sample.length < 10) relationIntegrity.sample.push({
+        estructura_local_id: _directoryKey_(relation.id),
+        estructura_id: _directoryKey_(relation.estructura_id),
+        estructura_sede_id: structureSedeId,
+        local_id: _directoryKey_(relation.local_id),
+        local_sede_id: localSedeId
+      });
+    }
+  });
 
   console.log('[DirectoryService] Site data ms:', JSON.stringify({
     authorization: authorizationElapsed,
@@ -1575,7 +1741,9 @@ function getDirectorySiteData(sedeId) {
     selectedSedeId,
     candidatePages: pageCount,
     records: records.length,
-    totalAssignments: expectedTotal || 0
+    totalAssignments: expectedTotal || 0,
+    siteCatalogsRestricted: true,
+    relationIntegrity
   }));
 
   return {
