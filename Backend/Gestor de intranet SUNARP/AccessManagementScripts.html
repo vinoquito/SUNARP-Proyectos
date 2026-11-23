@@ -1062,6 +1062,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         scopeHelp.textContent = 'Selecciona el ámbito aquí y pulsa Agregar acceso para guardar conjuntamente el módulo, el rol y el ámbito. Si no necesitas restringir el acceso, puedes dejarlo sin ámbito.';
 
         let selectedReferenceId = '';
+        let selectedSiteReferenceId = '';
 
         function structureHierarchyForLocal(localId) {
           const structures = catalogs.estructuraOrg || [];
@@ -1180,11 +1181,15 @@ function createAccessStatusCell(row, method, id, entityLabel) {
               selectedChain.splice(currentLevel - 1);
               if (levelSelect.value) selectedChain.push(levelSelect.value);
 
-              selectedReferenceId = type === 'LOCAL'
-                ? String(localId)
-                : selectedChain.length
+              if (type === 'SEDE') {
+                selectedReferenceId = selectedSiteReferenceId;
+              } else if (type === 'LOCAL') {
+                selectedReferenceId = String(localId);
+              } else {
+                selectedReferenceId = selectedChain.length
                   ? selectedChain[selectedChain.length - 1]
                   : '';
+              }
 
               renderStructureLevels(localId, levelsHost, selectedChain, type);
             });
@@ -1216,6 +1221,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           const canSelect = Boolean(roleSelect.value);
 
           selectedReferenceId = '';
+          selectedSiteReferenceId = '';
           scopeContextHost.replaceChildren();
 
           const selectedScopeType = (state.data.scopeTypes || []).find(item =>
@@ -1308,7 +1314,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
               levelsHost.replaceChildren();
 
               if (type === 'SEDE') {
-                selectedReferenceId = String(siteSelect.value || '');
+                selectedReferenceId = selectedSiteReferenceId;
               } else if (type === 'LOCAL') {
                 selectedReferenceId = localId;
               } else {
@@ -1334,8 +1340,9 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
           siteSelect.addEventListener('change', () => {
             selectedChain = [];
+            selectedSiteReferenceId = String(siteSelect.value || '');
             selectedReferenceId = type === 'SEDE'
-              ? String(siteSelect.value || '')
+              ? selectedSiteReferenceId
               : '';
             renderLocals();
           });
