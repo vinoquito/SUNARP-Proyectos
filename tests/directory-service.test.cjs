@@ -12,6 +12,8 @@ const coreRepositoryPath = path.join(root, 'Backend/SUNARP Core/DataRepository.j
 const uiDataTablePath = path.join(root, 'Backend/SUNARP UI/UIDataTableScripts.html');
 
 const serviceSource = fs.readFileSync(servicePath, 'utf8');
+const accessServicePath = path.join(root, 'Backend/Gestor de intranet SUNARP/AccessManagementService.js');
+const accessServiceSource = fs.readFileSync(accessServicePath, 'utf8');
 const frontendSource = fs.readFileSync(frontendPath, 'utf8');
 const coreTestsSource = fs.readFileSync(coreTestsPath, 'utf8');
 const coreRepositorySource = fs.readFileSync(coreRepositoryPath, 'utf8');
@@ -881,6 +883,141 @@ test('la lista de sedes deriva ámbitos SEDE, ESTRUCTURA_ORG y LOCAL sin ampliar
     Array.from(api.getAuthorizedSedeIds(invalidTotalAuth, context.sedes)),
     []
   );
+});
+
+test('una relación estructura_local no puede vincular una estructura y un local de sedes distintas', () => {
+  const context = assignmentContext();
+  context.sedes.push({ id: 'SEDE_2', name: 'Piura', active: true });
+  context.locales.push({
+    id: 'LOC_2', name: 'Local Piura', sede_id: 'SEDE_2',
+    tipo_local_id: 'TL_1', active: true
+  });
+  context.estructuraLocal.push({
+    id: 'REL_CROSS_SITE', estructura_id: 'EST_1', local_id: 'LOC_2',
+    active: true
+  });
+  assert.throws(
+    () => sandbox._directoryResolveAssignmentLocation_({
+      estructura_local_id: 'REL_CROSS_SITE', local_id: ''
+    }, context, false),
+    /no es coherente.*sede/i
+  );
+  assert.equal(
+    sandbox._directoryBuildRelations_(context, false).some(item => item.id === 'REL_CROSS_SITE'),
+    false
+  );
+});
+
+test('la consulta TOTAL excluye relaciones estructura_local incoherentes entre sedes', () => {
+  const context = assignmentContext();
+  context.sedes.push({ id: 'SEDE_2', name: 'Piura', active: true });
+  context.locales.push({
+    id: 'LOC_2', name: 'Local Piura', sede_id: 'SEDE_2',
+    tipo_local_id: 'TL_1', active: true
+  });
+  context.estructuraLocal.push({
+    id: 'REL_CROSS_SITE', estructura_id: 'EST_1', local_id: 'LOC_2',
+    active: true
+  });
+  const authorization = createDirectoryQueryAuthorization(context, [
+    { tipo_ambito_id: 'TOTAL', referencia_id: '', incluir_descendientes: false }
+  ]);
+  const descriptor = api.buildAssignmentQuery(context, authorization, { active: 'all' });
+  const relationCandidates = descriptor.queryOptions.anyOf
+    .filter(group => Object.prototype.hasOwnProperty.call(group, 'estructura_local_id'))
+    .flatMap(group => group.estructura_local_id);
+  const scopeValues = descriptor.queryOptions.authorization.scopeRecordLookups[0].values;
+  assert.equal(relationCandidates.includes('REL_CROSS_SITE'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(scopeValues, 'REL_CROSS_SITE'), false);
+  assert.equal(relationCandidates.includes('REL_1'), true);
+});
+
+test('getDirectorySiteData entrega catálogos exclusivos de la sede elegida incluso con ámbito TOTAL', () => {
+  const context = assignmentContext();
+  context.sedes.push({ id: 'SEDE_2', name: 'Piura', active: true });
+  context.locales.push({
+    id: 'LOC_2', name: 'Local Piura', sede_id: 'SEDE_2',
+    tipo_local_id: 'TL_1', active: true
+  });
+  context.estructuraOrg.push({
+    id: 'EST_2', name: 'Oficina Piura', parent_id: '',
+    sede_id: 'SEDE_2', tipo_estructura_id: 'TE_1', active: true
+  });
+  context.estructuraLocal.push({
+    id: 'REL_2', estructura_id: 'EST_2', local_id: 'LOC_2', active: true
+  });
+  const authorization = createDirectoryQueryAuthorization(context, [
+    { tipo_ambito_id: 'TOTAL', referencia_id: '', incluir_descendientes: false }
+  ]);
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  vmContext._directoryAuthorizationContext_ = () => authorization;
+  vmContext._directoryLoadContext_ = () => context;
+  vmContext._accessRecordIsAllowed_ = () => true;
+  vmContext._directoryExecuteAssignmentQuery_ = () => ({
+    records: [{
+      asignacion_id: 'ASG_001', persona_id: 'PER_001', cargo_id: 'CAR_001',
+      estructura_local_id: 'REL_1', local_id: '', active: true, order: 1,
+      nombres: 'Ana', apellidos: 'Pérez', cargo_name: 'Analista',
+      estructura_id: 'EST_1', estructura_name: 'Oficina',
+      sede_id: 'SEDE_1', filter_sede_id: 'SEDE_1',
+      filter_local_id: 'LOC_1', local_name: 'Local Lima'
+    }],
+    total: 1, hasMore: false
+  });
+  const result = vmContext.getDirectorySiteData('SEDE_1');
+  assert.deepEqual(Array.from(result.catalogs.locales, item => item.id), ['LOC_1']);
+  assert.deepEqual(Array.from(result.catalogs.estructuraOrg, item => item.id), ['EST_1']);
+  assert.deepEqual(Array.from(result.catalogs.estructuraLocal, item => item.id), ['REL_1']);
+  assert.deepEqual(Array.from(result.catalogs.sedes, item => item.id), ['SEDE_1']);
+});
+
+test('Piura se resuelve por estructura_local_id sin depender de local_id físico', () => {
+  const context = {
+    personas: [{ persona_id: 'PER_001', nombres: 'Ana', apellidos: 'Pérez' }],
+    cargos: [{ id: 'CAR_001', name: 'Registrador' }],
+    sedes: [{ id: 'ZR_I', name: 'Zona Registral N.° I', active: true }],
+    locales: [{
+      id: 'ZR_I_PIURA', name: 'Oficina Registral de Piura - Sede Principal',
+      sede_id: 'ZR_I', tipo_local_id: 'SEDE_ZONAL', active: true
+    }],
+    tiposLocal: [{ id: 'SEDE_ZONAL', name: 'Sede zonal' }],
+    tiposEstructura: [{ id: 'OFICINA_REGISTRAL', name: 'Oficina registral' }],
+    estructuraOrg: [{
+      id: 'ZR_I_OFICINA_PIURA', name: 'Oficina Registral Piura',
+      parent_id: '', sede_id: 'ZR_I', tipo_estructura_id: 'OFICINA_REGISTRAL',
+      active: true
+    }],
+    estructuraLocal: [{
+      id: 'EL_ZR_I_PIURA', estructura_id: 'ZR_I_OFICINA_PIURA',
+      local_id: 'ZR_I_PIURA', active: true, referencia: ''
+    }]
+  };
+  const assignment = {
+    asignacion_id: 'ASG_PIURA', persona_id: 'PER_001', cargo_id: 'CAR_001',
+    estructura_local_id: 'EL_ZR_I_PIURA', local_id: '', active: true, order: 1
+  };
+  const location = sandbox._directoryResolveAssignmentLocation_(assignment, context, false);
+  const enriched = sandbox._directoryEnrichAssignment_(
+    assignment, context,
+    sandbox._directoryCreateMap_(sandbox._directoryBuildRelations_(context, false)),
+    sandbox._directoryCreateMap_(context.personas, 'persona_id'), location
+  );
+  assert.equal(location.sede_id, 'ZR_I');
+  assert.equal(location.local.id, 'ZR_I_PIURA');
+  assert.equal(enriched.filter_sede_id, 'ZR_I');
+  assert.equal(enriched.filter_local_id, 'ZR_I_PIURA');
+});
+
+test('el caché del sitio depende de identidad, permisos y generaciones de las fuentes', () => {
+  assert.match(serviceSource, /DIRECTORY_DATA_CACHE_TTL = 3600/);
+  assert.match(serviceSource, /DIRECTORY_CATALOG_CACHE_TTL = 3600/);
+  assert.match(serviceSource, /DIRECTORY_SITE_SNAPSHOT_CACHE_TTL = 3600/);
+  assert.match(serviceSource, /directory-site-snapshot:v1:/);
+  assert.match(serviceSource, /_directoryGetSiteDataCacheSources_/);
+  assert.match(serviceSource, /cacheSeconds: 3600/);
+  assert.match(accessServiceSource, /access-auth-context:v1:[\s\S]*?3600/);
+  assert.match(accessServiceSource, /listRecordsFromSourcesCached\(requests, 3600\)/);
 });
 
 test('getDirectorySiteData carga todas las asignaciones de una sola sede con paginación interna de Core', () => {
