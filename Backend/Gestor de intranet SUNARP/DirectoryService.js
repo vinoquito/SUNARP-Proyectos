@@ -543,15 +543,14 @@ function _directoryLoadContext_(options) {
     !(options.includeAssignments === false && item[0] === 'asignaciones')
   );
   const sources = selectedSheets.map(item => _directorySource_(item[1]));
-  if (options.includeDocumentTypes !== false) {
-    sources.push(_directoryResolveDocumentTypesSource_());
-  }
-
+  const baseOptions = Object.assign({}, options, {
+    includeDocumentTypes: false,
+    validateSnapshot: false
+  });
   const variant = [
     options.includePersonalData === false ? 'no-personal' : 'personal',
     options.includePeople === false ? 'no-people' : 'people',
-    options.includeAssignments === false ? 'no-assignments' : 'assignments',
-    options.includeDocumentTypes === false ? 'no-doc-types' : 'doc-types'
+    options.includeAssignments === false ? 'no-assignments' : 'assignments'
   ].join(':');
   const cacheTtl = Math.min(DIRECTORY_DATA_CACHE_TTL, DIRECTORY_CATALOG_CACHE_TTL);
   let context;
@@ -561,9 +560,7 @@ function _directoryLoadContext_(options) {
     const cached = SUNARPCore.getOrBuildCachedValue(
       'directory-context:v1:' + variant,
       sources,
-      () => _directoryLoadContextFromSheets_(
-        Object.assign({}, options, { validateSnapshot: false })
-      ),
+      () => _directoryLoadContextFromSheets_(baseOptions),
       cacheTtl
     );
     context = cached && cached.value;
@@ -571,10 +568,24 @@ function _directoryLoadContext_(options) {
   }
 
   if (!context) {
-    context = _directoryLoadContextFromSheets_(
-      Object.assign({}, options, { validateSnapshot: false })
-    );
+    context = _directoryLoadContextFromSheets_(baseOptions);
   }
+
+  // Tipos de documento se cargan aparte para que la carga de páginas y filtros
+  // comparta el mismo contexto de catálogos, sin arrastrar ese catálogo auxiliar.
+  if (options.includeDocumentTypes !== false) {
+    const documentTypes = SUNARPCore.listRecordsFromSourcesCached([{
+      key: 'documentTypes',
+      source: _directoryResolveDocumentTypesSource_(),
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.documentTypes
+    }], DIRECTORY_CATALOG_CACHE_TTL);
+    context = Object.assign({}, context, {
+      documentTypes: documentTypes.documentTypes || []
+    });
+  } else if (!Array.isArray(context.documentTypes)) {
+    context = Object.assign({}, context, { documentTypes: [] });
+  }
+
   if (options.validateSnapshot !== false) {
     _directoryValidateSnapshot_(context, options);
   }
@@ -583,7 +594,8 @@ function _directoryLoadContext_(options) {
     durationMs: Date.now() - started,
     cacheHit,
     sourceCount: sources.length,
-    variant
+    variant,
+    documentTypesLoaded: options.includeDocumentTypes !== false
   }));
   return context;
 }
