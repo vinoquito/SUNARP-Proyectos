@@ -8,26 +8,27 @@
       <div class="sunarp-filter">
         <label for="directorySedeFilter">Sede</label>
         <select id="directorySedeFilter" class="sunarp-select">
-          <option value="">Todas las sedes</option>
+          <option value="">Selecciona una sede</option>
         </select>
       </div>
 
       <div class="sunarp-filter">
         <label for="directoryLocalFilter">Local</label>
-        <select id="directoryLocalFilter" class="sunarp-select">
-          <option value="">Todos los locales</option>
+        <select id="directoryLocalFilter" class="sunarp-select" disabled>
+          <option value="">Selecciona primero una sede</option>
         </select>
       </div>
 
       <div
         id="directoryHierarchyFilters"
-        class="sunarp-filter-collection">
+        class="sunarp-filter-collection"
+        hidden>
       </div>
 
       <div class="sunarp-filter">
         <label for="directoryCargoFilter">Cargo</label>
-        <select id="directoryCargoFilter" class="sunarp-select">
-          <option value="">Todos los cargos</option>
+        <select id="directoryCargoFilter" class="sunarp-select" disabled>
+          <option value="">Selecciona primero un local</option>
         </select>
       </div>
 

@@ -307,96 +307,78 @@ const DirectoryPage = (() => {
   function populateSedeFilter() {
     const select = getElements().sedeFilter;
     if (!select || !state.catalogs) return;
-
     const contract = state.catalogs.filterContract || {};
     const selectableIds = new Set(contract.selectable && contract.selectable.sedeIds || []);
     const sedes = (state.catalogs.sedes || [])
       .filter(item => !contract.selectable || selectableIds.has(key(item.id)))
       .slice().sort(sortByName);
-    updateFilterOptions(select, 'Todas las sedes', sedes);
-
-    const visible = sedes.length > 1;
+    updateFilterOptions(select, 'Selecciona una sede', sedes);
+    if (sedes.length === 1) select.value = key(sedes[0].id);
     const wrapper = select.closest('.sunarp-filter');
-    if (wrapper) wrapper.hidden = !visible;
-    if (!visible) select.value = '';
+    if (wrapper) wrapper.hidden = sedes.length <= 1;
   }
 
-
-  /**
-   * Locales autorizados que tienen asignaciones y respetan la sede y,
-   * cuando existe, la unidad orgánica seleccionada.
-   */
   function populateLocalFilter() {
     const select = getElements().localFilter;
     if (!select || !state.catalogs) return;
-
     const contract = state.catalogs.filterContract || {};
     const selectableIds = new Set(contract.selectable && contract.selectable.localIds || []);
     const siteId = key(getElements().sedeFilter && getElements().sedeFilter.value);
-    let locals = (state.catalogs.locales || [])
-      .filter(item => !contract.selectable || selectableIds.has(key(item.id)));
-
-    if (siteId) {
-      locals = locals.filter(item => key(item.sede_id) === siteId);
+    if (!siteId) {
+      updateFilterOptions(select, 'Selecciona primero una sede', []);
+      select.disabled = true;
+      return;
     }
-
-    if (state.hierarchyPath.length) {
-      const selectedStructureId = key(state.hierarchyPath[state.hierarchyPath.length - 1]);
-      const structures = state.catalogs.estructuraOrg || [];
-      const structureMap = new Map(structures.map(item => [key(item.id), item]));
-      const descendantIds = new Set([selectedStructureId]);
-      structures.forEach(node => {
-        let current = node;
-        const visited = new Set();
-        while (current && key(current.parent_id) && !visited.has(key(current.id))) {
-          visited.add(key(current.id));
-          if (key(current.parent_id) === selectedStructureId) {
-            descendantIds.add(key(current.id));
-            break;
-          }
-          current = structureMap.get(key(current.parent_id));
-        }
-      });
-      const linkedLocalIds = new Set((state.catalogs.estructuraLocal || [])
-        .filter(relation => descendantIds.has(key(relation.estructura_id)))
-        .map(relation => key(relation.local_id)));
-      locals = locals.filter(item => linkedLocalIds.has(key(item.id)));
-    }
-
-    locals = locals.slice().sort(sortByName);
-    updateFilterOptions(select, 'Todos los locales', locals);
-
-    const wrapper = select.closest('.sunarp-filter');
-    if (wrapper) wrapper.hidden = locals.length < 2;
-    if (locals.length < 2) select.value = '';
+    const locals = (state.catalogs.locales || [])
+      .filter(item =>
+        (!contract.selectable || selectableIds.has(key(item.id))) &&
+        key(item.sede_id) === siteId
+      )
+      .slice().sort(sortByName);
+    updateFilterOptions(
+      select,
+      locals.length ? 'Selecciona un local' : 'No hay locales disponibles en esta sede',
+      locals
+    );
+    select.disabled = locals.length === 0;
   }
 
-
-  /**
-   * Cargos utilizados por los registros que cumplen
-   * los filtros de sede y jerarquía.
-   */
   function populateCargoFilter() {
     const select = getElements().cargoFilter;
     if (!select || !state.catalogs) return;
-
+    const elements = getElements();
+    const siteId = key(elements.sedeFilter && elements.sedeFilter.value);
+    const localId = key(elements.localFilter && elements.localFilter.value);
+    if (!siteId || !localId) {
+      updateFilterOptions(
+        select,
+        !siteId ? 'Selecciona primero una sede' : 'Selecciona primero un local',
+        []
+      );
+      select.disabled = true;
+      return;
+    }
+    if (!Array.isArray(state.filteredCargoOptions)) {
+      updateFilterOptions(
+        select,
+        state.cargoOptionsNeedRefresh ? 'Consultando cargos...' : 'Selecciona un local',
+        []
+      );
+      select.disabled = true;
+      return;
+    }
     const contract = state.catalogs.filterContract || {};
     const selectableIds = new Set(contract.selectable && contract.selectable.cargoIds || []);
-    const source = Array.isArray(state.filteredCargoOptions)
-      ? state.filteredCargoOptions
-      : (state.catalogs.cargos || []);
-    const cargos = source
-      .filter(item => !contract.selectable || selectableIds.has(key(item.id)) ||
-        (state.filteredCargoOptions && state.filteredCargoOptions.some(option => key(option.id) === key(item.id))))
+    const cargos = state.filteredCargoOptions
+      .filter(item => !contract.selectable || selectableIds.has(key(item.id)))
       .slice().sort(sortByName);
-    updateFilterOptions(select, 'Todos los cargos', cargos);
-
-    const visible = cargos.length > 1;
-    const wrapper = select.closest('.sunarp-filter');
-    if (wrapper) wrapper.hidden = !visible;
-    if (!visible) select.value = '';
+    updateFilterOptions(
+      select,
+      cargos.length ? 'Todos los cargos de este local' : 'No hay cargos para esta selección',
+      cargos
+    );
+    select.disabled = cargos.length === 0;
   }
-
 
   /* =====================================================
      4. FILTROS JERÁRQUICOS DE LA TABLA
@@ -420,6 +402,15 @@ const DirectoryPage = (() => {
     const structureMap = new Map(structures.map(item => [key(item.id), item]));
     const siteId = key(getElements().sedeFilter && getElements().sedeFilter.value);
     const localId = key(getElements().localFilter && getElements().localFilter.value);
+    const allowedLocalIds = new Set(contract.selectable && contract.selectable.localIds || []);
+    const validLocal = (state.catalogs && state.catalogs.locales || []).some(item =>
+      key(item.id) === localId &&
+      key(item.sede_id) === siteId &&
+      (!contract.selectable || allowedLocalIds.has(key(item.id)))
+    );
+    if (!siteId || !localId || !validLocal) {
+      return { selectableIds: new Set(), contextualIds: new Set() };
+    }
     let selectableIds = new Set(
       structures.filter(node => !hasSelectableContract || allSelectable.has(key(node.id)))
         .map(node => key(node.id))
@@ -605,16 +596,22 @@ const DirectoryPage = (() => {
     const container = getElements().hierarchyFilters;
     if (!container || !state.catalogs) return;
     container.replaceChildren();
+    const elements = getElements();
+    const siteId = key(elements.sedeFilter && elements.sedeFilter.value);
+    const localId = key(elements.localFilter && elements.localFilter.value);
+    const validLocal = (state.catalogs.locales || []).some(item =>
+      key(item.id) === localId && key(item.sede_id) === siteId
+    );
+    if (!siteId || !localId || !validLocal) {
+      state.hierarchyPath = [];
+      container.hidden = true;
+      return;
+    }
     appendHierarchyLevel('', 0);
     container.hidden = container.childElementCount === 0;
     if (container.hidden) state.hierarchyPath = [];
   }
 
-
-  /**
-   * Comprueba si la selección de un filtro sigue teniendo
-   * registros compatibles con los demás filtros.
-   */
   function hasAvailableFilterSelection(filter) {
     const elements = getElements();
     if (filter === 'sede') {

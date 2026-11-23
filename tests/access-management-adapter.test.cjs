@@ -1993,3 +1993,39 @@ test('los botones de Administración de accesos notifican errores sincrónicos y
   assert.ok(users.includes("canManage ? 'Nueva cuenta'"));
   assert.ok(users.includes('canManage ? () => openUserModal(null) : null'));
 });
+
+
+test('los filtros de Información de personal exigen seleccionar cada padre antes del siguiente nivel', () => {
+  const localStart = directoryUiSource.indexOf('function populateLocalFilter()');
+  const localEnd = directoryUiSource.indexOf('function populateCargoFilter()', localStart);
+  assert.ok(localStart >= 0 && localEnd > localStart);
+  const localFilter = directoryUiSource.slice(localStart, localEnd);
+  assert.ok(localFilter.includes('if (!siteId)'));
+  assert.ok(localFilter.includes("updateFilterOptions(select, 'Selecciona primero una sede', [])"));
+  assert.ok(localFilter.includes('select.disabled = true'));
+  assert.ok(localFilter.includes('key(item.sede_id) === siteId'));
+  assert.equal(localFilter.includes('state.hierarchyPath'), false);
+
+  const hierarchyStart = directoryUiSource.indexOf('function getHierarchyFilterSets()');
+  const hierarchyEnd = directoryUiSource.indexOf('function getHierarchyNodes(parentId)', hierarchyStart);
+  const hierarchy = directoryUiSource.slice(hierarchyStart, hierarchyEnd);
+  assert.ok(hierarchy.includes('if (!siteId || !localId || !validLocal)'));
+  assert.ok(hierarchy.includes('return { selectableIds: new Set(), contextualIds: new Set() }'));
+
+  const renderStart = directoryUiSource.indexOf('function renderHierarchyFilters()');
+  const renderEnd = directoryUiSource.indexOf('function hasAvailableFilterSelection(filter)', renderStart);
+  const renderHierarchy = directoryUiSource.slice(renderStart, renderEnd);
+  assert.ok(renderHierarchy.includes('if (!siteId || !localId || !validLocal)'));
+  assert.ok(renderHierarchy.includes('container.hidden = true'));
+
+  const cargoStart = directoryUiSource.indexOf('function populateCargoFilter()');
+  const cargoEnd = directoryUiSource.indexOf('function getHierarchyFilterSets()', cargoStart);
+  const cargoFilter = directoryUiSource.slice(cargoStart, cargoEnd);
+  assert.ok(cargoFilter.includes('if (!siteId || !localId)'));
+  assert.ok(cargoFilter.includes('if (!Array.isArray(state.filteredCargoOptions))'));
+  assert.equal(cargoFilter.includes('(state.catalogs.cargos || [])'), false);
+  assert.ok(cargoFilter.includes('select.disabled = true'));
+
+  assert.match(directoryViewSource, /directoryLocalFilter" class="sunarp-select" disabled/);
+  assert.match(directoryViewSource, /directoryCargoFilter" class="sunarp-select" disabled/);
+});
