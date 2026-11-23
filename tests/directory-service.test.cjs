@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const crypto = require('node:crypto');
 
 const root = path.resolve(__dirname, '..');
 const servicePath = path.join(root, 'Backend/Gestor de intranet SUNARP/DirectoryService.js');
@@ -1001,6 +1002,7 @@ test('getDirectorySiteData entrega catálogos exclusivos de la sede elegida incl
   vmContext._directoryAuthorizationContext_ = () => authorization;
   vmContext._directoryLoadContext_ = () => context;
   vmContext._accessRecordIsAllowed_ = () => true;
+  vmContext._directoryEnrichAssignmentRecords_ = records => records;
   vmContext._directoryExecuteAssignmentQuery_ = () => ({
     records: [{
       asignacion_id: 'ASG_001', persona_id: 'PER_001', cargo_id: 'CAR_001',
@@ -1017,6 +1019,53 @@ test('getDirectorySiteData entrega catálogos exclusivos de la sede elegida incl
   assert.deepEqual(Array.from(result.catalogs.estructuraOrg, item => item.id), ['EST_1']);
   assert.deepEqual(Array.from(result.catalogs.estructuraLocal, item => item.id), ['REL_1']);
   assert.deepEqual(Array.from(result.catalogs.sedes, item => item.id), ['SEDE_1']);
+});
+
+test('el enriquecimiento de asignaciones resuelve personas en una sola búsqueda proyectada por lote', () => {
+  const context = assignmentContext();
+  context.personas.push({
+    persona_id: 'PER_002', nombres: 'Luis', apellidos: 'Rojas',
+    correo_institucional: 'luis@sunarp.gob.pe'
+  });
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  vmContext._directorySource_ = name => name;
+  const lookups = [];
+  vmContext.SUNARPCore = {
+    findRecordsByFields: (source, filters, options) => {
+      lookups.push({ source, filters, options });
+      return {
+        total: 2,
+        records: [
+          { persona_id: 'PER_001', nombres: 'Ana', apellidos: 'Pérez', correo_institucional: 'ana@sunarp.gob.pe' },
+          { persona_id: 'PER_002', nombres: 'Luis', apellidos: 'Rojas', correo_institucional: 'luis@sunarp.gob.pe' }
+        ]
+      };
+    }
+  };
+  const assignments = [
+    {
+      asignacion_id: 'ASG_001', persona_id: 'PER_001', cargo_id: 'CAR_001',
+      estructura_local_id: 'REL_1', local_id: 'LOC_1', active: true, order: 1
+    },
+    {
+      asignacion_id: 'ASG_002', persona_id: 'PER_002', cargo_id: 'CAR_001',
+      estructura_local_id: '', local_id: 'LOC_1', active: true, order: 2
+    }
+  ];
+  const enriched = vmContext._directoryEnrichAssignmentRecords_(assignments, context);
+  assert.equal(lookups.length, 1);
+  assert.equal(lookups[0].source, 'personas');
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(lookups[0].filters)),
+    { persona_id: ['PER_001', 'PER_002'] }
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(lookups[0].options.projectionFields)),
+    ['persona_id', 'nombres', 'apellidos', 'correo_institucional']
+  );
+  assert.deepEqual(Array.from(enriched, item => item.nombres), ['Ana', 'Luis']);
+  assert.deepEqual(Array.from(enriched, item => item.filter_sede_id), ['SEDE_1', 'SEDE_1']);
 });
 
 test('Piura se resuelve por estructura_local_id sin depender de local_id físico', () => {
@@ -1057,14 +1106,58 @@ test('Piura se resuelve por estructura_local_id sin depender de local_id físico
 });
 
 test('el caché del sitio depende de identidad, permisos y generaciones de las fuentes', () => {
-  assert.match(serviceSource, /DIRECTORY_DATA_CACHE_TTL = 3600/);
-  assert.match(serviceSource, /DIRECTORY_CATALOG_CACHE_TTL = 3600/);
-  assert.match(serviceSource, /DIRECTORY_SITE_SNAPSHOT_CACHE_TTL = 3600/);
-  assert.match(serviceSource, /directory-site-snapshot:v1:/);
+  assert.match(serviceSource, /DIRECTORY_DATA_CACHE_TTL = 60/);
+  assert.match(serviceSource, /DIRECTORY_CATALOG_CACHE_TTL = 60/);
+  assert.match(serviceSource, /DIRECTORY_SITE_SNAPSHOT_CACHE_TTL = 60/);
+  assert.match(serviceSource, /directory-site-snapshot:v2:/);
+  assert.match(serviceSource, /_directoryAuthorizationCacheFingerprint_/);
   assert.match(serviceSource, /_directoryGetSiteDataCacheSources_/);
-  assert.match(serviceSource, /cacheSeconds: 3600/);
+  assert.match(serviceSource, /cacheSeconds: 60/);
   assert.match(accessServiceSource, /access-auth-context:v1:[\s\S]*?3600/);
   assert.match(accessServiceSource, /listRecordsFromSourcesCached\(requests, 3600\)/);
+});
+
+test('la huella de caché de sede cambia por identidad, permiso, ámbitos y relaciones', () => {
+  const vmContext = vm.createContext({
+    Utilities: {
+      DigestAlgorithm: { SHA_256: 'SHA-256' },
+      computeDigest: (_algorithm, value) => Array.from(
+        crypto.createHash('sha256').update(String(value)).digest()
+      ),
+      base64EncodeWebSafe: bytes => Buffer.from(bytes)
+        .toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+    }
+  });
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  const base = {
+    auth: {
+      personaId: 'PER_001',
+      moduleAccess: [{
+        modulo_id: 'MOD_INFO_PERSONAL',
+        permissionCodes: ['INFORMACION_PERSONAL_VER'],
+        scopes: [{ tipo_ambito_id: 'SEDE', referencia_id: 'SEDE_1', incluir_descendientes: false }]
+      }]
+    },
+    moduleId: 'MOD_INFO_PERSONAL',
+    permissionCode: 'INFORMACION_PERSONAL_VER',
+    structures: [{ id: 'EST_1', parent_id: '', sede_id: 'SEDE_1' }],
+    locals: [{ id: 'LOC_1', sede_id: 'SEDE_1' }]
+  };
+  const fingerprint = vmContext._directoryAuthorizationCacheFingerprint_(base);
+  assert.equal(fingerprint.length, 43);
+  assert.equal(vmContext._directoryAuthorizationCacheFingerprint_(base), fingerprint);
+
+  const otherIdentity = JSON.parse(JSON.stringify(base));
+  otherIdentity.auth.personaId = 'PER_002';
+  assert.notEqual(vmContext._directoryAuthorizationCacheFingerprint_(otherIdentity), fingerprint);
+
+  const otherScope = JSON.parse(JSON.stringify(base));
+  otherScope.auth.moduleAccess[0].scopes[0].referencia_id = 'SEDE_2';
+  assert.notEqual(vmContext._directoryAuthorizationCacheFingerprint_(otherScope), fingerprint);
+
+  const otherPermission = JSON.parse(JSON.stringify(base));
+  otherPermission.auth.moduleAccess[0].permissionCodes.push('INFORMACION_PERSONAL_EDITAR');
+  assert.notEqual(vmContext._directoryAuthorizationCacheFingerprint_(otherPermission), fingerprint);
 });
 
 test('getDirectorySiteData carga todas las asignaciones de una sola sede con paginación interna de Core', () => {
@@ -1103,6 +1196,12 @@ test('getDirectorySiteData carga todas las asignaciones de una sola sede con pag
       filter_local_id: 'LOC_1', local_name: 'Local Lima'
     }
   ];
+  let enrichmentCalls = 0;
+  vmContext._directoryEnrichAssignmentRecords_ = received => {
+    enrichmentCalls++;
+    assert.equal(received.length, 2);
+    return received;
+  };
   const queryCalls = [];
   vmContext._directoryExecuteAssignmentQuery_ = (
     receivedContext, receivedAuthorization, options, idField, offset, limit, enrich
@@ -1123,7 +1222,9 @@ test('getDirectorySiteData carga todas las asignaciones de una sola sede con pag
   assert.equal(queryCalls[1].offset, 1);
   assert.equal(queryCalls[0].limit, 1000);
   assert.equal(queryCalls[0].idField, 'asignacion_id');
-  assert.equal(queryCalls[0].enrich, true);
+  assert.equal(queryCalls[0].enrich, false);
+  assert.equal(queryCalls[1].enrich, false);
+  assert.equal(enrichmentCalls, 1);
   assert.equal(result.records.length, 2);
   assert.equal(result.summary.assignments, 2);
   assert.equal(result.catalogs.sedes.length, 1);

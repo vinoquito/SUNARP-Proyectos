@@ -36,9 +36,12 @@ const DIRECTORY_SERVICE_CONFIG = Object.freeze({
   })
 });
 
-const DIRECTORY_DATA_CACHE_TTL = 3600;
-const DIRECTORY_CATALOG_CACHE_TTL = 3600;
-const DIRECTORY_SITE_SNAPSHOT_CACHE_TTL = 3600;
+// Core invalida por generación las escrituras propias. Las hojas y fórmulas
+// editadas externamente (incluido IMPORTRANGE) no publican esa generación;
+// limitar las instantáneas derivadas a 60 s acota su ventana de obsolescencia.
+const DIRECTORY_DATA_CACHE_TTL = 60;
+const DIRECTORY_CATALOG_CACHE_TTL = 60;
+const DIRECTORY_SITE_SNAPSHOT_CACHE_TTL = 60;
 
 const DIRECTORY_REQUIRED_HEADERS = Object.freeze({
   personas: ['persona_id', 'nombres', 'apellidos', 'correo_institucional'],
@@ -514,9 +517,9 @@ function _directoryLoadContextFromSheets_(options) {
     });
   }
 
-  // Las fuentes operativas conservan TTL de 5 minutos. Los catálogos
-  // replicados desde Global parameters usan TTL de 1 minuto; además, sus
-  // generaciones incluyen la fuente maestra declarada en AppConfig.
+  // Las fuentes operativas y los catálogos usan TTL máximo de 60 s para
+  // detectar cambios externos en hojas y fórmulas que no invalidan Core.
+  // Las réplicas conservan sus dependencias maestras declaradas en AppConfig.
   const operationalRequests = requests.filter(request =>
     !(request.source.dependencies || []).length &&
     request.source.sheetName !== DIRECTORY_SERVICE_CONFIG.sheets.documentTypes
@@ -1146,8 +1149,8 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
       searchFields: search ? ['condicion_cargo', 'anexo', 'observaciones'] : [],
       searchAny,
       authorization: authorizationForQuery,
-      cacheSeconds: 3600,
-      candidateCacheSeconds: 3600,
+      cacheSeconds: 60,
+      candidateCacheSeconds: 60,
       schemaVersion: 'directory-assignment-query-v1',
       sortBy: options.sortBy || 'order',
       sortDirection: options.sortDirection || 'asc'
@@ -1189,29 +1192,49 @@ function _directoryExecuteAssignmentQuery_(context, authorization, options, idFi
   if (!enrich) return result;
 
   const assignments = result.records || [];
-  const personaIds = Array.from(new Set(assignments.map(item =>
+  return Object.assign({}, result, {
+    records: _directoryEnrichAssignmentRecords_(assignments, context)
+  });
+}
+
+/**
+ * Enriquece un lote completo de asignaciones con una sola búsqueda masiva
+ * de personas y un único mapa de relaciones. La consulta de personas proyecta
+ * únicamente las columnas de presentación necesarias para la tabla principal.
+ */
+function _directoryEnrichAssignmentRecords_(assignments, context) {
+  const records = Array.isArray(assignments) ? assignments : [];
+  if (!records.length) return [];
+  const personaIds = Array.from(new Set(records.map(item =>
     _directoryKey_(item.persona_id)
   ).filter(Boolean)));
   const peopleResult = personaIds.length
     ? SUNARPCore.findRecordsByFields(
         _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
         { persona_id: personaIds },
-        { searchField: 'persona_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas }
+        {
+          searchField: 'persona_id',
+          requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas,
+          projectionFields: DIRECTORY_REQUIRED_HEADERS.personas
+        }
       )
     : { records: [], total: 0 };
-  if ((peopleResult.records || []).length !== personaIds.length) {
+  const people = peopleResult.records || [];
+  if (Number(peopleResult.total) !== personaIds.length || people.length !== personaIds.length) {
     throw new Error('Una o más asignaciones visibles no tienen una persona válida en el directorio.');
   }
 
+  const peopleMap = _directoryCreateMap_(people, 'persona_id');
+  if (peopleMap.size !== personaIds.length) {
+    throw new Error('El conjunto de personas contiene identificadores duplicados o incompletos.');
+  }
   const relationMap = _directoryCreateMap_(
     _directoryBuildRelations_(context, false)
   );
-  const peopleMap = _directoryCreateMap_(peopleResult.records || [], 'persona_id');
-  const enriched = assignments.map(item => {
+  return records.map(item => {
     const location = _directoryResolveAssignmentLocation_(item, context, false);
     return _directoryEnrichAssignment_(item, context, relationMap, peopleMap, location);
   });
-  return Object.assign({}, result, { records: enriched });
 }
 
 
@@ -1474,6 +1497,44 @@ function _directoryGetSiteDataCacheSources_() {
 }
 
 
+function _directoryAuthorizationCacheFingerprint_(authorization) {
+  const auth = authorization && authorization.auth || {};
+  const moduleId = _directoryKey_(authorization && authorization.moduleId);
+  const access = (auth.moduleAccess || []).find(item =>
+    _directoryKey_(item.modulo_id) === moduleId
+  );
+  const scopes = (access && access.scopes || []).map(scope => ({
+    tipo_ambito_id: _directoryKey_(scope.tipo_ambito_id),
+    referencia_id: _directoryKey_(scope.referencia_id),
+    incluir_descendientes: scope.incluir_descendientes,
+    active: scope.active
+  })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  const snapshot = {
+    personaId: _directoryKey_(auth.personaId),
+    moduleId,
+    permissionCode: _directoryKey_(authorization && authorization.permissionCode),
+    permissionCodes: (access && access.permissionCodes || []).slice().sort(),
+    scopes,
+    structures: (authorization && authorization.structures || []).map(item => ({
+      id: _directoryKey_(item.id),
+      parent_id: _directoryKey_(item.parent_id),
+      sede_id: _directoryKey_(item.sede_id),
+      active: item.active
+    })).sort((a, b) => a.id.localeCompare(b.id)),
+    locals: (authorization && authorization.locals || []).map(item => ({
+      id: _directoryKey_(item.id),
+      sede_id: _directoryKey_(item.sede_id),
+      active: item.active
+    })).sort((a, b) => a.id.localeCompare(b.id))
+  };
+  const digest = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    JSON.stringify(snapshot)
+  );
+  return Utilities.base64EncodeWebSafe(digest).replace(/=+$/g, '');
+}
+
+
 function getDirectorySiteData(sedeId) {
   const startedAt = Date.now();
   const selectedSedeId = _directoryKey_(sedeId);
@@ -1513,8 +1574,10 @@ function getDirectorySiteData(sedeId) {
   if (typeof SUNARPCore !== 'undefined' &&
       typeof SUNARPCore.getOrBuildCachedValue === 'function' &&
       _directoryKey_(authorization.auth && authorization.auth.personaId)) {
-    const cacheKey = 'directory-site-snapshot:v1:' +
-      _directoryKey_(authorization.auth.personaId) + ':' + selectedSedeId;
+    const authorizationFingerprint = _directoryAuthorizationCacheFingerprint_(authorization);
+    const cacheKey = 'directory-site-snapshot:v2:' +
+      _directoryKey_(authorization.auth.personaId) + ':' +
+      selectedSedeId + ':' + authorizationFingerprint;
     const cached = SUNARPCore.getOrBuildCachedValue(
       cacheKey,
       _directoryGetSiteDataCacheSources_(),
@@ -1570,6 +1633,9 @@ function _directoryBuildSiteData_(
   let pageCount = 0;
 
   while (hasMore) {
+    // La consulta de Core pagina asignaciones autorizadas sin repetir su
+    // enriquecimiento por cada página interna. Las personas se recuperan
+    // juntas después de completar el conjunto de la sede.
     const page = _directoryExecuteAssignmentQuery_(
       context,
       authorization,
@@ -1577,7 +1643,7 @@ function _directoryBuildSiteData_(
       'asignacion_id',
       offset,
       pageSize,
-      true
+      false
     );
     if (expectedTotal === null) expectedTotal = Number(page.total) || 0;
     const pageRecords = page.records || [];
@@ -1595,6 +1661,13 @@ function _directoryBuildSiteData_(
   if (records.length !== (expectedTotal || 0)) {
     throw new Error('La carga de asignaciones de la sede quedó incompleta. No se mostrarán resultados parciales.');
   }
+  const queryElapsed = Date.now() - queryStartedAt;
+  const peopleEnrichmentStartedAt = Date.now();
+  const enrichedRecords = _directoryEnrichAssignmentRecords_(records, context);
+  records.length = 0;
+  enrichedRecords.forEach(record => records.push(record));
+  const peopleEnrichmentElapsed = Date.now() - peopleEnrichmentStartedAt;
+
   const recordsOutsideSelectedSite = records.filter(record =>
     _directoryKey_(record.filter_sede_id || record.sede_id) !== selectedSedeId
   );
@@ -1612,8 +1685,6 @@ function _directoryBuildSiteData_(
     }));
     throw new Error('La consulta de la sede seleccionada devolvió asignaciones cuya adscripción se resuelve en otra sede. No se mostrarán resultados inconsistentes.');
   }
-  const queryElapsed = Date.now() - queryStartedAt;
-
   const structureMap = _directoryCreateMap_(context.estructuraOrg);
   const structureTypeMap = _directoryCreateMap_(context.tiposEstructura);
   const activeStructure = (context.estructuraOrg || [])
@@ -1747,6 +1818,7 @@ function _directoryBuildSiteData_(
     authorization: authorizationElapsed,
     context: contextElapsed,
     queryAndHydration: queryElapsed,
+    peopleEnrichment: peopleEnrichmentElapsed,
     total: Date.now() - startedAt,
     selectedSedeId,
     candidatePages: pageCount,
