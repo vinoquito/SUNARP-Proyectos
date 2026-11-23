@@ -1459,6 +1459,7 @@ test('el contexto de autorización se cachea por identidad y depende de todas la
     accessSource.indexOf('function getAuthContext_()')
   );
   assert.match(source, /getOrBuildCachedValue/);
+  assert.match(source, /Authorization context cache/);
   assert.match(source, /access-auth-context:v1:/);
   assert.match(source, /_accessDirectorySource_\(sheets\.people\)/);
   for (const sheet of ['users', 'modules', 'roles', 'userRoles', 'permissions', 'rolePermissions', 'scopes']) {
