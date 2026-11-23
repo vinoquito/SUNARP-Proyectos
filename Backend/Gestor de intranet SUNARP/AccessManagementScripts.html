@@ -1810,6 +1810,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     let documentNumberControl = null;
     let documentSearchButton = null;
     let documentClearButton = null;
+    let initialDocumentAlert = null;
 
     const resultHost = document.createElement('div');
     resultHost.className = 'access-person-search-result';
@@ -2079,17 +2080,17 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         resultHost.appendChild(alertHost);
 
         if (needsDocumentTypes) {
-          showSearchAlert(
-            'info',
-            'Cargando catálogo',
-            'El formulario ya está disponible. Se están cargando los tipos de documento.'
-          );
+          initialDocumentAlert = {
+            type: 'info',
+            title: 'Cargando catálogo',
+            message: 'El formulario ya está disponible. Se están cargando los tipos de documento.'
+          };
         } else {
-          showSearchAlert(
-            'error',
-            'Catálogo no disponible',
-            'No se encontraron tipos de documento en la pestaña tipo_documento_identidad.'
-          );
+          initialDocumentAlert = {
+            type: 'error',
+            title: 'Catálogo no disponible',
+            message: 'No se encontraron tipos de documento en la pestaña tipo_documento_identidad.'
+          };
         }
       }
     }
@@ -2145,6 +2146,16 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           : selectedPersonCanEnable
       }
     );
+
+    // openFormModal inserta el formulario en el DOM. Solo después se puede
+    // pedir a SUNARP UI que ubique el contenedor Alert por su ID.
+    if (initialDocumentAlert) {
+      showSearchAlert(
+        initialDocumentAlert.type,
+        initialDocumentAlert.title,
+        initialDocumentAlert.message
+      );
+    }
 
     // No bloquear la apertura del formulario por una lectura del catálogo.
     // Los controles se habilitan cuando termina la consulta en segundo plano.
