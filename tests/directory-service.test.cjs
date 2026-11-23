@@ -39,6 +39,7 @@ vm.runInContext(
     'createPersonalDataMap: _directoryCreatePersonalDataMap_,' +
     'resolveDocumentTypesSource: _directoryResolveDocumentTypesSource_,' +
     'buildFilterContract: _directoryBuildFilterContract_,' +
+    'getAuthorizedSedeIds: _directoryGetAuthorizedSedeIds_,' +
     'buildAssignmentQuery: _directoryBuildAssignmentQuery_,' +
     'executeAssignmentQuery: _directoryExecuteAssignmentQuery_' +
   '};',
@@ -89,7 +90,7 @@ test('SUNARP Core no contiene definiciones globales duplicadas en DataRepository
 
 test('las lecturas del Directorio no ejecutan validación integral de todas las asignaciones', () => {
   for (const name of [
-    'getDirectoryInitialData',
+    'getDirectorySiteData',
     'listDirectoryPeople',
     'listDirectoryAssignments',
     'getDirectoryPersonById'
@@ -101,10 +102,15 @@ test('las lecturas del Directorio no ejecutan validación integral de todas las 
     assert.match(implementation, /validateSnapshot:\s*false/);
   }
 
+  const initialStart = serviceSource.indexOf('function getDirectoryInitialData(');
+  const siteStart = serviceSource.indexOf('function getDirectorySiteData(', initialStart);
+  const initial = serviceSource.slice(initialStart, siteStart);
+  assert.doesNotMatch(initial, /_directoryLoadContext_|queryRecords|_directoryExecuteAssignmentQuery_/);
+
   const saveStart = serviceSource.indexOf('function saveDirectoryAssignment(');
   const saveEnd = serviceSource.indexOf('function setDirectoryAssignmentActive(', saveStart);
   const saveImplementation = serviceSource.slice(saveStart, saveEnd);
-  assert.doesNotMatch(saveImplementation, /validateSnapshot:\\s*false/);
+  assert.doesNotMatch(saveImplementation, /validateSnapshot:\s*false/);
 });
 
 test('el catálogo de tipos de documento se resuelve exclusivamente desde Global parameters', () => {
@@ -795,14 +801,86 @@ test('listDirectoryAssignments pagina mediante Core y no carga asignaciones comp
   assert.equal(result.records[0].sede_id, 'SEDE_1');
 });
 
-test('getDirectoryInitialData carga solo catálogos y una página, reutilizando consultas distintas de Core', () => {
+test('getDirectoryInitialData devuelve sedes autorizadas sin consultar asignaciones ni cargar catálogos completos', () => {
   const context = assignmentContext();
-  const pagePerson = { persona_id: 'PER_001', nombres: 'Ana', apellidos: 'Pérez' };
-  context.personas = [];
-  context.asignaciones = [];
-  context.documentTypes = [];
   const authorization = createDirectoryQueryAuthorization(context, [
     { tipo_ambito_id: 'TOTAL', referencia_id: '', incluir_descendientes: false }
+  ]);
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  vmContext._directoryAuthorizationContext_ = () => authorization;
+  vmContext._directoryLoadContext_ = () => {
+    throw new Error('El selector inicial no debe cargar el contexto completo de Directorios.');
+  };
+  vmContext.getIntranetDataSource = (sourceKey, sheetName, headerRow) => ({
+    sourceKey, sheetName, headerRow, spreadsheetId: 'SPREADSHEET_' + sourceKey
+  });
+
+  let queryCalls = 0;
+  let catalogRequests = null;
+  const allSedes = [
+    { id: 'SEDE_1', name: 'Lima', active: true },
+    { id: 'SEDE_2', name: 'Piura', active: true },
+    { id: 'SEDE_3', name: 'Inactiva', active: false }
+  ];
+  vmContext.SUNARPCore = {
+    listRecordsFromSourcesCached: (requests, ttl) => {
+      catalogRequests = { requests, ttl };
+      return { sedes: allSedes };
+    },
+    queryRecords: () => { queryCalls++; throw new Error('No debe consultar asignaciones al ingresar.'); }
+  };
+
+  const result = vmContext.getDirectoryInitialData();
+  assert.equal(queryCalls, 0);
+  assert.equal(catalogRequests.requests.length, 1);
+  assert.equal(catalogRequests.requests[0].key, 'sedes');
+  assert.equal(catalogRequests.requests[0].source.sheetName, 'sede');
+  assert.deepEqual(result.catalogs.sedes.map(item => item.id), ['SEDE_1', 'SEDE_2']);
+  assert.deepEqual(result.records, []);
+  assert.deepEqual(result.summary, { people: 0, assignments: 0 });
+});
+
+test('la lista de sedes deriva ámbitos SEDE, ESTRUCTURA_ORG y LOCAL sin ampliar permisos', () => {
+  const context = assignmentContext();
+  context.sedes.push({ id: 'SEDE_2', name: 'Piura', active: true });
+  context.estructuraOrg.push({
+    id: 'EST_CHILD', name: 'Unidad hija', parent_id: 'EST_1',
+    sede_id: 'SEDE_1', tipo_estructura_id: 'TE_1'
+  });
+  context.locales.push({ id: 'LOC_2', name: 'Local Piura', sede_id: 'SEDE_2' });
+
+  const structureAuth = createDirectoryQueryAuthorization(context, [
+    { tipo_ambito_id: 'ESTRUCTURA_ORG', referencia_id: 'EST_1', incluir_descendientes: true }
+  ]);
+  assert.deepEqual(
+    Array.from(api.getAuthorizedSedeIds(structureAuth, context.sedes)),
+    ['SEDE_1']
+  );
+
+  const localAuth = createDirectoryQueryAuthorization(context, [
+    { tipo_ambito_id: 'LOCAL', referencia_id: 'LOC_2', incluir_descendientes: false }
+  ]);
+  assert.deepEqual(
+    Array.from(api.getAuthorizedSedeIds(localAuth, context.sedes)),
+    ['SEDE_2']
+  );
+
+  const invalidTotalAuth = createDirectoryQueryAuthorization(context, [
+    { tipo_ambito_id: 'TOTAL', referencia_id: '', incluir_descendientes: false },
+    { tipo_ambito_id: 'SEDE', referencia_id: 'SEDE_1', incluir_descendientes: false }
+  ]);
+  assert.deepEqual(
+    Array.from(api.getAuthorizedSedeIds(invalidTotalAuth, context.sedes)),
+    []
+  );
+});
+
+test('getDirectorySiteData carga todas las asignaciones de una sola sede con paginación interna de Core', () => {
+  const context = assignmentContext();
+  context.sedes.push({ id: 'SEDE_2', name: 'Piura', active: true });
+  const authorization = createDirectoryQueryAuthorization(context, [
+    { tipo_ambito_id: 'SEDE', referencia_id: 'SEDE_1', incluir_descendientes: false }
   ]);
   const vmContext = vm.createContext({});
   vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
@@ -811,44 +889,61 @@ test('getDirectoryInitialData carga solo catálogos y una página, reutilizando 
     assert.equal(options.includeAssignments, false);
     assert.equal(options.includePeople, false);
     assert.equal(options.includePersonalData, false);
+    assert.equal(options.validateSnapshot, false);
     return context;
   };
   vmContext._accessRecordIsAllowed_ = () => true;
-  vmContext.getIntranetDataSource = (sourceKey, sheetName, headerRow) => ({
-    sourceKey, sheetName, headerRow, spreadsheetId: 'SPREADSHEET_' + sourceKey
-  });
-  const queryCalls = [];
-  vmContext.SUNARPCore = {
-    queryRecords: (source, options) => {
-      queryCalls.push(options);
-      assert.deepEqual(Array.from(options.distinctFields), ['cargo_id', 'estructura_local_id', 'local_id']);
-      assert.deepEqual(Array.from(options.distinctCountFields), ['persona_id']);
-      return {
-        records: [{
-          asignacion_id: 'ASG_001', persona_id: 'PER_001', cargo_id: 'CAR_001',
-          estructura_local_id: 'REL_1', local_id: '', active: true, order: 1
-        }],
-        total: 1,
-        distinctValues: {
-          cargo_id: ['CAR_001'],
-          estructura_local_id: ['REL_1'],
-          local_id: ['LOC_1']
-        },
-        distinctCounts: { persona_id: 1 }
-      };
+
+  const records = [
+    {
+      asignacion_id: 'ASG_001', persona_id: 'PER_001', cargo_id: 'CAR_001',
+      estructura_local_id: 'REL_1', local_id: '', active: true, order: 1,
+      nombres: 'Ana', apellidos: 'Pérez', cargo_name: 'Analista',
+      estructura_id: 'EST_1', estructura_name: 'Oficina',
+      sede_id: 'SEDE_1', filter_sede_id: 'SEDE_1',
+      filter_local_id: 'LOC_1', local_name: 'Local Lima'
     },
-    findRecordsByFields: () => ({ records: [pagePerson], total: 1 })
+    {
+      asignacion_id: 'ASG_002', persona_id: 'PER_001', cargo_id: 'CAR_001',
+      estructura_local_id: '', local_id: 'LOC_1', active: false, order: 2,
+      nombres: 'Ana', apellidos: 'Pérez', cargo_name: 'Analista',
+      estructura_id: '', estructura_name: '',
+      sede_id: 'SEDE_1', filter_sede_id: 'SEDE_1',
+      filter_local_id: 'LOC_1', local_name: 'Local Lima'
+    }
+  ];
+  const queryCalls = [];
+  vmContext._directoryExecuteAssignmentQuery_ = (
+    receivedContext, receivedAuthorization, options, idField, offset, limit, enrich
+  ) => {
+    queryCalls.push({ options, idField, offset, limit, enrich });
+    return {
+      records: offset === 0 ? [records[0]] : [records[1]],
+      total: 2,
+      hasMore: offset === 0
+    };
   };
 
-  const result = vmContext.getDirectoryInitialData();
-  assert.equal(queryCalls.length, 1);
-  assert.equal(result.records.length, 1);
-  assert.equal(result.records[0].nombres, 'Ana');
-  assert.equal(result.records[0].apellidos, 'Pérez');
-  assert.equal(result.records[0].cargo_name, 'Analista');
-  assert.equal(result.summary.people, 1);
-  assert.equal(result.summary.assignments, 1);
-  assert.deepEqual(Array.from(result.catalogs.filterContract.selectable.cargoIds), ['CAR_001']);
+  const result = vmContext.getDirectorySiteData('SEDE_1');
+  assert.equal(queryCalls.length, 2);
+  assert.equal(queryCalls[0].options.sedeId, 'SEDE_1');
+  assert.equal(queryCalls[1].options.sedeId, 'SEDE_1');
+  assert.equal(queryCalls[0].offset, 0);
+  assert.equal(queryCalls[1].offset, 1);
+  assert.equal(queryCalls[0].limit, 1000);
+  assert.equal(queryCalls[0].idField, 'asignacion_id');
+  assert.equal(queryCalls[0].enrich, true);
+  assert.equal(result.records.length, 2);
+  assert.equal(result.summary.assignments, 2);
+  assert.equal(result.catalogs.sedes.length, 1);
+  assert.equal(result.catalogs.sedes[0].id, 'SEDE_1');
+  assert.deepEqual(Array.from(result.catalogs.filterContract.selectable.localIds), ['LOC_1']);
+
+  assert.throws(
+    () => vmContext.getDirectorySiteData('SEDE_2'),
+    /No tienes permiso para consultar la sede seleccionada/i
+  );
+  assert.equal(queryCalls.length, 2, 'La sede no autorizada se rechaza antes de consultar asignaciones.');
 });
 
 test('getDirectoryPersonById consulta solo asignaciones autorizadas de la persona solicitada', () => {
@@ -1072,6 +1167,29 @@ test('el enriquecimiento conserva la modalidad local-only y expone su sede y loc
   assert.equal(enriched.local_name, 'Local Lima');
   assert.equal(enriched.display_location, 'Local Lima');
   assert.equal(enriched.local_id, 'LOC_1');
+  assert.equal(enriched.filter_local_id, 'LOC_1');
+  assert.equal(enriched.filter_sede_id, 'SEDE_1');
+});
+
+test('el enriquecimiento de una adscripción por relación expone el local canónico aunque local_id esté vacío', () => {
+  const context = assignmentContext();
+  const assignment = {
+    asignacion_id: 'ASG_011', persona_id: 'PER_001', cargo_id: 'CAR_001',
+    estructura_local_id: 'REL_1', local_id: '', active: true, order: 1
+  };
+  const relation = {
+    id: 'REL_1', estructura_id: 'EST_1', local_id: 'LOC_1',
+    estructura_name: 'Oficina', estructura_path: 'Oficina',
+    sede_id: 'SEDE_1', local_name: 'Local Lima',
+    display_name: 'Oficina — Local Lima'
+  };
+  const enriched = api.enrichAssignment(
+    assignment, context, new Map([['REL_1', relation]]),
+    new Map([['PER_001', context.personas[0]]])
+  );
+  assert.equal(enriched.local_id, '');
+  assert.equal(enriched.filter_local_id, 'LOC_1');
+  assert.equal(enriched.filter_sede_id, 'SEDE_1');
 });
 
 test('el orden se calcula por la combinación exacta de relación y local', () => {
@@ -1380,16 +1498,27 @@ test('el Directorio utiliza exclusivamente la caché central de SUNARP Core', ()
   assert.match(serviceSource, /function clearDirectoryCache\(\)/);
 });
 
-test('la carga inicial y las páginas del Directorio consultan asignaciones mediante Core', () => {
+test('la carga inicial solo entrega sedes y la carga de datos se restringe a la sede seleccionada', () => {
   const initialStart = serviceSource.indexOf('function getDirectoryInitialData() {');
-  const initialEnd = serviceSource.indexOf('function listDirectoryPeople(', initialStart);
-  const initial = serviceSource.slice(initialStart, initialEnd);
-  const listStart = serviceSource.indexOf('function listDirectoryAssignments(', initialStart);
-  const listEnd = serviceSource.indexOf('function ', listStart + 10);
-  const listing = serviceSource.slice(listStart, listEnd);
-  assert.match(initial, /records:\s*initialPage\.records/);
-  assert.match(initial, /includeAssignments:\s*false/);
-  assert.match(initial, /_directoryExecuteAssignmentQuery_/);
+  const siteStart = serviceSource.indexOf('function getDirectorySiteData(', initialStart);
+  const peopleStart = serviceSource.indexOf('function listDirectoryPeople(', siteStart);
+  const initial = serviceSource.slice(initialStart, siteStart);
+  const siteData = serviceSource.slice(siteStart, peopleStart);
+  const listingStart = serviceSource.indexOf('function listDirectoryAssignments(', peopleStart);
+  const listingEnd = serviceSource.indexOf('function ', listingStart + 10);
+  const listing = serviceSource.slice(listingStart, listingEnd);
+
+  assert.match(initial, /_directoryGetAuthorizedSedeIds_/);
+  assert.match(initial, /assignmentsLoaded:\s*0/);
+  assert.doesNotMatch(initial, /_directoryLoadContext_|_directoryExecuteAssignmentQuery_|queryRecords/);
+
+  assert.match(siteData, /_directoryGetAuthorizedSedeIds_/);
+  assert.match(siteData, /\{ active: 'all', sedeId: selectedSedeId \}/);
+  assert.match(siteData, /_directoryExecuteAssignmentQuery_/);
+  assert.match(siteData, /pageSize = 1000/);
+  assert.match(siteData, /records\.length !== \(expectedTotal \|\| 0\)/);
+  assert.match(siteData, /No tienes permiso para consultar la sede seleccionada/);
+
   assert.match(listing, /includeAssignments:\s*false/);
   assert.match(listing, /_directoryExecuteAssignmentQuery_/);
   assert.match(serviceSource, /function _directoryBuildAssignmentQuery_/);
@@ -1401,14 +1530,22 @@ test('la carga inicial y las páginas del Directorio consultan asignaciones medi
   assert.doesNotMatch(listing, /view\.assignments/);
 });
 
-test('la carga inicial no recupera asignaciones ni datos personales completos', () => {
-  const initialDataStart = serviceSource.indexOf('function getDirectoryInitialData() {');
-  const initialDataEnd = serviceSource.indexOf('function listDirectoryPeople(', initialDataStart);
-  const initialDataSource = serviceSource.slice(initialDataStart, initialDataEnd);
-  assert.match(initialDataSource, /includePersonalData:\s*false/);
-  assert.match(initialDataSource, /includePeople:\s*false/);
-  assert.match(initialDataSource, /includeAssignments:\s*false/);
-  assert.doesNotMatch(initialDataSource, /context\.datosPersonales|context\.personas|tipo_documento|numero_documento|fecha_nacimiento/);
+test('el ingreso no carga personas, asignaciones ni datos personales; la sede seleccionada carga una instantánea autorizada', () => {
+  const initialStart = serviceSource.indexOf('function getDirectoryInitialData() {');
+  const siteStart = serviceSource.indexOf('function getDirectorySiteData(', initialStart);
+  const initial = serviceSource.slice(initialStart, siteStart);
+  const siteDataEnd = serviceSource.indexOf('function listDirectoryPeople(', siteStart);
+  const siteData = serviceSource.slice(siteStart, siteDataEnd);
+
+  assert.match(initial, /listRecordsFromSourcesCached/);
+  assert.match(initial, /records:\s*\[\]/);
+  assert.doesNotMatch(initial, /includePersonalData|includePeople|includeAssignments|tipo_documento|numero_documento|_directoryLoadContext_/);
+
+  assert.match(siteData, /includePersonalData:\s*false/);
+  assert.match(siteData, /includePeople:\s*false/);
+  assert.match(siteData, /includeAssignments:\s*false/);
+  assert.match(siteData, /records,/);
+  assert.match(siteData, /filter_local_id/);
   assert.match(serviceSource, /function getDirectoryPersonById\([\s\S]*?findRecordsByFields\([\s\S]*?servidor_id/s);
   assert.match(frontendScript, /callServer\('getDirectoryPersonById', record\.persona_id\)/);
 });
@@ -1440,8 +1577,8 @@ test('la interfaz conserva la instantánea anterior cuando falla una actualizaci
   const loadSource = frontendSource.slice(loadStart, loadEnd);
   assert.ok(loadSource.includes('const hadLoadedSnapshot = state.loaded'));
   assert.ok(loadSource.includes('state.loaded = hadLoadedSnapshot'));
-  assert.ok(loadSource.includes('if (!hadLoadedSnapshot && container)'));
-  assert.ok(loadSource.includes('Se conserva la última información cargada.'));
+  assert.ok(loadSource.includes('if (!hadLoadedSnapshot && elements.table)'));
+  assert.ok(loadSource.includes('Se conserva la información cargada.'));
 });
 
 test('el contrato de filtros separa ámbitos fijos, opciones autorizadas y ancestros contextuales', () => {
@@ -1490,12 +1627,18 @@ test('el contrato de filtros reconoce TOTAL sin convertirlo en una selección re
   assert.equal(JSON.stringify(contract.selectable.sedeIds), JSON.stringify(['SEDE_1']));
 });
 
-test('el DataTable consume la primera página del bootstrap y no repite la consulta inicial', () => {
-  assert.match(frontendSource, /const initialPage = state\.initialPage/);
-  assert.match(frontendSource, /state\.initialPage = null/);
-  assert.match(frontendSource, /initialData: initialPage \|\| null/);
-  assert.match(frontendSource, /if \(isUnfilteredFirstPage\) \{\s*return initialPage;/);
-  assert.match(serviceSource, /\{ active: 'all' \},\s*'asignacion_id'/);
-  assert.match(uiDataTableSource, /hasInitialServerData/);
-  assert.match(uiDataTableSource, /mode === 'server' && !hasInitialServerData/);
+test('Información de personal carga por sede una vez y usa filtros, búsqueda y paginación locales', () => {
+  assert.match(frontendSource, /callServer\('getDirectorySiteData', selectedSedeId\)/);
+  assert.match(frontendSource, /mode:\s*'client'/);
+  assert.match(frontendSource, /data:\s*prepareRows\(getFilteredRecords\(\)\)/);
+  assert.match(frontendSource, /state\.table\.setData\(options\.data\)/);
+  assert.match(frontendSource, /siteDataCache/);
+  assert.match(frontendSource, /async function refreshActiveSede\(/);
+  assert.doesNotMatch(frontendSource, /listDirectoryAssignments/);
+  assert.doesNotMatch(frontendSource, /mode:\s*'server'/);
+  assert.doesNotMatch(frontendSource, /loadData:/);
+  assert.match(frontendSource, /function populateSedeFilter\([\s\S]*?wrapper\.hidden = false/);
+  assert.doesNotMatch(frontendSource, /sedes\.length === 1\) select\.value/);
+  assert.match(uiDataTableSource, /setData\(nextData\)/);
 });
+
