@@ -746,18 +746,18 @@ function _accessGetAuthContext_() {
   ];
 
   if (typeof SUNARPCore.getOrBuildCachedValue === 'function') {
-    const digest = Utilities.computeDigest(
-      Utilities.DigestAlgorithm.SHA_256,
-      String(email).trim().toLowerCase()
-    );
-    const identityKey = Utilities.base64EncodeWebSafe(digest).replace(/=+$/g, '');
-    const cached = SUNARPCore.getOrBuildCachedValue(
-      'access-auth-context:v1:' + identityKey,
-      sources,
-      () => _accessBuildAuthContext_(email),
-      60
-    );
-    if (cached && cached.value) return cached.value;
+    const identityKey = String(email).trim().toLowerCase();
+    // Los correos institucionales habituales caben en el límite de clave
+    // de Core; ante uno excepcionalmente largo se evita cachear.
+    if (identityKey.length <= 150) {
+      const cached = SUNARPCore.getOrBuildCachedValue(
+        'access-auth-context:v1:' + identityKey,
+        sources,
+        () => _accessBuildAuthContext_(email),
+        60
+      );
+      if (cached && cached.value) return cached.value;
+    }
   }
 
   return _accessBuildAuthContext_(email);
