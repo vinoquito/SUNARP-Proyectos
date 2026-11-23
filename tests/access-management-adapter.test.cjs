@@ -338,7 +338,7 @@ test('las pestañas de permisos y asignaciones agrupan sus catálogos en una lec
   assert.ok(permissions.operations.length > 0);
   assert.ok(permissions.permissions.length > 0);
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].keys.sort(), ['modules', 'operations', 'permissions'].sort());
+  assert.deepEqual(Array.from(calls[0].keys).sort(), ['modules', 'operations', 'permissions'].sort());
   assert.equal(calls[0].ttl, 60);
 
   calls.length = 0;
@@ -346,7 +346,7 @@ test('las pestañas de permisos y asignaciones agrupan sus catálogos en una lec
   assert.equal(assignments.roles.length, 2);
   assert.ok(assignments.permissions.length > 0);
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].keys.sort(), [
+  assert.deepEqual(Array.from(calls[0].keys).sort(), [
     'modules', 'operations', 'permissions', 'rolePermissions', 'roles'
   ].sort());
   assert.equal(calls[0].ttl, 60);
@@ -403,7 +403,7 @@ test('getAccessUsers reutiliza un índice compartido entre páginas, sedes y rol
   assert.equal(filtered.total, 10);
   assert.equal(filtered.items[0].persona_id, 'PER_010');
   assert.equal(materializationCount, 1, 'Cambiar sede, rol, página o búsqueda no reconstruye el índice.');
-  assert.deepEqual(indexSources.sort(), [
+  assert.deepEqual(Array.from(indexSources).sort(), [
     'Usuarios', 'UsuarioRol', 'personas', 'asignaciones',
     'estructura_local', 'estructura_org', 'locales', 'sede'
   ].sort());
@@ -535,7 +535,7 @@ test('getAccessUsers filtra localmente el índice compartido y excluye relacione
   });
   assert.equal(bySite.total, 2);
   assert.equal(bySite.items.length, 2);
-  assert.deepEqual(bySite.items.map(item => item.persona_id).sort(), ['PER_117', 'PER_118']);
+  assert.deepEqual(Array.from(bySite.items, item => item.persona_id).sort(), ['PER_117', 'PER_118']);
   assert.equal(bySite.items[0].sede_nombre, 'Lima');
   assert.ok(!bySite.items.some(item => ['PER_119', 'PER_120', 'PER_121'].includes(item.persona_id)));
   assert.equal(bySite.integrity.total, 3);
@@ -645,7 +645,7 @@ test('la consulta de usuarios reutiliza la vista materializada, pagina en servid
   assert.ok(implementation.includes('items.push(row)'));
   assert.ok(implementation.includes('totalPages'));
   assert.ok(implementation.includes('items.length < pageSize'));
-  assert.ok(implementation.includes('indexed.value.slice(offset, offset + pageSize)'));
+  assert.ok(implementation.includes('indexed.value.rows.forEach'));
   assert.ok(implementation.includes('if (!query)'));
   assert.doesNotMatch(implementation, /rows\\.splice|rows\\.slice/);
   const uiStart = accessUiSource.indexOf('function renderUsers(host) {');
@@ -1460,9 +1460,11 @@ test('la actualización de Asignación de permisos usa claves reales de la insta
   const end = accessSource.indexOf("if (tab === 'operations')", start);
   assert.ok(start >= 0 && end > start);
   const endpoint = accessSource.slice(start, end);
-  assert.match(endpoint, /const modules = _accessLoadSecurityRecords_\(s\.modules/);
-  assert.match(endpoint, /const permissions = _accessLoadSecurityRecords_\(s\.permissions/);
-  assert.match(endpoint, /const rolePermissions = _accessLoadSecurityRecords_\(s\.rolePermissions/);
+  assert.match(endpoint, /const catalogs = SUNARPCore\.listRecordsFromSourcesCached\(\[/);
+  assert.match(endpoint, /key: 'modules'/);
+  assert.match(endpoint, /key: 'permissions'/);
+  assert.match(endpoint, /key: 'rolePermissions'/);
+  assert.doesNotMatch(endpoint, /_accessLoadSecurityRecords_\(/);
   assert.match(endpoint, /modules: modules\.map/);
   assert.match(endpoint, /permissions: permissions\.map/);
   assert.match(endpoint, /rolePermissions: rolePermissions\.map/);
