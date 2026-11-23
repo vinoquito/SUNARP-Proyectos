@@ -1596,9 +1596,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       const finishLoading = ownsRequest ? beginAccessPanelLoading() : () => {};
       try {
         const result = await pending;
-        if (cacheGeneration !== state.userCacheGeneration) {
-          return loadUserPage(params);
-        }
+        if (cacheGeneration !== state.userCacheGeneration) return lastPageResult;
         if (currentRequest !== requestNumber) return lastPageResult;
         lastPageResult = {
           items: Array.isArray(result.items) ? result.items : [],
@@ -3007,9 +3005,7 @@ window.SUNARPAccessHistory = Object.freeze({
         const finishLoading = ownsRequest ? beginAccessPanelLoading() : () => {};
         try {
           const result = await pending;
-          if (cacheGeneration !== state.auditCacheGeneration) {
-            return loadData(params);
-          }
+          if (cacheGeneration !== state.auditCacheGeneration) return result;
           state.auditPageCache[cacheKey] = {
             timestamp: Date.now(),
             value: result
