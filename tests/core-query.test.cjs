@@ -96,7 +96,7 @@ test('queryRecords omite comprobaciones redundantes por registro para un único 
   assert.equal(result.records.length, 3);
 });
 
-test('queryRecords pagina distinctBy con retención acotada cuando distinctBy coincide con sortBy', () => {
+test('queryRecords conserva el conjunto autorizado completo para reutilizar páginas distinctBy', () => {
   const sandbox = createSandbox();
   const rows = [
     { assignment_id: 'A', status: 'ACTIVE', persona_id: 'P1', name: 'A', site_id: 'S1', allowed: true },
@@ -133,8 +133,8 @@ test('queryRecords pagina distinctBy con retención acotada cuando distinctBy co
   assert.equal(result.total, 4);
   assert.equal(result.records.length, 2);
   assert.deepEqual(Array.from(result.records, item => item.persona_id), ['P2', 'P3']);
-  assert.equal(result.retainedForPage, 3);
-  assert.equal(maxRetained, 3);
+  assert.equal(result.retainedForPage, 4);
+  assert.equal(maxRetained, 4);
 });
 
 test('queryRecords aplica AND, OR, autorización, orden y paginación antes de devolver datos', () => {
@@ -419,7 +419,7 @@ test('queryRecords valida las relaciones declaradas antes de devolver un resulta
   })), /scopeRecordById/);
 });
 
-test('queryRecords retiene solo offset + limit al ordenar páginas no distintas', () => {
+test('queryRecords conserva el conjunto autorizado completo al ordenar páginas no distintas', () => {
   const sandbox = createSandbox();
   const rows = Array.from({ length: 120 }, (_, index) => ({
     assignment_id: 'A' + String(index).padStart(3, '0'),
@@ -454,7 +454,114 @@ test('queryRecords retiene solo offset + limit al ordenar páginas no distintas'
   assert.equal(result.records.length, 5);
   assert.equal(result.records[0].assignment_id, 'A010');
   assert.equal(result.records[4].assignment_id, 'A014');
-  assert.equal(maximumRetained, 15);
+  assert.equal(maximumRetained, 120);
+  assert.equal(result.retainedForPage, 120);
+});
+
+test('queryRecords reutiliza la instantánea autorizada entre páginas sin repetir autorización', () => {
+  const sandbox = createSandbox();
+  let authorizationChecks = 0;
+  const originalScopeCheck = sandbox.context.authorizationIsRecordInScope;
+  sandbox.context.authorizationIsRecordInScope = (...args) => {
+    authorizationChecks++;
+    return originalScopeCheck(...args);
+  };
+  const sourceRef = { spreadsheetId: 'S', sheetName: 'Assignments' };
+  const base = {
+    idField: 'assignment_id',
+    filters: { status: 'ACTIVE' },
+    sortBy: 'name',
+    sortDirection: 'asc',
+    cacheSeconds: 3600,
+    candidateCacheSeconds: 3600,
+    authorization: sandbox.authorization()
+  };
+
+  const first = sandbox.context.queryRecords(sourceRef, Object.assign({}, base, {
+    offset: 0,
+    limit: 1
+  }));
+  const checksAfterFirstPage = authorizationChecks;
+  const second = sandbox.context.queryRecords(sourceRef, Object.assign({}, base, {
+    offset: 1,
+    limit: 1
+  }));
+
+  assert.equal(first.records[0].assignment_id, 'A');
+  assert.equal(first.authorizedSnapshotCacheHit, false);
+  assert.equal(second.records[0].assignment_id, 'D');
+  assert.equal(second.authorizedSnapshotCacheHit, true);
+  assert.equal(authorizationChecks, checksAfterFirstPage);
+  assert.equal(second.candidateCount, 3);
+  assert.equal(second.authorizedCount, 2);
+});
+
+test('la instantánea autorizada queda aislada por identidad y cambia al cambiar la generación', () => {
+  const sandbox = createSandbox();
+  let generation = 'GEN-1';
+  sandbox.context._coreGetSourceGeneration_ = () => generation;
+  let authorizationChecks = 0;
+  const originalScopeCheck = sandbox.context.authorizationIsRecordInScope;
+  sandbox.context.authorizationIsRecordInScope = (...args) => {
+    authorizationChecks++;
+    return originalScopeCheck(...args);
+  };
+  const sourceRef = { spreadsheetId: 'S', sheetName: 'Assignments' };
+  const base = {
+    idField: 'assignment_id',
+    filters: { status: 'ACTIVE' },
+    offset: 0,
+    limit: 1,
+    authorization: sandbox.authorization(),
+    cacheSeconds: 300
+  };
+  sandbox.context.queryRecords(sourceRef, base);
+  const checksAfterFirst = authorizationChecks;
+  const sameIdentity = sandbox.context.queryRecords(sourceRef, Object.assign({}, base, {
+    offset: 1
+  }));
+  assert.equal(sameIdentity.authorizedSnapshotCacheHit, true);
+  assert.equal(authorizationChecks, checksAfterFirst);
+
+  const otherIdentity = sandbox.context.queryRecords(sourceRef, Object.assign({}, base, {
+    authorization: sandbox.authorization('P2')
+  }));
+  assert.equal(otherIdentity.authorizedSnapshotCacheHit, false);
+  assert.ok(authorizationChecks > checksAfterFirst);
+
+  generation = 'GEN-2';
+  const refreshed = sandbox.context.queryRecords(sourceRef, base);
+  assert.equal(refreshed.authorizedSnapshotCacheHit, false);
+});
+
+test('las cachés de consultas se limitan a 60 segundos para acotar cambios externos a Core', () => {
+  const sandbox = createSandbox();
+  const stored = [];
+  const originalPut = sandbox.context.putCachedValue;
+  sandbox.context.putCachedValue = (key, value, ttl) => {
+    stored.push({ key, ttl });
+    return originalPut(key, value);
+  };
+  sandbox.context.queryRecords(
+    { spreadsheetId: 'S', sheetName: 'Assignments' },
+    {
+      idField: 'assignment_id',
+      filters: { status: 'ACTIVE' },
+      authorization: sandbox.authorization(),
+      cacheSeconds: 3600,
+      candidateCacheSeconds: 3600
+    }
+  );
+  assert.ok(stored.length >= 2);
+  assert.ok(stored.every(item => item.ttl === 60));
+});
+
+test('la hidratación compara fechas serializadas en caché con valores Date de Sheets', () => {
+  const sandbox = createSandbox();
+  const matches = sandbox.context._coreQueryProjectionValueMatches_;
+  assert.equal(typeof matches, 'function');
+  assert.equal(matches(new Date('2026-11-23T10:00:00.000Z'), '2026-11-23T10:00:00.000Z'), true);
+  assert.equal(matches(new Date('2026-11-23T10:00:00.000Z'), '2026-11-23T11:00:00.000Z'), false);
 });
 
 test('queryRecords reutiliza candidatos entre páginas con la misma proyección y prioriza el filtro de ámbito', () => {
@@ -614,14 +721,6 @@ test('la nueva generación de la fuente invalida candidatos y resultados derivad
   assert.equal(sourceReads, 2);
 });
 
-
-test('la hidratación compara fechas serializadas en caché con valores Date de Sheets', () => {
-  const sandbox = createSandbox();
-  const matches = sandbox.context._coreQueryProjectionValueMatches_;
-  assert.equal(typeof matches, 'function');
-  assert.equal(matches(new Date('2026-11-23T10:00:00.000Z'), '2026-11-23T10:00:00.000Z'), true);
-  assert.equal(matches(new Date('2026-11-23T10:00:00.000Z'), '2026-11-23T11:00:00.000Z'), false);
-});
 
 test('queryRecords proyecta columnas de evaluación y solo hidrata la página autorizada', () => {
   const sandbox = createSandbox();
