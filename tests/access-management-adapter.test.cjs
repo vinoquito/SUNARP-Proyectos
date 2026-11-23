@@ -1462,7 +1462,7 @@ test('el contexto de autorización se cachea por identidad y depende de todas la
   for (const sheet of ['users', 'modules', 'roles', 'userRoles', 'permissions', 'rolePermissions', 'scopes']) {
     assert.match(source, new RegExp('_accessSecuritySource_\\(sheets\\.' + sheet + '\\)'));
   }
-  assert.match(source, /\n      60\n/);
+  assert.match(source, /_accessBuildAuthContext_\(email\),\s*60\s*\)/);
 });
 
 test('la autorización ordinaria consulta solo relaciones activas y proyecta los campos mínimos de seguridad', () => {
