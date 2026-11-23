@@ -68,6 +68,7 @@ function createSandbox() {
     },
     structures: [],
     locals: [],
+    catalogVersion: 'FIXTURE-1',
     moduleId: 'MOD_DIRECTORY',
     permissionCode: 'DIRECTORY_READ'
   });
@@ -199,6 +200,9 @@ test('queryRecords exige catálogos para ámbitos no globales y no cachea sin ve
   const scoped = sandbox.authorization('P1', ['DIRECTORY_READ'], [
     { tipo_ambito_id: 'SEDE', referencia_id: 'S1' }
   ]);
+  delete scoped.structures;
+  delete scoped.locals;
+  delete scoped.catalogVersion;
   assert.throws(() => sandbox.context.queryRecords(sourceRef, {
     idField: 'assignment_id',
     filters: { status: 'ACTIVE' },
@@ -841,6 +845,7 @@ test('queryRecords elige como columna conductora un filtro no vacío aunque el p
   const directLocalRecord = {
     assignment_id: 'LOCAL_1',
     status: 'ACTIVE',
+    site_id: 'S1',
     estructura_local_id: '',
     local_id: 'L1',
     persona_id: 'P5',
