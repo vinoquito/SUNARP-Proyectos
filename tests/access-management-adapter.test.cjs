@@ -1970,15 +1970,16 @@ test('el bootstrap de accesos agrupa catálogos del libro de Seguridad en una le
 
 
 
-test('la jerarquía del Directorio recorre los ancestros contextuales sin referencias indefinidas', () => {
+test('la jerarquía del Directorio permite seleccionar ancestros reales y muestra rutas completas', () => {
   const start = directoryUiSource.indexOf('function appendHierarchyLevel(');
   const end = directoryUiSource.indexOf('function renderHierarchyFilters()', start);
   assert.ok(start >= 0 && end > start);
   const implementation = directoryUiSource.slice(start, end);
-  assert.ok(implementation.includes('sets.contextualIds.has(key(node.id))'));
-  assert.ok(implementation.includes('!sets.selectableIds.has(key(node.id))'));
-  assert.equal(implementation.includes('contextual.has(key(node.id))'), false);
-  assert.equal(implementation.includes('selectable.has(key(node.id))'), false);
+  assert.ok(implementation.includes('sets.selectableIds.has(key(node.id))'));
+  assert.ok(implementation.includes('_directoryGetHierarchyDisplayPath_('));
+  assert.equal(implementation.includes('contextualIds'), false);
+  assert.equal(implementation.includes('(contexto)'), false);
+  assert.equal(implementation.includes('option.disabled'), false);
 });
 
 test('los ámbitos recorren Sede -> Local -> Unidad orgánica filtrando cada nivel por su padre', () => {
@@ -2028,7 +2029,8 @@ test('los filtros de Información de personal exigen seleccionar cada padre ante
   const hierarchyEnd = directoryUiSource.indexOf('function getHierarchyNodes(parentId)', hierarchyStart);
   const hierarchy = directoryUiSource.slice(hierarchyStart, hierarchyEnd);
   assert.ok(hierarchy.includes('if (!siteId || siteId !== state.activeSedeId || !localId)'));
-  assert.ok(hierarchy.includes('return { selectableIds: new Set(), contextualIds: new Set() }'));
+  assert.ok(hierarchy.includes('return { selectableIds: new Set() }'));
+  assert.ok(hierarchy.includes('_directoryBuildHierarchyFilterSets_('));
 
   const renderStart = directoryUiSource.indexOf('function renderHierarchyFilters()');
   const renderEnd = directoryUiSource.indexOf('function hasAvailableFilterSelection(filter)', renderStart);
