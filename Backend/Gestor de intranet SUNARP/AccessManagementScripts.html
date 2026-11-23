@@ -19,6 +19,10 @@
     userFilters: { sedeId: '', roleId: '' },
     userPageCache: {},
     auditPageCache: {},
+    userPagePromises: {},
+    auditPagePromises: {},
+    userCacheGeneration: 0,
+    auditCacheGeneration: 0,
     userListParams: { page: 1, pageSize: 10, search: '' },
     auditListParams: { page: 1, pageSize: 10, search: '', filters: {} },
     selectedAssignmentRoleId: ''
@@ -1582,9 +1586,19 @@ function createAccessStatusCell(row, method, id, entityLabel) {
       }
 
       const currentRequest = ++requestNumber;
-      const finishLoading = beginAccessPanelLoading();
+      const cacheGeneration = state.userCacheGeneration;
+      let pending = state.userPagePromises[cacheKey];
+      const ownsRequest = !pending;
+      if (!pending) {
+        pending = rpc('getAccessUsers', request);
+        state.userPagePromises[cacheKey] = pending;
+      }
+      const finishLoading = ownsRequest ? beginAccessPanelLoading() : () => {};
       try {
-        const result = await rpc('getAccessUsers', request);
+        const result = await pending;
+        if (cacheGeneration !== state.userCacheGeneration) {
+          return loadUserPage(params);
+        }
         if (currentRequest !== requestNumber) return lastPageResult;
         lastPageResult = {
           items: Array.isArray(result.items) ? result.items : [],
@@ -1603,6 +1617,9 @@ function createAccessStatusCell(row, method, id, entityLabel) {
         return lastPageResult;
       } finally {
         finishLoading();
+        if (state.userPagePromises[cacheKey] === pending) {
+          delete state.userPagePromises[cacheKey];
+        }
       }
     }
 
@@ -2979,9 +2996,19 @@ window.SUNARPAccessHistory = Object.freeze({
         const cached = state.auditPageCache[cacheKey];
         if (cached && Date.now() - cached.timestamp < 120000) return cached.value;
 
-        const finishLoading = beginAccessPanelLoading();
+        const cacheGeneration = state.auditCacheGeneration;
+        let pending = state.auditPagePromises[cacheKey];
+        const ownsRequest = !pending;
+        if (!pending) {
+          pending = rpc('getAccessAuditHistory', request);
+          state.auditPagePromises[cacheKey] = pending;
+        }
+        const finishLoading = ownsRequest ? beginAccessPanelLoading() : () => {};
         try {
-          const result = await rpc('getAccessAuditHistory', request);
+          const result = await pending;
+          if (cacheGeneration !== state.auditCacheGeneration) {
+            return loadData(params);
+          }
           state.auditPageCache[cacheKey] = {
             timestamp: Date.now(),
             value: result
@@ -2989,6 +3016,9 @@ window.SUNARPAccessHistory = Object.freeze({
           return result;
         } finally {
           finishLoading();
+          if (state.auditPagePromises[cacheKey] === pending) {
+            delete state.auditPagePromises[cacheKey];
+          }
         }
       },
 
@@ -3251,6 +3281,10 @@ window.SUNARPAccessHistory = Object.freeze({
       const tab = state.activeTab;
       state.auditPageCache = {};
       state.userPageCache = {};
+      state.auditPagePromises = {};
+      state.userPagePromises = {};
+      state.auditCacheGeneration += 1;
+      state.userCacheGeneration += 1;
 
       if (tab === 'users') {
         if (state.userListController) {
