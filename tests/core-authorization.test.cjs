@@ -50,6 +50,47 @@ test('Core separa la resolución genérica de identidad del motor de permisos y 
   assert.match(authorizationEngine, /item\.modulo_id/);
 });
 
+test('el evaluador de ámbito reutilizable conserva la semántica y permite evaluar lotes', () => {
+  const sandbox = vm.createContext({ console: { log: () => {}, warn: () => {} } });
+  vm.runInContext(coreSource, sandbox);
+  const context = {
+    authenticated: true,
+    personaId: 'PER_1',
+    moduleAccess: [{
+      modulo_id: 'MOD_1',
+      scopes: [{ tipo_ambito_id: 'ESTRUCTURA_ORG', referencia_id: 'ORG_1', incluir_descendientes: true }]
+    }]
+  };
+  const structures = [
+    { id: 'ORG_1', parent_id: '', sede_id: 'SEDE_1', active: true },
+    { id: 'ORG_2', parent_id: 'ORG_1', sede_id: 'SEDE_1', active: true },
+    { id: 'ORG_3', parent_id: 'ORG_2', sede_id: 'SEDE_1', active: true },
+    { id: 'ORG_4', parent_id: '', sede_id: 'SEDE_2', active: true }
+  ];
+  const locals = [
+    { id: 'LOC_1', sede_id: 'SEDE_1', active: true },
+    { id: 'LOC_2', sede_id: 'SEDE_2', active: true }
+  ];
+  const checker = sandbox._coreAuthCreateRecordScopeChecker_(
+    context, 'MOD_1', structures, {}, locals
+  );
+  const records = [
+    { estructura_id: 'ORG_1', local_id: 'LOC_1' },
+    { estructura_id: 'ORG_3', local_id: 'LOC_1' },
+    { estructura_id: 'ORG_4', local_id: 'LOC_2' },
+    { estructura_id: 'ORG_3', local_id: 'LOC_2' },
+    { estructura_id: '', local_id: 'LOC_1' },
+    { estructura_id: '', local_id: 'LOC_MISSING' }
+  ];
+  records.forEach(record => {
+    assert.equal(
+      checker(record),
+      sandbox.authorizationIsRecordInScope(context, 'MOD_1', record, structures, {}, locals)
+    );
+  });
+  assert.deepEqual(records.map(checker), [true, true, false, false, false, false]);
+});
+
 test('las comprobaciones de permisos y ámbitos exigen modulo_id', () => {
   assert.match(
     coreSource,
