@@ -926,7 +926,7 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
 
     if (selectedSiteId) {
       relationIds = relationIds.filter(id => {
-        const relation = relations.find(item => _directoryKey_(item.id) === id);
+        const relation = relationMap.get(id);
         const structure = relation && structureMap.get(_directoryKey_(relation.estructura_id));
         return structure && _directoryKey_(structure.sede_id) === selectedSiteId;
       });
@@ -938,7 +938,7 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
 
     if (selectedStructureIds) {
       relationIds = relationIds.filter(id => {
-        const relation = relations.find(item => _directoryKey_(item.id) === id);
+        const relation = relationMap.get(id);
         return relation && selectedStructureIds.has(_directoryKey_(relation.estructura_id));
       });
       // El filtro de unidad orgánica no incluye asignaciones directas a locales.
