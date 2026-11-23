@@ -1336,19 +1336,55 @@ function _directoryGetAuthorizedSedeIds_(authorization, sedes) {
 function getDirectoryInitialData() {
   const startedAt = Date.now();
   const authorizationStartedAt = Date.now();
-  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
+  const moduleId = 'MOD_INFO_PERSONAL';
+  const auth = requirePermission_('INFORMACION_PERSONAL_VER', moduleId);
   const authorizationElapsed = Date.now() - authorizationStartedAt;
 
   // El ingreso solo necesita las sedes disponibles para la identidad actual.
-  // No lee asignaciones, personas, relaciones estructura-local ni catálogos
-  // que solo se necesitan después de seleccionar una sede.
-  const catalogStartedAt = Date.now();
-  const sedesResult = SUNARPCore.listRecordsFromSourcesCached([{
+  // EstructuraOrg o locales solo se leen cuando un ámbito requiere resolver
+  // una referencia de ese tipo. Para SEDE y TOTAL basta el catálogo de sedes.
+  const moduleAccess = (auth.moduleAccess || []).find(item =>
+    _directoryKey_(item.modulo_id) === moduleId
+  );
+  const scopes = moduleAccess && Array.isArray(moduleAccess.scopes)
+    ? moduleAccess.scopes
+    : [];
+  const scopeTypes = new Set(scopes.map(scope =>
+    _directoryText_(scope.tipo_ambito_id).toUpperCase()
+  ));
+  const catalogRequests = [{
     key: 'sedes',
     source: _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.sedes),
     requiredHeaders: ['id', 'name']
-  }], DIRECTORY_CATALOG_CACHE_TTL);
-  const allSedes = sedesResult.sedes || [];
+  }];
+
+  if (scopeTypes.has('ESTRUCTURA_ORG')) {
+    catalogRequests.push({
+      key: 'structures',
+      source: getIntranetDataSource('SECURITY', 'EstructuraOrg', 1),
+      requiredHeaders: ['id', 'parent_id', 'sede_id']
+    });
+  }
+  if (scopeTypes.has('LOCAL')) {
+    catalogRequests.push({
+      key: 'locals',
+      source: _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.locales),
+      requiredHeaders: ['id', 'sede_id']
+    });
+  }
+
+  const catalogStartedAt = Date.now();
+  const catalogs = SUNARPCore.listRecordsFromSourcesCached(
+    catalogRequests,
+    DIRECTORY_CATALOG_CACHE_TTL
+  );
+  const authorization = {
+    auth,
+    moduleId,
+    structures: catalogs.structures || [],
+    locals: catalogs.locals || []
+  };
+  const allSedes = catalogs.sedes || [];
   const authorizedSedeIds = _directoryGetAuthorizedSedeIds_(authorization, allSedes);
   const sedes = allSedes
     .filter(item => _directoryIsActive_(item) && authorizedSedeIds.has(_directoryKey_(item.id)))
@@ -1365,6 +1401,7 @@ function getDirectoryInitialData() {
     siteCatalog: catalogElapsed,
     total: Date.now() - startedAt,
     authorizedSites: sedes.length,
+    authorizationCatalogs: catalogRequests.map(item => item.key),
     assignmentsLoaded: 0
   }));
 
