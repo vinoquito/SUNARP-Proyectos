@@ -1840,6 +1840,18 @@ test('el catálogo de tipos de documento se carga al abrir Nueva cuenta y no en 
   assert.doesNotMatch(bootstrap, /_accessLoadDocumentTypes_\(/);
 });
 
+test('el contexto del Directorio reutiliza catálogos ensamblados por generación de fuente', () => {
+  const start = directorySource.indexOf('function _directoryLoadContext_(options)');
+  const end = directorySource.indexOf('function _directoryInvalidateCache_()', start);
+  const implementation = directorySource.slice(start, end);
+  assert.match(implementation, /getOrBuildCachedValue/);
+  assert.match(implementation, /directory-context:v1:/);
+  assert.match(implementation, /sources,/);
+  assert.match(implementation, /validateSnapshot: false/);
+  assert.match(implementation, /_directoryValidateSnapshot_\(context, options\)/);
+  assert.match(implementation, /DIRECTORY_CATALOG_CACHE_TTL/);
+});
+
 test('Información de personal presenta filtros en cascada Sede, Local, Unidad orgánica y Cargo', () => {
   assert.match(directoryViewSource, /id="directorySedeFilter"/);
   assert.match(directoryViewSource, /id="directoryLocalFilter"/);
