@@ -591,13 +591,24 @@ function queryRecords(source, options) {
   distinctFields.forEach(field => { distinctValueSets[field] = new Set(); });
   distinctCountFields.forEach(field => { distinctCountSets[field] = new Set(); });
   let authorizedCount = 0;
-  const isRecordInScope = _coreAuthCreateRecordScopeChecker_(
-    validated.context,
-    validated.moduleId,
-    authorization.structures || [],
-    authorization.fields || {},
-    authorization.locals || []
-  );
+  // Core v13 prepara el evaluador una sola vez por lote. El fallback conserva
+  // compatibilidad temporal con consumidores que aún ejecutan Core v12.
+  const isRecordInScope = typeof _coreAuthCreateRecordScopeChecker_ === 'function'
+    ? _coreAuthCreateRecordScopeChecker_(
+        validated.context,
+        validated.moduleId,
+        authorization.structures || [],
+        authorization.fields || {},
+        authorization.locals || []
+      )
+    : record => authorizationIsRecordInScope(
+        validated.context,
+        validated.moduleId,
+        record,
+        authorization.structures || [],
+        authorization.fields || {},
+        authorization.locals || []
+      );
 
   candidateRows.forEach(candidate => {
     const record = _coreQueryRecordValue_(candidate);
