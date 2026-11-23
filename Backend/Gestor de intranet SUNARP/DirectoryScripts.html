@@ -21,10 +21,13 @@ const DirectoryPage = (() => {
   const state = {
     records: [],
     catalogs: null,
+    authorizedSedes: [],
     table: null,
     hierarchyPath: [],
-    filteredCargoOptions: null,
-    cargoOptionsNeedRefresh: false,
+    activeSedeId: '',
+    siteDataCache: new Map(),
+    siteRequestId: 0,
+    siteLoading: false,
     loading: false,
     loaded: false,
     eventsBound: false,
@@ -198,60 +201,27 @@ const DirectoryPage = (() => {
     const sedeId = elements.sedeFilter
       ? key(elements.sedeFilter.value)
       : '';
-
     const localId = elements.localFilter
       ? key(elements.localFilter.value)
       : '';
-
     const cargoId = elements.cargoFilter
       ? key(elements.cargoFilter.value)
       : '';
 
     return state.records.filter(record => {
+      const recordSedeId = key(record.filter_sede_id || record.sede_id);
+      const recordLocalId = key(record.filter_local_id || record.local_id);
 
-      if (
-        !excluded.has('sede') &&
-        sedeId &&
-        key(record.sede_id) !== sedeId
-      ) {
-        return false;
-      }
-
-      if (
-        !excluded.has('local') &&
-        localId &&
-        key(record.local_id) !== localId
-      ) {
-        return false;
-      }
-
-      if (
-        !excluded.has('cargo') &&
-        cargoId &&
-        key(record.cargo_id) !== cargoId
-      ) {
-        return false;
-      }
-
-      if (
-        !excluded.has('hierarchy') &&
-        !recordMatchesHierarchyPath(
-          record,
-          state.hierarchyPath
-        )
-      ) {
-        return false;
-      }
-
+      if (!excluded.has('sede') && sedeId && recordSedeId !== sedeId) return false;
+      if (!excluded.has('local') && localId && recordLocalId !== localId) return false;
+      if (!excluded.has('cargo') && cargoId && key(record.cargo_id) !== cargoId) return false;
+      if (!excluded.has('hierarchy') &&
+          !recordMatchesHierarchyPath(record, state.hierarchyPath)) return false;
       return true;
     });
   }
 
 
-  /**
-   * Obtiene únicamente los elementos del catálogo
-   * que están siendo utilizados por los registros.
-   */
   function getUsedCatalogItems(records, field, catalog) {
     const usedIds = new Set(
       records
@@ -306,35 +276,38 @@ const DirectoryPage = (() => {
    */
   function populateSedeFilter() {
     const select = getElements().sedeFilter;
-    if (!select || !state.catalogs) return;
-    const contract = state.catalogs.filterContract || {};
-    const selectableIds = new Set(contract.selectable && contract.selectable.sedeIds || []);
-    const sedes = (state.catalogs.sedes || [])
-      .filter(item => !contract.selectable || selectableIds.has(key(item.id)))
-      .slice().sort(sortByName);
+    if (!select) return;
+    const sedes = (state.authorizedSedes || [])
+      .filter(item => isActive(item))
+      .slice()
+      .sort(sortByName);
     updateFilterOptions(select, 'Selecciona una sede', sedes);
-    if (sedes.length === 1) select.value = key(sedes[0].id);
+    // La selección siempre es explícita, incluso cuando solo existe una sede.
+    select.disabled = sedes.length === 0;
     const wrapper = select.closest('.sunarp-filter');
-    if (wrapper) wrapper.hidden = sedes.length <= 1;
+    if (wrapper) wrapper.hidden = false;
   }
+
 
   function populateLocalFilter() {
     const select = getElements().localFilter;
-    if (!select || !state.catalogs) return;
-    const contract = state.catalogs.filterContract || {};
-    const selectableIds = new Set(contract.selectable && contract.selectable.localIds || []);
+    if (!select) return;
     const siteId = key(getElements().sedeFilter && getElements().sedeFilter.value);
-    if (!siteId) {
+
+    if (!siteId || siteId !== state.activeSedeId) {
       updateFilterOptions(select, 'Selecciona primero una sede', []);
       select.disabled = true;
       return;
     }
-    const locals = (state.catalogs.locales || [])
-      .filter(item =>
-        (!contract.selectable || selectableIds.has(key(item.id))) &&
-        key(item.sede_id) === siteId
-      )
-      .slice().sort(sortByName);
+
+    const options = new Map();
+    state.records.forEach(record => {
+      const id = key(record.filter_local_id || record.local_id);
+      const recordSedeId = key(record.filter_sede_id || record.sede_id);
+      if (!id || recordSedeId !== siteId || options.has(id)) return;
+      options.set(id, { id, name: key(record.local_name) || id });
+    });
+    const locals = Array.from(options.values()).sort(sortByName);
     updateFilterOptions(
       select,
       locals.length ? 'Selecciona un local' : 'No hay locales disponibles en esta sede',
@@ -343,13 +316,15 @@ const DirectoryPage = (() => {
     select.disabled = locals.length === 0;
   }
 
+
   function populateCargoFilter() {
     const select = getElements().cargoFilter;
-    if (!select || !state.catalogs) return;
+    if (!select) return;
     const elements = getElements();
     const siteId = key(elements.sedeFilter && elements.sedeFilter.value);
     const localId = key(elements.localFilter && elements.localFilter.value);
-    if (!siteId || !localId) {
+
+    if (!siteId || siteId !== state.activeSedeId || !localId) {
       updateFilterOptions(
         select,
         !siteId ? 'Selecciona primero una sede' : 'Selecciona primero un local',
@@ -358,20 +333,14 @@ const DirectoryPage = (() => {
       select.disabled = true;
       return;
     }
-    if (!Array.isArray(state.filteredCargoOptions)) {
-      updateFilterOptions(
-        select,
-        state.cargoOptionsNeedRefresh ? 'Consultando cargos...' : 'Selecciona un local',
-        []
-      );
-      select.disabled = true;
-      return;
-    }
-    const contract = state.catalogs.filterContract || {};
-    const selectableIds = new Set(contract.selectable && contract.selectable.cargoIds || []);
-    const cargos = state.filteredCargoOptions
-      .filter(item => !contract.selectable || selectableIds.has(key(item.id)))
-      .slice().sort(sortByName);
+
+    const options = new Map();
+    getRecordsForFilters(new Set(['cargo'])).forEach(record => {
+      const id = key(record.cargo_id);
+      if (!id || options.has(id)) return;
+      options.set(id, { id, name: key(record.cargo_name) || id });
+    });
+    const cargos = Array.from(options.values()).sort(sortByName);
     updateFilterOptions(
       select,
       cargos.length ? 'Todos los cargos de este local' : 'No hay cargos para esta selección',
@@ -380,64 +349,36 @@ const DirectoryPage = (() => {
     select.disabled = cargos.length === 0;
   }
 
-  /* =====================================================
-     4. FILTROS JERÁRQUICOS DE LA TABLA
-     ===================================================== */
 
-
-  /**
-   * Obtiene las unidades orgánicas que tienen registros
-   * asociados y corresponden al nivel jerárquico indicado.
-   *
-   * Incluye los órganos superiores necesarios para llegar
-   * a las unidades que sí tienen servidores registrados.
-   */
   function getHierarchyFilterSets() {
-    const contract = state.catalogs && state.catalogs.filterContract || {};
-    const hasSelectableContract = Boolean(contract.selectable);
-    const allSelectable = new Set(
-      contract.selectable && contract.selectable.structureIds || []
-    );
+    const elements = getElements();
+    const siteId = key(elements.sedeFilter && elements.sedeFilter.value);
+    const localId = key(elements.localFilter && elements.localFilter.value);
     const structures = state.catalogs && state.catalogs.estructuraOrg || [];
     const structureMap = new Map(structures.map(item => [key(item.id), item]));
-    const siteId = key(getElements().sedeFilter && getElements().sedeFilter.value);
-    const localId = key(getElements().localFilter && getElements().localFilter.value);
-    const allowedLocalIds = new Set(contract.selectable && contract.selectable.localIds || []);
-    const validLocal = (state.catalogs && state.catalogs.locales || []).some(item =>
-      key(item.id) === localId &&
-      key(item.sede_id) === siteId &&
-      (!contract.selectable || allowedLocalIds.has(key(item.id)))
-    );
-    if (!siteId || !localId || !validLocal) {
+
+    if (!siteId || siteId !== state.activeSedeId || !localId) {
       return { selectableIds: new Set(), contextualIds: new Set() };
     }
-    let selectableIds = new Set(
-      structures.filter(node => !hasSelectableContract || allSelectable.has(key(node.id)))
-        .map(node => key(node.id))
-    );
 
-    if (siteId) {
-      selectableIds = new Set(Array.from(selectableIds).filter(id => {
-        const node = structureMap.get(id);
-        return node && key(node.sede_id) === siteId;
-      }));
-    }
-
-    if (localId) {
-      const linkedStructureIds = new Set((state.catalogs.estructuraLocal || [])
-        .filter(relation => key(relation.local_id) === localId)
-        .map(relation => key(relation.estructura_id)));
-      selectableIds = new Set(Array.from(selectableIds).filter(id =>
-        linkedStructureIds.has(id)
-      ));
-    }
+    const selectableIds = new Set();
+    state.records.forEach(record => {
+      const recordSiteId = key(record.filter_sede_id || record.sede_id);
+      const recordLocalId = key(record.filter_local_id || record.local_id);
+      const structureId = key(record.estructura_id);
+      if (recordSiteId === siteId && recordLocalId === localId && structureId) {
+        selectableIds.add(structureId);
+      }
+    });
 
     const contextualIds = new Set();
     selectableIds.forEach(id => {
       let current = structureMap.get(id);
       const visited = new Set();
-      while (current && key(current.parent_id) && !visited.has(key(current.id))) {
-        visited.add(key(current.id));
+      while (current && key(current.parent_id)) {
+        const currentId = key(current.id);
+        if (!currentId || visited.has(currentId)) break;
+        visited.add(currentId);
         const parentId = key(current.parent_id);
         if (!selectableIds.has(parentId)) contextualIds.add(parentId);
         current = structureMap.get(parentId);
@@ -446,6 +387,7 @@ const DirectoryPage = (() => {
 
     return { selectableIds, contextualIds };
   }
+
 
   function getHierarchyNodes(parentId) {
     const sets = getHierarchyFilterSets();
@@ -594,23 +536,28 @@ const DirectoryPage = (() => {
    */
   function renderHierarchyFilters() {
     const container = getElements().hierarchyFilters;
-    if (!container || !state.catalogs) return;
+    if (!container) return;
     container.replaceChildren();
+
     const elements = getElements();
     const siteId = key(elements.sedeFilter && elements.sedeFilter.value);
     const localId = key(elements.localFilter && elements.localFilter.value);
-    const validLocal = (state.catalogs.locales || []).some(item =>
-      key(item.id) === localId && key(item.sede_id) === siteId
+    const validLocal = state.records.some(record =>
+      key(record.filter_sede_id || record.sede_id) === siteId &&
+      key(record.filter_local_id || record.local_id) === localId
     );
-    if (!siteId || !localId || !validLocal) {
+
+    if (!siteId || siteId !== state.activeSedeId || !localId || !validLocal) {
       state.hierarchyPath = [];
       container.hidden = true;
       return;
     }
+
     appendHierarchyLevel('', 0);
     container.hidden = container.childElementCount === 0;
     if (container.hidden) state.hierarchyPath = [];
   }
+
 
   function hasAvailableFilterSelection(filter) {
     const elements = getElements();
@@ -645,32 +592,18 @@ const DirectoryPage = (() => {
    */
   function refreshDependentFilters(changedFilter) {
     const elements = getElements();
-    const parentChanged = ['sede', 'local', 'hierarchy'].includes(changedFilter);
+    if (changedFilter === 'sede') return;
 
-    if (changedFilter === 'sede') {
-      if (elements.localFilter) elements.localFilter.value = '';
-      state.hierarchyPath = [];
-    } else if (changedFilter === 'local') {
-      state.hierarchyPath = [];
-    }
+    const parentChanged = ['local', 'hierarchy'].includes(changedFilter);
+    if (changedFilter === 'local') state.hierarchyPath = [];
+    if (parentChanged && elements.cargoFilter) elements.cargoFilter.value = '';
 
-    if (parentChanged) {
-      if (elements.cargoFilter) elements.cargoFilter.value = '';
-      state.filteredCargoOptions = null;
-      state.cargoOptionsNeedRefresh = true;
-    }
-
-    populateSedeFilter();
     populateLocalFilter();
     populateCargoFilter();
     renderHierarchyFilters();
     renderTable();
   }
 
-
-  /* =====================================================
-     5. FILTRADO Y PREPARACIÓN DE REGISTROS
-     ===================================================== */
 
   function getFilteredRecords() {
     return getRecordsForFilters(new Set());
@@ -714,208 +647,81 @@ const DirectoryPage = (() => {
 
     
   function renderTable() {
-
     const container = getElements().table;
-
     if (!container) return;
 
-    if (
-      !window.SUNARPUI ||
-      typeof SUNARPUI.createDataTable !== 'function'
-    ) {
-      throw new Error(
-        'No está disponible el componente DataTable de SUNARP UI.'
-      );
+    if (!state.activeSedeId) {
+      if (state.table) {
+        state.table.destroy();
+        state.table = null;
+      }
+      container.textContent = 'Selecciona una sede para consultar la información de personal.';
+      return;
     }
 
-    // El servicio ya entrega la primera página durante el bootstrap.
-    // Consumirla aquí evita repetir inmediatamente la misma consulta al servidor.
-    const initialPage = state.initialPage;
-    state.initialPage = null;
+    if (!window.SUNARPUI || typeof SUNARPUI.createDataTable !== 'function') {
+      throw new Error('No está disponible el componente DataTable de SUNARP UI.');
+    }
 
     const options = {
-
       containerId: 'directoryTableContainer',
-
-      mode: 'server',
-      initialData: initialPage || null,
-
-      loadData: async params => {
-        const initialElements = getElements();
-        const isUnfilteredFirstPage =
-          initialPage &&
-          Number(params.page || 1) === 1 &&
-          Number(params.pageSize || 10) === 10 &&
-          !String(params.search || '').trim() &&
-          !(initialElements.sedeFilter && initialElements.sedeFilter.value) &&
-          !(initialElements.localFilter && initialElements.localFilter.value) &&
-          !(initialElements.cargoFilter && initialElements.cargoFilter.value) &&
-          !state.hierarchyPath.length;
-
-        if (isUnfilteredFirstPage) {
-          return initialPage;
-        }
-
-        const requestStartedAt = performance.now();
-        const elements = getElements();
-        const includeCargoOptions = state.cargoOptionsNeedRefresh;
-        const result = await callServer('listDirectoryAssignments', {
-          active: 'all',
-          page: params.page,
-          pageSize: params.pageSize,
-          search: params.search,
-          sedeId: elements.sedeFilter ? elements.sedeFilter.value : '',
-          localId: elements.localFilter ? elements.localFilter.value : '',
-          cargoId: elements.cargoFilter ? elements.cargoFilter.value : '',
-          estructuraId: state.hierarchyPath.length
-            ? state.hierarchyPath[state.hierarchyPath.length - 1]
-            : '',
-          includeCargoOptions
-        });
-        if (includeCargoOptions) {
-          state.filteredCargoOptions = Array.isArray(result.cargoOptions)
-            ? result.cargoOptions
-            : [];
-          state.cargoOptionsNeedRefresh = false;
-          populateCargoFilter();
-        }
-        const elapsed = performance.now() - requestStartedAt;
-        console.info('[DirectoryPage] DataTable server request ms:', Math.round(elapsed), {
-          page: params.page,
-          rows: (result.records || []).length,
-          total: Number(result.total) || 0,
-          initialPageWasProvided: Boolean(state.initialPage)
-        });
-        return {
-          items: prepareRows(result.records || []),
-          total: Number(result.total) || 0
-        };
-      },
-
+      mode: 'client',
+      data: prepareRows(getFilteredRecords()),
+      emptyMessage: 'No se encontraron registros para los filtros seleccionados.',
       columns: [
-
-        {
-          key: 'servidor',
-          label: 'Servidor',
-          searchable: true
-        },
-
-        {
-          key: 'cargo_name',
-          label: 'Cargo',
-          searchable: true
-        },
-
-        {
-          key: 'anexo_display',
-          label: 'Anexo',
-          align: 'center',
-          searchable: true
-        },
-
-        {
-          key: 'dependencia_display',
-          label: 'Dependencia',
-          searchable: true
-        },
-
-        {
-          key: 'local_display',
-          label: 'Local',
-          searchable: true
-        },
-
+        { key: 'servidor', label: 'Servidor', searchable: true },
+        { key: 'cargo_name', label: 'Cargo', searchable: true },
+        { key: 'anexo_display', label: 'Anexo', align: 'center', searchable: true },
+        { key: 'dependencia_display', label: 'Dependencia', searchable: true },
+        { key: 'local_display', label: 'Local', searchable: true },
         {
           key: 'active',
           label: 'Estado',
           searchable: false,
-
           render: (value, record) => {
-
             const active = isActive(record);
-
             const wrapper = document.createElement('div');
-
-            wrapper.className =
-              'sunarp-datatable-status access-status-cell';
-
-            // Badge de estado.
+            wrapper.className = 'sunarp-datatable-status access-status-cell';
             const badge = SUNARPUI.createBadge({
               label: active ? 'Activo' : 'Inactivo',
               variant: active ? 'success' : 'danger',
               icon: active ? 'check_circle' : 'cancel'
             });
-
             wrapper.appendChild(badge);
-
-            // Acción de cambio de estado.
             const statusButton = document.createElement('button');
-
             statusButton.type = 'button';
-
             statusButton.className =
               `sunarp-datatable-status-link access-status-link ${
                 active
                   ? 'sunarp-datatable-status-link--deactivate access-status-link--deactivate'
                   : 'sunarp-datatable-status-link--activate access-status-link--activate'
               }`;
-
-            statusButton.textContent = active
-              ? 'Desactivar'
-              : 'Activar';
-
+            statusButton.textContent = active ? 'Desactivar' : 'Activar';
             statusButton.addEventListener('click', async () => {
-
               statusButton.disabled = true;
-
               try {
-
-                await changeDirectoryStatus(
-                  record,
-                  !active
-                );
-
+                await changeDirectoryStatus(record, !active);
               } catch (error) {
-
-                notify(
-                  'error',
-                  error.message || 'No se pudo cambiar el estado.'
-                );
-
+                notify('error', error.message || 'No se pudo cambiar el estado.');
               } finally {
-
-                if (statusButton.isConnected) {
-                  statusButton.disabled = false;
-                }
-
+                if (statusButton.isConnected) statusButton.disabled = false;
               }
-
             });
-
             wrapper.appendChild(statusButton);
-
             return wrapper;
-
           }
         }
-
       ],
-
       pageSize: 10,
-
       pageSizeOptions: [10, 25, 50],
-
       rowActions: [
-
         {
           label: 'Editar',
           icon: 'edit',
           variant: 'primary',
           title: 'Editar servidor',
-
           onClick: record => openDirectoryForm(record)
         },
-
         {
           label: 'Nueva asignación',
           icon: 'plus',
@@ -923,68 +729,42 @@ const DirectoryPage = (() => {
           title: 'Registrar otra asignación para esta persona',
           onClick: record => openDirectoryForm(record, { assignmentOnly: true })
         },
-
         {
           label: 'Historial',
           icon: 'history',
           variant: 'primary',
           title: 'Consultar historial del servidor',
-
           onClick: record => {
-            if (
-              !window.SUNARPAccessHistory ||
-              typeof window.SUNARPAccessHistory.open !== 'function'
-            ) {
-              notify(
-                'error',
-                'No está disponible el componente de historial.'
-              );
-
+            if (!window.SUNARPAccessHistory ||
+                typeof window.SUNARPAccessHistory.open !== 'function') {
+              notify('error', 'No está disponible el componente de historial.');
               return;
             }
-
             window.SUNARPAccessHistory.open(
               'SERVIDOR',
               record.persona_id,
-              [
-                record.nombres,
-                record.apellidos
-              ].filter(Boolean).join(' ')
+              [record.nombres, record.apellidos].filter(Boolean).join(' ')
             );
           }
         },
-
         {
           label: 'Eliminar',
           icon: 'delete',
           variant: 'danger',
           title: 'Eliminar asignación',
-
           onClick: record => deleteDirectoryEntry(record)
         }
-
       ]
-
     };
 
     if (!state.table) {
-
       state.table = SUNARPUI.createDataTable(options);
-
     } else {
-
-      state.table.refresh();
-
+      // Actualización local: conserva el componente y no consulta al servidor.
+      state.table.setData(options.data);
     }
-
   }
 
-
-
-
-  /* =====================================================
-     7. FORMULARIO: ESTRUCTURA JERÁRQUICA
-     ===================================================== */
 
   function getFormStructurePath(structureId) {
 
@@ -1497,6 +1277,10 @@ const DirectoryPage = (() => {
 
     const assignmentOnly = options.assignmentOnly === true;
     const isEditing = Boolean(record) && !assignmentOnly;
+    if (!state.activeSedeId || !state.catalogs || !Array.isArray(state.catalogs.estructuraOrg)) {
+      notify('warning', 'Selecciona una sede antes de registrar o editar información de personal.');
+      return;
+    }
     let formRecord = record;
 
     if (isEditing) {
@@ -1738,7 +1522,7 @@ const DirectoryPage = (() => {
         result.message || 'Registro guardado correctamente.'
       );
 
-      await load(true);
+      await refreshActiveSede();
 
     } catch (error) {
 
@@ -1773,7 +1557,7 @@ async function changeDirectoryStatus(record, active) {
     active
   );
 
-  await load(true);
+  await refreshActiveSede();
 
   notify(
     'success',
@@ -1837,7 +1621,7 @@ async function deleteDirectoryEntry(record) {
   );
 
   // Recargar la información actualizada.
-  await load(true);
+  await refreshActiveSede();
 
   notify(
     'success',
@@ -1866,7 +1650,13 @@ async function deleteDirectoryEntry(record) {
         label: 'Nuevo servidor',
         icon: 'person_add',
         variant: 'primary',
-        onClick: () => openDirectoryForm(null)
+        onClick: () => {
+          if (!state.activeSedeId) {
+            notify('warning', 'Selecciona una sede antes de registrar un servidor.');
+            return;
+          }
+          openDirectoryForm(null);
+        }
       }
 
     ]);
@@ -1897,195 +1687,205 @@ async function deleteDirectoryEntry(record) {
 
 
   function bindEvents() {
-
     if (state.eventsBound) return;
-
     const elements = getElements();
+    if (!elements.sedeFilter || !elements.localFilter || !elements.cargoFilter) return;
 
-    if (
-      !elements.sedeFilter ||
-      !elements.localFilter ||
-      !elements.cargoFilter
-    ) {
-      return;
-    }
-
-    // Cambio de sede.
     elements.sedeFilter.addEventListener('change', () => {
-      refreshDependentFilters('sede');
+      loadSelectedSede(elements.sedeFilter.value);
     });
-
-    // Cambio de local: reinicia la jerarquía dependiente.
     elements.localFilter.addEventListener('change', () => {
       refreshDependentFilters('local');
     });
-
-    // Cambio de cargo.
     elements.cargoFilter.addEventListener('change', () => {
       refreshDependentFilters('cargo');
     });
-
     state.eventsBound = true;
   }
 
-  /* =====================================================
-     14. CARGA PRINCIPAL
-     ===================================================== */
 
-  
+  function clearDirectoryTable(message) {
+    const container = getElements().table;
+    if (state.table) {
+      state.table.destroy();
+      state.table = null;
+    }
+    if (container) container.textContent = message || '';
+  }
+
+
+  async function loadSelectedSede(sedeId, force = false) {
+    const selectedSedeId = key(sedeId);
+    const elements = getElements();
+    const requestId = ++state.siteRequestId;
+
+    if (!selectedSedeId) {
+      state.activeSedeId = '';
+      state.records = [];
+      state.hierarchyPath = [];
+      state.catalogs = { sedes: state.authorizedSedes || [] };
+      if (elements.localFilter) elements.localFilter.value = '';
+      if (elements.cargoFilter) elements.cargoFilter.value = '';
+      populateLocalFilter();
+      populateCargoFilter();
+      renderHierarchyFilters();
+      clearDirectoryTable('Selecciona una sede para consultar la información de personal.');
+      return;
+    }
+
+    const isAuthorizedSede = (state.authorizedSedes || []).some(item =>
+      key(item.id) === selectedSedeId
+    );
+    if (!isAuthorizedSede) {
+      elements.sedeFilter.value = '';
+      notify('warning', 'La sede seleccionada no está dentro de tus ámbitos autorizados.');
+      return;
+    }
+
+    state.siteLoading = true;
+    state.activeSedeId = '';
+    state.records = [];
+    state.hierarchyPath = [];
+    state.catalogs = { sedes: state.authorizedSedes || [] };
+    if (elements.localFilter) elements.localFilter.value = '';
+    if (elements.cargoFilter) elements.cargoFilter.value = '';
+    populateLocalFilter();
+    populateCargoFilter();
+    renderHierarchyFilters();
+    clearDirectoryTable('Cargando información de la sede seleccionada...');
+
+    try {
+      let result = !force ? state.siteDataCache.get(selectedSedeId) : null;
+      if (!result) {
+        result = await callServer('getDirectorySiteData', selectedSedeId);
+      }
+      if (requestId !== state.siteRequestId) return;
+
+      if (!result || !result.catalogs || !Array.isArray(result.records)) {
+        throw new Error('El servidor devolvió una carga incompleta para la sede seleccionada.');
+      }
+
+      state.siteDataCache.set(selectedSedeId, result);
+      state.records = result.records;
+      state.catalogs = Object.assign({}, result.catalogs, {
+        sedes: state.authorizedSedes || []
+      });
+      state.activeSedeId = selectedSedeId;
+
+      populateLocalFilter();
+      populateCargoFilter();
+      renderHierarchyFilters();
+      renderTable();
+
+      console.info('[DirectoryPage] Sede cargada:', {
+        sedeId: selectedSedeId,
+        records: state.records.length,
+        assignments: result.summary ? result.summary.assignments : state.records.length
+      });
+    } catch (error) {
+      if (requestId !== state.siteRequestId) return;
+      state.activeSedeId = '';
+      state.records = [];
+      state.catalogs = { sedes: state.authorizedSedes || [] };
+      elements.sedeFilter.value = '';
+      populateLocalFilter();
+      populateCargoFilter();
+      renderHierarchyFilters();
+      clearDirectoryTable('No se pudo cargar la información de la sede.');
+      notify('error', error.message || 'No se pudo cargar la información de la sede.');
+    } finally {
+      if (requestId === state.siteRequestId) state.siteLoading = false;
+    }
+  }
+
+
+  async function refreshActiveSede() {
+    const elements = getElements();
+    const selectedSedeId = state.activeSedeId ||
+      key(elements.sedeFilter && elements.sedeFilter.value);
+    if (!selectedSedeId) return load(true);
+    state.siteDataCache.delete(selectedSedeId);
+    return loadSelectedSede(selectedSedeId, true);
+  }
+
+
   async function load(force = false) {
-
     if (state.loading) return;
 
-    // Conservar una instantánea funcional si una actualización posterior
-    // falla por tiempo de espera o por un error transitorio del servidor.
-    const hadLoadedSnapshot = state.loaded &&
-      Boolean(state.catalogs) &&
-      Array.isArray(state.records);
-
-    // Evitar volver a consultar los archivos si ya se cargaron.
     if (state.loaded && !force) {
       setPageActions();
       return;
     }
 
-    state.loading = true;
+    const elements = getElements();
+    const previousSedeId = key(elements.sedeFilter && elements.sedeFilter.value);
+    const hadLoadedSnapshot = state.loaded && Boolean(state.catalogs);
 
+    state.loading = true;
     let finishLoading = null;
 
-    const totalStart = performance.now();
-
-    const timings = {
-      server: 0,
-      filters: 0,
-      table: 0
-    };
-
     try {
-
-      if (
-        window.SUNARPUI &&
-        typeof SUNARPUI.beginLoading === 'function'
-      ) {
+      if (window.SUNARPUI && typeof SUNARPUI.beginLoading === 'function') {
         finishLoading = SUNARPUI.beginLoading();
       }
 
-      setPageActions();
+      const startedAt = performance.now();
+      const result = await callServer('getDirectoryInitialData');
+      const serverElapsed = performance.now() - startedAt;
 
-      // 1. Obtener información del servidor.
-      const serverStart = performance.now();
-
-      const result = await callServer(
-        'getDirectoryInitialData'
-      );
-
-      timings.server = performance.now() - serverStart;
-
-      if (
-        !result ||
-        !result.catalogs ||
-        !Array.isArray(result.records)
-      ) {
-        throw new Error(
-          'El servidor devolvió una respuesta incompleta.'
-        );
+      if (!result || !result.catalogs || !Array.isArray(result.catalogs.sedes)) {
+        throw new Error('El servidor devolvió una lista de sedes incompleta.');
       }
 
-      state.records = result.records;
-      state.initialPage = result.page
-        ? { items: prepareRows(result.records), total: Number(result.page.total) || 0 }
-        : null;
-      state.catalogs = result.catalogs;
-      state.filteredCargoOptions = null;
-      state.cargoOptionsNeedRefresh = false;
+      state.authorizedSedes = result.catalogs.sedes;
+      state.catalogs = { sedes: state.authorizedSedes };
+      state.records = [];
+      state.activeSedeId = '';
+      state.hierarchyPath = [];
+      state.siteDataCache.clear();
 
-      // 2. Preparar filtros.
-      const filtersStart = performance.now();
+      if (elements.sedeFilter) elements.sedeFilter.value = '';
+      if (elements.localFilter) elements.localFilter.value = '';
+      if (elements.cargoFilter) elements.cargoFilter.value = '';
 
+      clearDirectoryTable('Selecciona una sede para consultar la información de personal.');
       populateSedeFilter();
       populateLocalFilter();
       populateCargoFilter();
-
       renderHierarchyFilters();
-
       bindEvents();
 
-      timings.filters = performance.now() - filtersStart;
-
-      // 3. Crear o actualizar la tabla.
-      const tableStart = performance.now();
-
-      renderTable();
-
-      timings.table = performance.now() - tableStart;
-
       state.loaded = true;
+      setPageActions();
 
-      // Diagnóstico de rendimiento.
-      const totalTime = performance.now() - totalStart;
-
-      console.group('Rendimiento - Información de personal');
-
-      console.table({
-        'Consulta al servidor': {
-          milisegundos: Math.round(timings.server),
-          segundos: (timings.server / 1000).toFixed(2)
-        },
-        'Preparación de filtros': {
-          milisegundos: Math.round(timings.filters),
-          segundos: (timings.filters / 1000).toFixed(2)
-        },
-        'Creación de tabla': {
-          milisegundos: Math.round(timings.table),
-          segundos: (timings.table / 1000).toFixed(2)
-        },
-        'Tiempo total': {
-          milisegundos: Math.round(totalTime),
-          segundos: (totalTime / 1000).toFixed(2)
-        }
+      console.info('[DirectoryPage] Selector inicial de sedes:', {
+        serverMs: Math.round(serverElapsed),
+        authorizedSedes: state.authorizedSedes.length,
+        assignmentRecordsLoaded: 0
       });
 
-      console.log('Registros recibidos:', state.records.length);
-
-      console.groupEnd();
-
+      if (force && previousSedeId &&
+          state.authorizedSedes.some(item => key(item.id) === previousSedeId)) {
+        elements.sedeFilter.value = previousSedeId;
+        await loadSelectedSede(previousSedeId, true);
+      }
     } catch (error) {
-
       state.loaded = hadLoadedSnapshot;
-
-      console.error(
-        'Error al cargar Información de personal:',
-        error
-      );
-
+      console.error('Error al cargar el selector de Información de personal:', error);
       notify(
         hadLoadedSnapshot ? 'warning' : 'error',
         hadLoadedSnapshot
-          ? 'No se pudo actualizar el directorio. Se conserva la última información cargada.'
-          : (error.message || 'No se pudo cargar la información de personal.')
+          ? 'No se pudo actualizar la lista de sedes. Se conserva la información cargada.'
+          : (error.message || 'No se pudo cargar la lista de sedes.')
       );
-
-      // No destruir una tabla válida por un fallo de actualización.
-      // En la primera carga no hay instantánea que conservar.
-      const container = getElements().table;
-
-      if (!hadLoadedSnapshot && container) {
-        container.textContent =
-          'No se pudo cargar la información de personal.';
+      if (!hadLoadedSnapshot && elements.table) {
+        elements.table.textContent = 'No se pudo cargar la lista de sedes autorizadas.';
       }
-
     } finally {
-
       state.loading = false;
-
-      if (typeof finishLoading === 'function') {
-        finishLoading();
-      }
-
+      if (typeof finishLoading === 'function') finishLoading();
     }
-
   }
-
 
 
   /* =====================================================
@@ -2109,7 +1909,7 @@ async function deleteDirectoryEntry(record) {
 
   return Object.freeze({
     load,
-    refresh: load
+    refresh: refreshActiveSede
   });
 
 })();
