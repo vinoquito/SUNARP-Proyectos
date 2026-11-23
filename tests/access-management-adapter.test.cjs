@@ -1451,6 +1451,20 @@ test('el historial de un permiso deduplica eventos encontrados por ID y por snap
 });
 
 
+test('el contexto de autorización se cachea por identidad y depende de todas las fuentes de seguridad', () => {
+  const source = accessSource.slice(
+    accessSource.indexOf('function _accessGetAuthContext_()'),
+    accessSource.indexOf('function getAuthContext_()')
+  );
+  assert.match(source, /getOrBuildCachedValue/);
+  assert.match(source, /access-auth-context:v1:/);
+  assert.match(source, /_accessDirectorySource_\(sheets\.people\)/);
+  for (const sheet of ['users', 'modules', 'roles', 'userRoles', 'permissions', 'rolePermissions', 'scopes']) {
+    assert.match(source, new RegExp('_accessSecuritySource_\\(sheets\\.' + sheet + '\\)'));
+  }
+  assert.match(source, /\n      60\n/);
+});
+
 test('la autorización ordinaria consulta solo relaciones activas y proyecta los campos mínimos de seguridad', () => {
   const sandbox = createAdapterSandbox(makeSecurityData());
   const calls = [];
