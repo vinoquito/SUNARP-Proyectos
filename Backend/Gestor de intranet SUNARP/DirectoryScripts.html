@@ -18,6 +18,8 @@
 
 const DirectoryPage = (() => {
 
+  const DIRECTORY_SITE_CLIENT_CACHE_TTL_MS = 55000;
+
   const state = {
     records: [],
     catalogs: null,
@@ -1755,7 +1757,14 @@ async function deleteDirectoryEntry(record) {
     clearDirectoryTable('Cargando información de la sede seleccionada...');
 
     try {
-      let result = !force ? state.siteDataCache.get(selectedSedeId) : null;
+      const cacheEntry = state.siteDataCache.get(selectedSedeId);
+      const useClientCache = Boolean(
+        !force &&
+        cacheEntry &&
+        cacheEntry.data &&
+        Date.now() - cacheEntry.loadedAt < DIRECTORY_SITE_CLIENT_CACHE_TTL_MS
+      );
+      let result = useClientCache ? cacheEntry.data : null;
       if (!result) {
         result = await callServer('getDirectorySiteData', selectedSedeId);
       }
@@ -1765,7 +1774,10 @@ async function deleteDirectoryEntry(record) {
         throw new Error('El servidor devolvió una carga incompleta para la sede seleccionada.');
       }
 
-      state.siteDataCache.set(selectedSedeId, result);
+      state.siteDataCache.set(selectedSedeId, {
+        data: result,
+        loadedAt: Date.now()
+      });
       state.records = result.records;
       state.catalogs = Object.assign({}, result.catalogs, {
         sedes: state.authorizedSedes || []
@@ -1780,7 +1792,8 @@ async function deleteDirectoryEntry(record) {
       console.info('[DirectoryPage] Sede cargada:', {
         sedeId: selectedSedeId,
         records: state.records.length,
-        assignments: result.summary ? result.summary.assignments : state.records.length
+        assignments: result.summary ? result.summary.assignments : state.records.length,
+        source: useClientCache ? 'session-cache' : 'server'
       });
     } catch (error) {
       if (requestId !== state.siteRequestId) return;
