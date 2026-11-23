@@ -615,6 +615,14 @@ test('la nueva generación de la fuente invalida candidatos y resultados derivad
 });
 
 
+test('la hidratación compara fechas serializadas en caché con valores Date de Sheets', () => {
+  const sandbox = createSandbox();
+  const matches = sandbox.context._coreQueryProjectionValueMatches_;
+  assert.equal(typeof matches, 'function');
+  assert.equal(matches(new Date('2026-11-23T10:00:00.000Z'), '2026-11-23T10:00:00.000Z'), true);
+  assert.equal(matches(new Date('2026-11-23T10:00:00.000Z'), '2026-11-23T11:00:00.000Z'), false);
+});
+
 test('queryRecords proyecta columnas de evaluación y solo hidrata la página autorizada', () => {
   const sandbox = createSandbox();
   const rows = [

@@ -127,6 +127,56 @@ test('listTailRecords permite filtros temporales exactos sin leer filas completa
   assert.equal(result.hasMore, false);
 });
 
+test('findRecordsByFields usa ventanas agrupadas de 500 filas para búsquedas masivas proyectadas', () => {
+  const headers = ['persona_id', 'nombres'];
+  let requestedWindowSize = null;
+  const sheet = {
+    getLastRow: () => 2,
+    getLastColumn: () => 2,
+    getRange(startRow) {
+      if (startRow === 1) return { getDisplayValues: () => [headers] };
+      return {
+        createTextFinder: () => ({
+          matchEntireCell() { return this; },
+          matchCase() { return this; },
+          useRegularExpression() { return this; },
+          findAll: () => [{ getRow: () => 2 }]
+        })
+      };
+    }
+  };
+  const sandbox = vm.createContext({
+    Map,
+    Set,
+    Object,
+    Array,
+    String,
+    Error,
+    _coreOpenSource_: () => ({
+      config: { headerRow: 1, sheetName: 'personas' },
+      sheet
+    }),
+    _coreReadProjectedCandidateRows_: (_sheet, rowNumbers, _headerMap, _fields, _start, windowSize) => {
+      requestedWindowSize = windowSize;
+      return new Map([[2, { persona_id: 'PER_001', nombres: 'Ana' }]]);
+    },
+    _coreValuesEqual_: (actual, expected) =>
+      String(actual === null || actual === undefined ? '' : actual).trim() ===
+      String(expected === null || expected === undefined ? '' : expected).trim()
+  });
+  vm.runInContext(repositorySource, sandbox, { filename: 'DataRepository.js' });
+  const result = sandbox.findRecordsByFields(
+    { spreadsheetId: 'DIRECTORY', sheetName: 'personas' },
+    { persona_id: ['PER_001'] },
+    {
+      searchField: 'persona_id',
+      projectionFields: ['persona_id', 'nombres']
+    }
+  );
+  assert.equal(result.total, 1);
+  assert.equal(requestedWindowSize, 500);
+});
+
 test('findRecordsByFields respeta matchCase=false al validar filas candidatas', () => {
   const headers = ['persona_id', 'correo_institucional'];
   const rows = [

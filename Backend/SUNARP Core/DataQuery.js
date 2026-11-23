@@ -351,6 +351,16 @@ function _coreQueryCacheKey_(source, generation, authorizationFingerprint, query
   return 'query-result:v2:' + digest;
 }
 
+function _coreQueryAuthorizedSnapshotCacheKey_(source, generation, authorizationFingerprint, query) {
+  const digest = _coreQueryDigest_({
+    source: _coreBuildSourceCacheKey_(source, 'authorized-query-snapshot'),
+    generation,
+    authorizationFingerprint,
+    query
+  });
+  return 'query-authorized:v1:' + digest;
+}
+
 function _coreQueryCandidateCacheKey_(source, generation, idField, schemaVersion, groups) {
   // La clave identifica el conjunto de candidatos, no la forma de la respuesta.
   // La compatibilidad de proyecciones se valida contra los metadatos guardados.
@@ -442,16 +452,23 @@ function queryRecords(source, options) {
   const authFingerprint = _coreQueryAuthorizationFingerprint_(
     authorization, validated, catalogVersion, scopeRelations
   );
-  const cacheSeconds = options.cacheSeconds === undefined ? 60 : Number(options.cacheSeconds);
-  if (!Number.isInteger(cacheSeconds) || cacheSeconds < 0 || cacheSeconds > 21600) {
+  const requestedCacheSeconds = options.cacheSeconds === undefined ? 60 : Number(options.cacheSeconds);
+  if (!Number.isInteger(requestedCacheSeconds) || requestedCacheSeconds < 0 || requestedCacheSeconds > 21600) {
     throw new Error('SUNARP Core: cacheSeconds debe ser un entero entre 0 y 21600.');
   }
-  const candidateCacheSeconds = options.candidateCacheSeconds === undefined
-    ? cacheSeconds
+  // Las ediciones directas en Sheets/IMPORTRANGE no publican una generación Core.
+  // Por eso las consultas derivadas tienen una vigencia máxima de 60 s aunque
+  // el consumidor solicite una caché más larga. Las escrituras Core invalidan
+  // inmediatamente mediante generaciones; el TTL limita cambios externos.
+  const cacheSeconds = Math.min(requestedCacheSeconds, 60);
+  const requestedCandidateCacheSeconds = options.candidateCacheSeconds === undefined
+    ? requestedCacheSeconds
     : Number(options.candidateCacheSeconds);
-  if (!Number.isInteger(candidateCacheSeconds) || candidateCacheSeconds < 0 || candidateCacheSeconds > 21600) {
+  if (!Number.isInteger(requestedCandidateCacheSeconds) ||
+      requestedCandidateCacheSeconds < 0 || requestedCandidateCacheSeconds > 21600) {
     throw new Error('SUNARP Core: candidateCacheSeconds debe ser un entero entre 0 y 21600.');
   }
+  const candidateCacheSeconds = Math.min(requestedCandidateCacheSeconds, 60);
   const generation = typeof _coreGetSourceGeneration_ === 'function'
     ? _coreGetSourceGeneration_(source)
     : null;
@@ -493,8 +510,74 @@ function queryRecords(source, options) {
     }
   }
 
+  // Instantánea autorizada compartida entre páginas. Offset/limit no forman
+  // parte de la clave: el conjunto completo, ya filtrado, ordenado y autorizado,
+  // se reutiliza. La huella incluye identidad, permiso, ámbitos y catálogos.
+  const authorizedSnapshotDescriptor = {
+    groups, search, searchFields, searchAny, sortBy, sortDirection,
+    idField, distinctBy, distinctFields, distinctCountFields,
+    schemaVersion: descriptor.schemaVersion
+  };
+  const authorizedSnapshotKey = generation && cacheSeconds > 0 && catalogCacheSafe
+    ? _coreQueryAuthorizedSnapshotCacheKey_(
+        source, generation, authFingerprint, authorizedSnapshotDescriptor
+      )
+    : null;
+  const authorizedSnapshot = authorizedSnapshotKey
+    ? getCachedValue(authorizedSnapshotKey)
+    : null;
+  if (authorizedSnapshot && authorizedSnapshot.version === 1 &&
+      Array.isArray(authorizedSnapshot.records) &&
+      authorizedSnapshot.distinctValues && authorizedSnapshot.distinctCounts) {
+    const snapshotContext = typeof _coreOpenSource_ === 'function'
+      ? _coreOpenSource_(source)
+      : null;
+    const selectedSnapshotPage = authorizedSnapshot.records.slice(offset, offset + limit);
+    const snapshotPage = _coreQueryHydratePage_(
+      source, selectedSnapshotPage, snapshotContext
+    );
+    if (generation && _coreGetSourceGeneration_(source) !== generation) {
+      throw new Error('SUNARP Core: la fuente cambió durante la consulta; vuelve a solicitar la página.');
+    }
+    const snapshotResult = {
+      version: 2,
+      records: snapshotPage,
+      total: authorizedSnapshot.total,
+      offset,
+      limit,
+      distinctValues: authorizedSnapshot.distinctValues,
+      distinctCounts: authorizedSnapshot.distinctCounts,
+      hasMore: offset + snapshotPage.length < authorizedSnapshot.total,
+      cacheHit: false,
+      authorizedSnapshotCacheHit: true,
+      candidateCacheHit: true,
+      candidateCount: authorizedSnapshot.candidateCount,
+      authorizedCount: authorizedSnapshot.authorizedCount,
+      retainedForPage: authorizedSnapshot.records.length,
+      projectedFieldCount: authorizedSnapshot.projectedFieldCount,
+      hydratedRowCount: snapshotPage.length,
+      durationMs: Date.now() - queryStartedAt
+    };
+    if (cacheKey) {
+      try { putCachedValue(cacheKey, snapshotResult, cacheSeconds); } catch (error) {
+        console.warn('[SUNARP Core] No se pudo almacenar el resultado de consulta:', error.message);
+      }
+    }
+    console.log('[SUNARP Core] Instantánea autorizada reutilizada:', {
+      sheet: (source && (source.sheetName || source.label)) || 'fuente',
+      authorizedSnapshotCacheHit: true,
+      candidateCount: snapshotResult.candidateCount,
+      authorizedCount: snapshotResult.authorizedCount,
+      hydratedRowCount: snapshotResult.hydratedRowCount,
+      offset,
+      limit,
+      durationMs: snapshotResult.durationMs
+    });
+    return snapshotResult;
+  }
+
   // La caché de candidatos contiene filas aún no autorizadas y nunca se entrega
-  // directamente: cada consulta vuelve a comprobar permiso y ámbito sobre ellas.
+  // directamente: en el primer uso de cada instantánea se aplica el ámbito vigente.
   const candidateCacheKey = generation && candidateCacheSeconds > 0
     ? _coreQueryCandidateCacheKey_(
         source, generation, idField, descriptor.schemaVersion, groups
@@ -580,7 +663,11 @@ function queryRecords(source, options) {
     candidateContext = _coreOpenSource_(source);
   }
 
-  const maxRetainedRecords = offset + limit;
+  // Para que las páginas posteriores no vuelvan a recorrer y autorizar todos
+  // los candidatos, la instantánea conserva el conjunto autorizado completo.
+  // La caché fragmentada limita el tamaño; si no cabe, se devuelve el resultado
+  // seguro de esta petición y la siguiente vuelve a calcularlo.
+  const maxRetainedRecords = candidateRows.length;
   const pageCandidates = [];
   const boundedDistinctPage = Boolean(distinctBy && distinctBy === sortBy);
   const distinctPageRecords = boundedDistinctPage ? [] : null;
@@ -722,11 +809,44 @@ function queryRecords(source, options) {
   }
   const selectedPage = pageSource.slice(offset, offset + limit);
   const page = _coreQueryHydratePage_(source, selectedPage, candidateContext);
+  if (generation && _coreGetSourceGeneration_(source) !== generation) {
+    throw new Error('SUNARP Core: la fuente cambió durante la consulta; vuelve a solicitar la página.');
+  }
+  const snapshotValue = {
+    version: 1,
+    records: pageSource,
+    total,
+    distinctValues,
+    distinctCounts,
+    candidateCount: candidateRows.length,
+    authorizedCount,
+    projectedFieldCount
+  };
+  if (authorizedSnapshotKey) {
+    try {
+      const storedSnapshot = putCachedValue(
+        authorizedSnapshotKey, snapshotValue, cacheSeconds
+      );
+      if (!storedSnapshot || storedSnapshot.success !== true) {
+        console.warn('[SUNARP Core] Instantánea autorizada no almacenada:', {
+          reason: storedSnapshot && storedSnapshot.reason || 'unknown',
+          candidateCount: candidateRows.length,
+          authorizedCount,
+          sizeBytes: storedSnapshot && storedSnapshot.sizeBytes,
+          compressedBytes: storedSnapshot && storedSnapshot.compressedBytes,
+          chunkCount: storedSnapshot && storedSnapshot.chunkCount
+        });
+      }
+    } catch (error) {
+      console.warn('[SUNARP Core] No se pudo almacenar la instantánea autorizada:', error.message);
+    }
+  }
   const result = {
     version: 2, records: page, total, offset, limit,
     distinctValues, distinctCounts,
     hasMore: offset + page.length < total,
     cacheHit: false,
+    authorizedSnapshotCacheHit: false,
     candidateCacheHit,
     candidateCount: candidateRows.length,
     authorizedCount,
@@ -745,6 +865,7 @@ function queryRecords(source, options) {
   console.log('[SUNARP Core] Consulta autorizada:', {
     sheet: (source && (source.sheetName || source.label)) || 'fuente',
     candidateCacheHit,
+    authorizedSnapshotCacheHit: result.authorizedSnapshotCacheHit,
     candidateCount: result.candidateCount,
     authorizedCount,
     retainedForPage: result.retainedForPage,
@@ -873,6 +994,16 @@ function _coreQueryRecordValue_(candidate) {
 }
 
 /** Recupera el ancho completo exclusivamente para las filas de la página final. */
+function _coreQueryProjectionValueMatches_(actual, expected) {
+  if (actual instanceof Date || expected instanceof Date) {
+    const actualTime = actual instanceof Date ? actual.getTime() : Date.parse(actual);
+    const expectedTime = expected instanceof Date ? expected.getTime() : Date.parse(expected);
+    return Number.isFinite(actualTime) && Number.isFinite(expectedTime) &&
+      actualTime === expectedTime;
+  }
+  return _coreValuesEqual_(actual, expected);
+}
+
 function _coreQueryHydratePage_(source, candidates, context) {
   if (!Array.isArray(candidates) || !candidates.length) return [];
   if (!candidates.every(item => item && Number.isInteger(item.rowNumber))) {
@@ -885,7 +1016,7 @@ function _coreQueryHydratePage_(source, candidates, context) {
     .getDisplayValues()[0].map(value => String(value).trim());
   const rowNumbers = candidates.map(item => item.rowNumber);
   const valuesByNumber = _coreReadCandidateRows_(
-    sheet, rowNumbers, lastColumn, context.config.headerRow + 1, 25
+    sheet, rowNumbers, lastColumn, context.config.headerRow + 1, 500
   );
   return candidates.map(candidate => {
     const values = valuesByNumber.get(candidate.rowNumber);
@@ -897,7 +1028,7 @@ function _coreQueryHydratePage_(source, candidates, context) {
     const projectedRecord = _coreQueryRecordValue_(candidate);
     const projectionStillMatches = Object.keys(projectedRecord).every(field =>
       Object.prototype.hasOwnProperty.call(hydratedRecord, field) &&
-      _coreValuesEqual_(hydratedRecord[field], projectedRecord[field])
+      _coreQueryProjectionValueMatches_(hydratedRecord[field], projectedRecord[field])
     );
     if (!projectionStillMatches) {
       throw new Error(

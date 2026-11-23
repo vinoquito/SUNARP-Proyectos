@@ -1076,12 +1076,14 @@ function findRecordsByFields(source, filters, options) {
 
   const records = [];
   const orderedRows = [...candidateRows].sort((a, b) => a - b);
+  // Las búsquedas masivas (p. ej. persona_id de una página de asignaciones)
+  // agrupan filas en ventanas de 500 para evitar lecturas fragmentadas de 25.
   const candidateValues = projectionFields
     ? _coreReadProjectedCandidateRows_(
-        sheet, orderedRows, headerMap, projectionFields, dataStartRow, 25
+        sheet, orderedRows, headerMap, projectionFields, dataStartRow, 500
       )
     : _coreReadCandidateRows_(
-        sheet, orderedRows, lastColumn, dataStartRow, 25
+        sheet, orderedRows, lastColumn, dataStartRow, 500
       );
   orderedRows.forEach(rowNumber => {
     const values = candidateValues.get(rowNumber);
