@@ -1195,7 +1195,8 @@ test('la cascada de ámbitos parte del local y recorre solo la jerarquía vincul
   assert.ok(referenceOptions.includes("if (!['SEDE', 'LOCAL', 'ESTRUCTURA_ORG'].includes(type))"));
   assert.ok(referenceOptions.includes('String(item.sede_id) === siteId'));
   assert.ok(referenceOptions.includes("selectedReferenceId = type === 'SEDE'"));
-  assert.ok(referenceOptions.includes("selectedReferenceId = type === 'LOCAL' ? localId : ''"));
+  assert.ok(referenceOptions.includes("else if (type === 'LOCAL')"));
+  assert.ok(referenceOptions.includes('selectedReferenceId = localId;'));
   assert.ok(referenceOptions.includes('renderStructureLevels(localId, levelsHost, selectedChain, type)'));
   assert.match(accessUiSource, /String\(item\.parent_id \|\| ''\) === String\(selectedId\)/);
   assert.doesNotMatch(referenceOptions, /sedeName\(item\.sede_id\) \+ ' — ' \+ item\.name/);
@@ -1964,7 +1965,8 @@ test('los ámbitos recorren Sede -> Local -> Unidad orgánica filtrando cada niv
   assert.ok(implementation.includes("localSelect.addEventListener('change'"));
   assert.ok(implementation.includes('renderStructureLevels(localId, levelsHost, selectedChain, type)'));
   assert.ok(implementation.includes("localSelect.required = type !== 'SEDE'"));
-  assert.ok(implementation.includes("type === 'ESTRUCTURA_ORG'"));
+  assert.ok(implementation.includes("!['SEDE', 'LOCAL', 'ESTRUCTURA_ORG'].includes(type)"));
+  assert.ok(accessUiSource.includes("levelSelect.required = type === 'ESTRUCTURA_ORG'"));
 });
 
 test('los botones de Administración de accesos notifican errores sincrónicos y asíncronos', () => {
