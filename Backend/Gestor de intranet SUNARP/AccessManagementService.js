@@ -756,6 +756,11 @@ function _accessGetAuthContext_() {
         () => _accessBuildAuthContext_(email),
         60
       );
+      console.log('[AccessManagement] Authorization context cache:', JSON.stringify({
+        cacheHit: Boolean(cached && cached.cacheHit),
+        cacheStored: Boolean(cached && cached.cacheStored),
+        sourceCount: sources.length
+      }));
       if (cached && cached.value) return cached.value;
     }
   }
