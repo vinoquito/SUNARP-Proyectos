@@ -1188,11 +1188,17 @@ test('la cascada de ámbitos parte del local y recorre solo la jerarquía vincul
   const otherLocal = sandbox.structureHierarchyForLocal('LOC2');
   assert.deepEqual(Array.from(otherLocal.roots, item => item.id), ['OUT']);
 
-  assert.match(accessUiSource, /type === 'ESTRUCTURA_ORG' \|\| type === 'LOCAL'/);
+  const referenceStart = accessUiSource.indexOf('function updateReferenceOptions() {');
+  const referenceEnd = accessUiSource.indexOf('function paintScopes()', referenceStart);
+  assert.ok(referenceStart >= 0 && referenceEnd > referenceStart);
+  const referenceOptions = accessUiSource.slice(referenceStart, referenceEnd);
+  assert.ok(referenceOptions.includes("if (!['SEDE', 'LOCAL', 'ESTRUCTURA_ORG'].includes(type))"));
+  assert.ok(referenceOptions.includes('String(item.sede_id) === siteId'));
+  assert.ok(referenceOptions.includes("selectedReferenceId = type === 'SEDE'"));
+  assert.ok(referenceOptions.includes("selectedReferenceId = type === 'LOCAL' ? localId : ''"));
+  assert.ok(referenceOptions.includes('renderStructureLevels(localId, levelsHost, selectedChain, type)'));
   assert.match(accessUiSource, /String\(item\.parent_id \|\| ''\) === String\(selectedId\)/);
-  assert.match(accessUiSource, /selectedReferenceId = type === 'LOCAL' \? localId : ''/);
-  assert.match(accessUiSource, /sedeName\(item\.sede_id\) \+ ' — ' \+ item\.name/);
-  assert.doesNotMatch(accessUiSource, /function structuresForSede\(sedeId\)/);
+  assert.doesNotMatch(referenceOptions, /sedeName\(item\.sede_id\) \+ ' — ' \+ item\.name/);
 });
 
 
