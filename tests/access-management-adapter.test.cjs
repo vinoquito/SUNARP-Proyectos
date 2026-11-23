@@ -1871,6 +1871,17 @@ test('Información de personal registra tiempos de autorización, contexto y con
 });
 
 
+test('el modal de permiso abre sin depender de visitar antes la pestaña de módulos', () => {
+  const start = accessUiSource.indexOf('function openPermissionModal(row)');
+  const end = accessUiSource.indexOf('function renderAssignments(host)', start);
+  const modal = accessUiSource.slice(start, end);
+  assert.match(modal, /needsPermissionCatalogs/);
+  assert.match(modal, /rpc\('getAccessManagementTabData', 'permissions'\)\.then/);
+  assert.match(modal, /El formulario se muestra de inmediato/);
+  assert.match(modal, /module\.disabled = editing \|\| needsPermissionCatalogs/);
+  assert.match(modal, /operation\.disabled = editing \|\| needsPermissionCatalogs/);
+});
+
 test('el editor de permisos recibe el catálogo de operaciones al cargar Permisos', () => {
   assert.match(accessUiSource, /state\.data\.operations = result\.operations \|\| \[\]/);
   assert.match(accessUiSource, /state\.tabDataLoaded\.operations = true/);
