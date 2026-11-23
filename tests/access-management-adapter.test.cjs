@@ -1975,8 +1975,8 @@ test('la jerarquía del Directorio permite seleccionar ancestros reales y muestr
   const end = directoryUiSource.indexOf('function renderHierarchyFilters()', start);
   assert.ok(start >= 0 && end > start);
   const implementation = directoryUiSource.slice(start, end);
-  assert.ok(implementation.includes('sets.selectableIds.has(key(node.id))'));
   assert.ok(implementation.includes('_directoryGetHierarchyDisplayPath_('));
+  assert.ok(implementation.includes('option.textContent = _directoryGetHierarchyDisplayPath_('));
   assert.equal(implementation.includes('contextualIds'), false);
   assert.equal(implementation.includes('(contexto)'), false);
   assert.equal(implementation.includes('option.disabled'), false);
