@@ -1002,7 +1002,7 @@ test('getDirectorySiteData entrega catálogos exclusivos de la sede elegida incl
   vmContext._directoryAuthorizationContext_ = () => authorization;
   vmContext._directoryLoadContext_ = () => context;
   vmContext._accessRecordIsAllowed_ = () => true;
-  vmContext._directoryEnrichAssignmentRecords_ = records => records;
+  vmContext._directoryEnrichAssignmentRecords_ = records => records.slice();
   vmContext._directoryExecuteAssignmentQuery_ = () => ({
     records: [{
       asignacion_id: 'ASG_001', persona_id: 'PER_001', cargo_id: 'CAR_001',
@@ -1200,7 +1200,7 @@ test('getDirectorySiteData carga todas las asignaciones de una sola sede con pag
   vmContext._directoryEnrichAssignmentRecords_ = received => {
     enrichmentCalls++;
     assert.equal(received.length, 2);
-    return received;
+    return received.slice();
   };
   const queryCalls = [];
   vmContext._directoryExecuteAssignmentQuery_ = (
