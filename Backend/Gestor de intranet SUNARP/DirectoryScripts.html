@@ -368,7 +368,7 @@ const DirectoryPage = (() => {
 
     const wrapper = select.closest('.sunarp-filter');
     if (wrapper) wrapper.hidden = locals.length < 2;
-    if (locals.length < 2) select.value = locals.length === 1 ? key(locals[0].id) : '';
+    if (locals.length < 2) select.value = '';
   }
 
 
