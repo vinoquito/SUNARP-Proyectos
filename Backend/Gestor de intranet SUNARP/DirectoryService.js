@@ -523,9 +523,68 @@ function _directoryLoadContextFromSheets_(options) {
 }
 
 function _directoryLoadContext_(options) {
+  options = options || {};
   const started = Date.now();
-  const context = _directoryLoadContextFromSheets_(options);
-  console.log('[DirectoryService] Contexto recuperado mediante caché central de SUNARP Core:', Date.now() - started, 'ms.');
+  const sheetMap = [
+    ['personas', 'personas'],
+    ['datosPersonales', 'servidores datos personales'],
+    ['asignaciones', 'asignaciones'],
+    ['sedes', 'sede'],
+    ['tiposLocal', 'tipos_local'],
+    ['locales', 'locales'],
+    ['tiposEstructura', 'tipos_estructura'],
+    ['estructuraOrg', 'estructura_org'],
+    ['estructuraLocal', 'estructura_local'],
+    ['cargos', 'cargos']
+  ];
+  const selectedSheets = sheetMap.filter(item =>
+    !(options.includePersonalData === false && item[0] === 'datosPersonales') &&
+    !(options.includePeople === false && item[0] === 'personas') &&
+    !(options.includeAssignments === false && item[0] === 'asignaciones')
+  );
+  const sources = selectedSheets.map(item => _directorySource_(item[1]));
+  if (options.includeDocumentTypes !== false) {
+    sources.push(_directoryResolveDocumentTypesSource_());
+  }
+
+  const variant = [
+    options.includePersonalData === false ? 'no-personal' : 'personal',
+    options.includePeople === false ? 'no-people' : 'people',
+    options.includeAssignments === false ? 'no-assignments' : 'assignments',
+    options.includeDocumentTypes === false ? 'no-doc-types' : 'doc-types'
+  ].join(':');
+  const cacheTtl = Math.min(DIRECTORY_DATA_CACHE_TTL, DIRECTORY_CATALOG_CACHE_TTL);
+  let context;
+  let cacheHit = false;
+
+  if (typeof SUNARPCore.getOrBuildCachedValue === 'function') {
+    const cached = SUNARPCore.getOrBuildCachedValue(
+      'directory-context:v1:' + variant,
+      sources,
+      () => _directoryLoadContextFromSheets_(
+        Object.assign({}, options, { validateSnapshot: false })
+      ),
+      cacheTtl
+    );
+    context = cached && cached.value;
+    cacheHit = Boolean(cached && cached.cacheHit);
+  }
+
+  if (!context) {
+    context = _directoryLoadContextFromSheets_(
+      Object.assign({}, options, { validateSnapshot: false })
+    );
+  }
+  if (options.validateSnapshot !== false) {
+    _directoryValidateSnapshot_(context, options);
+  }
+
+  console.log('[DirectoryService] Contexto de catálogos:', JSON.stringify({
+    durationMs: Date.now() - started,
+    cacheHit,
+    sourceCount: sources.length,
+    variant
+  }));
   return context;
 }
 
