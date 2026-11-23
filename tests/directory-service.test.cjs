@@ -808,7 +808,11 @@ test('getDirectoryInitialData devuelve sedes autorizadas sin consultar asignacio
   ]);
   const vmContext = vm.createContext({});
   vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
-  vmContext._directoryAuthorizationContext_ = () => authorization;
+  vmContext.requirePermission_ = (permissionCode, moduleId) => {
+    assert.equal(permissionCode, 'INFORMACION_PERSONAL_VER');
+    assert.equal(moduleId, 'MOD_INFO_PERSONAL');
+    return authorization.auth;
+  };
   vmContext._directoryLoadContext_ = () => {
     throw new Error('El selector inicial no debe cargar el contexto completo de Directorios.');
   };
@@ -834,6 +838,8 @@ test('getDirectoryInitialData devuelve sedes autorizadas sin consultar asignacio
   const result = vmContext.getDirectoryInitialData();
   assert.equal(queryCalls, 0);
   assert.equal(catalogRequests.requests.length, 1);
+  assert.equal(catalogRequests.requests[0].key, 'sedes');
+  assert.equal(result.catalogs.sedes.length, 2);
   assert.equal(catalogRequests.requests[0].key, 'sedes');
   assert.equal(catalogRequests.requests[0].source.sheetName, 'sede');
   assert.deepEqual(result.catalogs.sedes.map(item => item.id), ['SEDE_1', 'SEDE_2']);
