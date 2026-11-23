@@ -1640,6 +1640,9 @@ test('Información de personal carga por sede una vez y usa filtros, búsqueda y
   assert.match(frontendSource, /data:\s*prepareRows\(getFilteredRecords\(\)\)/);
   assert.match(frontendSource, /state\.table\.setData\(options\.data\)/);
   assert.match(frontendSource, /siteDataCache/);
+  assert.match(frontendSource, /DIRECTORY_SITE_CLIENT_CACHE_TTL_MS = 55000/);
+  assert.match(frontendSource, /Date\.now\(\) - cacheEntry\.loadedAt < DIRECTORY_SITE_CLIENT_CACHE_TTL_MS/);
+  assert.match(frontendSource, /state\.siteDataCache\.set\(selectedSedeId, \{\s*data: result,\s*loadedAt: Date\.now\(\)/);
   assert.match(frontendSource, /async function refreshActiveSede\(/);
   assert.doesNotMatch(frontendSource, /listDirectoryAssignments/);
   assert.doesNotMatch(frontendSource, /mode:\s*'server'/);
