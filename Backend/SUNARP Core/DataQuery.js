@@ -122,9 +122,11 @@ function _coreQueryValidateAuthorization_(authorization) {
   if (!access || !Array.isArray(access.scopes) || !access.scopes.length) {
     throw new Error('SUNARP Core: no tienes ámbitos activos para consultar estos registros.');
   }
-  const totalOnly = access.scopes.every(scope =>
-    String(scope.tipo_ambito_id || scope.tipo_ambito || '').trim().toUpperCase() === 'TOTAL'
-  );
+  // El atajo global solo es válido para un único ámbito TOTAL sin referencia.
+  // Cualquier duplicidad o referencia malformada conserva la comprobación estricta.
+  const totalOnly = access.scopes.length === 1 &&
+    String(access.scopes[0].tipo_ambito_id || access.scopes[0].tipo_ambito || '').trim().toUpperCase() === 'TOTAL' &&
+    !String(access.scopes[0].referencia_id || '').trim();
   if (!totalOnly && (!Array.isArray(authorization.structures) || !Array.isArray(authorization.locals))) {
     throw new Error('SUNARP Core: faltan los catálogos organizacionales requeridos para comprobar los ámbitos.');
   }
@@ -593,22 +595,24 @@ function queryRecords(source, options) {
   let authorizedCount = 0;
   // Core v13 prepara el evaluador una sola vez por lote. El fallback conserva
   // compatibilidad temporal con consumidores que aún ejecutan Core v12.
-  const isRecordInScope = typeof _coreAuthCreateRecordScopeChecker_ === 'function'
-    ? _coreAuthCreateRecordScopeChecker_(
-        validated.context,
-        validated.moduleId,
-        authorization.structures || [],
-        authorization.fields || {},
-        authorization.locals || []
-      )
-    : record => authorizationIsRecordInScope(
-        validated.context,
-        validated.moduleId,
-        record,
-        authorization.structures || [],
-        authorization.fields || {},
-        authorization.locals || []
-      );
+  const isRecordInScope = validated.totalOnly
+    ? null
+    : (typeof _coreAuthCreateRecordScopeChecker_ === 'function'
+      ? _coreAuthCreateRecordScopeChecker_(
+          validated.context,
+          validated.moduleId,
+          authorization.structures || [],
+          authorization.fields || {},
+          authorization.locals || []
+        )
+      : record => authorizationIsRecordInScope(
+          validated.context,
+          validated.moduleId,
+          record,
+          authorization.structures || [],
+          authorization.fields || {},
+          authorization.locals || []
+        ));
 
   candidateRows.forEach(candidate => {
     const record = _coreQueryRecordValue_(candidate);
@@ -645,7 +649,7 @@ function queryRecords(source, options) {
       }
     });
     if (!relationConsistent) return;
-    if (!isRecordInScope(scopeRecord)) return;
+    if (!validated.totalOnly && !isRecordInScope(scopeRecord)) return;
 
     authorizedCount++;
     distinctFields.forEach(field => {
