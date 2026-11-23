@@ -576,34 +576,35 @@ function authorizationHasPermission(context, permissionCode, moduloId) {
  * fields permite adaptar los campos del registro de negocio y de ambos
  * catálogos, sin alterar el contrato de seguridad.
  */
-function authorizationIsRecordInScope(
+/**
+ * Construye un evaluador de ámbito reutilizable para una consulta.
+ * Los mapas de catálogos y el módulo se resuelven una sola vez por lote,
+ * no una vez por cada registro candidato.
+ */
+function _coreAuthCreateRecordScopeChecker_(
   context,
   moduloId,
-  record,
   structures,
   fields,
   locals
 ) {
   const moduleAccess = _coreAuthGetModuleAccess_(context, moduloId);
-
-  if (!moduleAccess || !moduleAccess.scopes.length) return false;
+  if (!moduleAccess || !moduleAccess.scopes.length) return () => false;
 
   const activeScopes = moduleAccess.scopes;
-
   const totalScopes = activeScopes.filter(scope =>
     _coreAuthScopeType_(scope) === 'TOTAL'
   );
   if (totalScopes.length) {
     // TOTAL es exclusivo dentro del módulo. Una mezcla de TOTAL y ámbitos
     // específicos es inconsistente y debe denegarse, nunca ampliar permisos.
-    return activeScopes.length === 1 &&
+    const allowed = activeScopes.length === 1 &&
       totalScopes.length === 1 &&
       !_coreAuthText_(totalScopes[0].referencia_id);
+    return () => allowed;
   }
 
-  record = record || {};
   fields = fields || {};
-
   const f = Object.assign({
     recordOrganizationStructureId: 'estructura_org_id',
     recordStructureId: 'estructura_id',
@@ -624,94 +625,94 @@ function authorizationIsRecordInScope(
   const structureMap = catalogMaps.structureMap;
   const localMap = catalogMaps.localMap;
 
-  const structureId = _coreAuthText_(
-    record[f.recordOrganizationStructureId] ||
-    record[f.recordStructureId]
-  );
+  return function isRecordInScope(record) {
+    record = record || {};
+    const structureId = _coreAuthText_(
+      record[f.recordOrganizationStructureId] ||
+      record[f.recordStructureId]
+    );
+    const localId = _coreAuthText_(record[f.recordLocalId]);
+    const local = localId ? localMap.get(localId) : null;
 
-  const localId = _coreAuthText_(record[f.recordLocalId]);
-  const local = localId ? localMap.get(localId) : null;
+    // Cualquier local_id declarado debe existir en el catálogo maestro.
+    // Así se evita confiar en sede_id suministrado por el registro.
+    if (localId && !local) return false;
 
-  // Cualquier local_id declarado debe existir en el catálogo maestro.
-  // Así se evita que un registro manipule sede_id para aparentar pertenecer
-  // a una sede distinta de la que realmente tiene su local.
-  if (localId && !local) return false;
-
-  let siteId = '';
-
-  if (structureId) {
-    const structure = structureMap.get(structureId);
-
-    if (!structure) return false;
-
-    siteId = _coreAuthText_(structure[f.structureSiteId]);
-
-    // Cuando existe estructura y local, ambos catálogos deben concordar.
-    const localSiteId = local
-      ? _coreAuthText_(local[f.localSiteId])
-      : '';
-
-    if (local && localSiteId && siteId && localSiteId !== siteId) {
-      return false;
-    }
-  } else if (local) {
-    siteId = _coreAuthText_(local[f.localSiteId]);
-  } else {
-    siteId = _coreAuthText_(record[f.recordSiteId]);
-  }
-
-  return activeScopes.some(scope => {
-    const type = _coreAuthScopeType_(scope);
-    const referenceId = _coreAuthText_(scope.referencia_id);
-
-    if (type === 'SEDE') {
-      return Boolean(referenceId && siteId && referenceId === siteId);
-    }
-
-    if (type === 'LOCAL') {
-      // LOCAL cubre únicamente registros adscritos directamente al local,
-      // sin estructura orgánica.
-      return Boolean(
-        referenceId &&
-        local &&
-        localId &&
-        referenceId === localId &&
-        !structureId
-      );
-    }
-
-    if (type === 'ESTRUCTURA_ORG') {
-      if (!referenceId || !structureId) return false;
-
-      // Tanto la estructura de referencia como la del registro deben
-      // pertenecer al catálogo antes de comparar su relación jerárquica.
-      if (!structureMap.has(referenceId)) return false;
-      if (!structureMap.has(structureId)) return false;
-      if (referenceId === structureId) return true;
-
-      if (!_coreAuthIsTruthy_(scope.incluir_descendientes)) return false;
-
-      const visited = new Set();
-      let currentId = structureId;
-
-      while (currentId && !visited.has(currentId)) {
-        visited.add(currentId);
-
-        const current = structureMap.get(currentId);
-
-        if (!current) return false;
-
-        const parentId = _coreAuthText_(
-          current[f.structureParentId]
-        );
-
-        if (!parentId) return false;
-        if (parentId === referenceId) return true;
-
-        currentId = parentId;
+    let siteId = '';
+    if (structureId) {
+      const structure = structureMap.get(structureId);
+      if (!structure) return false;
+      siteId = _coreAuthText_(structure[f.structureSiteId]);
+      const localSiteId = local
+        ? _coreAuthText_(local[f.localSiteId])
+        : '';
+      if (local && localSiteId && siteId && localSiteId !== siteId) {
+        return false;
       }
+    } else if (local) {
+      siteId = _coreAuthText_(local[f.localSiteId]);
+    } else {
+      siteId = _coreAuthText_(record[f.recordSiteId]);
     }
 
-    return false;
-  });
+    return activeScopes.some(scope => {
+      const type = _coreAuthScopeType_(scope);
+      const referenceId = _coreAuthText_(scope.referencia_id);
+
+      if (type === 'SEDE') {
+        return Boolean(referenceId && siteId && referenceId === siteId);
+      }
+
+      if (type === 'LOCAL') {
+        // LOCAL cubre únicamente registros adscritos directamente al local,
+        // sin estructura orgánica.
+        return Boolean(
+          referenceId &&
+          local &&
+          localId &&
+          referenceId === localId &&
+          !structureId
+        );
+      }
+
+      if (type === 'ESTRUCTURA_ORG') {
+        if (!referenceId || !structureId) return false;
+        if (!structureMap.has(referenceId)) return false;
+        if (!structureMap.has(structureId)) return false;
+        if (referenceId === structureId) return true;
+        if (!_coreAuthIsTruthy_(scope.incluir_descendientes)) return false;
+
+        const visited = new Set();
+        let currentId = structureId;
+        while (currentId && !visited.has(currentId)) {
+          visited.add(currentId);
+          const current = structureMap.get(currentId);
+          if (!current) return false;
+          const parentId = _coreAuthText_(current[f.structureParentId]);
+          if (!parentId) return false;
+          if (parentId === referenceId) return true;
+          currentId = parentId;
+        }
+      }
+      return false;
+    });
+  };
+}
+
+/**
+ * Comprueba un registro mediante el contrato público de autorización.
+ * Para una comprobación aislada conserva la misma semántica; las consultas
+ * por lotes deben reutilizar _coreAuthCreateRecordScopeChecker_.
+ */
+function authorizationIsRecordInScope(
+  context,
+  moduloId,
+  record,
+  structures,
+  fields,
+  locals
+) {
+  return _coreAuthCreateRecordScopeChecker_(
+    context, moduloId, structures, fields, locals
+  )(record);
 }
