@@ -1940,6 +1940,24 @@ test('Nueva cuenta abre el formulario sin esperar los catálogos organizacionale
 });
 
 
+
+test('Nueva cuenta monta el formulario antes de mostrar la alerta del contenedor de búsqueda', () => {
+  const start = accessUiSource.indexOf('function openUserModal(row) {');
+  const end = accessUiSource.indexOf('function renderRoles(host)', start);
+  const implementation = accessUiSource.slice(start, end);
+  const mountIndex = implementation.indexOf('saveButton = openFormModal(');
+  const alertIndex = implementation.indexOf('if (initialDocumentAlert) {');
+  assert.ok(mountIndex >= 0);
+  assert.ok(alertIndex > mountIndex);
+  assert.match(implementation, /let initialDocumentAlert = null/);
+  assert.match(implementation, /initialDocumentAlert = \{[\s\S]*?title: 'Cargando catálogo'/);
+  assert.match(implementation, /showSearchAlert\(\s*initialDocumentAlert\.type/);
+  assert.ok(implementation.includes("resultHost.appendChild(alertHost)"));
+  assert.doesNotMatch(
+    implementation.slice(implementation.indexOf("if (!documentTypes.length)"), mountIndex),
+    /showSearchAlert\(/
+  );
+});
 test('el bootstrap de accesos agrupa catálogos del libro de Seguridad en una lectura', () => {
   const bootstrap = accessSource.slice(
     accessSource.indexOf('function getAccessManagementData()'),
