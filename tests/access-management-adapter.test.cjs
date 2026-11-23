@@ -404,7 +404,7 @@ test('getAccessUsers reutiliza un índice compartido entre páginas, sedes y rol
   assert.equal(filtered.items[0].persona_id, 'PER_010');
   assert.equal(materializationCount, 1, 'Cambiar sede, rol, página o búsqueda no reconstruye el índice.');
   assert.deepEqual(Array.from(indexSources).sort(), [
-    'Usuarios', 'UsuarioRol', 'personas', 'asignaciones',
+    'Usuarios', 'UsuarioRol', 'Roles', 'AmbitosAcceso', 'personas', 'asignaciones',
     'estructura_local', 'estructura_org', 'locales', 'sede'
   ].sort());
 });
@@ -518,7 +518,7 @@ test('getAccessUsers filtra localmente el índice compartido y excluye relacione
   let buildCount = 0;
   sandbox.SUNARPCore.getOrBuildCachedValue = (key, sources, builder, ttl) => {
     assert.equal(key, 'access-users-index-v2');
-    assert.equal(sources.length, 8);
+    assert.equal(sources.length, 10);
     assert.equal(ttl, 60);
     if (cache.has(key)) return { value: cache.get(key), cacheHit: true, cacheStored: true };
     buildCount++;

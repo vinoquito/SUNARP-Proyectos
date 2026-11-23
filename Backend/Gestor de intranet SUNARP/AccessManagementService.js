@@ -2966,6 +2966,10 @@ function _accessBuildUserListingIndex_() {
   const sources = [
     _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.users),
     _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.userRoles),
+    // Roles y ámbitos también forman parte de las dependencias de invalidación
+    // del índice administrativo, aunque no se materialicen en su payload.
+    _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.roles),
+    _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.scopes),
     _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
     _directorySource_('asignaciones'),
     _directorySource_('estructura_local'),
