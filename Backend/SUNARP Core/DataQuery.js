@@ -591,6 +591,13 @@ function queryRecords(source, options) {
   distinctFields.forEach(field => { distinctValueSets[field] = new Set(); });
   distinctCountFields.forEach(field => { distinctCountSets[field] = new Set(); });
   let authorizedCount = 0;
+  const isRecordInScope = _coreAuthCreateRecordScopeChecker_(
+    validated.context,
+    validated.moduleId,
+    authorization.structures || [],
+    authorization.fields || {},
+    authorization.locals || []
+  );
 
   candidateRows.forEach(candidate => {
     const record = _coreQueryRecordValue_(candidate);
@@ -627,14 +634,7 @@ function queryRecords(source, options) {
       }
     });
     if (!relationConsistent) return;
-    if (!authorizationIsRecordInScope(
-      validated.context,
-      validated.moduleId,
-      scopeRecord,
-      authorization.structures || [],
-      authorization.fields || {},
-      authorization.locals || []
-    )) return;
+    if (!isRecordInScope(scopeRecord)) return;
 
     authorizedCount++;
     distinctFields.forEach(field => {
