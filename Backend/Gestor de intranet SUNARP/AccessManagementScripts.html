@@ -19,6 +19,8 @@
     userFilters: { sedeId: '', roleId: '' },
     userPageCache: {},
     auditPageCache: {},
+    userListParams: { page: 1, pageSize: 10, search: '' },
+    auditListParams: { page: 1, pageSize: 10, search: '', filters: {} },
     selectedAssignmentRoleId: ''
   };
 
@@ -399,6 +401,7 @@
       filters: config.filters || [],
       mode: config.mode || 'client',
       loadData: config.loadData,
+      initialState: config.initialState,
       search: config.search !== false,
 
       searchPlaceholder:
@@ -1548,6 +1551,11 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     let lastPageResult = { items: [], total: 0 };
 
     async function loadUserPage(params) {
+      state.userListParams = {
+        page: Number(params && params.page) || 1,
+        pageSize: Number(params && params.pageSize) || 10,
+        search: String(params && params.search || '')
+      };
       const allSitesSelected = appliedSedeId === '__ALL__' || appliedRoleId === '__ALL__';
       const sedeId = appliedSedeId === '__ALL__' ? '' : appliedSedeId;
       const rolId = appliedRoleId === '__ALL__' ? '' : appliedRoleId;
@@ -1600,6 +1608,14 @@ function createAccessStatusCell(row, method, id, entityLabel) {
 
     function loadFilteredUsers() {
       if (!tableConfig) return;
+      const previousTableState = state.table && typeof state.table.getState === 'function'
+        ? state.table.getState()
+        : state.userListParams;
+      state.userListParams = {
+        page: 1,
+        pageSize: Number(previousTableState && previousTableState.pageSize) || 10,
+        search: String(previousTableState && previousTableState.search || '')
+      };
       requestNumber += 1;
       appliedSedeId = siteSelect.value;
       appliedRoleId = roleSelect.value;
@@ -1643,6 +1659,7 @@ function createAccessStatusCell(row, method, id, entityLabel) {
           onClick: row => openEntityHistory('USUARIO', row.persona_id, row.nombre_completo)
         }] : [])
       ],
+      initialState: state.userListParams,
       searchPlaceholder: 'Buscar por nombre o correo institucional...',
       emptyMessage: appliedSedeId || appliedRoleId
         ? 'No existen usuarios para los filtros seleccionados.'
@@ -2943,6 +2960,7 @@ window.SUNARPAccessHistory = Object.freeze({
 
     renderTable(host, {
       mode: 'server',
+      initialState: state.auditListParams,
 
       loadData: async params => {
         const request = {
@@ -2950,6 +2968,12 @@ window.SUNARPAccessHistory = Object.freeze({
           ...params.filters,
           page: params.page,
           pageSize: params.pageSize
+        };
+        state.auditListParams = {
+          page: Number(params.page) || 1,
+          pageSize: Number(params.pageSize) || 10,
+          search: String(params.search || ''),
+          filters: Object.assign({}, params.filters || {})
         };
         const cacheKey = JSON.stringify(request);
         const cached = state.auditPageCache[cacheKey];
@@ -3111,6 +3135,11 @@ window.SUNARPAccessHistory = Object.freeze({
   function renderActiveTab(tabId) {
     const panel = $('#accessTabPanel');
     if (!panel || !state.data) return;
+    if (state.table && typeof state.table.getState === 'function') {
+      const tableState = state.table.getState();
+      if (state.activeTab === 'users') state.userListParams = tableState;
+      if (state.activeTab === 'audit') state.auditListParams = tableState;
+    }
     destroyTable();
     panel.replaceChildren();
     const renderers = {
