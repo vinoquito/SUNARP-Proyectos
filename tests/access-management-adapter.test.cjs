@@ -12,6 +12,7 @@ const appPath = path.join(root, 'Backend/Gestor de intranet SUNARP/Código.js');
 const configPath = path.join(root, 'Backend/Gestor de intranet SUNARP/AppConfig.js');
 const accessUiPath = path.join(root, 'Backend/Gestor de intranet SUNARP/AccessManagementScripts.html');
 const directoryUiPath = path.join(root, 'Backend/Gestor de intranet SUNARP/DirectoryScripts.html');
+const directoryViewPath = path.join(root, 'Backend/Gestor de intranet SUNARP/ViewDirectorios.html');
 
 const coreSource = fs.readFileSync(corePath, 'utf8');
 const accessSource = fs.readFileSync(accessPath, 'utf8');
@@ -22,6 +23,7 @@ const accessUiSource = fs.readFileSync(accessUiPath, 'utf8');
 const viewPath = path.join(root, 'Backend/Gestor de intranet SUNARP/ViewAccesos.html');
 const viewSource = fs.readFileSync(viewPath, 'utf8');
 const directoryUiSource = fs.readFileSync(directoryUiPath, 'utf8');
+const directoryViewSource = fs.readFileSync(directoryViewPath, 'utf8');
 
 function extractInlineScripts(html) {
   return [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)]
@@ -1839,10 +1841,10 @@ test('el catálogo de tipos de documento se carga al abrir Nueva cuenta y no en 
 });
 
 test('Información de personal presenta filtros en cascada Sede, Local, Unidad orgánica y Cargo', () => {
-  assert.match(viewSource, /id="directorySedeFilter"/);
-  assert.match(viewSource, /id="directoryLocalFilter"/);
-  assert.match(viewSource, /id="directoryHierarchyFilters"/);
-  assert.match(viewSource, /id="directoryCargoFilter"/);
+  assert.match(directoryViewSource, /id="directorySedeFilter"/);
+  assert.match(directoryViewSource, /id="directoryLocalFilter"/);
+  assert.match(directoryViewSource, /id="directoryHierarchyFilters"/);
+  assert.match(directoryViewSource, /id="directoryCargoFilter"/);
   assert.match(directoryUiSource, /localFilter: document\.getElementById\(/);
   assert.match(directoryUiSource, /function populateLocalFilter\(\)/);
   assert.match(directoryUiSource, /function getHierarchyFilterSets\(\)/);
