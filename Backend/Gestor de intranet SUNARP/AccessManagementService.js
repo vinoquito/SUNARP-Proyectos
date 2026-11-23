@@ -697,7 +697,7 @@ function _accessOrgCatalog_() {
     { key: 'locales', source: getIntranetDataSource('DIRECTORY', 'locales', 1) }
   ];
 
-  const catalogs = SUNARPCore.listRecordsFromSourcesCached(requests, 30);
+  const catalogs = SUNARPCore.listRecordsFromSourcesCached(requests, 3600);
 
   return {
     sedes: (catalogs.sedes || []).filter(_accessCatalogIsActive_),
@@ -754,7 +754,7 @@ function _accessGetAuthContext_() {
         'access-auth-context:v1:' + identityKey,
         sources,
         () => _accessBuildAuthContext_(email),
-        60
+        3600
       );
       console.log('[AccessManagement] Authorization context cache:', JSON.stringify({
         cacheHit: Boolean(cached && cached.cacheHit),
