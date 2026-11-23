@@ -56,7 +56,7 @@ function createSandbox() {
     })
   });
   vm.runInContext(source, context, { filename: 'DataQuery.js' });
-  const authorization = (personaId = 'P1', permissionCodes = ['DIRECTORY_READ'], scopes = [{ tipo_ambito_id: 'TOTAL', referencia_id: '' }]) => ({
+  const authorization = (personaId = 'P1', permissionCodes = ['DIRECTORY_READ'], scopes = [{ tipo_ambito_id: 'SEDE', referencia_id: 'S1' }]) => ({
     context: {
       authenticated: true,
       personaId,
@@ -66,11 +66,34 @@ function createSandbox() {
         scopes
       }]
     },
+    structures: [],
+    locals: [],
     moduleId: 'MOD_DIRECTORY',
     permissionCode: 'DIRECTORY_READ'
   });
   return { context, authorization, getCacheReads: () => cacheReads, cache };
 }
+
+test('queryRecords omite comprobaciones redundantes por registro para un único ámbito TOTAL válido', () => {
+  const sandbox = createSandbox();
+  sandbox.context.authorizationIsRecordInScope = () => {
+    throw new Error('Un ámbito TOTAL válido no debe comprobar cada registro individualmente.');
+  };
+  const result = sandbox.context.queryRecords(
+    { spreadsheetId: 'S', sheetName: 'Assignments' },
+    {
+      idField: 'assignment_id',
+      filters: { status: 'ACTIVE' },
+      authorization: sandbox.authorization('P1', ['DIRECTORY_READ'], [
+        { tipo_ambito_id: 'TOTAL', referencia_id: '' }
+      ]),
+      cacheSeconds: 0,
+      candidateCacheSeconds: 0
+    }
+  );
+  assert.equal(result.total, 3);
+  assert.equal(result.records.length, 3);
+});
 
 test('queryRecords pagina distinctBy con retención acotada cuando distinctBy coincide con sortBy', () => {
   const sandbox = createSandbox();
