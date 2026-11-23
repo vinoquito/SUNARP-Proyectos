@@ -855,6 +855,8 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
   const structures = context.estructuraOrg || [];
   const locals = context.locales || [];
   const structureMap = _directoryCreateMap_(structures);
+  const relationMap = _directoryCreateMap_(relations);
+  const localMap = _directoryCreateMap_(locals);
   const moduleAccess = (authorization.auth.moduleAccess || []).find(item =>
     _directoryKey_(item.modulo_id) === _directoryKey_(authorization.moduleId)
   );
@@ -916,7 +918,7 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
 
     if (selectedLocalId) {
       relationIds = relationIds.filter(id => {
-        const relation = relations.find(item => _directoryKey_(item.id) === id);
+        const relation = relationMap.get(id);
         return relation && _directoryKey_(relation.local_id) === selectedLocalId;
       });
       localIds = localIds.filter(id => id === selectedLocalId);
@@ -929,7 +931,7 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
         return structure && _directoryKey_(structure.sede_id) === selectedSiteId;
       });
       localIds = localIds.filter(id => {
-        const local = locals.find(item => _directoryKey_(item.id) === id);
+        const local = localMap.get(id);
         return local && _directoryKey_(local.sede_id) === selectedSiteId;
       });
     }
@@ -970,7 +972,7 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
   relations.forEach(relation => {
     const relationId = _directoryKey_(relation.id);
     const structure = structureMap.get(_directoryKey_(relation.estructura_id));
-    const local = locals.find(item => _directoryKey_(item.id) === _directoryKey_(relation.local_id));
+    const local = localMap.get(_directoryKey_(relation.local_id));
     if (!relationId || !structure || !local) return;
     relationValues[relationId] = {
       estructura_id: _directoryKey_(relation.estructura_id),
@@ -1360,9 +1362,11 @@ function getDirectoryInitialData() {
   const usedCargoIds = new Set((distinctValues.cargo_id || []).map(_directoryKey_).filter(Boolean));
   const usedRelationIds = new Set((distinctValues.estructura_local_id || []).map(_directoryKey_).filter(Boolean));
   const usedLocalIds = new Set((distinctValues.local_id || []).map(_directoryKey_).filter(Boolean));
+  const relationMap = _directoryCreateMap_(context.estructuraLocal || []);
+  const localMap = _directoryCreateMap_(context.locales || []);
   const usedStructureIds = new Set();
   usedRelationIds.forEach(id => {
-    const relation = (context.estructuraLocal || []).find(item => _directoryKey_(item.id) === id);
+    const relation = relationMap.get(id);
     if (relation) usedStructureIds.add(_directoryKey_(relation.estructura_id));
   });
 
@@ -1372,7 +1376,7 @@ function getDirectoryInitialData() {
     if (structure && _directoryKey_(structure.sede_id)) selectableSedeIds.add(_directoryKey_(structure.sede_id));
   });
   usedLocalIds.forEach(id => {
-    const local = (context.locales || []).find(item => _directoryKey_(item.id) === id);
+    const local = localMap.get(id);
     if (local && _directoryKey_(local.sede_id)) selectableSedeIds.add(_directoryKey_(local.sede_id));
   });
 
