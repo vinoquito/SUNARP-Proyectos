@@ -1551,6 +1551,7 @@ function listDirectoryAssignments(options) {
   }
 
   const queryStartedAt = Date.now();
+  const includeCargoOptions = options.includeCargoOptions === true;
   const result = _directoryExecuteAssignmentQuery_(
     context,
     authorization,
@@ -1558,8 +1559,19 @@ function listDirectoryAssignments(options) {
     'asignacion_id',
     offset,
     limit,
-    true
+    true,
+    '',
+    includeCargoOptions ? ['cargo_id'] : [],
+    []
   );
+  const cargoOptions = includeCargoOptions
+    ? (context.cargos || [])
+        .filter(item => _directoryIsActive_(item) &&
+          new Set(result.distinctValues && result.distinctValues.cargo_id || [])
+            .has(_directoryKey_(item.id)))
+        .map(item => ({ id: _directoryKey_(item.id), name: _directoryText_(item.name) }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'es'))
+    : null;
   console.log('[DirectoryService] Assignment page ms:', JSON.stringify({
     authorization: authElapsed,
     context: contextElapsed,
@@ -1567,6 +1579,7 @@ function listDirectoryAssignments(options) {
     total: Date.now() - totalStartedAt,
     page: page || 1,
     pageSize: limit,
+    cargoOptions: includeCargoOptions,
     rows: (result.records || []).length,
     totalRows: Number(result.total) || 0
   }));
@@ -1576,7 +1589,8 @@ function listDirectoryAssignments(options) {
     offset,
     limit,
     page,
-    pageSize
+    pageSize,
+    ...(includeCargoOptions ? { cargoOptions } : {})
   };
 }
 
