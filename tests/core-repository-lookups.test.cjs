@@ -129,13 +129,14 @@ test('listTailRecords permite filtros temporales exactos sin leer filas completa
 
 test('findRecordsByFields usa ventanas agrupadas de 500 filas para búsquedas masivas proyectadas', () => {
   const headers = ['persona_id', 'nombres'];
-  let requestedWindowSize = null;
+  const row = ['PER_001', 'Ana'];
   const sheet = {
     getLastRow: () => 2,
     getLastColumn: () => 2,
-    getRange(startRow) {
+    getRange(startRow, startColumn, numRows, numColumns) {
       if (startRow === 1) return { getDisplayValues: () => [headers] };
       return {
+        getValues: () => [row.slice(startColumn - 1, startColumn - 1 + numColumns)],
         createTextFinder: () => ({
           matchEntireCell() { return this; },
           matchCase() { return this; },
@@ -156,15 +157,17 @@ test('findRecordsByFields usa ventanas agrupadas de 500 filas para búsquedas ma
       config: { headerRow: 1, sheetName: 'personas' },
       sheet
     }),
-    _coreReadProjectedCandidateRows_: (_sheet, rowNumbers, _headerMap, _fields, _start, windowSize) => {
-      requestedWindowSize = windowSize;
-      return new Map([[2, { persona_id: 'PER_001', nombres: 'Ana' }]]);
-    },
     _coreValuesEqual_: (actual, expected) =>
       String(actual === null || actual === undefined ? '' : actual).trim() ===
       String(expected === null || expected === undefined ? '' : expected).trim()
   });
   vm.runInContext(repositorySource, sandbox, { filename: 'DataRepository.js' });
+  const originalRead = sandbox._coreReadProjectedCandidateRows_;
+  let requestedWindowSize = null;
+  sandbox._coreReadProjectedCandidateRows_ = (...args) => {
+    requestedWindowSize = args[5];
+    return originalRead(...args);
+  };
   const result = sandbox.findRecordsByFields(
     { spreadsheetId: 'DIRECTORY', sheetName: 'personas' },
     { persona_id: ['PER_001'] },
@@ -174,6 +177,7 @@ test('findRecordsByFields usa ventanas agrupadas de 500 filas para búsquedas ma
     }
   );
   assert.equal(result.total, 1);
+  assert.equal(result.records[0].persona_id, 'PER_001');
   assert.equal(requestedWindowSize, 500);
 });
 

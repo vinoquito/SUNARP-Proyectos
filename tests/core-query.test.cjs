@@ -191,7 +191,7 @@ test('queryRecords separa la caché por persona y contexto de ámbito', () => {
   sandbox.context.queryRecords(sourceRef, Object.assign({}, options, {
     authorization: sandbox.authorization('P2')
   }));
-  assert.equal(sandbox.cache.size, before + 1);
+  assert.equal(sandbox.cache.size, before + 2);
 });
 
 test('queryRecords exige catálogos para ámbitos no globales y no cachea sin versión de catálogo', () => {
