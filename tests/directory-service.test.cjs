@@ -1114,7 +1114,7 @@ test('el caché del sitio depende de identidad, permisos y generaciones de las f
   assert.match(serviceSource, /_directoryGetSiteDataCacheSources_/);
   assert.match(serviceSource, /cacheSeconds: 60/);
   assert.match(accessServiceSource, /access-auth-context:v1:[\s\S]*?3600/);
-  assert.match(accessServiceSource, /listRecordsFromSourcesCached\(requests, 3600\)/);
+  assert.match(accessServiceSource, /listRecordsFromSourcesCached\(requests, 60\)/);
 });
 
 test('la huella de caché de sede cambia por identidad, permiso, ámbitos y relaciones', () => {

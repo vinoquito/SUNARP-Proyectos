@@ -1822,7 +1822,7 @@ test('la paginación del historial por entidad reutiliza el índice cacheado y c
   sandbox.SUNARPCore.getOrBuildCachedValue = (key, sources, builder, ttl) => {
     assert.equal(sources.length, 1);
     assert.equal(sources[0].sheetName, 'Auditoria');
-    assert.equal(ttl, 300);
+    assert.equal(ttl, 60);
     if (cache.has(key)) return { value: cache.get(key), cacheHit: true, cacheStored: true };
     builds++;
     const value = builder();
@@ -2023,7 +2023,7 @@ test('el bootstrap de accesos agrupa catálogos del libro de Seguridad en una le
     accessSource.indexOf('function getAccessManagementTabData(', accessSource.indexOf('function getAccessManagementData()'))
   );
   assert.match(bootstrap, /bootstrapRequests/);
-  assert.match(bootstrap, /listRecordsFromSourcesCached\(bootstrapRequests, 300\)/);
+  assert.match(bootstrap, /listRecordsFromSourcesCached\(bootstrapRequests, 60\)/);
   assert.doesNotMatch(bootstrap, /_accessLoadSecurityRecords_\(/);
 });
 
