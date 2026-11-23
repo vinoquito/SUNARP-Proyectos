@@ -13,6 +13,7 @@ const configPath = path.join(root, 'Backend/Gestor de intranet SUNARP/AppConfig.
 const accessUiPath = path.join(root, 'Backend/Gestor de intranet SUNARP/AccessManagementScripts.html');
 const directoryUiPath = path.join(root, 'Backend/Gestor de intranet SUNARP/DirectoryScripts.html');
 const directoryViewPath = path.join(root, 'Backend/Gestor de intranet SUNARP/ViewDirectorios.html');
+const dataTableUiPath = path.join(root, 'Backend/SUNARP UI/UIDataTableScripts.html');
 
 const coreSource = fs.readFileSync(corePath, 'utf8');
 const accessSource = fs.readFileSync(accessPath, 'utf8');
@@ -24,6 +25,7 @@ const viewPath = path.join(root, 'Backend/Gestor de intranet SUNARP/ViewAccesos.
 const viewSource = fs.readFileSync(viewPath, 'utf8');
 const directoryUiSource = fs.readFileSync(directoryUiPath, 'utf8');
 const directoryViewSource = fs.readFileSync(directoryViewPath, 'utf8');
+const dataTableUiSource = fs.readFileSync(dataTableUiPath, 'utf8');
 
 function extractInlineScripts(html) {
   return [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)]
@@ -1883,6 +1885,20 @@ test('Información de personal registra tiempos de autorización, contexto y con
   assert.match(directoryUiSource, /\[DirectoryPage\] DataTable server request ms:/);
 });
 
+
+test('las pestañas Usuarios y Auditoría conservan búsqueda, filtros y página al volver', () => {
+  assert.match(dataTableUiSource, /const initialState = options\.initialState/);
+  assert.match(dataTableUiSource, /Number\.parseInt\(initialState\.page/);
+  assert.match(dataTableUiSource, /String\(initialState\.search/);
+  assert.match(dataTableUiSource, /initialState\.filters && initialState\.filters\[filter\.key\]/);
+  assert.match(accessUiSource, /initialState: config\.initialState/);
+  assert.match(accessUiSource, /state\.userListParams = tableState/);
+  assert.match(accessUiSource, /state\.auditListParams = tableState/);
+  assert.match(accessUiSource, /state\.userPagePromises/);
+  assert.match(accessUiSource, /state\.auditPagePromises/);
+  assert.match(accessUiSource, /state\.userCacheGeneration \+= 1/);
+  assert.match(accessUiSource, /state\.auditCacheGeneration \+= 1/);
+});
 
 test('el modal de permiso abre sin depender de visitar antes la pestaña de módulos', () => {
   const start = accessUiSource.indexOf('function openPermissionModal(row)');
