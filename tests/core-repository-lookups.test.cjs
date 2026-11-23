@@ -181,6 +181,54 @@ test('findRecordsByFields usa ventanas agrupadas de 500 filas para búsquedas ma
   assert.equal(requestedWindowSize, 500);
 });
 
+test('searchRecordsByFields agrupa la hidratación de candidatos en ventanas de 500 filas', () => {
+  const headers = ['evento_id', 'detalle'];
+  const row = ['EVT_001', 'Ana Torres'];
+  const sheet = {
+    getLastRow: () => 2,
+    getLastColumn: () => 2,
+    getRange(startRow, startColumn, numRows, numColumns) {
+      if (startRow === 1) return { getDisplayValues: () => [headers] };
+      return {
+        getValues: () => [row.slice(startColumn - 1, startColumn - 1 + numColumns)],
+        createTextFinder: () => ({
+          matchCase() { return this; },
+          useRegularExpression() { return this; },
+          findAll: () => [{ getRow: () => 2 }]
+        })
+      };
+    }
+  };
+  const sandbox = vm.createContext({
+    Map,
+    Set,
+    Object,
+    Array,
+    String,
+    Error,
+    _coreOpenSource_: () => ({
+      config: { headerRow: 1, sheetName: 'Auditoria' },
+      sheet
+    })
+  });
+  vm.runInContext(repositorySource, sandbox, { filename: 'DataRepository.js' });
+  const originalRead = sandbox._coreReadCandidateRows_;
+  let requestedWindowSize = null;
+  sandbox._coreReadCandidateRows_ = (...args) => {
+    requestedWindowSize = args[4];
+    return originalRead(...args);
+  };
+  const result = sandbox.searchRecordsByFields(
+    { spreadsheetId: 'SECURITY', sheetName: 'Auditoria' },
+    'Ana',
+    ['detalle'],
+    { matchCase: false }
+  );
+  assert.equal(result.total, 1);
+  assert.equal(result.records[0].evento_id, 'EVT_001');
+  assert.equal(requestedWindowSize, 500);
+});
+
 test('findRecordsByFields respeta matchCase=false al validar filas candidatas', () => {
   const headers = ['persona_id', 'correo_institucional'];
   const rows = [

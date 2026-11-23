@@ -1221,8 +1221,10 @@ function searchRecordsByFields(source, query, fields, options) {
     : _coreNormalizeSearchText_(search);
   const records = [];
   const orderedRows = [...candidateRows].sort((a, b) => a - b);
+  // Búsquedas textuales (p. ej. auditoría filtrada) leen candidatos en
+  // ventanas agrupadas, evitando cientos de lecturas de 25 filas.
   const candidateValues = _coreReadCandidateRows_(
-    sheet, orderedRows, lastColumn, dataStartRow, 25
+    sheet, orderedRows, lastColumn, dataStartRow, 500
   );
   orderedRows.forEach(rowNumber => {
     const values = candidateValues.get(rowNumber);

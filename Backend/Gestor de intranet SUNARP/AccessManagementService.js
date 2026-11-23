@@ -242,7 +242,7 @@ function _accessLoadSecurityData_() {
     { key: 'ambitosAcceso', source: _accessSecuritySource_(s.scopes), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.scopes },
     { key: 'tiposAmbito', source: _accessSecuritySource_(s.scopeTypes), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.scopeTypes }
   ];
-  const data = SUNARPCore.listRecordsFromSourcesCached(requests, 300);
+  const data = SUNARPCore.listRecordsFromSourcesCached(requests, 60);
   _accessValidateSnapshot_(data);
   return data;
 }
@@ -482,7 +482,7 @@ function _accessLoadAuthorizationData_(personaId) {
     key: 'modulos',
     source: _accessSecuritySource_(s.modules),
     requiredHeaders: ACCESS_MANAGEMENT_FIELDS.modules
-  }], 300);
+  }], 60);
 
   return {
     usuarios: activeUsers,
@@ -697,7 +697,7 @@ function _accessOrgCatalog_() {
     { key: 'locales', source: getIntranetDataSource('DIRECTORY', 'locales', 1) }
   ];
 
-  const catalogs = SUNARPCore.listRecordsFromSourcesCached(requests, 3600);
+  const catalogs = SUNARPCore.listRecordsFromSourcesCached(requests, 60);
 
   return {
     sedes: (catalogs.sedes || []).filter(_accessCatalogIsActive_),
@@ -2610,7 +2610,7 @@ function _accessLoadSecurityRecords_(sheetName, requiredHeaders) {
     key: 'records',
     source: _accessSecuritySource_(sheetName),
     requiredHeaders: requiredHeaders || []
-  }], 300);
+  }], 60);
   return result.records || [];
 }
 
@@ -2673,7 +2673,7 @@ function getAccessManagementData() {
   // Agrupar fuentes del mismo libro en una sola lectura Core evita abrir
   // repetidamente el archivo de Seguridad durante el bootstrap.
   const bootstrapCatalogs = bootstrapRequests.length
-    ? SUNARPCore.listRecordsFromSourcesCached(bootstrapRequests, 300)
+    ? SUNARPCore.listRecordsFromSourcesCached(bootstrapRequests, 60)
     : {};
   const modules = bootstrapCatalogs.modules || [];
   const roles = bootstrapCatalogs.roles || [];
@@ -2773,9 +2773,14 @@ function getAccessManagementTabData(tabId) {
 
   if (tab === 'permissions') {
     const auth = _accessRequirePermission_('PERMISOS_ADMINISTRAR');
-    const modules = _accessLoadSecurityRecords_(s.modules, ACCESS_MANAGEMENT_FIELDS.modules);
-    const operations = _accessLoadSecurityRecords_(s.operations, ACCESS_MANAGEMENT_FIELDS.operations);
-    const permissions = _accessLoadSecurityRecords_(s.permissions, ACCESS_MANAGEMENT_FIELDS.permissions);
+    const catalogs = SUNARPCore.listRecordsFromSourcesCached([
+      { key: 'modules', source: _accessSecuritySource_(s.modules), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.modules },
+      { key: 'operations', source: _accessSecuritySource_(s.operations), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.operations },
+      { key: 'permissions', source: _accessSecuritySource_(s.permissions), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.permissions }
+    ], 60);
+    const modules = catalogs.modules || [];
+    const operations = catalogs.operations || [];
+    const permissions = catalogs.permissions || [];
     return {
       modules: modules.map(item => ({
         modulo_id: _accessText_(item.modulo_id), codigo: _accessUpper_(item.codigo),
@@ -2797,11 +2802,18 @@ function getAccessManagementTabData(tabId) {
 
   if (tab === 'assignments') {
     const auth = _accessRequirePermission_('ROLES_ADMINISTRAR');
-    const roles = _accessLoadSecurityRecords_(s.roles, ACCESS_MANAGEMENT_FIELDS.roles);
-    const modules = _accessLoadSecurityRecords_(s.modules, ACCESS_MANAGEMENT_FIELDS.modules);
-    const operations = _accessLoadSecurityRecords_(s.operations, ACCESS_MANAGEMENT_FIELDS.operations);
-    const permissions = _accessLoadSecurityRecords_(s.permissions, ACCESS_MANAGEMENT_FIELDS.permissions);
-    const rolePermissions = _accessLoadSecurityRecords_(s.rolePermissions, ACCESS_MANAGEMENT_FIELDS.rolePermissions);
+    const catalogs = SUNARPCore.listRecordsFromSourcesCached([
+      { key: 'roles', source: _accessSecuritySource_(s.roles), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.roles },
+      { key: 'modules', source: _accessSecuritySource_(s.modules), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.modules },
+      { key: 'operations', source: _accessSecuritySource_(s.operations), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.operations },
+      { key: 'permissions', source: _accessSecuritySource_(s.permissions), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.permissions },
+      { key: 'rolePermissions', source: _accessSecuritySource_(s.rolePermissions), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.rolePermissions }
+    ], 60);
+    const roles = catalogs.roles || [];
+    const modules = catalogs.modules || [];
+    const operations = catalogs.operations || [];
+    const permissions = catalogs.permissions || [];
+    const rolePermissions = catalogs.rolePermissions || [];
     return {
       roles: roles.map(item => ({
         rol_id: _accessText_(item.rol_id), nombre: _accessText_(item.nombre),
@@ -2942,107 +2954,177 @@ function getAccessUserConfiguration(personaId) {
  * vez por combinación de filtros estructurales y generación de las fuentes.
  * Las búsquedas y páginas posteriores reutilizan el índice ya enriquecido.
  */
-function _accessBuildUserListingIndex_(sedeId, roleId) {
+function _accessBuildUserListingIndex_() {
   if (typeof SUNARPCore.getOrBuildCachedValue !== 'function') {
     throw new Error(
       'El listado de usuarios requiere la versión de SUNARP Core que incorpora getOrBuildCachedValue.'
     );
   }
 
+  // La clave no depende de los filtros de sede/rol. Las generaciones de todas
+  // las fuentes mantienen un único índice compartido y lo invalidan tras CRUD.
   const sources = [
     _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.users),
     _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.userRoles),
-    _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people)
+    _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
+    _directorySource_('asignaciones'),
+    _directorySource_('estructura_local'),
+    _directorySource_('estructura_org'),
+    _directorySource_('locales'),
+    _directorySource_('sede')
   ];
-  const locationRequests = [];
-  if (sedeId) {
-    const assignmentSource = _directorySource_('asignaciones');
-    const relationSource = _directorySource_('estructura_local');
-    const structureSource = _directorySource_('estructura_org');
-    const localSource = _directorySource_('locales');
-    const siteSource = _directorySource_('sede');
-    sources.push(assignmentSource, relationSource, structureSource, localSource, siteSource);
-    locationRequests.push(
-      { key: 'relations', source: relationSource, requiredHeaders: ['id', 'estructura_id', 'local_id'] },
-      { key: 'structures', source: structureSource, requiredHeaders: ['id', 'sede_id'] },
-      { key: 'locals', source: localSource, requiredHeaders: ['id', 'sede_id'] },
-      { key: 'sites', source: siteSource, requiredHeaders: ['id', 'name'] }
-    );
-  }
-
-  const cacheKey = ['access-users-index-v1', sedeId || '*', roleId || '*'].join(':');
-  const cached = SUNARPCore.getOrBuildCachedValue(cacheKey, sources, () => {
-    const candidateSets = [];
-    if (roleId) {
-      const roleAssignments = _accessFindSecurityRecords_(
-        ACCESS_MANAGEMENT_CONFIG.sheets.userRoles,
-        'rol_id',
-        [roleId],
-        ACCESS_MANAGEMENT_FIELDS.userRoles,
-        { projectionFields: ['persona_id', 'active'] }
-      ).filter(item => _accessIsActive_(item.active));
-      candidateSets.push(new Set(
-        roleAssignments.map(item => _accessText_(item.persona_id)).filter(Boolean)
-      ));
+  const requests = [
+    {
+      key: 'users',
+      source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.users),
+      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.users
+    },
+    {
+      key: 'userRoles',
+      source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.userRoles),
+      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.userRoles
+    },
+    {
+      key: 'relations',
+      source: _directorySource_('estructura_local'),
+      requiredHeaders: ['id', 'estructura_id', 'local_id']
+    },
+    {
+      key: 'structures',
+      source: _directorySource_('estructura_org'),
+      requiredHeaders: ['id', 'sede_id']
+    },
+    {
+      key: 'locals',
+      source: _directorySource_('locales'),
+      requiredHeaders: ['id', 'sede_id']
+    },
+    {
+      key: 'sites',
+      source: _directorySource_('sede'),
+      requiredHeaders: ['id', 'name']
     }
+  ];
 
-    const sitesByPerson = new Map();
-    const siteNames = new Map();
-    if (sedeId) {
-      const locationData = SUNARPCore.listRecordsFromSourcesCached(locationRequests, 300);
-      const relations = new Map((locationData.relations || []).map(item => [
+  const cached = SUNARPCore.getOrBuildCachedValue(
+    'access-users-index-v2',
+    sources,
+    () => {
+      const data = SUNARPCore.listRecordsFromSourcesCached(requests, 60);
+      const accounts = data.users || [];
+      const userRoles = data.userRoles || [];
+      const relations = data.relations || [];
+      const structures = new Map((data.structures || []).map(item => [
         _accessText_(item.id), item
       ]));
-      const structures = new Map((locationData.structures || []).map(item => [
+      const locals = new Map((data.locals || []).map(item => [
         _accessText_(item.id), item
       ]));
-      const locals = new Map((locationData.locals || []).map(item => [
-        _accessText_(item.id), item
+      const siteNames = new Map((data.sites || []).map(item => [
+        _accessText_(item.id), _accessText_(item.name)
       ]));
-      (locationData.sites || []).forEach(item =>
-        siteNames.set(_accessText_(item.id), _accessText_(item.name))
-      );
 
-      const relationIds = (locationData.relations || []).filter(relation => {
+      const integrity = {
+        total: relations.length,
+        missingStructure: 0,
+        missingLocal: 0,
+        missingSite: 0,
+        crossSite: 0,
+        invalidAssignments: 0,
+        sample: []
+      };
+      const validRelations = new Map();
+      relations.forEach(relation => {
+        const relationId = _accessText_(relation.id);
         const structure = structures.get(_accessText_(relation.estructura_id));
-        return structure && _accessText_(structure.sede_id) === sedeId;
-      }).map(item => _accessText_(item.id)).filter(Boolean);
-      const localIds = (locationData.locals || []).filter(local =>
-        _accessText_(local.sede_id) === sedeId
-      ).map(item => _accessText_(item.id)).filter(Boolean);
+        const local = locals.get(_accessText_(relation.local_id));
+        if (!structure) integrity.missingStructure++;
+        if (!local) integrity.missingLocal++;
+        if (!structure || !local) {
+          if (integrity.sample.length < 10) integrity.sample.push({
+            estructura_local_id: relationId,
+            issue: !structure && !local ? 'missing-structure-and-local' :
+              (!structure ? 'missing-structure' : 'missing-local')
+          });
+          return;
+        }
 
+        const structureSiteId = _accessText_(structure.sede_id);
+        const localSiteId = _accessText_(local.sede_id);
+        if (!structureSiteId || !localSiteId) {
+          integrity.missingSite++;
+          if (integrity.sample.length < 10) integrity.sample.push({
+            estructura_local_id: relationId,
+            estructura_sede_id: structureSiteId,
+            local_sede_id: localSiteId,
+            issue: 'missing-site'
+          });
+          return;
+        }
+        if (structureSiteId !== localSiteId) {
+          integrity.crossSite++;
+          if (integrity.sample.length < 10) integrity.sample.push({
+            estructura_local_id: relationId,
+            estructura_sede_id: structureSiteId,
+            local_id: _accessText_(local.id),
+            local_sede_id: localSiteId,
+            issue: 'cross-site'
+          });
+          return;
+        }
+        if (relationId) {
+          validRelations.set(relationId, {
+            relation,
+            localId: _accessText_(local.id),
+            sedeId: structureSiteId
+          });
+        }
+      });
+
+      const sitesByPerson = new Map();
       const assignmentHeaders = [
         'asignacion_id', 'persona_id', 'estructura_local_id', 'local_id', 'active'
       ];
-      const collectAssignments = records => {
-        (records || []).forEach(assignment => {
+      const collectAssignments = rows => {
+        (rows || []).forEach(assignment => {
           if (!_accessIsActive_(assignment.active)) return;
           const personaId = _accessText_(assignment.persona_id);
           const relationId = _accessText_(assignment.estructura_local_id);
           const localId = _accessText_(assignment.local_id);
-          let assignedSiteId = '';
+          if (!personaId) return;
 
+          let assignedSiteId = '';
           if (relationId) {
-            const relation = relations.get(relationId);
-            const structure = relation && structures.get(_accessText_(relation.estructura_id));
-            if (!relation || !structure ||
-                (localId && localId !== _accessText_(relation.local_id))) return;
-            assignedSiteId = _accessText_(structure.sede_id);
+            const validRelation = validRelations.get(relationId);
+            if (!validRelation ||
+                (localId && localId !== validRelation.localId)) {
+              integrity.invalidAssignments++;
+              return;
+            }
+            assignedSiteId = validRelation.sedeId;
           } else if (localId) {
             const local = locals.get(localId);
             assignedSiteId = local ? _accessText_(local.sede_id) : '';
+            if (!assignedSiteId) {
+              integrity.invalidAssignments++;
+              return;
+            }
+          } else {
+            integrity.invalidAssignments++;
+            return;
           }
 
-          if (!personaId || assignedSiteId !== sedeId) return;
           if (!sitesByPerson.has(personaId)) sitesByPerson.set(personaId, new Set());
           sitesByPerson.get(personaId).add(assignedSiteId);
         });
       };
 
-      if (relationIds.length) {
+      const validRelationIds = Array.from(validRelations.keys());
+      const localIds = Array.from(locals.keys()).filter(Boolean);
+      if (validRelationIds.length) {
         const result = SUNARPCore.findRecordsByFields(
           _directorySource_('asignaciones'),
-          { estructura_local_id: relationIds },
+          { estructura_local_id: validRelationIds },
           {
             searchField: 'estructura_local_id',
             requiredHeaders: assignmentHeaders,
@@ -3063,94 +3145,81 @@ function _accessBuildUserListingIndex_(sedeId, roleId) {
         );
         collectAssignments(result.records);
       }
-      candidateSets.push(new Set(sitesByPerson.keys()));
-    }
 
-    if (!candidateSets.length) {
-      const allAccounts = _accessLoadSecurityRecords_(
-        ACCESS_MANAGEMENT_CONFIG.sheets.users,
-        ACCESS_MANAGEMENT_FIELDS.users
-      );
-      candidateSets.push(new Set(
-        allAccounts.map(item => _accessText_(item.persona_id)).filter(Boolean)
-      ));
-    }
+      const accountPersonaIds = Array.from(new Set(accounts.map(item =>
+        _accessText_(item.persona_id)
+      ).filter(Boolean)));
+      const peopleResult = accountPersonaIds.length
+        ? SUNARPCore.findRecordsByFields(
+            _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
+            { persona_id: accountPersonaIds },
+            {
+              searchField: 'persona_id',
+              requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people,
+              projectionFields: [
+                'persona_id', 'correo_institucional', 'nombres', 'apellidos'
+              ]
+            }
+          )
+        : { records: [], total: 0 };
+      const people = new Map((peopleResult.records || []).map(person => [
+        _accessText_(person.persona_id), person
+      ]));
 
-    let candidateIds = candidateSets.length ? new Set(candidateSets[0]) : new Set();
-    candidateSets.slice(1).forEach(set => {
-      candidateIds = new Set(Array.from(candidateIds).filter(id => set.has(id)));
-    });
-    const personaIds = Array.from(candidateIds).filter(Boolean);
-    if (!personaIds.length) return [];
-
-    const accounts = _accessFindSecurityRecords_(
-      ACCESS_MANAGEMENT_CONFIG.sheets.users,
-      'persona_id',
-      personaIds,
-      ACCESS_MANAGEMENT_FIELDS.users,
-      { projectionFields: ['persona_id', 'active'] }
-    );
-    const accountPersonaIds = [...new Set(
-      accounts.map(item => _accessText_(item.persona_id)).filter(Boolean)
-    )];
-    if (!accountPersonaIds.length) return [];
-
-    const peopleResult = SUNARPCore.findRecordsByFields(
-      _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
-      { persona_id: accountPersonaIds },
-      {
-        searchField: 'persona_id',
-        requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people,
-        projectionFields: ['persona_id', 'correo_institucional', 'nombres', 'apellidos']
-      }
-    );
-    const people = new Map((peopleResult.records || []).map(person => [
-      _accessText_(person.persona_id), person
-    ]));
-
-    const userRoles = _accessFindSecurityRecords_(
-      ACCESS_MANAGEMENT_CONFIG.sheets.userRoles,
-      'persona_id',
-      accountPersonaIds,
-      ACCESS_MANAGEMENT_FIELDS.userRoles,
-      { projectionFields: ['persona_id', 'modulo_id', 'rol_id', 'active'] }
-    );
-    const rolesByPerson = new Map();
-    userRoles.filter(item => _accessIsActive_(item.active)).forEach(item => {
-      const id = _accessText_(item.persona_id);
-      if (!rolesByPerson.has(id)) rolesByPerson.set(id, []);
-      rolesByPerson.get(id).push({
-        modulo_id: _accessText_(item.modulo_id),
-        rol_id: _accessUpper_(item.rol_id)
+      const rolesByPerson = new Map();
+      userRoles.filter(item => _accessIsActive_(item.active)).forEach(item => {
+        const id = _accessText_(item.persona_id);
+        if (!id) return;
+        if (!rolesByPerson.has(id)) rolesByPerson.set(id, []);
+        rolesByPerson.get(id).push({
+          modulo_id: _accessText_(item.modulo_id),
+          rol_id: _accessUpper_(item.rol_id)
+        });
       });
-    });
 
-    const rows = accounts.map(user => {
-      const personaId = _accessText_(user.persona_id);
-      const person = people.get(personaId) || {};
-      const sedeIds = Array.from(sitesByPerson.get(personaId) || []);
-      return {
-        persona_id: personaId,
-        correo_institucional: _accessText_(person.correo_institucional),
-        nombres: _accessText_(person.nombres),
-        apellidos: _accessText_(person.apellidos),
-        nombre_completo: [_accessText_(person.nombres), _accessText_(person.apellidos)]
-          .filter(Boolean).join(' '),
-        sede_ids: sedeIds,
-        sede_nombre: sedeIds.map(id => siteNames.get(id) || id).join(' · '),
-        active: _accessIsActive_(user.active),
-        roles: rolesByPerson.get(personaId) || []
-      };
-    });
-    rows.sort((left, right) =>
-      left.nombre_completo.localeCompare(right.nombre_completo, 'es') ||
-      left.persona_id.localeCompare(right.persona_id, 'es')
-    );
-    return rows;
-  }, 300);
+      const rows = accounts.map(user => {
+        const personaId = _accessText_(user.persona_id);
+        const person = people.get(personaId) || {};
+        const sedeIds = Array.from(sitesByPerson.get(personaId) || []).sort();
+        return {
+          persona_id: personaId,
+          correo_institucional: _accessText_(person.correo_institucional),
+          nombres: _accessText_(person.nombres),
+          apellidos: _accessText_(person.apellidos),
+          nombre_completo: [_accessText_(person.nombres), _accessText_(person.apellidos)]
+            .filter(Boolean).join(' '),
+          sede_ids: sedeIds,
+          sede_nombre: sedeIds.map(id => siteNames.get(id) || id).join(' · '),
+          active: _accessIsActive_(user.active),
+          roles: rolesByPerson.get(personaId) || []
+        };
+      }).filter(row => row.persona_id);
+      rows.sort((left, right) =>
+        left.nombre_completo.localeCompare(right.nombre_completo, 'es') ||
+        left.persona_id.localeCompare(right.persona_id, 'es')
+      );
 
-  if (!cached || !Array.isArray(cached.value)) {
-    throw new Error('SUNARP Core no devolvió un índice válido para el listado de usuarios.');
+      console.log('[AccessManagement] Shared user index built:', JSON.stringify({
+        users: rows.length,
+        relations: integrity.total,
+        crossSiteRelations: integrity.crossSite,
+        missingStructure: integrity.missingStructure,
+        missingLocal: integrity.missingLocal,
+        missingSite: integrity.missingSite,
+        invalidAssignments: integrity.invalidAssignments
+      }));
+      if (integrity.crossSite || integrity.missingStructure ||
+          integrity.missingLocal || integrity.missingSite ||
+          integrity.invalidAssignments) {
+        console.warn('[AccessManagement] Organizational index anomalies:', JSON.stringify(integrity));
+      }
+      return { rows, integrity };
+    },
+    60
+  );
+
+  if (!cached || !cached.value || !Array.isArray(cached.value.rows)) {
+    throw new Error('SUNARP Core no devolvió un índice compartido válido para el listado de usuarios.');
   }
   return cached;
 }
@@ -3168,36 +3237,29 @@ function getAccessUsers(filters) {
   const page = Math.max(1, Number.parseInt(filters.page, 10) || 1);
   const pageSize = Math.min(100, Math.max(1, Number.parseInt(filters.pageSize, 10) || 10));
   const offset = (page - 1) * pageSize;
-  const indexed = _accessBuildUserListingIndex_(sedeId, roleId);
-  let items;
-  let total;
+  const indexed = _accessBuildUserListingIndex_();
+  const items = [];
+  let total = 0;
 
-  if (!query) {
-    // Sin búsqueda, el índice ya está ordenado: obtener la página no requiere
-    // recorrer todos los candidatos ni volver a ordenarlos.
-    total = indexed.value.length;
-    items = indexed.value.slice(offset, offset + pageSize);
-  } else {
-    items = [];
-    total = 0;
-    indexed.value.forEach(row => {
-      if (![
-        row.persona_id, row.nombre_completo, row.correo_institucional, row.sede_nombre
-      ].join(' ').toLocaleLowerCase().includes(query)) return;
-      if (total >= offset && items.length < pageSize) items.push(row);
-      total++;
-    });
-  }
+  indexed.value.rows.forEach(row => {
+    if (sedeId && !row.sede_ids.includes(sedeId)) return;
+    if (roleId && !row.roles.some(role => _accessUpper_(role.rol_id) === roleId)) return;
+    if (query && ![
+      row.persona_id, row.nombre_completo, row.correo_institucional, row.sede_nombre
+    ].join(' ').toLocaleLowerCase().includes(query)) return;
+    if (total >= offset && items.length < pageSize) items.push(row);
+    total++;
+  });
 
   return {
     items,
     total,
     page,
     pageSize,
-    totalPages: Math.max(1, Math.ceil(total / pageSize))
+    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    integrity: indexed.value.integrity || {}
   };
 }
-
 
 function _accessAuditTimestamp_(record) {
   const value = record && record.fecha_hora;
@@ -3590,7 +3652,7 @@ function getAccessEntityHistory(payload) {
       cacheKey,
       [source],
       buildIndex,
-      300
+      60
     );
     events = cached && Array.isArray(cached.value)
       ? cached.value

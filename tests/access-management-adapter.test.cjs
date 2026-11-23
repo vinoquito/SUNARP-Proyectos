@@ -320,53 +320,74 @@ test('los filtros combinados de auditoría retienen solo la página cronológica
   assert.equal(result.items[0].evento_id, 'EVT_003');
 });
 
-test('getAccessUsers reutiliza un índice ordenado por generación y conserva total exacto por página', () => {
+test('las pestañas de permisos y asignaciones agrupan sus catálogos en una lectura Core por pestaña', () => {
   const sandbox = createAdapterSandbox(makeSecurityData());
   sandbox._accessRequirePermission_ = () => ({ authenticated: true });
+  const originalList = sandbox.SUNARPCore.listRecordsFromSourcesCached;
+  const calls = [];
+  sandbox.SUNARPCore.listRecordsFromSourcesCached = (requests, ttl) => {
+    calls.push({
+      keys: requests.map(request => request.key),
+      ttl
+    });
+    return originalList(requests, ttl);
+  };
+
+  const permissions = sandbox.getAccessManagementTabData('permissions');
+  assert.equal(permissions.modules.length, 2);
+  assert.ok(permissions.operations.length > 0);
+  assert.ok(permissions.permissions.length > 0);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].keys.sort(), ['modules', 'operations', 'permissions'].sort());
+  assert.equal(calls[0].ttl, 60);
+
+  calls.length = 0;
+  const assignments = sandbox.getAccessManagementTabData('assignments');
+  assert.equal(assignments.roles.length, 2);
+  assert.ok(assignments.permissions.length > 0);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].keys.sort(), [
+    'modules', 'operations', 'permissions', 'rolePermissions', 'roles'
+  ].sort());
+  assert.equal(calls[0].ttl, 60);
+});
+
+test('getAccessUsers reutiliza un índice compartido entre páginas, sedes y roles', () => {
+  const data = makeSecurityData();
   const accounts = [];
-  const assignments = [];
+  const userRoles = [];
   const people = [];
   for (let index = 30; index >= 1; index--) {
     const personaId = 'PER_' + String(index).padStart(3, '0');
     accounts.push({ persona_id: personaId, active: true });
-    assignments.push({
-      persona_id: personaId,
-      modulo_id: 'MOD_INFO_PERSONAL',
-      rol_id: 'ROL_EDITOR',
-      active: true
-    });
+    userRoles.push({ persona_id: personaId, modulo_id: 'MOD_INFO_PERSONAL', rol_id: 'ROL_EDITOR', active: true });
     people.push({
-      persona_id: personaId,
-      nombres: 'Persona',
+      persona_id: personaId, nombres: 'Persona',
       apellidos: String(index).padStart(3, '0'),
       correo_institucional: 'persona' + index + '@sunarp.gob.pe'
     });
   }
+  Object.assign(data, {
+    usuarios: accounts, usuarioRol: userRoles, personas: people,
+    asignaciones: [], estructura_local: [], estructura_org: [], locales: [], sede: []
+  });
+  const sandbox = createAdapterSandbox(data);
+  sandbox._accessRequirePermission_ = () => ({ authenticated: true });
   const materialized = new Map();
   let materializationCount = 0;
-  sandbox.SUNARPCore.getOrBuildCachedValue = (key, sources, builder) => {
+  let indexSources = null;
+  sandbox.SUNARPCore.getOrBuildCachedValue = (key, sources, builder, ttl) => {
+    assert.equal(key, 'access-users-index-v2');
+    assert.equal(ttl, 60);
+    indexSources = sources.map(source => source.sheetName);
     if (materialized.has(key)) return { value: materialized.get(key), cacheHit: true, cacheStored: true };
     materializationCount++;
     const value = builder();
     materialized.set(key, value);
     return { value, cacheHit: false, cacheStored: true };
   };
-  sandbox._accessFindSecurityRecords_ = (sheet, field, values) => {
-    if (sheet === 'Usuarios') return accounts;
-    if (sheet === 'UsuarioRol' && field === 'rol_id') return assignments;
-    if (sheet === 'UsuarioRol' && field === 'persona_id') return assignments;
-    throw new Error('Consulta no prevista en el listado de usuarios: ' + sheet + '.' + field);
-  };
-  sandbox.SUNARPCore.findRecordsByFields = () => ({
-    records: people,
-    total: people.length
-  });
 
-  const result = sandbox.getAccessUsers({
-    rol_id: 'ROL_EDITOR',
-    page: 2,
-    pageSize: 10
-  });
+  const result = sandbox.getAccessUsers({ rol_id: 'ROL_EDITOR', page: 2, pageSize: 10 });
   assert.equal(result.total, 30);
   assert.equal(result.page, 2);
   assert.equal(result.pageSize, 10);
@@ -375,12 +396,18 @@ test('getAccessUsers reutiliza un índice ordenado por generación y conserva to
   assert.equal(result.items[0].persona_id, 'PER_011');
   assert.equal(result.items[0].nombre_completo, 'Persona 011');
   assert.equal(result.items[9].persona_id, 'PER_020');
-  const filtered = sandbox.getAccessUsers({ rol_id: 'ROL_EDITOR', search: 'Persona 01', page: 1, pageSize: 10 });
+
+  const filtered = sandbox.getAccessUsers({
+    rol_id: 'ROL_EDITOR', search: 'Persona 01', page: 1, pageSize: 10
+  });
   assert.equal(filtered.total, 10);
   assert.equal(filtered.items[0].persona_id, 'PER_010');
-  assert.equal(materializationCount, 1, 'Cambiar página o búsqueda no debe reconstruir las relaciones.');
+  assert.equal(materializationCount, 1, 'Cambiar sede, rol, página o búsqueda no reconstruye el índice.');
+  assert.deepEqual(indexSources.sort(), [
+    'Usuarios', 'UsuarioRol', 'personas', 'asignaciones',
+    'estructura_local', 'estructura_org', 'locales', 'sede'
+  ].sort());
 });
-
 test('la autorización ordinaria no expone getters de snapshots completos y la integridad global es explícita', () => {
   const authStart = accessSource.indexOf('function _accessGetAuthContext_() {');
   const authEnd = accessSource.indexOf('function getAuthContext_()', authStart);
@@ -435,64 +462,92 @@ test('el historial conserva compatibilidad con SUNARP Core v9 mientras admite le
   assert.ok(implementation.includes('listTailRecords'));
 });
 
-test('getAccessUsers consulta candidatos por sede o rol sin cargar el snapshot global', () => {
+test('getAccessUsers filtra localmente el índice compartido y excluye relaciones entre sedes', () => {
   const data = makeSecurityData();
-  data.personas.push({
-    persona_id: 'PER_118',
-    nombres: 'Ana',
-    apellidos: 'Zeta',
-    correo_institucional: 'ana.zeta@sunarp.gob.pe'
-  });
-  data.usuarios.push({ persona_id: 'PER_118', active: false });
+  data.personas.push(
+    { persona_id: 'PER_118', nombres: 'Ana', apellidos: 'Zeta', correo_institucional: 'ana.zeta@sunarp.gob.pe' },
+    { persona_id: 'PER_119', nombres: 'Luis', apellidos: 'Mala', correo_institucional: 'luis.mala@sunarp.gob.pe' },
+    { persona_id: 'PER_120', nombres: 'Rosa', apellidos: 'Cruce', correo_institucional: 'rosa.cruce@sunarp.gob.pe' },
+    { persona_id: 'PER_121', nombres: 'Mario', apellidos: 'Cruce', correo_institucional: 'mario.cruce@sunarp.gob.pe' }
+  );
+  data.usuarios = [
+    { persona_id: 'PER_117', active: true }, { persona_id: 'PER_118', active: false },
+    { persona_id: 'PER_119', active: true }, { persona_id: 'PER_120', active: true },
+    { persona_id: 'PER_121', active: true }
+  ];
+  data.usuarioRol = [
+    { persona_id: 'PER_117', modulo_id: 'MOD_ACCESOS', rol_id: 'ROL_ADMIN', active: true },
+    { persona_id: 'PER_117', modulo_id: 'MOD_INFO_PERSONAL', rol_id: 'ROL_EDITOR', active: true },
+    { persona_id: 'PER_118', modulo_id: 'MOD_INFO_PERSONAL', rol_id: 'ROL_EDITOR', active: true },
+    { persona_id: 'PER_119', modulo_id: 'MOD_INFO_PERSONAL', rol_id: 'ROL_EDITOR', active: true },
+    { persona_id: 'PER_120', modulo_id: 'MOD_INFO_PERSONAL', rol_id: 'ROL_EDITOR', active: true },
+    { persona_id: 'PER_121', modulo_id: 'MOD_INFO_PERSONAL', rol_id: 'ROL_EDITOR', active: true }
+  ];
   data.asignaciones = [
     { asignacion_id: 'ASG_001', persona_id: 'PER_117', estructura_local_id: 'REL_1', local_id: 'LOC_1', active: true },
     { asignacion_id: 'ASG_002', persona_id: 'PER_118', estructura_local_id: '', local_id: 'LOC_1', active: true },
-    { asignacion_id: 'ASG_003', persona_id: 'PER_119', estructura_local_id: 'REL_1', local_id: 'LOC_WRONG', active: true }
+    { asignacion_id: 'ASG_003', persona_id: 'PER_119', estructura_local_id: 'REL_1', local_id: 'LOC_WRONG', active: true },
+    { asignacion_id: 'ASG_004', persona_id: 'PER_120', estructura_local_id: 'REL_CROSS_1', local_id: 'LOC_X', active: true },
+    { asignacion_id: 'ASG_005', persona_id: 'PER_121', estructura_local_id: 'REL_CROSS_2', local_id: 'LOC_Y', active: true }
   ];
-  data.estructura_local = [{ id: 'REL_1', estructura_id: 'EST_1', local_id: 'LOC_1' }];
-  data.estructura_org = [{ id: 'EST_1', sede_id: 'SEDE_1' }];
-  data.locales = [{ id: 'LOC_1', sede_id: 'SEDE_1' }];
-  data.sede = [{ id: 'SEDE_1', name: 'Lima' }];
+  data.estructura_local = [
+    { id: 'REL_1', estructura_id: 'EST_1', local_id: 'LOC_1' },
+    { id: 'REL_CROSS_1', estructura_id: 'EST_CENTRAL', local_id: 'LOC_X' },
+    { id: 'REL_CROSS_2', estructura_id: 'EST_CENTRAL_2', local_id: 'LOC_Y' }
+  ];
+  data.estructura_org = [
+    { id: 'EST_1', sede_id: 'SEDE_1' },
+    { id: 'EST_CENTRAL', sede_id: 'SEDE_CENTRAL' },
+    { id: 'EST_CENTRAL_2', sede_id: 'SEDE_CENTRAL' }
+  ];
+  data.locales = [
+    { id: 'LOC_1', sede_id: 'SEDE_1' },
+    { id: 'LOC_WRONG', sede_id: 'SEDE_2' },
+    { id: 'LOC_X', sede_id: 'ZR_V' },
+    { id: 'LOC_Y', sede_id: 'ZR_XII' }
+  ];
+  data.sede = [
+    { id: 'SEDE_1', name: 'Lima' }, { id: 'SEDE_2', name: 'Piura' },
+    { id: 'SEDE_CENTRAL', name: 'Central' }, { id: 'ZR_V', name: 'Zona V' },
+    { id: 'ZR_XII', name: 'Zona XII' }
+  ];
 
   const sandbox = createAdapterSandbox(data);
-  const projectionRequests = [];
-  const peopleProjectionRequests = [];
-  const originalFind = sandbox.SUNARPCore.findRecordsByFields;
-  sandbox.SUNARPCore.findRecordsByFields = (source, filters, options) => {
-    if (source.sheetName === 'asignaciones') projectionRequests.push(options.projectionFields);
-    if (options && Array.isArray(options.projectionFields) &&
-        options.projectionFields.includes('nombres')) {
-      peopleProjectionRequests.push(options.projectionFields);
-    }
-    return originalFind(source, filters, options);
+  sandbox._accessRequirePermission_ = () => ({ authenticated: true });
+  const cache = new Map();
+  let buildCount = 0;
+  sandbox.SUNARPCore.getOrBuildCachedValue = (key, sources, builder, ttl) => {
+    assert.equal(key, 'access-users-index-v2');
+    assert.equal(sources.length, 8);
+    assert.equal(ttl, 60);
+    if (cache.has(key)) return { value: cache.get(key), cacheHit: true, cacheStored: true };
+    buildCount++;
+    const value = builder();
+    cache.set(key, value);
+    return { value, cacheHit: false, cacheStored: true };
   };
   let fullLoads = 0;
   const fullLoader = sandbox._accessLoadSecurityData_;
-  sandbox._accessLoadSecurityData_ = () => {
-    fullLoads++;
-    return fullLoader();
-  };
+  sandbox._accessLoadSecurityData_ = () => { fullLoads++; return fullLoader(); };
 
-  const bySite = sandbox.getAccessUsers({ sede_id: 'SEDE_1', search: 'lima', page: 1, pageSize: 10 });
+  const bySite = sandbox.getAccessUsers({
+    sede_id: 'SEDE_1', search: 'lima', page: 1, pageSize: 10
+  });
   assert.equal(bySite.total, 2);
   assert.equal(bySite.items.length, 2);
+  assert.deepEqual(bySite.items.map(item => item.persona_id).sort(), ['PER_117', 'PER_118']);
   assert.equal(bySite.items[0].sede_nombre, 'Lima');
-  assert.ok(projectionRequests.length > 0);
-  assert.ok(projectionRequests.every(fields =>
-    fields.join(',') === 'asignacion_id,persona_id,estructura_local_id,local_id,active'
-  ));
-  assert.ok(!bySite.items.some(item => item.persona_id === 'PER_119'));
-  assert.equal(
-    peopleProjectionRequests[0].join(','),
-    'persona_id,correo_institucional,nombres,apellidos'
-  );
+  assert.ok(!bySite.items.some(item => ['PER_119', 'PER_120', 'PER_121'].includes(item.persona_id)));
+  assert.equal(bySite.integrity.total, 3);
+  assert.equal(bySite.integrity.crossSite, 2);
+  assert.equal(bySite.integrity.invalidAssignments, 1);
 
   const byRole = sandbox.getAccessUsers({ rol_id: 'ROL_ADMIN', page: 1, pageSize: 10 });
   assert.equal(byRole.total, 1);
   assert.equal(byRole.items[0].persona_id, 'PER_117');
-  assert.equal(fullLoads, 0);
+  assert.equal(buildCount, 1, 'Cambiar de sede a rol reutiliza el mismo índice compartido.');
+  assert.equal(fullLoads, 0, 'El índice no debe cargar el snapshot global de las nueve tablas de seguridad.');
 });
-
 test('la búsqueda documental comprueba la cuenta por persona_id sin cargar el snapshot global', () => {
   const sandbox = createAdapterSandbox(makeSecurityData());
   let fullLoads = 0;
@@ -575,16 +630,18 @@ test('la tabla de usuarios conserva filtros y ejecuta la consulta al cambiar sed
 });
 
 test('la consulta de usuarios reutiliza la vista materializada, pagina en servidor y limita el payload', () => {
-  const helperStart = accessSource.indexOf('function _accessBuildUserListingIndex_(sedeId, roleId) {');
+  const helperStart = accessSource.indexOf('function _accessBuildUserListingIndex_() {');
   const helperEnd = accessSource.indexOf('function getAccessUsers(filters) {', helperStart);
   const helper = accessSource.slice(helperStart, helperEnd);
   const start = accessSource.indexOf('function getAccessUsers(filters) {');
   const end = accessSource.indexOf('function _accessAuditTimestamp_(', start);
   const implementation = accessSource.slice(start, end);
   assert.ok(helper.includes('getOrBuildCachedValue'));
-  assert.ok(helper.includes('access-users-index-v1'));
+  assert.ok(helper.includes('access-users-index-v2'));
+  assert.ok(helper.includes("_directorySource_('asignaciones')"));
+  assert.ok(helper.includes('structureSiteId !== localSiteId'));
   assert.ok(helper.includes('rows.sort'));
-  assert.ok(implementation.includes('indexed.value.forEach'));
+  assert.ok(implementation.includes('indexed.value.rows.forEach'));
   assert.ok(implementation.includes('items.push(row)'));
   assert.ok(implementation.includes('totalPages'));
   assert.ok(implementation.includes('items.length < pageSize'));
@@ -1236,7 +1293,9 @@ test('el listado de usuarios se consulta al seleccionar un filtro y admite Todas
   assert.match(accessSource, /function getAccessUsers\(filters\)/);
   assert.match(accessSource, /const allSitesSelected = filters\.all_sedes === true/);
   assert.match(accessSource, /if \(!sedeId && !roleId && !allSitesSelected\) return \{ items: \[\], total: 0 \}/);
-  assert.match(accessSource, /if \(!candidateSets\.length\)[\s\S]*?ACCESS_MANAGEMENT_CONFIG\.sheets\.users/);
+  assert.match(accessSource, /access-users-index-v2/);
+  assert.match(accessSource, /indexed\.value\.rows\.forEach/);
+  assert.doesNotMatch(accessSource, /access-users-index-v1/);
   assert.match(accessUiSource, /createField\('Sede', siteSelect\)/);
   assert.match(accessUiSource, /createField\('Rol', roleSelect\)/);
   assert.match(accessUiSource, /rpc\('getAccessUsers'/);
