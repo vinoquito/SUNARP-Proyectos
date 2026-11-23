@@ -1779,9 +1779,9 @@ async function deleteDirectoryEntry(record) {
         loadedAt: Date.now()
       });
       state.records = result.records;
-      state.catalogs = Object.assign({}, result.catalogs, {
-        sedes: state.authorizedSedes || []
-      });
+      // Los filtros de navegación usan state.authorizedSedes; los formularios
+      // usan solo los catálogos de la sede que el servidor acaba de cargar.
+      state.catalogs = result.catalogs;
       state.activeSedeId = selectedSedeId;
 
       populateLocalFilter();
