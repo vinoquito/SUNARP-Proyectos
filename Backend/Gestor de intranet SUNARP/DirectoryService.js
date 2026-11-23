@@ -1564,11 +1564,13 @@ function listDirectoryAssignments(options) {
     includeCargoOptions ? ['cargo_id'] : [],
     []
   );
+  const availableCargoIds = new Set(
+    result.distinctValues && result.distinctValues.cargo_id || []
+  );
   const cargoOptions = includeCargoOptions
     ? (context.cargos || [])
         .filter(item => _directoryIsActive_(item) &&
-          new Set(result.distinctValues && result.distinctValues.cargo_id || [])
-            .has(_directoryKey_(item.id)))
+          availableCargoIds.has(_directoryKey_(item.id)))
         .map(item => ({ id: _directoryKey_(item.id), name: _directoryText_(item.name) }))
         .sort((a, b) => a.name.localeCompare(b.name, 'es'))
     : null;
