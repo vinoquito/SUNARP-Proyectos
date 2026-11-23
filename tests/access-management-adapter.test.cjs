@@ -1890,8 +1890,8 @@ test('el modal de permiso abre sin depender de visitar antes la pestaña de mód
   assert.match(modal, /needsPermissionCatalogs/);
   assert.match(modal, /rpc\('getAccessManagementTabData', 'permissions'\)\.then/);
   assert.match(modal, /El formulario se muestra de inmediato/);
-  assert.match(modal, /module\.disabled = editing \|\| needsPermissionCatalogs/);
-  assert.match(modal, /operation\.disabled = editing \|\| needsPermissionCatalogs/);
+  assert.match(modal, /if \(editing \|\| needsPermissionCatalogs\) module\.disabled = true/);
+  assert.match(modal, /if \(editing \|\| needsPermissionCatalogs\) operation\.disabled = true/);
 });
 
 test('el editor de permisos recibe el catálogo de operaciones al cargar Permisos', () => {
