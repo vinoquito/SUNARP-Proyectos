@@ -1482,6 +1482,12 @@ function getDirectorySiteData(sedeId) {
   const authorizationStartedAt = Date.now();
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
   const authorizationElapsed = Date.now() - authorizationStartedAt;
+  const siteContextOptions = {
+    includePersonalData: false,
+    includePeople: false,
+    includeAssignments: false,
+    validateSnapshot: false
+  };
 
   // Se comprueba la autorización y que la sede siga activa antes de usar caché.
   if (typeof SUNARPCore !== 'undefined' &&
@@ -1513,7 +1519,8 @@ function getDirectorySiteData(sedeId) {
       cacheKey,
       _directoryGetSiteDataCacheSources_(),
       () => _directoryBuildSiteData_(
-        selectedSedeId, authorization, startedAt, authorizationElapsed
+        selectedSedeId, authorization, startedAt, authorizationElapsed,
+        siteContextOptions
       ),
       DIRECTORY_SITE_SNAPSHOT_CACHE_TTL
     );
@@ -1527,14 +1534,17 @@ function getDirectorySiteData(sedeId) {
   }
 
   return _directoryBuildSiteData_(
-    selectedSedeId, authorization, startedAt, authorizationElapsed
+    selectedSedeId, authorization, startedAt, authorizationElapsed,
+    siteContextOptions
   );
 }
 
 
-function _directoryBuildSiteData_(selectedSedeId, authorization, startedAt, authorizationElapsed) {
+function _directoryBuildSiteData_(
+  selectedSedeId, authorization, startedAt, authorizationElapsed, siteContextOptions
+) {
   const contextStartedAt = Date.now();
-  const context = _directoryLoadContext_({
+  const context = _directoryLoadContext_(siteContextOptions || {
     includePersonalData: false,
     includePeople: false,
     includeAssignments: false,
