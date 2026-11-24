@@ -948,6 +948,9 @@ test('la consulta de usuarios reutiliza la vista materializada, pagina en servid
   assert.ok(helper.includes('access-users-index-v4'));
   assert.ok(helper.includes("_accessSecuritySource_('EstructuraOrg')"));
   assert.ok(helper.includes('ACCESS_MANAGEMENT_CONFIG.sheets.scopes'));
+  assert.ok(helper.includes("_accessFindOrgCatalogByIds_('ESTRUCTURA_ORG'"));
+  assert.ok(helper.includes("_accessFindOrgCatalogByIds_('LOCAL'"));
+  assert.ok(helper.includes('orgLookupMs'));
   assert.doesNotMatch(helper, /asignaciones|estructura_local/);
   assert.ok(implementation.includes('SUNARPCore.queryRecords'));
   assert.ok(implementation.includes('filters: { persona_id: pageCandidateIds }'));
@@ -960,6 +963,40 @@ test('la consulta de usuarios reutiliza la vista materializada, pagina en servid
   const uiImplementation = accessUiSource.slice(uiStart, uiEnd);
   assert.ok(uiImplementation.includes("mode: 'server'"));
   assert.ok(uiImplementation.includes('loadData: loadUserPage'));
+});
+
+
+test('la auditoría envía fecha_hora como ISO string compatible entre proyectos Apps Script', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  sandbox.Utilities = { getUuid: () => 'EVT_TEST_001' };
+  sandbox._accessSecuritySource_ = sheet => ({ sheetName: sheet });
+  const headers = [
+    'evento_id', 'fecha_hora', 'actor_correo', 'actor_nombre', 'accion',
+    'modulo', 'tipo_entidad', 'registro_id', 'registro_nombre', 'resultado',
+    'detalle', 'datos_antes', 'datos_despues', 'ambito_modulo',
+    'ambito_tipo', 'ambito_referencia_id'
+  ];
+  sandbox.SUNARPCore.getSourceInfoCached = () => ({ headers });
+  let saved = null;
+  sandbox.SUNARPCore.appendAuditEvent = (_source, record, idField) => {
+    saved = { record, idField };
+    return { success: true };
+  };
+  const result = sandbox._accessWriteAudit_(
+    { email: 'admin@sunarp.gob.pe', name: 'Administrador' },
+    {
+      accion: 'CREAR_USUARIO',
+      modulo: 'ACCESOS',
+      tipo_entidad: 'USUARIO',
+      registro_id: 'PER_122',
+      registro_nombre: 'Persona Nueva',
+      detalle: 'Alta de cuenta'
+    }
+  );
+  assert.equal(result.success, true);
+  assert.equal(saved.idField, 'evento_id');
+  assert.equal(typeof saved.record.fecha_hora, 'string');
+  assert.equal(new Date(saved.record.fecha_hora).toISOString(), saved.record.fecha_hora);
 });
 
 test('la escritura de auditoría reutiliza metadatos de fuente desde Core', () => {
@@ -2079,6 +2116,37 @@ test('la edición conjunta de accesos consulta módulos y roles por los IDs de l
   assert.match(implementation, /_accessFindSecurityRecords_\s*\(\s*s\.roles/);
 });
 
+
+test('la continuidad del administrador reutiliza su vista hasta que cambie la generación', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  const cache = new Map();
+  let builds = 0;
+  let lookups = 0;
+  const originalFind = sandbox.SUNARPCore.findRecordsByFields;
+  sandbox.SUNARPCore.findRecordsByFields = (...args) => {
+    lookups++;
+    return originalFind(...args);
+  };
+  sandbox.SUNARPCore.getOrBuildCachedValue = (key, sources, builder, ttl) => {
+    assert.equal(key, 'access-admin-continuity:v1');
+    assert.equal(ttl, 60);
+    assert.ok(sources.some(source => source.sheetName === 'Usuarios'));
+    assert.ok(sources.some(source => source.sheetName === 'AmbitosAcceso'));
+    if (cache.has(key)) return { value: cache.get(key), cacheHit: true, cacheStored: true };
+    builds++;
+    const value = builder();
+    cache.set(key, value);
+    return { value, cacheHit: false, cacheStored: true };
+  };
+  const first = sandbox._accessLoadAdministratorContinuityData_();
+  const firstLookups = lookups;
+  const second = sandbox._accessLoadAdministratorContinuityData_();
+  assert.equal(builds, 1);
+  assert.equal(lookups, firstLookups);
+  assert.equal(first.usuarios.length, second.usuarios.length);
+  assert.equal(first.usuarioRol.length, second.usuarioRol.length);
+});
+
 test('la continuidad del administrador global restringe las relaciones por módulo y permisos críticos', () => {
   const sandbox = createAdapterSandbox(makeSecurityData());
   const calls = [];
@@ -2327,12 +2395,45 @@ test('Nueva cuenta monta el formulario antes de mostrar la alerta del contenedor
     /showSearchAlert\(/
   );
 });
+
+test('el bootstrap de Administración reutiliza catálogos mientras no cambie su generación', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  const cache = new Map();
+  let catalogBuilds = 0;
+  const list = sandbox.SUNARPCore.listRecordsFromSourcesCached;
+  const authContextCache = sandbox.SUNARPCore.getOrBuildCachedValue;
+  sandbox.SUNARPCore.getOrBuildCachedValue = (key, sources, builder, ttl) => {
+    if (String(key).startsWith('access-auth-context:')) {
+      return authContextCache(key, sources, builder, ttl);
+    }
+    assert.equal(key, 'access-management-bootstrap:v1');
+    assert.equal(ttl, 60);
+    if (cache.has(key)) return { value: cache.get(key), cacheHit: true, cacheStored: true };
+    const value = builder();
+    cache.set(key, value);
+    return { value, cacheHit: false, cacheStored: true };
+  };
+  sandbox.SUNARPCore.listRecordsFromSourcesCached = (...args) => {
+    catalogBuilds++;
+    return list(...args);
+  };
+  const first = sandbox.getAccessManagementData();
+  const second = sandbox.getAccessManagementData();
+  assert.equal(catalogBuilds, 1);
+  assert.deepEqual(
+    Array.from(first.modules, item => item.modulo_id),
+    Array.from(second.modules, item => item.modulo_id)
+  );
+});
+
 test('el bootstrap de accesos agrupa catálogos del libro de Seguridad en una lectura', () => {
   const bootstrap = accessSource.slice(
     accessSource.indexOf('function getAccessManagementData()'),
     accessSource.indexOf('function getAccessManagementTabData(', accessSource.indexOf('function getAccessManagementData()'))
   );
   assert.match(bootstrap, /bootstrapRequests/);
+  assert.match(bootstrap, /getOrBuildCachedValue/);
+  assert.match(bootstrap, /access-management-bootstrap:v1/);
   assert.match(bootstrap, /listRecordsFromSourcesCached\(bootstrapRequests, 60\)/);
   assert.doesNotMatch(bootstrap, /_accessLoadSecurityRecords_\(/);
 });
