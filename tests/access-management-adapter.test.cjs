@@ -750,6 +750,18 @@ test('getAccessUsers incluye cuentas por ámbito organizacional aunque no tengan
 });
 
 
+test('el diagnóstico de acceso mide identidad, relaciones de autorización, consultas y RPC', () => {
+  assert.match(accessSource, /Authorization data stages/);
+  assert.match(accessSource, /Authorization context build stages/);
+  assert.match(accessSource, /currentUserLookupMs/);
+  assert.match(accessSource, /authorizationResolutionMs/);
+  assert.match(accessSource, /User configuration timing/);
+  assert.match(accessSource, /Save user timing/);
+  assert.match(accessUiSource, /roundTripMs/);
+  assert.match(accessUiSource, /getAccessManagementTabData/);
+  assert.match(accessUiSource, /\^saveAccess/);
+});
+
 test('crear usuario, asignar rol y ámbito, listar por sede y bloquear duplicidad documental', () => {
   const data = makeSecurityData();
   data.ambitosAcceso = data.ambitosAcceso.filter(scope =>

@@ -403,98 +403,110 @@ function _accessLoadAdministratorContinuityData_() {
 }
 
 function _accessLoadAuthorizationData_(personaId) {
-  const s = ACCESS_MANAGEMENT_CONFIG.sheets;
-  const users = _accessFindSecurityRecords_(
-    s.users,
-    'persona_id',
-    [personaId],
-    ACCESS_MANAGEMENT_FIELDS.users,
-    { projectionFields: ['persona_id', 'active'] }
-  );
-  const activeUsers = users.filter(item => _accessIsActive_(item.active));
-
-  if (!activeUsers.length) {
-    return {
-      usuarios: users, modulos: [], roles: [], usuarioRol: [],
-      permisos: [], rolPermiso: [], ambitosAcceso: [],
-      operaciones: [], tiposAmbito: []
-    };
-  }
-
-  // La autorización ordinaria solo necesita relaciones activas de la
-  // identidad solicitante. Las relaciones inactivas se reservan para
-  // mantenimiento e integridad, no para resolver permisos efectivos.
-  const usuarioRol = _accessFindSecurityRecordsByFilters_(
-    s.userRoles,
-    { persona_id: personaId, active: true },
-    'persona_id',
-    ACCESS_MANAGEMENT_FIELDS.userRoles,
-    { matchCase: false, projectionFields: ['persona_id', 'modulo_id', 'rol_id', 'active'] }
-  );
-  const ambitosAcceso = _accessFindSecurityRecordsByFilters_(
-    s.scopes,
-    { persona_id: personaId, active: true },
-    'persona_id',
-    ACCESS_MANAGEMENT_FIELDS.scopes,
-    {
-      matchCase: false,
-      projectionFields: [
-        'persona_id', 'modulo_id', 'tipo_ambito_id',
-        'referencia_id', 'incluir_descendientes', 'active'
-      ]
-    }
-  );
-
-  const roleIds = [...new Set(usuarioRol.map(item => _accessText_(item.rol_id)).filter(Boolean))];
-  const roles = _accessFindSecurityRecordsByFilters_(
-    s.roles,
-    { rol_id: roleIds, active: true },
-    'rol_id',
-    ACCESS_MANAGEMENT_FIELDS.roles,
-    { matchCase: false, projectionFields: ['rol_id', 'nombre', 'active'] }
-  );
-  const activeRoleIds = [...new Set(roles.map(item => _accessText_(item.rol_id)).filter(Boolean))];
-  const rolPermiso = _accessFindSecurityRecordsByFilters_(
-    s.rolePermissions,
-    { rol_id: activeRoleIds, active: true },
-    'rol_id',
-    ACCESS_MANAGEMENT_FIELDS.rolePermissions,
-    { matchCase: false, projectionFields: ['rol_id', 'permiso_id', 'active'] }
-  );
-  const permissionIds = [...new Set(rolPermiso.map(item => _accessText_(item.permiso_id)).filter(Boolean))];
-  const permisos = _accessFindSecurityRecordsByFilters_(
-    s.permissions,
-    { permiso_id: permissionIds, active: true },
-    'permiso_id',
-    ACCESS_MANAGEMENT_FIELDS.permissions,
-    {
-      matchCase: false,
-      projectionFields: [
-        'permiso_id', 'codigo', 'modulo_id',
-        'operacion_id', 'descripcion', 'active'
-      ]
-    }
-  );
-
-  // El catálogo de módulos es pequeño y permite resolver module_id incluso
-  // cuando la persona no tiene una asignación en un módulo concreto.
-  const moduleData = SUNARPCore.listRecordsFromSourcesCached([{
-    key: 'modulos',
-    source: _accessSecuritySource_(s.modules),
-    requiredHeaders: ACCESS_MANAGEMENT_FIELDS.modules
-  }], 60);
-
-  return {
-    usuarios: activeUsers,
-    modulos: moduleData.modulos || [],
-    roles,
-    usuarioRol,
-    permisos,
-    rolPermiso,
-    ambitosAcceso,
-    operaciones: [],
-    tiposAmbito: []
+  const startedAt = Date.now();
+  const stageTimes = {};
+  let stage = 'users';
+  const measure = (name, operation) => {
+    stage = name;
+    const started = Date.now();
+    const value = operation();
+    stageTimes[name] = Date.now() - started;
+    return value;
   };
+  try {
+    const s = ACCESS_MANAGEMENT_CONFIG.sheets;
+    const users = measure('users', () => _accessFindSecurityRecords_(
+      s.users, 'persona_id', [personaId], ACCESS_MANAGEMENT_FIELDS.users,
+      { projectionFields: ['persona_id', 'active'] }
+    ));
+    const activeUsers = users.filter(item => _accessIsActive_(item.active));
+    if (!activeUsers.length) {
+      console.log('[AccessManagement] Authorization data stages:', JSON.stringify({
+        stageTimes, activeUsers: 0, totalMs: Date.now() - startedAt
+      }));
+      return {
+        usuarios: users, modulos: [], roles: [], usuarioRol: [],
+        permisos: [], rolPermiso: [], ambitosAcceso: [],
+        operaciones: [], tiposAmbito: []
+      };
+    }
+
+    const usuarioRol = measure('userRoles', () => _accessFindSecurityRecordsByFilters_(
+      s.userRoles, { persona_id: personaId, active: true }, 'persona_id',
+      ACCESS_MANAGEMENT_FIELDS.userRoles,
+      { matchCase: false, projectionFields: ['persona_id', 'modulo_id', 'rol_id', 'active'] }
+    ));
+    const ambitosAcceso = measure('scopes', () => _accessFindSecurityRecordsByFilters_(
+      s.scopes, { persona_id: personaId, active: true }, 'persona_id',
+      ACCESS_MANAGEMENT_FIELDS.scopes,
+      {
+        matchCase: false,
+        projectionFields: [
+          'persona_id', 'modulo_id', 'tipo_ambito_id',
+          'referencia_id', 'incluir_descendientes', 'active'
+        ]
+      }
+    ));
+    const roleIds = [...new Set(usuarioRol.map(item => _accessText_(item.rol_id)).filter(Boolean))];
+    const roles = measure('roles', () => _accessFindSecurityRecordsByFilters_(
+      s.roles, { rol_id: roleIds, active: true }, 'rol_id',
+      ACCESS_MANAGEMENT_FIELDS.roles,
+      { matchCase: false, projectionFields: ['rol_id', 'nombre', 'active'] }
+    ));
+    const activeRoleIds = [...new Set(roles.map(item => _accessText_(item.rol_id)).filter(Boolean))];
+    const rolPermiso = measure('rolePermissions', () => _accessFindSecurityRecordsByFilters_(
+      s.rolePermissions, { rol_id: activeRoleIds, active: true }, 'rol_id',
+      ACCESS_MANAGEMENT_FIELDS.rolePermissions,
+      { matchCase: false, projectionFields: ['rol_id', 'permiso_id', 'active'] }
+    ));
+    const permissionIds = [...new Set(rolPermiso.map(item => _accessText_(item.permiso_id)).filter(Boolean))];
+    const permisos = measure('permissions', () => _accessFindSecurityRecordsByFilters_(
+      s.permissions, { permiso_id: permissionIds, active: true }, 'permiso_id',
+      ACCESS_MANAGEMENT_FIELDS.permissions,
+      {
+        matchCase: false,
+        projectionFields: [
+          'permiso_id', 'codigo', 'modulo_id',
+          'operacion_id', 'descripcion', 'active'
+        ]
+      }
+    ));
+    const moduleData = measure('modules', () => SUNARPCore.listRecordsFromSourcesCached([{
+      key: 'modulos',
+      source: _accessSecuritySource_(s.modules),
+      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.modules
+    }], 60));
+
+    console.log('[AccessManagement] Authorization data stages:', JSON.stringify({
+      stageTimes,
+      activeUsers: activeUsers.length,
+      activeRoleAssignments: usuarioRol.length,
+      activeScopes: ambitosAcceso.length,
+      activeRoles: roles.length,
+      activePermissions: permisos.length,
+      totalMs: Date.now() - startedAt
+    }));
+    return {
+      usuarios: activeUsers,
+      modulos: moduleData.modulos || [],
+      roles,
+      usuarioRol,
+      permisos,
+      rolPermiso,
+      ambitosAcceso,
+      operaciones: [],
+      tiposAmbito: []
+    };
+  } catch (error) {
+    console.error('[AccessManagement] Authorization data load failed:', JSON.stringify({
+      stage,
+      stageTimes,
+      totalMs: Date.now() - startedAt,
+      errorName: error && error.name || 'Error',
+      errorMessage: error && error.message || String(error)
+    }));
+    throw error;
+  }
 }
 
 function _accessLoadDocumentTypes_() {
@@ -728,11 +740,13 @@ function _accessOrgManagementCatalog_() {
  * El TTL corto limita el desfase si una hoja se edita fuera de Core.
  */
 function _accessGetAuthContext_() {
+  const startedAt = Date.now();
+  const emailStartedAt = Date.now();
   const email = SUNARPCore.getCurrentUserEmail();
+  const currentUserLookupMs = Date.now() - emailStartedAt;
   if (!email) {
     throw new Error('No se pudo identificar tu cuenta institucional. Verifica la implementación de la aplicación web.');
   }
-
   const sheets = ACCESS_MANAGEMENT_CONFIG.sheets;
   const sources = [
     _accessDirectorySource_(sheets.people),
@@ -744,32 +758,42 @@ function _accessGetAuthContext_() {
     _accessSecuritySource_(sheets.rolePermissions),
     _accessSecuritySource_(sheets.scopes)
   ];
-
   if (typeof SUNARPCore.getOrBuildCachedValue === 'function') {
     const identityKey = String(email).trim().toLowerCase();
-    // Los correos institucionales habituales caben en el límite de clave
-    // de Core; ante uno excepcionalmente largo se evita cachear.
     if (identityKey.length <= 150) {
+      const cacheStartedAt = Date.now();
       const cached = SUNARPCore.getOrBuildCachedValue(
         'access-auth-context:v1:' + identityKey,
         sources,
         () => _accessBuildAuthContext_(email),
         3600
       );
+      const cacheLookupMs = Date.now() - cacheStartedAt;
       console.log('[AccessManagement] Authorization context cache:', JSON.stringify({
         cacheHit: Boolean(cached && cached.cacheHit),
         cacheStored: Boolean(cached && cached.cacheStored),
-        sourceCount: sources.length
+        sourceCount: sources.length,
+        currentUserLookupMs,
+        cacheLookupMs,
+        totalMs: Date.now() - startedAt
       }));
       if (cached && cached.value) return cached.value;
     }
   }
-
-  return _accessBuildAuthContext_(email);
+  const buildStartedAt = Date.now();
+  const value = _accessBuildAuthContext_(email);
+  console.log('[AccessManagement] Authorization context uncached:', JSON.stringify({
+    currentUserLookupMs,
+    buildMs: Date.now() - buildStartedAt,
+    totalMs: Date.now() - startedAt
+  }));
+  return value;
 }
 
-
 function _accessBuildAuthContext_(email) {
+  const startedAt = Date.now();
+  let stage = 'identity';
+  const identityStartedAt = Date.now();
   const identityResult = SUNARPCore.resolveIdentity(
     _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
     email,
@@ -777,11 +801,10 @@ function _accessBuildAuthContext_(email) {
       emailField: 'correo_institucional',
       idField: 'persona_id',
       requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people,
-      projectionFields: [
-        'persona_id', 'correo_institucional', 'nombres', 'apellidos'
-      ]
+      projectionFields: ['persona_id', 'correo_institucional', 'nombres', 'apellidos']
     }
   );
+  const identityMs = Date.now() - identityStartedAt;
   const matchingPeople = identityResult.records;
 
   if (matchingPeople.length !== 1) {
@@ -805,9 +828,15 @@ function _accessBuildAuthContext_(email) {
   if (Object.prototype.hasOwnProperty.call(person, 'active') && !_accessIsActive_(person.active)) {
     throw new Error('La persona vinculada a tu correo institucional está inactiva.');
   }
-
   const personaId = _accessText_(person.persona_id);
+
+  stage = 'authorization-data';
+  const authorizationDataStartedAt = Date.now();
   const data = _accessLoadAuthorizationData_(personaId);
+  const authorizationDataMs = Date.now() - authorizationDataStartedAt;
+
+  stage = 'authorization-resolution';
+  const resolutionStartedAt = Date.now();
   const context = SUNARPCore.resolveAuthorizationContext({
     personaId,
     users: data.usuarios,
@@ -818,6 +847,7 @@ function _accessBuildAuthContext_(email) {
     rolePermissions: data.rolPermiso,
     scopes: data.ambitosAcceso
   });
+  const authorizationResolutionMs = Date.now() - resolutionStartedAt;
 
   if (!context.authenticated) {
     _accessWriteAudit_({
@@ -843,9 +873,16 @@ function _accessBuildAuthContext_(email) {
     permissionsCatalog: data.permisos,
     rolesCatalog: data.roles
   });
-
-  // El contexto de autorización queda cerrado sobre las relaciones puntuales
-  // ya consultadas. No expone getters que puedan disparar lecturas globales.
+  console.log('[AccessManagement] Authorization context build stages:', JSON.stringify({
+    identityMs,
+    authorizationDataMs,
+    authorizationResolutionMs,
+    totalMs: Date.now() - startedAt,
+    roleAssignments: data.usuarioRol.length,
+    scopes: data.ambitosAcceso.length,
+    roles: data.roles.length,
+    permissions: data.permisos.length
+  }));
   return auth;
 }
 
@@ -1510,13 +1547,34 @@ function _accessRecordUser_(auth, payload, action) {
 
 
 function saveAccessUser(payload) {
-  const auth = _accessRequirePermission_('USUARIOS_ADMINISTRAR');
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('No se recibieron los datos de la cuenta.');
-  const action = _accessText_(payload.action).toLowerCase();
-  if (!['create', 'edit'].includes(action)) throw new Error('La operación de la cuenta no es válida.');
-  return _accessRecordUser_(auth, payload, action);
+  const startedAt = Date.now();
+  let action = '';
+  try {
+    const auth = _accessRequirePermission_('USUARIOS_ADMINISTRAR');
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new Error('No se recibieron los datos de la cuenta.');
+    }
+    action = _accessText_(payload.action).toLowerCase();
+    if (!['create', 'edit'].includes(action)) {
+      throw new Error('La operación de la cuenta no es válida.');
+    }
+    const result = _accessRecordUser_(auth, payload, action);
+    console.log('[AccessManagement] Save user timing:', JSON.stringify({
+      action,
+      durationMs: Date.now() - startedAt,
+      success: Boolean(result && result.success)
+    }));
+    return result;
+  } catch (error) {
+    console.error('[AccessManagement] Save user failed:', JSON.stringify({
+      action: action || 'unknown',
+      durationMs: Date.now() - startedAt,
+      errorName: error && error.name || 'Error',
+      errorMessage: error && error.message || String(error)
+    }));
+    throw error;
+  }
 }
-
 
 function saveAccessUserRole(payload) {
   const auth = _accessRequirePermission_('ROLES_ADMINISTRAR');
@@ -2053,8 +2111,11 @@ function saveAccessScopes(payload) {
  * claves compuestas, evitando una llamada remota por módulo.
  */
 function saveAccessUserConfiguration(payload) {
+  const startedAt = Date.now();
+  const authStartedAt = Date.now();
   const auth = _accessRequirePermission_('USUARIOS_ADMINISTRAR');
   _accessRequirePermission_('ROLES_ADMINISTRAR');
+  const authorizationMs = Date.now() - authStartedAt;
 
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('No se recibieron los accesos que deseas guardar.');
@@ -2078,6 +2139,7 @@ function saveAccessUserConfiguration(payload) {
     throw new Error('La persona no tiene una cuenta activa.');
   }
 
+  const relationLookupStartedAt = Date.now();
   const continuityData = _accessLoadAdministratorContinuityData_();
   const targetUserRoles = _accessFindSecurityRecords_(
     s.userRoles, 'persona_id', [personaId], ACCESS_MANAGEMENT_FIELDS.userRoles
@@ -2085,6 +2147,7 @@ function saveAccessUserConfiguration(payload) {
   const targetScopes = _accessFindSecurityRecords_(
     s.scopes, 'persona_id', [personaId], ACCESS_MANAGEMENT_FIELDS.scopes
   );
+  const relationLookupMs = Date.now() - relationLookupStartedAt;
 
   // El editor solo necesita los módulos y roles vinculados a esta persona
   // o incluidos en el envío; no requiere descargar ambos catálogos completos.
@@ -2098,6 +2161,7 @@ function saveAccessUserConfiguration(payload) {
       .concat(accessInput.map(item => _accessText_(item && item.rol_id)))
       .filter(Boolean)
   ));
+  const catalogLookupStartedAt = Date.now();
   const modulesCatalog = _accessFindSecurityRecords_(
     s.modules, 'modulo_id', moduleIds, ACCESS_MANAGEMENT_FIELDS.modules
   );
@@ -2107,6 +2171,7 @@ function saveAccessUserConfiguration(payload) {
   const scopeTypesCatalog = _accessLoadSecurityRecords_(
     s.scopeTypes, ACCESS_MANAGEMENT_FIELDS.scopeTypes
   );
+  const roleCatalogLookupMs = Date.now() - catalogLookupStartedAt;
   const data = {
     usuarios: _accessMergeUniqueRows_(
       [continuityData.usuarios, targetUsers], ['persona_id']
@@ -2304,6 +2369,7 @@ function saveAccessUserConfiguration(payload) {
         }
       });
     });
+    const orgCatalogStartedAt = Date.now();
     const structures = _accessFindOrgCatalogByIds_(
       'ESTRUCTURA_ORG', Array.from(referenceIdsByEntity.ESTRUCTURA_ORG)
     );
@@ -2313,6 +2379,7 @@ function saveAccessUserConfiguration(payload) {
     const locals = _accessFindOrgCatalogByIds_(
       'LOCAL', Array.from(referenceIdsByEntity.LOCAL)
     );
+    const orgCatalogLookupMs = Date.now() - orgCatalogStartedAt;
 
     const normalizedScopes = [];
 
@@ -2549,7 +2616,9 @@ function saveAccessUserConfiguration(payload) {
     person && person.apellidos
   ].map(_accessText_).filter(Boolean).join(' ');
 
-  return _accessRunAudited_(auth, {
+  const preparationMs = Date.now() - startedAt;
+  const writeStartedAt = Date.now();
+  const result = _accessRunAudited_(auth, {
     accion: 'ACTUALIZAR_ACCESOS_USUARIO',
     modulo: ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses,
     tipo_entidad: 'USUARIO',
@@ -2614,6 +2683,18 @@ function saveAccessUserConfiguration(payload) {
       }
     };
   });
+  console.log('[AccessManagement] User configuration timing:', JSON.stringify({
+    authorizationMs,
+    relationLookupMs,
+    roleCatalogLookupMs,
+    orgCatalogLookupMs: typeof orgCatalogLookupMs === 'number' ? orgCatalogLookupMs : 0,
+    preparationMs,
+    writeMs: Date.now() - writeStartedAt,
+    rolesChanged,
+    scopesChanged,
+    totalMs: Date.now() - startedAt
+  }));
+  return result;
 }
 
 
