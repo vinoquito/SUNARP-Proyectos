@@ -1382,56 +1382,63 @@ test('el contador de administradores globales ignora cuentas, roles o ámbitos i
   assert.equal(sandbox._accessCountAdministrators_(nonAdminRole), 0);
 });
 
-test('el bootstrap de Administración carga Sedes para el filtro, pero difiere catálogos organizacionales hasta abrir el editor', () => {
-  const sandbox = createAdapterSandbox(makeSecurityData({
+test('el bootstrap difiere catálogos organizacionales y el editor los carga en una sola lectura cacheada por generación', () => {
+  const data = makeSecurityData({
     sedes: [{ id: 'SITE_1', name: 'Lima', active: true }],
     securityOrg: [{ id: 'ORG_1', sede_id: 'SITE_1', name: 'Sede Central', active: true }],
     locales: [{ id: 'LOC_1', sede_id: 'SITE_1', name: 'Local Lima', active: true }],
     tipos_estructura: [{ id: 'TYPE_1', name: 'Oficina', active: true }],
     estructura_local: [{ id: 'REL_1', estructura_id: 'ORG_1', local_id: 'LOC_1', active: true }]
-  }));
+  });
+  const sandbox = createAdapterSandbox(data);
   const reads = [];
-  const original = sandbox.SUNARPCore.listRecordsFromSourcesCached;
-  sandbox.SUNARPCore.listRecordsFromSourcesCached = requests => {
-    requests.forEach(request => reads.push(request.source.sheetName));
-    return original(requests);
+  const originalList = sandbox.SUNARPCore.listRecordsFromSourcesCached;
+  const cache = new Map();
+  sandbox.SUNARPCore.getOrBuildCachedValue = (key, sources, builder, ttl) => {
+    const cacheKey = String(key);
+    if (cache.has(cacheKey)) return { value: cache.get(cacheKey), cacheHit: true, cacheStored: true };
+    const value = builder();
+    cache.set(cacheKey, value);
+    return { value, cacheHit: false, cacheStored: true };
+  };
+  sandbox.SUNARPCore.listRecordsFromSourcesCached = (requests, ttl) => {
+    reads.push(requests.map(request => request.source.sourceKey + ':' + request.source.sheetName));
+    return originalList(requests, ttl);
   };
   const view = sandbox.getAccessManagementData();
   assert.equal(view.users.length, 0);
   assert.equal(view.userRoles.length, 0);
   assert.equal(view.scopes.length, 0);
-  assert.ok(reads.includes('Modulos'));
-  assert.ok(reads.includes('Roles'));
-  assert.ok(reads.includes('TiposAmbito'));
-  assert.ok(reads.includes('Sedes'));
-  assert.doesNotMatch(reads.join('|'), /EstructuraOrg|locales|tipos_estructura|estructura_local|Usuarios|UsuarioRol|Permisos|RolPermiso|AmbitosAcceso|Operaciones/);
+  assert.ok(reads.flat().includes('SECURITY:Modulos'));
+  assert.ok(reads.flat().includes('SECURITY:Roles'));
+  assert.ok(reads.flat().includes('SECURITY:TiposAmbito'));
+  assert.ok(reads.flat().includes('SECURITY:Sedes'));
+  assert.doesNotMatch(reads.flat().join('|'), /EstructuraOrg|DIRECTORY:locales|tipos_estructura|estructura_local|Usuarios|UsuarioRol|Permisos|RolPermiso|AmbitosAcceso|Operaciones/);
   assert.equal(view.catalogs.sedes.length, 1);
   assert.equal(view.catalogs.estructuraOrg.length, 0);
   assert.equal(view.scopeCatalogsLoaded, false);
 
-  const scopeReads = [];
-  const originalLoader = sandbox.SUNARPCore.listRecordsFromSourcesCached;
-  sandbox.SUNARPCore.listRecordsFromSourcesCached = requests => {
-    requests.forEach(request => scopeReads.push(request.source.sourceKey + ':' + request.source.sheetName));
-    return originalLoader(requests);
-  };
   const scopeCatalogs = sandbox.getAccessScopeCatalogs();
   assert.equal(scopeCatalogs.sedes.length, 1);
   assert.equal(scopeCatalogs.estructuraOrg.length, 1);
   assert.equal(scopeCatalogs.locales.length, 1);
   assert.equal(scopeCatalogs.tiposEstructura.length, 1);
   assert.equal(scopeCatalogs.estructuraLocal.length, 1);
-  assert.deepEqual(scopeReads, [
-    // La autorización del endpoint resuelve Modulos antes de consultar catálogos.
-    'SECURITY:Modulos',
-    'SECURITY:Sedes',
-    'SECURITY:EstructuraOrg',
+  const scopeReads = reads.filter(batch => batch.includes('SECURITY:Sedes'));
+  assert.equal(scopeReads.length, 1, 'El editor agrupa las cinco fuentes organizacionales en una lectura.');
+  assert.deepEqual(scopeReads[0].sort(), [
+    'DIRECTORY:estructura_local',
     'DIRECTORY:locales',
     'DIRECTORY:tipos_estructura',
-    'DIRECTORY:estructura_local'
-  ]);
-});
+    'SECURITY:EstructuraOrg',
+    'SECURITY:Sedes'
+  ].sort());
 
+  const callsBeforeSecondOpen = reads.length;
+  const second = sandbox.getAccessScopeCatalogs();
+  assert.equal(second.estructuraLocal.length, 1);
+  assert.equal(reads.length, callsBeforeSecondOpen, 'La segunda apertura debe reutilizar la vista por generación.');
+});
 test('la configuración del editor consulta solo las relaciones de la persona seleccionada', () => {
   const sandbox = createAdapterSandbox(makeSecurityData());
   const calls = [];

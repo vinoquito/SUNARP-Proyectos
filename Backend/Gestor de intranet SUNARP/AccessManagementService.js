@@ -748,17 +748,38 @@ function _accessOrgCatalog_() {
 }
 
 function _accessOrgManagementCatalog_() {
-  const base = _accessOrgCatalog_();
   const requests = [
+    { key: 'sedes', source: getIntranetDataSource('SECURITY', 'Sedes', 1) },
+    { key: 'estructuraOrg', source: getIntranetDataSource('SECURITY', 'EstructuraOrg', 1) },
+    { key: 'locales', source: getIntranetDataSource('DIRECTORY', 'locales', 1) },
     { key: 'tiposEstructura', source: getIntranetDataSource('DIRECTORY', 'tipos_estructura', 1) },
     { key: 'estructuraLocal', source: getIntranetDataSource('DIRECTORY', 'estructura_local', 1) }
   ];
-  const extra = SUNARPCore.listRecordsFromSourcesCached(requests, 30);
-
-  return Object.assign({}, base, {
-    tiposEstructura: (extra.tiposEstructura || []).filter(_accessCatalogIsActive_),
-    estructuraLocal: (extra.estructuraLocal || []).filter(_accessCatalogIsActive_)
-  });
+  const sources = requests.map(request => request.source);
+  const startedAt = Date.now();
+  const cached = SUNARPCore.getOrBuildCachedValue(
+    'access-scope-org-catalogs:v1',
+    sources,
+    () => SUNARPCore.listRecordsFromSourcesCached(requests, 60),
+    60
+  );
+  if (!cached || !cached.value) {
+    throw new Error('SUNARP Core no devolvió los catálogos organizacionales del editor de ámbitos.');
+  }
+  const catalogs = cached.value;
+  console.log('[AccessManagement] Scope organization catalogs:', JSON.stringify({
+    cacheHit: cached.cacheHit === true,
+    cacheStored: cached.cacheStored === true,
+    sourceCount: sources.length,
+    durationMs: Date.now() - startedAt
+  }));
+  return {
+    sedes: (catalogs.sedes || []).filter(_accessCatalogIsActive_),
+    estructuraOrg: (catalogs.estructuraOrg || []).filter(_accessCatalogIsActive_),
+    locales: (catalogs.locales || []).filter(_accessCatalogIsActive_),
+    tiposEstructura: (catalogs.tiposEstructura || []).filter(_accessCatalogIsActive_),
+    estructuraLocal: (catalogs.estructuraLocal || []).filter(_accessCatalogIsActive_)
+  };
 }
 
 
