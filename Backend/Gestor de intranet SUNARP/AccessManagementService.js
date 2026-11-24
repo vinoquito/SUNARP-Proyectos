@@ -2347,6 +2347,7 @@ function saveAccessUserConfiguration(payload) {
 
   let desiredScopes = previousScopes.map(scope => Object.assign({}, scope));
   let scopesChanged = false;
+  let orgCatalogLookupMs = 0;
 
   if (canManageScopes) {
     const referenceIdsByEntity = {
@@ -2379,7 +2380,7 @@ function saveAccessUserConfiguration(payload) {
     const locals = _accessFindOrgCatalogByIds_(
       'LOCAL', Array.from(referenceIdsByEntity.LOCAL)
     );
-    const orgCatalogLookupMs = Date.now() - orgCatalogStartedAt;
+    orgCatalogLookupMs = Date.now() - orgCatalogStartedAt;
 
     const normalizedScopes = [];
 
@@ -2687,7 +2688,7 @@ function saveAccessUserConfiguration(payload) {
     authorizationMs,
     relationLookupMs,
     roleCatalogLookupMs,
-    orgCatalogLookupMs: typeof orgCatalogLookupMs === 'number' ? orgCatalogLookupMs : 0,
+    orgCatalogLookupMs,
     preparationMs,
     writeMs: Date.now() - writeStartedAt,
     rolesChanged,
