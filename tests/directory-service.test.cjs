@@ -304,15 +304,21 @@ test('los filtros jerárquicos conservan ancestros reales, pero excluyen otras s
   assert.deepEqual([...hierarchySandbox.buildHierarchyFilterSets(records, structures, { scopes: [{ type: 'LOCAL', referenceId: 'LOCAL_A', includeDescendants: false }] }, 'SEDE_A')], []);
 });
 
-test('la interfaz limita la cascada a nodos reales autorizados y no presenta contexto artificial', () => {
-  assert.doesNotMatch(frontendScript, /contextualIds|\(contexto\)|option\.disabled\s*=\s*contextualOnly/);
-  assert.match(frontendScript, /option\.textContent = key\(node\.name\)/);
-  assert.match(frontendScript, /index\.childrenByParent\.get\(key\(parent\)\)/);
-  assert.match(frontendScript, /Array\.from\(index\.structureById\.values\(\)\)/);
-  assert.match(frontendScript, /scope\.includeDescendants === true/);
-  assert.match(frontendScript, /state\.hierarchySelectableIds = _directoryBuildHierarchyFilterSets_/);
-  assert.doesNotMatch(frontendScript, /selectableIds\.add\(keyOf\(node\.id\)\)/);
-});
+test('la interfaz limita la cascada a hijos directos reales y no presenta contexto artificial', () => {
+  assert.doesNotMatch(frontendScript, /contextualIds|\\(contexto\\)|option\\.disabled\\s*=\\s*contextualOnly/);
+  assert.match(frontendScript, /option\\.textContent = key\\(node\\.name\\)/);
+  assert.match(frontendScript, /index\\.childrenByParent\\.get\\(parentKey\\)/);
+  assert.match(frontendScript, /Array\\.from\\(index\\.structureById\\.values\\(\\)\\)/);
+  assert.match(frontendScript, /scope\\.includeDescendants === true/);
+  assert.match(frontendScript, /state\\.hierarchySelectableIds = _directoryBuildHierarchyFilterSets_/);
+  assert.match(frontendScript, /_directoryGetSelectableHierarchyChildren_\\(/);
+  const getHierarchyStart = frontendScript.indexOf('function getHierarchyNodes(parentId)');
+  const getHierarchyEnd = frontendScript.indexOf('function getHierarchyLabel(', getHierarchyStart);
+  const getHierarchySource = frontendScript.slice(getHierarchyStart, getHierarchyEnd);
+  assert.match(getHierarchySource, /_directoryGetSelectableHierarchyChildren_/);
+  assert.doesNotMatch(getHierarchySource, /collectChildren/);
+  assert.doesNotMatch(frontendScript, /selectableIds\\.add\\(keyOf\\(node\\.id\\)\\)/);
+});;
 
 
 test('las asignaciones se agrupan por jerarquía, respetan order por unidad y conservan un desempate estable', () => {
