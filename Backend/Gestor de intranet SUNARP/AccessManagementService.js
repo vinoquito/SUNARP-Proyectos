@@ -3239,14 +3239,25 @@ function _accessBuildUserListingIndex_() {
       });
 
       const orgLookupStartedAt = Date.now();
-      const sites = _accessFindOrgCatalogByIds_('SEDE', Array.from(referenceIds.SEDE));
       const structures = _accessFindOrgCatalogByIds_('ESTRUCTURA_ORG', Array.from(referenceIds.ESTRUCTURA_ORG));
       const locals = _accessFindOrgCatalogByIds_('LOCAL', Array.from(referenceIds.LOCAL));
+      const resolvedSiteIds = new Set(referenceIds.SEDE);
+      structures.forEach(item => {
+        const siteId = _accessText_(item.sede_id);
+        if (siteId) resolvedSiteIds.add(siteId);
+      });
+      locals.forEach(item => {
+        const siteId = _accessText_(item.sede_id);
+        if (siteId) resolvedSiteIds.add(siteId);
+      });
+      const sites = _accessFindOrgCatalogByIds_('SEDE', Array.from(resolvedSiteIds));
       const orgLookupMs = Date.now() - orgLookupStartedAt;
       const siteById = new Map(sites.map(item => [_accessText_(item.id), item]));
+      const siteNameById = new Map(sites.map(item => [
+        _accessText_(item.id), _accessText_(item.name)
+      ]));
       const structureById = new Map(structures.map(item => [_accessText_(item.id), item]));
       const localById = new Map(locals.map(item => [_accessText_(item.id), item]));
-
       const siteIdsByPerson = new Map();
       const addSite = (personaId, siteId) => {
         const personId = _accessText_(personaId);
@@ -3304,7 +3315,7 @@ function _accessBuildUserListingIndex_() {
           sede_ids: invalidMultiSite ? [] : scopedSiteIds,
           all_sedes: hasTotalScope,
           sede_nombre: hasTotalScope ? 'Todas las sedes' :
-            (invalidMultiSite ? '' : scopedSiteIds.join(' · ')),
+            (invalidMultiSite ? '' : scopedSiteIds.map(id => siteNameById.get(id) || id).join(' · ')),
           active: _accessIsActive_(user.active),
           roles: rolesByPerson.get(personaId) || []
         };

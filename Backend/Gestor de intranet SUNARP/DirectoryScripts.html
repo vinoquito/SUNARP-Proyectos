@@ -308,9 +308,6 @@ const DirectoryPage = (() => {
         'directorySedeFilter'
       ),
 
-      localFilter: document.getElementById(
-        'directoryLocalFilter'
-      ),
 
       hierarchyFilters: document.getElementById(
         'directoryHierarchyFilters'
@@ -454,17 +451,6 @@ const DirectoryPage = (() => {
     if (sedes.length === 1) select.value = key(sedes[0].id);
     select.disabled = sedes.length <= 1;
     if (wrapper) wrapper.hidden = sedes.length <= 1;
-  }
-
-  function populateLocalFilter() {
-    // La adscripción física no es un paso para obtener resultados. El backend
-    // ya devuelve la unión autorizada; Local nunca bloquea la carga ni la tabla.
-    const select = getElements().localFilter;
-    if (!select) return;
-    select.value = '';
-    select.disabled = true;
-    const wrapper = select.closest('.sunarp-filter');
-    if (wrapper) wrapper.hidden = true;
   }
 
   function populateCargoFilter() {
@@ -1948,9 +1934,7 @@ async function deleteDirectoryEntry(record) {
       state.hierarchyIndex = null;
       state.hierarchySelectableIds = new Set();
       state.catalogs = { sedes: state.authorizedSedes || [] };
-      if (elements.localFilter) elements.localFilter.value = '';
       if (elements.cargoFilter) elements.cargoFilter.value = '';
-      populateLocalFilter();
       populateCargoFilter();
       renderHierarchyFilters();
       clearDirectoryTable('Selecciona una sede para consultar la información de personal.');
@@ -1973,9 +1957,7 @@ async function deleteDirectoryEntry(record) {
     state.hierarchyIndex = null;
     state.hierarchySelectableIds = new Set();
     state.catalogs = { sedes: state.authorizedSedes || [] };
-    if (elements.localFilter) elements.localFilter.value = '';
     if (elements.cargoFilter) elements.cargoFilter.value = '';
-    populateLocalFilter();
     populateCargoFilter();
     renderHierarchyFilters();
     clearDirectoryTable('Cargando información de la sede seleccionada...');
@@ -2022,7 +2004,6 @@ async function deleteDirectoryEntry(record) {
       const clientIndexMs = performance.now() - indexStartedAt;
 
       const filtersStartedAt = performance.now();
-      populateLocalFilter();
       populateCargoFilter();
       renderHierarchyFilters();
       const filterSetupMs = performance.now() - filtersStartedAt;
@@ -2057,7 +2038,6 @@ async function deleteDirectoryEntry(record) {
       state.hierarchySelectableIds = new Set();
       state.catalogs = { sedes: state.authorizedSedes || [] };
       elements.sedeFilter.value = '';
-      populateLocalFilter();
       populateCargoFilter();
       renderHierarchyFilters();
       clearDirectoryTable('No se pudo cargar la información de la sede.');
@@ -2110,11 +2090,9 @@ async function deleteDirectoryEntry(record) {
       state.hierarchyPath = [];
       state.siteDataCache.clear();
       if (elements.sedeFilter) elements.sedeFilter.value = '';
-      if (elements.localFilter) elements.localFilter.value = '';
       if (elements.cargoFilter) elements.cargoFilter.value = '';
       clearDirectoryTable('Cargando únicamente la información de tus ámbitos autorizados...');
       populateSedeFilter();
-      populateLocalFilter();
       populateCargoFilter();
       renderHierarchyFilters();
       bindEvents();
