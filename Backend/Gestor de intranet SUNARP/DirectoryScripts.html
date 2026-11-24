@@ -442,21 +442,22 @@ const DirectoryPage = (() => {
       .filter(item => isActive(item))
       .slice()
       .sort(sortByName);
-    updateFilterOptions(select, 'Selecciona una sede', sedes);
-    // La selección siempre es explícita, incluso cuando solo existe una sede.
-    select.disabled = sedes.length === 0;
+    updateFilterOptions(select, 'Sede determinada por el ámbito autorizado', sedes);
     const wrapper = select.closest('.sunarp-filter');
-    if (wrapper) wrapper.hidden = false;
+    if (sedes.length === 1) select.value = key(sedes[0].id);
+    select.disabled = sedes.length <= 1;
+    if (wrapper) wrapper.hidden = sedes.length <= 1;
   }
-
 
   function populateLocalFilter() {
     const select = getElements().localFilter;
     if (!select) return;
+    const wrapper = select.closest('.sunarp-filter');
     const siteId = key(getElements().sedeFilter && getElements().sedeFilter.value);
     if (!siteId || siteId !== state.activeSedeId) {
-      updateFilterOptions(select, 'Selecciona primero una sede', []);
+      updateFilterOptions(select, 'Los locales autorizados se cargan con la sede', []);
       select.disabled = true;
+      if (wrapper) wrapper.hidden = true;
       return;
     }
     const locals = state.hierarchyIndex
@@ -465,12 +466,18 @@ const DirectoryPage = (() => {
     locals.sort(sortByName);
     updateFilterOptions(
       select,
-      locals.length ? 'Selecciona un local' : 'No hay locales disponibles en esta sede',
+      locals.length ? 'Todos los locales autorizados' : 'No hay locales autorizados en esta sede',
       locals
     );
-    select.disabled = locals.length === 0;
+    if (locals.length === 1) {
+      select.value = key(locals[0].id);
+      select.disabled = true;
+      if (wrapper) wrapper.hidden = true;
+    } else {
+      select.disabled = locals.length === 0;
+      if (wrapper) wrapper.hidden = locals.length <= 1;
+    }
   }
-
 
   function populateCargoFilter() {
     const select = getElements().cargoFilter;
@@ -478,17 +485,11 @@ const DirectoryPage = (() => {
     const elements = getElements();
     const siteId = key(elements.sedeFilter && elements.sedeFilter.value);
     const localId = key(elements.localFilter && elements.localFilter.value);
-
-    if (!siteId || siteId !== state.activeSedeId || !localId) {
-      updateFilterOptions(
-        select,
-        !siteId ? 'Selecciona primero una sede' : 'Selecciona primero un local',
-        []
-      );
+    if (!siteId || siteId !== state.activeSedeId) {
+      updateFilterOptions(select, 'Los cargos se cargan con la información autorizada', []);
       select.disabled = true;
       return;
     }
-
     const options = new Map();
     getRecordsForFilters(new Set(['cargo'])).forEach(record => {
       const id = key(record.cargo_id);
@@ -498,25 +499,29 @@ const DirectoryPage = (() => {
     const cargos = Array.from(options.values()).sort(sortByName);
     updateFilterOptions(
       select,
-      cargos.length ? 'Todos los cargos de este local' : 'No hay cargos para esta selección',
+      cargos.length
+        ? (localId ? 'Todos los cargos de este local' : 'Todos los cargos autorizados')
+        : 'No hay cargos para esta selección',
       cargos
     );
     select.disabled = cargos.length === 0;
   }
 
-
   function getHierarchyFilterSets() {
     const elements = getElements();
     const siteId = key(elements.sedeFilter && elements.sedeFilter.value);
     const localId = key(elements.localFilter && elements.localFilter.value);
-    if (!siteId || siteId !== state.activeSedeId || !localId || !state.hierarchyIndex) {
+    const index = state.hierarchyIndex;
+    if (!siteId || siteId !== state.activeSedeId || !index) {
       return { selectableIds: new Set() };
     }
-    return {
-      selectableIds: state.hierarchyIndex.selectableByLocal.get(localId) || new Set()
-    };
+    if (localId) {
+      return { selectableIds: index.selectableByLocal.get(localId) || new Set() };
+    }
+    const selectableIds = new Set();
+    index.selectableByLocal.forEach(ids => ids.forEach(id => selectableIds.add(key(id))));
+    return { selectableIds };
   }
-
 
   function getHierarchyNodes(parentId) {
     const selectableIds = getHierarchyFilterSets().selectableIds;
@@ -652,8 +657,9 @@ const DirectoryPage = (() => {
     const siteId = key(elements.sedeFilter && elements.sedeFilter.value);
     const localId = key(elements.localFilter && elements.localFilter.value);
     const index = state.hierarchyIndex;
-    const validLocal = Boolean(index && index.recordsByLocal.has(localId));
-    if (!siteId || siteId !== state.activeSedeId || !localId || !validLocal) {
+    const hasAuthorizedRecords = Boolean(index && index.recordsByLocal.size > 0);
+    const validLocal = Boolean(index && (!localId || index.recordsByLocal.has(localId)));
+    if (!siteId || siteId !== state.activeSedeId || !hasAuthorizedRecords || !validLocal) {
       state.hierarchyPath = [];
       container.hidden = true;
       return;
@@ -662,7 +668,6 @@ const DirectoryPage = (() => {
     container.hidden = container.childElementCount === 0;
     if (container.hidden) state.hierarchyPath = [];
   }
-
 
   function hasAvailableFilterSelection(filter) {
     const elements = getElements();
@@ -2083,25 +2088,22 @@ async function deleteDirectoryEntry(record) {
       setPageActions();
       return;
     }
-
     const elements = getElements();
     const previousSedeId = key(elements.sedeFilter && elements.sedeFilter.value);
     const hadLoadedSnapshot = state.loaded && Boolean(state.catalogs);
     state.loading = true;
     let finishLoading = null;
-
+    let autoLoadedSoleSede = false;
     try {
       if (window.SUNARPUI && typeof SUNARPUI.beginLoading === 'function') {
         finishLoading = SUNARPUI.beginLoading();
       }
-
       const requestStartedAt = performance.now();
       const result = await callServer('getDirectoryInitialData');
       const roundTripMs = performance.now() - requestStartedAt;
       if (!result || !result.catalogs || !Array.isArray(result.catalogs.sedes)) {
         throw new Error('El servidor devolvió una lista de sedes incompleta.');
       }
-
       const clientSetupStartedAt = performance.now();
       state.authorizedSedes = result.catalogs.sedes;
       state.catalogs = { sedes: state.authorizedSedes };
@@ -2113,8 +2115,7 @@ async function deleteDirectoryEntry(record) {
       if (elements.sedeFilter) elements.sedeFilter.value = '';
       if (elements.localFilter) elements.localFilter.value = '';
       if (elements.cargoFilter) elements.cargoFilter.value = '';
-
-      clearDirectoryTable('Selecciona una sede para consultar la información de personal.');
+      clearDirectoryTable('Cargando únicamente la información de tus ámbitos autorizados...');
       populateSedeFilter();
       populateLocalFilter();
       populateCargoFilter();
@@ -2122,15 +2123,24 @@ async function deleteDirectoryEntry(record) {
       bindEvents();
       state.loaded = true;
       setPageActions();
-      // Se lanza después de mostrar los filtros y no bloquea la entrada.
-      // La primera selección espera solo si el precalentamiento sigue activo.
-      startDirectoryContextWarmup();
-
       const clientSetupMs = performance.now() - clientSetupStartedAt;
       const diagnostics = result.diagnostics || {};
       const serverMs = Number.isFinite(Number(diagnostics.serverMs))
         ? Number(diagnostics.serverMs)
         : null;
+      if (state.authorizedSedes.length === 1) {
+        const soleSedeId = key(state.authorizedSedes[0].id);
+        if (soleSedeId) {
+          if (elements.sedeFilter) elements.sedeFilter.value = soleSedeId;
+          autoLoadedSoleSede = true;
+          console.info('[DirectoryPage] Carga automática de única sede autorizada:', {
+            sedeId: soleSedeId
+          });
+          await loadSelectedSede(soleSedeId);
+        }
+      } else if (state.authorizedSedes.length > 1) {
+        startDirectoryContextWarmup();
+      }
       console.info('[DirectoryPage] Selector inicial de sedes:', {
         serverMs,
         roundTripMs: Math.round(roundTripMs),
@@ -2140,10 +2150,10 @@ async function deleteDirectoryEntry(record) {
         serverStages: diagnostics.stages || null,
         clientSetupMs: Math.round(clientSetupMs),
         authorizedSedes: state.authorizedSedes.length,
+        autoLoadedSoleSede,
         assignmentRecordsLoaded: 0
       });
-
-      if (force && previousSedeId &&
+      if (force && !autoLoadedSoleSede && previousSedeId &&
           state.authorizedSedes.some(item => key(item.id) === previousSedeId)) {
         elements.sedeFilter.value = previousSedeId;
         await loadSelectedSede(previousSedeId, true);

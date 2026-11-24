@@ -2165,6 +2165,17 @@ test('el contrato de filtros reconoce TOTAL sin convertirlo en una selección re
   assert.equal(JSON.stringify(contract.selectable.sedeIds), JSON.stringify(['SEDE_1']));
 });
 
+
+test('Información de personal abre directamente la única sede autorizada y no exige seleccionar local', () => {
+  assert.match(frontendSource, /state\.authorizedSedes\.length === 1/);
+  assert.match(frontendSource, /autoLoadedSoleSede = true/);
+  assert.match(frontendSource, /await loadSelectedSede\(soleSedeId\)/);
+  assert.match(frontendSource, /wrapper\.hidden = sedes\.length <= 1/);
+  assert.match(frontendSource, /const hasAuthorizedRecords = Boolean\(index && index\.recordsByLocal\.size > 0\)/);
+  assert.match(frontendSource, /selectableByLocal\.forEach\(ids => ids\.forEach/);
+  assert.doesNotMatch(frontendSource, /if \(!siteId \|\| siteId !== state\.activeSedeId \|\| !localId/);
+});
+
 test('Información de personal carga por sede una vez y usa filtros, búsqueda y paginación locales', () => {
   assert.match(frontendSource, /callServer\('getDirectorySiteData', selectedSedeId\)/);
   assert.match(frontendSource, /mode:\s*'client'/);
@@ -2190,8 +2201,11 @@ test('Información de personal carga por sede una vez y usa filtros, búsqueda y
   assert.doesNotMatch(frontendSource, /listDirectoryAssignments/);
   assert.doesNotMatch(frontendSource, /mode:\s*'server'/);
   assert.doesNotMatch(frontendSource, /loadData:/);
-  assert.match(frontendSource, /function populateSedeFilter\([\s\S]*?wrapper\.hidden = false/);
-  assert.doesNotMatch(frontendSource, /sedes\.length === 1\) select\.value/);
+  assert.match(frontendSource, /function populateSedeFilter\([\s\S]*?wrapper\.hidden = sedes\.length <= 1/);
+  assert.match(frontendSource, /state\.authorizedSedes\.length === 1/);
+  assert.match(frontendSource, /await loadSelectedSede\(soleSedeId\)/);
+  assert.match(frontendSource, /selectableByLocal\.forEach\(ids => ids\.forEach/);
+  assert.doesNotMatch(frontendSource, /!siteId \|\| siteId !== state\.activeSedeId \|\| !localId/);
   assert.match(uiDataTableSource, /setData\(nextData\)/);
 });
 
