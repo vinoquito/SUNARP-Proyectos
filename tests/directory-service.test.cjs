@@ -53,6 +53,19 @@ vm.runInContext(
 
 const api = sandbox.directoryTestApi;
 
+const hierarchyIndexMatch = frontendScript.match(/function _directoryBuildHierarchyClientIndex_\\([\\s\\S]*?\\n  \\}/);
+const hierarchySubtreeMatch = frontendScript.match(/function _directoryMatchesHierarchySubtree_\\([\\s\\S]*?\\n  \\}/);
+assert.ok(hierarchyIndexMatch, 'El frontend debe precalcular sus índices jerárquicos por sede');
+assert.ok(hierarchySubtreeMatch, 'El frontend debe resolver pertenencia a subárbol mediante índice');
+const hierarchyIndexSandbox = vm.createContext({});
+vm.runInContext(
+  hierarchyIndexMatch[0] + '\\n' + hierarchySubtreeMatch[0] +
+    '\\nthis.buildIndex = _directoryBuildHierarchyClientIndex_;' +
+    '\\nthis.matchesSubtree = _directoryMatchesHierarchySubtree_;',
+  hierarchyIndexSandbox,
+  { filename: 'DirectoryHierarchyIndex.js' }
+);
+
 const hierarchyHelperMatch = frontendScript.match(/function _directoryBuildHierarchyFilterSets_\([\s\S]*?\n  \}/);
 assert.ok(hierarchyHelperMatch, 'El frontend debe incluir el cálculo puro de estructuras seleccionables');
 const hierarchySandbox = vm.createContext({});
@@ -81,11 +94,49 @@ test('Gerencia General incluye sus dependencias reales y excluye la raíz indepe
     { estructura_id: 'OTHER_SITE', filter_sede_id: 'SEDE_B', filter_local_id: 'LOCAL_B' }
   ];
   const ids = hierarchySandbox.buildHierarchyFilterSets(records, structures, 'SEDE_A', 'LOCAL_A');
-  assert.deepEqual([...ids].sort(), ['AC', 'GG', 'TD', 'UF_GD', 'UF_INT']);
+  assert.deepEqual([...ids].sort(), ['AC', 'DTR', 'GG', 'TD', 'UF_GD', 'UF_INT']);
   assert.equal(ids.has('UF_GD'), true, 'La dependencia intermedia aparece por tener descendientes asignados');
-  assert.equal(ids.has('DTR'), false, 'La raíz independiente no aparece como opción contextual');
+  assert.equal(ids.has('DTR'), true, 'La raíz independiente puede aparecer en el nivel raíz si tiene asignaciones propias');
+  assert.equal(structures.find(node => node.id === 'DTR').parent_id, '', 'Dirección Técnica Registral no pertenece a Gerencia General');
   assert.equal(ids.has('OTHER_SITE'), false);
 });
+test('el índice cliente conserva hijos directos, ancestros intermedios y separa raíces independientes por local', () => {
+  const structures = [
+    { id: 'GG', name: 'Gerencia General', parent_id: '', sede_id: 'SEDE_A', order: 1 },
+    { id: 'UF_INT', name: 'UF Integridad', parent_id: 'GG', sede_id: 'SEDE_A', order: 1 },
+    { id: 'UF_GD', name: 'UF Gestión Documental', parent_id: 'GG', sede_id: 'SEDE_A', order: 2 },
+    { id: 'TD', name: 'Trámite Documentario', parent_id: 'UF_GD', sede_id: 'SEDE_A', order: 1 },
+    { id: 'AC', name: 'Archivo Central', parent_id: 'UF_GD', sede_id: 'SEDE_A', order: 2 },
+    { id: 'DTR', name: 'Dirección Técnica Registral', parent_id: '', sede_id: 'SEDE_A', order: 2 }
+  ];
+  const records = [
+    { estructura_id: 'GG', filter_sede_id: 'SEDE_A', filter_local_id: 'LOCAL_A', local_name: 'Primavera' },
+    { estructura_id: 'UF_INT', filter_sede_id: 'SEDE_A', filter_local_id: 'LOCAL_A', local_name: 'Primavera' },
+    { estructura_id: 'TD', filter_sede_id: 'SEDE_A', filter_local_id: 'LOCAL_A', local_name: 'Primavera' },
+    { estructura_id: 'AC', filter_sede_id: 'SEDE_A', filter_local_id: 'LOCAL_A', local_name: 'Primavera' },
+    { estructura_id: 'DTR', filter_sede_id: 'SEDE_A', filter_local_id: 'LOCAL_A', local_name: 'Primavera' },
+    { estructura_id: '', filter_sede_id: 'SEDE_A', filter_local_id: 'LOCAL_B', local_name: 'Local solo' }
+  ];
+  const index = hierarchyIndexSandbox.buildIndex(records, structures);
+  const selected = index.selectableByLocal.get('LOCAL_A');
+  assert.deepEqual([...selected].sort(), ['AC', 'DTR', 'GG', 'TD', 'UF_GD', 'UF_INT']);
+  assert.deepEqual(
+    index.childrenByParent.get('GG').map(node => node.id),
+    ['UF_INT', 'UF_GD'],
+    'Gerencia General solo muestra sus hijos directos; Dirección Técnica Registral es otra raíz'
+  );
+  assert.deepEqual(
+    index.structurePathById.get('TD').map(node => node.id),
+    ['GG', 'UF_GD', 'TD']
+  );
+  assert.equal(index.recordsByLocal.get('LOCAL_A').length, 5);
+  assert.equal(index.localOptionsById.has('LOCAL_B'), true);
+  assert.equal(index.selectableByLocal.has('LOCAL_B'), false, 'La asignación local-only no crea una estructura');
+  assert.equal(hierarchyIndexSandbox.matchesSubtree('TD', 'GG', index), true);
+  assert.equal(hierarchyIndexSandbox.matchesSubtree('DTR', 'GG', index), false);
+  assert.equal(hierarchyIndexSandbox.matchesSubtree('UF_INT', 'UF_GD', index), false);
+});
+
 test('los filtros jerárquicos excluyen estructuras de otras sedes y locales', () => {
   const structures = [
     { id: 'ROOT_A', name: 'Gerencia A', parent_id: '', sede_id: 'SEDE_A' },
@@ -103,10 +154,12 @@ test('los filtros jerárquicos excluyen estructuras de otras sedes y locales', (
   assert.deepEqual([...hierarchySandbox.buildHierarchyFilterSets(records, structures, '', 'LOCAL_A')], []);
 });
 
-test('la interfaz no genera opciones artificiales de contexto ni deshabilita ancestros reales', () => {
+test('la interfaz limita cada selector a hijos directos y no presenta opciones contextuales artificiales', () => {
   assert.doesNotMatch(frontendScript, /contextualIds|\(contexto\)|option\.disabled\s*=\s*contextualOnly/);
-  assert.match(frontendScript, /_directoryGetHierarchyDisplayPath_\(/);
+  assert.match(frontendScript, /option\.textContent = key\(node\.name\)/);
+  assert.match(frontendScript, /childrenByParent\.get\(key\(parentId\)\)/);
 });
+
 
 test('las asignaciones se agrupan por jerarquía, respetan order por unidad y conservan un desempate estable', () => {
   const structures = [

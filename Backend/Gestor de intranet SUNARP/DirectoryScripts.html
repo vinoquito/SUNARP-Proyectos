@@ -57,6 +57,143 @@
   }
 
   /**
+   * Precalcula una sola vez las relaciones usadas por filtros y tabla.
+   * La pertenencia a un subárbol se resuelve con intervalos DFS O(1), y
+   * las opciones por local se derivan únicamente de asignaciones reales.
+   */
+  function _directoryBuildHierarchyClientIndex_(records, structures) {
+    const keyOf = value => String(value === null || value === undefined ? '' : value).trim();
+    const nodes = Array.isArray(structures) ? structures : [];
+    const structureById = new Map();
+    nodes.forEach(node => {
+      const id = keyOf(node && node.id);
+      if (id) structureById.set(id, node);
+    });
+
+    const childrenByParent = new Map();
+    nodes.forEach(node => {
+      const id = keyOf(node && node.id);
+      if (!id || structureById.get(id) !== node) return;
+      const parentId = keyOf(node.parent_id);
+      if (!childrenByParent.has(parentId)) childrenByParent.set(parentId, []);
+      childrenByParent.get(parentId).push(node);
+    });
+    const compareNodes = (a, b) => {
+      const orderA = Number(a.order);
+      const orderB = Number(b.order);
+      const normalizedA = Number.isFinite(orderA) ? orderA : Number.MAX_SAFE_INTEGER;
+      const normalizedB = Number.isFinite(orderB) ? orderB : Number.MAX_SAFE_INTEGER;
+      return normalizedA - normalizedB ||
+        String(a.name || '').localeCompare(String(b.name || ''), 'es', { sensitivity: 'base' }) ||
+        keyOf(a.id).localeCompare(keyOf(b.id));
+    };
+    childrenByParent.forEach(children => children.sort(compareNodes));
+
+    const structurePathById = new Map();
+    const resolvePath = structureId => {
+      const startId = keyOf(structureId);
+      if (!startId) return [];
+      if (structurePathById.has(startId)) return structurePathById.get(startId);
+      const first = structureById.get(startId);
+      if (!first) return [];
+      const expectedSiteId = keyOf(first.sede_id);
+      const reversePath = [];
+      const visited = new Set();
+      let current = first;
+      while (current) {
+        const id = keyOf(current.id);
+        if (!id || visited.has(id) || keyOf(current.sede_id) !== expectedSiteId) break;
+        visited.add(id);
+        reversePath.push(current);
+        const parentId = keyOf(current.parent_id);
+        const parent = parentId ? structureById.get(parentId) : null;
+        current = parent && keyOf(parent.sede_id) === expectedSiteId ? parent : null;
+      }
+      const path = reversePath.reverse();
+      path.forEach((node, index) => {
+        const id = keyOf(node.id);
+        if (!structurePathById.has(id)) structurePathById.set(id, path.slice(0, index + 1));
+      });
+      if (!structurePathById.has(startId)) structurePathById.set(startId, path);
+      return structurePathById.get(startId);
+    };
+    nodes.forEach(node => resolvePath(node && node.id));
+
+    const entryIndexByStructureId = new Map();
+    const subtreeIntervalsByStructureId = new Map();
+    const visiting = new Set();
+    const visited = new Set();
+    let cursor = 0;
+    const visit = node => {
+      const id = keyOf(node && node.id);
+      if (!id || visiting.has(id) || visited.has(id)) return;
+      visiting.add(id);
+      const start = cursor++;
+      entryIndexByStructureId.set(id, start);
+      const siteId = keyOf(node.sede_id);
+      (childrenByParent.get(id) || []).forEach(child => {
+        if (keyOf(child.sede_id) === siteId) visit(child);
+      });
+      subtreeIntervalsByStructureId.set(id, { start, end: cursor });
+      visiting.delete(id);
+      visited.add(id);
+    };
+    nodes.forEach(node => {
+      const parentId = keyOf(node && node.parent_id);
+      const parent = parentId ? structureById.get(parentId) : null;
+      if (!parent || keyOf(parent.sede_id) !== keyOf(node.sede_id)) visit(node);
+    });
+    nodes.forEach(visit);
+
+    const recordsByLocal = new Map();
+    const localOptionsById = new Map();
+    const selectableByLocal = new Map();
+    (Array.isArray(records) ? records : []).forEach(record => {
+      const siteId = keyOf(record.filter_sede_id || record.sede_id);
+      const localId = keyOf(record.filter_local_id || record.local_id);
+      if (!siteId || !localId) return;
+      if (!recordsByLocal.has(localId)) recordsByLocal.set(localId, []);
+      recordsByLocal.get(localId).push(record);
+      if (!localOptionsById.has(localId)) {
+        localOptionsById.set(localId, {
+          id: localId,
+          name: keyOf(record.local_name) || localId
+        });
+      }
+      const structureId = keyOf(record.estructura_id);
+      if (!structureId) return;
+      const path = resolvePath(structureId);
+      if (!path.length) return;
+      if (!selectableByLocal.has(localId)) selectableByLocal.set(localId, new Set());
+      const selectableIds = selectableByLocal.get(localId);
+      path.forEach(node => {
+        if (keyOf(node.sede_id) === siteId) selectableIds.add(keyOf(node.id));
+      });
+    });
+
+    return {
+      structureById,
+      childrenByParent,
+      structurePathById,
+      entryIndexByStructureId,
+      subtreeIntervalsByStructureId,
+      recordsByLocal,
+      localOptionsById,
+      selectableByLocal
+    };
+  }
+
+  function _directoryMatchesHierarchySubtree_(recordStructureId, selectedStructureId, index) {
+    const selectedId = String(selectedStructureId || '').trim();
+    const recordId = String(recordStructureId || '').trim();
+    if (!selectedId || !recordId || !index) return false;
+    const interval = index.subtreeIntervalsByStructureId.get(selectedId);
+    const recordIndex = index.entryIndexByStructureId.get(recordId);
+    return Boolean(interval && recordIndex !== undefined &&
+      recordIndex >= interval.start && recordIndex < interval.end);
+  }
+
+  /**
  * GESTOR DE INTRANET SUNARP
  * Módulo: Información de personal
  *
@@ -83,6 +220,7 @@ const DirectoryPage = (() => {
     authorizedSedes: [],
     table: null,
     hierarchyPath: [],
+    hierarchyIndex: null,
     activeSedeId: '',
     siteDataCache: new Map(),
     siteRequestId: 0,
@@ -192,56 +330,20 @@ const DirectoryPage = (() => {
    * Ejemplo: Órgano -> Oficina -> Unidad.
    */
   function getRecordStructurePath(record) {
-    const structureMap = new Map(
-      state.catalogs.estructuraOrg.map(node => [
-        key(node.id),
-        node
-      ])
-    );
-
-    const path = [];
-    const visited = new Set();
-
-    let current = structureMap.get(
-      key(record.estructura_id)
-    );
-
-    while (current) {
-      const currentId = key(current.id);
-
-      if (!currentId || visited.has(currentId)) {
-        break;
-      }
-
-      visited.add(currentId);
-      path.unshift(current);
-
-      const parentId = key(current.parent_id);
-
-      current = parentId
-        ? structureMap.get(parentId) || null
-        : null;
-    }
-
-    return path;
+    const index = state.hierarchyIndex;
+    return index
+      ? index.structurePathById.get(key(record && record.estructura_id)) || []
+      : [];
   }
 
 
-  /**
-   * Comprueba si un registro corresponde a la ruta
-   * jerárquica que está seleccionada.
-   */
   function recordMatchesHierarchyPath(record, path) {
     if (!path || !path.length) return true;
-
-    const recordPath = getRecordStructurePath(record);
-
-    if (recordPath.length < path.length) {
-      return false;
-    }
-
-    return path.every((selectedId, index) =>
-      key(recordPath[index].id) === key(selectedId)
+    const selectedId = key(path[path.length - 1]);
+    return _directoryMatchesHierarchySubtree_(
+      record && record.estructura_id,
+      selectedId,
+      state.hierarchyIndex
     );
   }
 
@@ -256,26 +358,24 @@ const DirectoryPage = (() => {
   function getRecordsForFilters(excludedFilters) {
     const excluded = excludedFilters || new Set();
     const elements = getElements();
-
-    const sedeId = elements.sedeFilter
-      ? key(elements.sedeFilter.value)
+    const siteId = elements.sedeFilter ? key(elements.sedeFilter.value) : '';
+    const localId = elements.localFilter ? key(elements.localFilter.value) : '';
+    const cargoId = elements.cargoFilter ? key(elements.cargoFilter.value) : '';
+    const selectedStructureId = !excluded.has('hierarchy') && state.hierarchyPath.length
+      ? key(state.hierarchyPath[state.hierarchyPath.length - 1])
       : '';
-    const localId = elements.localFilter
-      ? key(elements.localFilter.value)
-      : '';
-    const cargoId = elements.cargoFilter
-      ? key(elements.cargoFilter.value)
-      : '';
-
-    return state.records.filter(record => {
-      const recordSedeId = key(record.filter_sede_id || record.sede_id);
+    const indexedLocalRecords = !excluded.has('local') && localId && state.hierarchyIndex
+      ? state.hierarchyIndex.recordsByLocal.get(localId) || []
+      : state.records;
+    return indexedLocalRecords.filter(record => {
+      const recordSiteId = key(record.filter_sede_id || record.sede_id);
       const recordLocalId = key(record.filter_local_id || record.local_id);
-
-      if (!excluded.has('sede') && sedeId && recordSedeId !== sedeId) return false;
+      if (!excluded.has('sede') && siteId && recordSiteId !== siteId) return false;
       if (!excluded.has('local') && localId && recordLocalId !== localId) return false;
       if (!excluded.has('cargo') && cargoId && key(record.cargo_id) !== cargoId) return false;
-      if (!excluded.has('hierarchy') &&
-          !recordMatchesHierarchyPath(record, state.hierarchyPath)) return false;
+      if (selectedStructureId && !_directoryMatchesHierarchySubtree_(
+        record.estructura_id, selectedStructureId, state.hierarchyIndex
+      )) return false;
       return true;
     });
   }
@@ -352,21 +452,15 @@ const DirectoryPage = (() => {
     const select = getElements().localFilter;
     if (!select) return;
     const siteId = key(getElements().sedeFilter && getElements().sedeFilter.value);
-
     if (!siteId || siteId !== state.activeSedeId) {
       updateFilterOptions(select, 'Selecciona primero una sede', []);
       select.disabled = true;
       return;
     }
-
-    const options = new Map();
-    state.records.forEach(record => {
-      const id = key(record.filter_local_id || record.local_id);
-      const recordSedeId = key(record.filter_sede_id || record.sede_id);
-      if (!id || recordSedeId !== siteId || options.has(id)) return;
-      options.set(id, { id, name: key(record.local_name) || id });
-    });
-    const locals = Array.from(options.values()).sort(sortByName);
+    const locals = state.hierarchyIndex
+      ? Array.from(state.hierarchyIndex.localOptionsById.values())
+      : [];
+    locals.sort(sortByName);
     updateFilterOptions(
       select,
       locals.length ? 'Selecciona un local' : 'No hay locales disponibles en esta sede',
@@ -413,37 +507,21 @@ const DirectoryPage = (() => {
     const elements = getElements();
     const siteId = key(elements.sedeFilter && elements.sedeFilter.value);
     const localId = key(elements.localFilter && elements.localFilter.value);
-    const structures = state.catalogs && state.catalogs.estructuraOrg || [];
-
-    if (!siteId || siteId !== state.activeSedeId || !localId) {
+    if (!siteId || siteId !== state.activeSedeId || !localId || !state.hierarchyIndex) {
       return { selectableIds: new Set() };
     }
-
     return {
-      selectableIds: _directoryBuildHierarchyFilterSets_(
-        state.records,
-        structures,
-        siteId,
-        localId
-      )
+      selectableIds: state.hierarchyIndex.selectableByLocal.get(localId) || new Set()
     };
   }
 
 
   function getHierarchyNodes(parentId) {
-    const sets = getHierarchyFilterSets();
-    return (state.catalogs.estructuraOrg || [])
-      .filter(node =>
-        key(node.parent_id) === key(parentId) &&
-        sets.selectableIds.has(key(node.id))
-      )
-      .slice()
-      .sort((a, b) => {
-        const orderA = Number(a.order) || 0;
-        const orderB = Number(b.order) || 0;
-        return orderA - orderB ||
-          String(a.name).localeCompare(String(b.name), 'es');
-      });
+    const selectableIds = getHierarchyFilterSets().selectableIds;
+    const index = state.hierarchyIndex;
+    if (!index) return [];
+    return (index.childrenByParent.get(key(parentId)) || [])
+      .filter(node => selectableIds.has(key(node.id)));
   }
 
 
@@ -508,15 +586,11 @@ const DirectoryPage = (() => {
 
     select.appendChild(placeholder);
 
-    const sets = getHierarchyFilterSets();
     nodes.forEach(node => {
       const option = document.createElement('option');
       const id = key(node.id);
       option.value = id;
-      option.textContent = _directoryGetHierarchyDisplayPath_(
-        node,
-        state.catalogs.estructuraOrg || []
-      ) || node.name;
+      option.textContent = key(node.name) || id;
       select.appendChild(option);
     });
 
@@ -572,21 +646,16 @@ const DirectoryPage = (() => {
     const container = getElements().hierarchyFilters;
     if (!container) return;
     container.replaceChildren();
-
     const elements = getElements();
     const siteId = key(elements.sedeFilter && elements.sedeFilter.value);
     const localId = key(elements.localFilter && elements.localFilter.value);
-    const validLocal = state.records.some(record =>
-      key(record.filter_sede_id || record.sede_id) === siteId &&
-      key(record.filter_local_id || record.local_id) === localId
-    );
-
+    const index = state.hierarchyIndex;
+    const validLocal = Boolean(index && index.recordsByLocal.has(localId));
     if (!siteId || siteId !== state.activeSedeId || !localId || !validLocal) {
       state.hierarchyPath = [];
       container.hidden = true;
       return;
     }
-
     appendHierarchyLevel('', 0);
     container.hidden = container.childElementCount === 0;
     if (container.hidden) state.hierarchyPath = [];
@@ -604,7 +673,9 @@ const DirectoryPage = (() => {
       return !selected || (state.catalogs.cargos || []).some(item => key(item.id) === selected);
     }
     if (filter === 'hierarchy') {
-      const structures = new Map((state.catalogs.estructuraOrg || []).map(item => [key(item.id), item]));
+      const structures = state.hierarchyIndex
+        ? state.hierarchyIndex.structureById
+        : new Map();
       return state.hierarchyPath.every((id, index) => {
         const node = structures.get(key(id));
         if (!node) return false;
@@ -625,17 +696,34 @@ const DirectoryPage = (() => {
    * compatibles con las nuevas selecciones.
    */
   function refreshDependentFilters(changedFilter) {
-    const elements = getElements();
+    const startedAt = performance.now();
     if (changedFilter === 'sede') return;
-
-    const parentChanged = ['local', 'hierarchy'].includes(changedFilter);
+    if (changedFilter === 'cargo') {
+      renderTable();
+      console.info('[DirectoryPage] Filtro actualizado:', {
+        changedFilter,
+        totalMs: Math.round(performance.now() - startedAt)
+      });
+      return;
+    }
     if (changedFilter === 'local') state.hierarchyPath = [];
-    if (parentChanged && elements.cargoFilter) elements.cargoFilter.value = '';
-
-    populateLocalFilter();
+    if (['local', 'hierarchy'].includes(changedFilter)) {
+      const elements = getElements();
+      if (elements.cargoFilter) elements.cargoFilter.value = '';
+    }
+    const cargoStartedAt = performance.now();
     populateCargoFilter();
+    const cargoOptionsMs = performance.now() - cargoStartedAt;
+    const hierarchyStartedAt = performance.now();
     renderHierarchyFilters();
+    const hierarchyOptionsMs = performance.now() - hierarchyStartedAt;
     renderTable();
+    console.info('[DirectoryPage] Filtros dependientes actualizados:', {
+      changedFilter,
+      cargoOptionsMs: Math.round(cargoOptionsMs),
+      hierarchyOptionsMs: Math.round(hierarchyOptionsMs),
+      totalMs: Math.round(performance.now() - startedAt)
+    });
   }
 
 
@@ -699,10 +787,17 @@ const DirectoryPage = (() => {
       throw new Error('No está disponible el componente DataTable de SUNARP UI.');
     }
 
+    const tableStartedAt = performance.now();
+    const filterStartedAt = performance.now();
+    const filteredRecords = getFilteredRecords();
+    const filteringMs = performance.now() - filterStartedAt;
+    const preparationStartedAt = performance.now();
+    const preparedRows = prepareRows(filteredRecords);
+    const rowPreparationMs = performance.now() - preparationStartedAt;
     const options = {
       containerId: 'directoryTableContainer',
       mode: 'client',
-      data: prepareRows(getFilteredRecords()),
+      data: preparedRows,
       emptyMessage: 'No se encontraron registros para los filtros seleccionados.',
       columns: [
         { key: 'servidor', label: 'Nombre', searchable: true },
@@ -794,12 +889,21 @@ const DirectoryPage = (() => {
       ]
     };
 
+    const tableUpdateStartedAt = performance.now();
     if (!state.table) {
       state.table = SUNARPUI.createDataTable(options);
     } else {
       // Actualización local: conserva el componente y no consulta al servidor.
       state.table.setData(options.data);
     }
+    console.info('[DirectoryPage] Tabla actualizada:', {
+      filteringMs: Math.round(filteringMs),
+      rowPreparationMs: Math.round(rowPreparationMs),
+      datatableUpdateMs: Math.round(performance.now() - tableUpdateStartedAt),
+      totalClientMs: Math.round(performance.now() - tableStartedAt),
+      totalSedeRecords: state.records.length,
+      visibleRows: preparedRows.length
+    });
   }
 
 
@@ -1760,6 +1864,7 @@ async function deleteDirectoryEntry(record) {
       state.activeSedeId = '';
       state.records = [];
       state.hierarchyPath = [];
+      state.hierarchyIndex = null;
       state.catalogs = { sedes: state.authorizedSedes || [] };
       if (elements.localFilter) elements.localFilter.value = '';
       if (elements.cargoFilter) elements.cargoFilter.value = '';
@@ -1783,6 +1888,7 @@ async function deleteDirectoryEntry(record) {
     state.activeSedeId = '';
     state.records = [];
     state.hierarchyPath = [];
+    state.hierarchyIndex = null;
     state.catalogs = { sedes: state.authorizedSedes || [] };
     if (elements.localFilter) elements.localFilter.value = '';
     if (elements.cargoFilter) elements.cargoFilter.value = '';
@@ -1800,40 +1906,65 @@ async function deleteDirectoryEntry(record) {
         Date.now() - cacheEntry.loadedAt < DIRECTORY_SITE_CLIENT_CACHE_TTL_MS
       );
       let result = useClientCache ? cacheEntry.data : null;
+      let roundTripMs = 0;
       if (!result) {
+        const requestStartedAt = performance.now();
         result = await callServer('getDirectorySiteData', selectedSedeId);
+        roundTripMs = performance.now() - requestStartedAt;
       }
       if (requestId !== state.siteRequestId) return;
-
       if (!result || !result.catalogs || !Array.isArray(result.records)) {
         throw new Error('El servidor devolvió una carga incompleta para la sede seleccionada.');
       }
 
+      const clientProcessingStartedAt = performance.now();
       state.siteDataCache.set(selectedSedeId, {
         data: result,
         loadedAt: Date.now()
       });
       state.records = result.records;
-      // Los filtros de navegación usan state.authorizedSedes; los formularios
-      // usan solo los catálogos de la sede que el servidor acaba de cargar.
       state.catalogs = result.catalogs;
       state.activeSedeId = selectedSedeId;
 
+      const indexStartedAt = performance.now();
+      state.hierarchyIndex = _directoryBuildHierarchyClientIndex_(
+        state.records,
+        state.catalogs.estructuraOrg || []
+      );
+      const clientIndexMs = performance.now() - indexStartedAt;
+
+      const filtersStartedAt = performance.now();
       populateLocalFilter();
       populateCargoFilter();
       renderHierarchyFilters();
+      const filterSetupMs = performance.now() - filtersStartedAt;
       renderTable();
+      const clientProcessingMs = performance.now() - clientProcessingStartedAt;
+      const diagnostics = result.diagnostics || {};
+      const serverMs = Number.isFinite(Number(diagnostics.serverMs))
+        ? Number(diagnostics.serverMs)
+        : null;
 
       console.info('[DirectoryPage] Sede cargada:', {
         sedeId: selectedSedeId,
         records: state.records.length,
         assignments: result.summary ? result.summary.assignments : state.records.length,
-        source: useClientCache ? 'session-cache' : 'server'
+        source: useClientCache ? 'session-cache' : 'server',
+        serverMs,
+        roundTripMs: Math.round(roundTripMs),
+        roundTripResidualMs: serverMs === null || useClientCache
+          ? null
+          : Math.round(Math.max(0, roundTripMs - serverMs)),
+        serverStages: diagnostics.stages || null,
+        clientIndexMs: Math.round(clientIndexMs),
+        filterSetupMs: Math.round(filterSetupMs),
+        clientProcessingMs: Math.round(clientProcessingMs)
       });
     } catch (error) {
       if (requestId !== state.siteRequestId) return;
       state.activeSedeId = '';
       state.records = [];
+      state.hierarchyIndex = null;
       state.catalogs = { sedes: state.authorizedSedes || [] };
       elements.sedeFilter.value = '';
       populateLocalFilter();
@@ -1859,7 +1990,6 @@ async function deleteDirectoryEntry(record) {
 
   async function load(force = false) {
     if (state.loading) return;
-
     if (state.loaded && !force) {
       setPageActions();
       return;
@@ -1868,7 +1998,6 @@ async function deleteDirectoryEntry(record) {
     const elements = getElements();
     const previousSedeId = key(elements.sedeFilter && elements.sedeFilter.value);
     const hadLoadedSnapshot = state.loaded && Boolean(state.catalogs);
-
     state.loading = true;
     let finishLoading = null;
 
@@ -1877,21 +2006,21 @@ async function deleteDirectoryEntry(record) {
         finishLoading = SUNARPUI.beginLoading();
       }
 
-      const startedAt = performance.now();
+      const requestStartedAt = performance.now();
       const result = await callServer('getDirectoryInitialData');
-      const serverElapsed = performance.now() - startedAt;
-
+      const roundTripMs = performance.now() - requestStartedAt;
       if (!result || !result.catalogs || !Array.isArray(result.catalogs.sedes)) {
         throw new Error('El servidor devolvió una lista de sedes incompleta.');
       }
 
+      const clientSetupStartedAt = performance.now();
       state.authorizedSedes = result.catalogs.sedes;
       state.catalogs = { sedes: state.authorizedSedes };
       state.records = [];
+      state.hierarchyIndex = null;
       state.activeSedeId = '';
       state.hierarchyPath = [];
       state.siteDataCache.clear();
-
       if (elements.sedeFilter) elements.sedeFilter.value = '';
       if (elements.localFilter) elements.localFilter.value = '';
       if (elements.cargoFilter) elements.cargoFilter.value = '';
@@ -1902,12 +2031,22 @@ async function deleteDirectoryEntry(record) {
       populateCargoFilter();
       renderHierarchyFilters();
       bindEvents();
-
       state.loaded = true;
       setPageActions();
 
+      const clientSetupMs = performance.now() - clientSetupStartedAt;
+      const diagnostics = result.diagnostics || {};
+      const serverMs = Number.isFinite(Number(diagnostics.serverMs))
+        ? Number(diagnostics.serverMs)
+        : null;
       console.info('[DirectoryPage] Selector inicial de sedes:', {
-        serverMs: Math.round(serverElapsed),
+        serverMs,
+        roundTripMs: Math.round(roundTripMs),
+        roundTripResidualMs: serverMs === null
+          ? null
+          : Math.round(Math.max(0, roundTripMs - serverMs)),
+        serverStages: diagnostics.stages || null,
+        clientSetupMs: Math.round(clientSetupMs),
         authorizedSedes: state.authorizedSedes.length,
         assignmentRecordsLoaded: 0
       });

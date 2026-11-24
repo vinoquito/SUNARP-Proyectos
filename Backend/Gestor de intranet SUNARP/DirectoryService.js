@@ -1171,8 +1171,8 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
  * idField puede cambiarse para obtener conjuntos distintos (cargos, locales,
  * personas) sin volver a cargar la tabla completa al servicio consumidor.
  */
-function _directoryExecuteAssignmentQuery_(context, authorization, options, idField, offset, limit, enrich, distinctBy, distinctFields, distinctCountFields) {
-  const descriptor = _directoryBuildAssignmentQuery_(context, authorization, options);
+function _directoryExecuteAssignmentQuery_(context, authorization, options, idField, offset, limit, enrich, distinctBy, distinctFields, distinctCountFields, preparedDescriptor) {
+  const descriptor = preparedDescriptor || _directoryBuildAssignmentQuery_(context, authorization, options);
   const pageOffset = Number.isInteger(offset) && offset >= 0 ? offset : 0;
   const pageLimit = Number.isInteger(limit) && limit >= 1 ? limit : 10;
   if (!descriptor.queryOptions.anyOf.length) {
@@ -1209,7 +1209,7 @@ function _directoryExecuteAssignmentQuery_(context, authorization, options, idFi
  * de personas y un único mapa de relaciones. La consulta de personas proyecta
  * únicamente las columnas de presentación necesarias para la tabla principal.
  */
-function _directoryEnrichAssignmentRecords_(assignments, context) {
+function _directoryEnrichAssignmentRecords_(assignments, context, relationMap) {
   const records = Array.isArray(assignments) ? assignments : [];
   if (!records.length) return [];
   const personaIds = Array.from(new Set(records.map(item =>
@@ -1235,12 +1235,11 @@ function _directoryEnrichAssignmentRecords_(assignments, context) {
   if (peopleMap.size !== personaIds.length) {
     throw new Error('El conjunto de personas contiene identificadores duplicados o incompletos.');
   }
-  const relationMap = _directoryCreateMap_(
-    _directoryBuildRelations_(context, false)
-  );
+  const resolvedRelationMap = relationMap ||
+    _directoryCreateMap_(_directoryBuildRelations_(context, false));
   return records.map(item => {
     const location = _directoryResolveAssignmentLocation_(item, context, false);
-    return _directoryEnrichAssignment_(item, context, relationMap, peopleMap, location);
+    return _directoryEnrichAssignment_(item, context, resolvedRelationMap, peopleMap, location);
   });
 }
 
@@ -1460,10 +1459,18 @@ function getDirectoryInitialData() {
     .sort((a, b) => a.name.localeCompare(b.name, 'es'));
   const catalogElapsed = Date.now() - catalogStartedAt;
 
+  const serverElapsed = Date.now() - startedAt;
+  const diagnostics = {
+    serverMs: serverElapsed,
+    stages: {
+      authorizationMs: authorizationElapsed,
+      siteCatalogMs: catalogElapsed
+    }
+  };
   console.log('[DirectoryService] Initial site selector ms:', JSON.stringify({
     authorization: authorizationElapsed,
     siteCatalog: catalogElapsed,
-    total: Date.now() - startedAt,
+    total: serverElapsed,
     authorizedSites: sedes.length,
     authorizationCatalogs: catalogRequests.map(item => item.key),
     assignmentsLoaded: 0
@@ -1472,7 +1479,8 @@ function getDirectoryInitialData() {
   return {
     catalogs: { sedes },
     records: [],
-    summary: { people: 0, assignments: 0 }
+    summary: { people: 0, assignments: 0 },
+    diagnostics
   };
 }
 
@@ -1557,9 +1565,10 @@ function getDirectorySiteData(sedeId) {
     validateSnapshot: false
   };
 
-  // Se comprueba la autorización y que la sede siga activa antes de usar caché.
+  let siteValidationElapsed = 0;
   if (typeof SUNARPCore !== 'undefined' &&
       typeof SUNARPCore.listRecordsFromSourcesCached === 'function') {
+    const validationStartedAt = Date.now();
     const siteCatalog = SUNARPCore.listRecordsFromSourcesCached([{
       key: 'sedes',
       source: _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.sedes),
@@ -1576,15 +1585,21 @@ function getDirectorySiteData(sedeId) {
     if (!activeSite) {
       throw new Error('No tienes permiso para consultar la sede seleccionada o la sede ya no está activa.');
     }
+    siteValidationElapsed = Date.now() - validationStartedAt;
   }
 
+  let result = null;
+  let siteSnapshotCacheHit = false;
+  let siteSnapshotCacheStored = false;
+  let snapshotCacheLookupElapsed = 0;
   if (typeof SUNARPCore !== 'undefined' &&
       typeof SUNARPCore.getOrBuildCachedValue === 'function' &&
       _directoryKey_(authorization.auth && authorization.auth.personaId)) {
     const authorizationFingerprint = _directoryAuthorizationCacheFingerprint_(authorization);
-    const cacheKey = 'directory-site-snapshot:v2:' +
+    const cacheKey = 'directory-site-snapshot:v3:' +
       _directoryKey_(authorization.auth.personaId) + ':' +
       selectedSedeId + ':' + authorizationFingerprint;
+    const cacheLookupStartedAt = Date.now();
     const cached = SUNARPCore.getOrBuildCachedValue(
       cacheKey,
       _directoryGetSiteDataCacheSources_(),
@@ -1594,19 +1609,50 @@ function getDirectorySiteData(sedeId) {
       ),
       DIRECTORY_SITE_SNAPSHOT_CACHE_TTL
     );
+    snapshotCacheLookupElapsed = Date.now() - cacheLookupStartedAt;
+    siteSnapshotCacheHit = Boolean(cached && cached.cacheHit);
+    siteSnapshotCacheStored = Boolean(cached && cached.cacheStored);
     console.log('[DirectoryService] Site snapshot cache:', JSON.stringify({
-      cacheHit: Boolean(cached && cached.cacheHit),
-      cacheStored: Boolean(cached && cached.cacheStored),
+      cacheHit: siteSnapshotCacheHit,
+      cacheStored: siteSnapshotCacheStored,
       selectedSedeId,
-      durationMs: Date.now() - startedAt
+      durationMs: snapshotCacheLookupElapsed
     }));
-    if (cached && cached.value) return cached.value;
+    if (cached && cached.value) result = cached.value;
   }
 
-  return _directoryBuildSiteData_(
-    selectedSedeId, authorization, startedAt, authorizationElapsed,
-    siteContextOptions
-  );
+  if (!result) {
+    result = _directoryBuildSiteData_(
+      selectedSedeId, authorization, startedAt, authorizationElapsed,
+      siteContextOptions
+    );
+  }
+  const requestServerMs = Date.now() - startedAt;
+  const previousDiagnostics = result.diagnostics || {};
+  const diagnostics = Object.assign({}, previousDiagnostics, {
+    snapshotBuildMs: Number.isFinite(Number(previousDiagnostics.serverMs))
+      ? Number(previousDiagnostics.serverMs)
+      : null,
+    serverMs: requestServerMs,
+    requestServerMs,
+    stages: Object.assign({}, previousDiagnostics.stages || {}, {
+      authorizationMs: authorizationElapsed,
+      siteValidationMs: siteValidationElapsed,
+      snapshotCacheLookupMs: snapshotCacheLookupElapsed
+    }),
+    cache: Object.assign({}, previousDiagnostics.cache || {}, {
+      siteSnapshotCacheHit,
+      siteSnapshotCacheStored
+    })
+  });
+  console.log('[DirectoryService] Site request timing:', JSON.stringify({
+    selectedSedeId,
+    serverMs: requestServerMs,
+    siteSnapshotCacheHit,
+    siteValidationMs: siteValidationElapsed,
+    snapshotCacheLookupMs: snapshotCacheLookupElapsed
+  }));
+  return Object.assign({}, result, { diagnostics });
 }
 
 
@@ -1631,7 +1677,17 @@ function _directoryBuildSiteData_(
   );
   if (!selectedSede) throw new Error('La sede seleccionada no existe o está inactiva.');
 
+  const queryDescriptorStartedAt = Date.now();
+  const assignmentQueryOptions = { active: 'all', sedeId: selectedSedeId };
+  const assignmentQueryDescriptor = _directoryBuildAssignmentQuery_(
+    context, authorization, assignmentQueryOptions
+  );
+  const queryDescriptorElapsed = Date.now() - queryDescriptorStartedAt;
+
   const queryStartedAt = Date.now();
+  let coreQueryElapsed = 0;
+  let candidateCacheHits = 0;
+  let authorizedSnapshotCacheHits = 0;
   const pageSize = 1000;
   const records = [];
   let offset = 0;
@@ -1646,12 +1702,19 @@ function _directoryBuildSiteData_(
     const page = _directoryExecuteAssignmentQuery_(
       context,
       authorization,
-      { active: 'all', sedeId: selectedSedeId },
+      assignmentQueryOptions,
       'asignacion_id',
       offset,
       pageSize,
-      false
+      false,
+      '',
+      [],
+      [],
+      assignmentQueryDescriptor
     );
+    coreQueryElapsed += Number(page.durationMs) || 0;
+    if (page.candidateCacheHit) candidateCacheHits++;
+    if (page.authorizedSnapshotCacheHit) authorizedSnapshotCacheHits++;
     if (expectedTotal === null) expectedTotal = Number(page.total) || 0;
     const pageRecords = page.records || [];
     records.push.apply(records, pageRecords);
@@ -1669,8 +1732,13 @@ function _directoryBuildSiteData_(
     throw new Error('La carga de asignaciones de la sede quedó incompleta. No se mostrarán resultados parciales.');
   }
   const queryElapsed = Date.now() - queryStartedAt;
+  const relationIndexStartedAt = Date.now();
+  const relations = _directoryBuildRelations_(context, false);
+  const relationMap = _directoryCreateMap_(relations);
+  const relationIndexElapsed = Date.now() - relationIndexStartedAt;
+
   const peopleEnrichmentStartedAt = Date.now();
-  const enrichedRecords = _directoryEnrichAssignmentRecords_(records, context);
+  const enrichedRecords = _directoryEnrichAssignmentRecords_(records, context, relationMap);
   records.length = 0;
   enrichedRecords.forEach(record => records.push(record));
   const peopleEnrichmentElapsed = Date.now() - peopleEnrichmentStartedAt;
@@ -1702,6 +1770,7 @@ function _directoryBuildSiteData_(
     }));
     throw new Error('La consulta de la sede seleccionada devolvió asignaciones cuya adscripción se resuelve en otra sede. No se mostrarán resultados inconsistentes.');
   }
+  const catalogAssemblyStartedAt = Date.now();
   const structureMap = _directoryCreateMap_(context.estructuraOrg);
   const structureTypeMap = _directoryCreateMap_(context.tiposEstructura);
   const activeStructure = (context.estructuraOrg || [])
@@ -1748,7 +1817,6 @@ function _directoryBuildSiteData_(
     hierarchyDisplayIds.has(_directoryKey_(node.id))
   );
 
-  const relations = _directoryBuildRelations_(context, false);
   const scopedRelations = relations.filter(item =>
     item.active &&
     _directoryKey_(item.sede_id) === selectedSedeId &&
@@ -1786,9 +1854,11 @@ function _directoryBuildSiteData_(
     scopedStructures.map(item => _directoryKey_(item.tipo_estructura_id))
   );
 
+  const filterContractStartedAt = Date.now();
   const filterContract = _directoryBuildFilterContract_(
     authorization, records, scopedStructures
   );
+  const filterContractElapsed = Date.now() - filterContractStartedAt;
   const selectable = filterContract.selectable || {};
   const usedCargoIds = new Set(selectable.cargoIds || []);
   const usedStructureIds = new Set(selectable.structureIds || []);
@@ -1831,15 +1901,46 @@ function _directoryBuildSiteData_(
     }
   });
 
+  const catalogAndFilterContractElapsed = Date.now() - catalogAssemblyStartedAt;
+  const serverElapsed = Date.now() - startedAt;
+  const diagnostics = {
+    serverMs: serverElapsed,
+    stages: {
+      authorizationMs: authorizationElapsed,
+      contextMs: contextElapsed,
+      queryDescriptorMs: queryDescriptorElapsed,
+      assignmentQueryWallMs: queryElapsed,
+      coreQueryMs: coreQueryElapsed,
+      relationResolutionMs: relationIndexElapsed,
+      peopleEnrichmentMs: peopleEnrichmentElapsed,
+      hierarchySortingMs: hierarchySortElapsed,
+      filterContractMs: filterContractElapsed,
+      catalogAndFilterContractMs: catalogAndFilterContractElapsed
+    },
+    counts: {
+      assignmentQueryPages: pageCount,
+      assignments: records.length,
+      expectedAssignments: expectedTotal || 0,
+      candidateCacheHits,
+      authorizedSnapshotCacheHits
+    }
+  };
   console.log('[DirectoryService] Site data ms:', JSON.stringify({
     authorization: authorizationElapsed,
     context: contextElapsed,
-    queryAndHydration: queryElapsed,
+    queryDescriptor: queryDescriptorElapsed,
+    assignmentQueryWall: queryElapsed,
+    coreQuery: coreQueryElapsed,
+    relationResolution: relationIndexElapsed,
     peopleEnrichment: peopleEnrichmentElapsed,
     hierarchySort: hierarchySortElapsed,
-    total: Date.now() - startedAt,
+    filterContract: filterContractElapsed,
+    catalogAndFilterContract: catalogAndFilterContractElapsed,
+    total: serverElapsed,
     selectedSedeId,
     candidatePages: pageCount,
+    candidateCacheHits,
+    authorizedSnapshotCacheHits,
     records: records.length,
     totalAssignments: expectedTotal || 0,
     siteCatalogsRestricted: true,
@@ -1873,7 +1974,8 @@ function _directoryBuildSiteData_(
     summary: {
       people: new Set(records.map(item => _directoryKey_(item.persona_id)).filter(Boolean)).size,
       assignments: records.length
-    }
+    },
+    diagnostics
   };
 }
 
