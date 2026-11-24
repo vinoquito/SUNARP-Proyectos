@@ -1321,7 +1321,7 @@ test('el caché del sitio depende de identidad, permisos y generaciones de las f
   assert.match(serviceSource, /directory-site-snapshot:v4:/);
   assert.match(serviceSource, /_directoryAuthorizationCacheFingerprint_/);
   assert.match(serviceSource, /_directoryGetSiteDataCacheSources_/);
-  assert.match(serviceSource, /cacheSeconds: 60/);
+  assert.match(serviceSource, /cacheSeconds: DIRECTORY_ASSIGNMENT_QUERY_CACHE_TTL/);
   assert.match(accessServiceSource, /access-auth-context:v1:[\s\S]*?3600/);
   assert.match(accessServiceSource, /listRecordsFromSourcesCached\(requests, 60\)/);
 });
@@ -1993,9 +1993,10 @@ test('la edición permite pasar de ambos identificadores a local-only vaciando l
 });
 
 
-test('el Directorio utiliza exclusivamente la caché central de SUNARP Core', () => {
-  assert.match(serviceSource, /SUNARPCore\.listRecordsFromSourcesCached\(\s*operationalRequests,\s*DIRECTORY_DATA_CACHE_TTL\s*\)/);
-  assert.match(serviceSource, /SUNARPCore\.listRecordsFromSourcesCached\(\s*catalogRequests,\s*DIRECTORY_CATALOG_CACHE_TTL\s*\)/);
+test('el Directorio utiliza exclusivamente la caché central de SUNARP Core con lecturas agrupadas', () => {
+  assert.match(serviceSource, /SUNARPCore\.listRecordsFromSourcesCached\(requests, Math\.min\(/);
+  assert.doesNotMatch(serviceSource, /const operationalRequests = requests\.filter/);
+  assert.doesNotMatch(serviceSource, /const catalogRequests = requests\.filter/);
   assert.doesNotMatch(serviceSource, /function _directoryWriteCachedContext_/);
   assert.doesNotMatch(serviceSource, /function _directoryReadCachedContext_/);
   assert.doesNotMatch(serviceSource, /DIRECTORY_CACHE_PART_SUFFIX/);
@@ -2146,8 +2147,8 @@ test('Información de personal carga por sede una vez y usa filtros, búsqueda y
   assert.match(frontendSource, /DIRECTORY_SITE_CLIENT_CACHE_MAX_ENTRIES = 5/);
   assert.match(frontendSource, /function getSiteClientCacheData\(/);
   assert.match(frontendSource, /function rememberSiteClientCacheData\(/);
-  assert.match(frontendSource, /Date\.now\(\) - cacheEntry\.loadedAt < DIRECTORY_SITE_CLIENT_CACHE_TTL_MS/);
-  assert.match(frontendSource, /state\.siteDataCache\.set\(selectedSedeId, \{\s*data: result,\s*loadedAt: Date\.now\(\)/);
+  assert.match(frontendSource, /Date\.now\(\) - entry\.loadedAt >= DIRECTORY_SITE_CLIENT_CACHE_TTL_MS/);
+  assert.match(frontendSource, /state\.siteDataCache\.set\(id, \{ data, loadedAt: Date\.now\(\) \}\)/);
   assert.match(frontendSource, /state\.catalogs = result\.catalogs;/);
   assert.doesNotMatch(frontendSource, /state\.catalogs = Object\.assign\(\{\}, result\.catalogs, \{\s*sedes: state\.authorizedSedes/);
   assert.match(frontendSource, /async function refreshActiveSede\(/);
