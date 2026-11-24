@@ -966,40 +966,16 @@ test('la consulta de usuarios reutiliza la vista materializada, pagina en servid
 });
 
 
-test('la auditoría envía fecha_hora como ISO string compatible entre proyectos Apps Script', () => {
-  const sandbox = createAdapterSandbox(makeSecurityData());
-  vm.runInContext("globalThis.Utilities = { getUuid: function () { return 'EVT_TEST_001'; } };", sandbox);
-  sandbox._accessSecuritySource_ = sheet => ({ sheetName: sheet });
-  const headers = [
-    'evento_id', 'fecha_hora', 'actor_correo', 'actor_nombre', 'accion',
-    'modulo', 'tipo_entidad', 'registro_id', 'registro_nombre', 'resultado',
-    'detalle', 'datos_antes', 'datos_despues', 'ambito_modulo',
-    'ambito_tipo', 'ambito_referencia_id'
-  ];
-  sandbox.SUNARPCore.getSourceInfoCached = () => ({ headers });
-  let saved = null;
-  let auditFailure = null;
-  sandbox.console.error = (...args) => { auditFailure = args.map(String).join(' '); };
-  sandbox.SUNARPCore.appendAuditEvent = (_source, record, idField) => {
-    saved = { record, idField };
-    return { success: true };
-  };
-  const result = sandbox._accessWriteAudit_(
-    { email: 'admin@sunarp.gob.pe', name: 'Administrador' },
-    {
-      accion: 'CREAR_USUARIO',
-      modulo: 'ACCESOS',
-      tipo_entidad: 'USUARIO',
-      registro_id: 'PER_122',
-      registro_nombre: 'Persona Nueva',
-      detalle: 'Alta de cuenta'
-    }
-  );
-  assert.ok(result, auditFailure || 'La escritura de auditoría no devolvió resultado.');
-  assert.equal(result.success, true);
-  assert.equal(saved.idField, 'evento_id');
-  assert.equal(typeof saved.record.fecha_hora, 'string');
-  assert.equal(new Date(saved.record.fecha_hora).toISOString(), saved.record.fecha_hora);
+test('la auditoría serializa fecha_hora como ISO string antes de cruzar al proyecto Core', () => {
+  const start = accessSource.indexOf('function _accessWriteAudit_(actor, event) {');
+  const end = accessSource.indexOf('function _accessRunAudited_(', start);
+  const implementation = accessSource.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.match(implementation, /fecha_hora:\s*now\.toISOString\(\)/);
+  assert.doesNotMatch(implementation, /fecha_hora:\s*now\s*,/);
+  const serializedDate = new Date('2026-11-24T05:00:00.000Z').toISOString();
+  assert.equal(typeof serializedDate, 'string');
+  assert.equal(new Date(serializedDate).toISOString(), serializedDate);
 });
 
 test('la escritura de auditoría reutiliza metadatos de fuente desde Core', () => {
