@@ -3138,12 +3138,14 @@ function getAccessUsers(filters) {
   const query = _accessText_(filters.search);
   const allSitesSelected = filters.all_sedes === true;
   if (!sedeId && !roleId && !allSitesSelected) return { items: [], total: 0 };
+
   const page = Math.max(1, Number.parseInt(filters.page, 10) || 1);
   const pageSize = Math.min(100, Math.max(1, Number.parseInt(filters.pageSize, 10) || 10));
   const offset = (page - 1) * pageSize;
   const indexStartedAt = Date.now();
   const indexed = _accessBuildUserListingIndex_();
   const indexLookupMs = Date.now() - indexStartedAt;
+
   const filterStartedAt = Date.now();
   const matchingRows = indexed.value.rows.filter(row => {
     if (sedeId && !row.sede_ids.includes(sedeId)) return false;
@@ -3154,33 +3156,77 @@ function getAccessUsers(filters) {
   if (!candidatePersonaIds.length) {
     console.log('[AccessManagement] Users page timing:', JSON.stringify({
       authorizationMs, indexLookupMs, candidateFilterMs: Date.now() - filterStartedAt,
-      peopleQueryMs: 0, candidateCount: 0, page, pageSize,
-      totalMs: Date.now() - requestStartedAt, cacheHit: indexed.cacheHit === true
+      peopleSearchMs: 0, peopleQueryMs: 0, candidateCount: 0,
+      page, pageSize, totalMs: Date.now() - requestStartedAt,
+      cacheHit: indexed.cacheHit === true
     }));
-    return { items: [], total: 0, page, pageSize, totalPages: 1, integrity: indexed.value.integrity || {} };
+    return {
+      items: [], total: 0, page, pageSize, totalPages: 1,
+      integrity: indexed.value.integrity || {}
+    };
   }
-  const siteSearchPersonaIds = query
-    ? matchingRows.filter(row => row.sede_nombre.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
-      .map(row => row.persona_id)
-    : [];
-  const accessModuleId = _accessResolveModuleId_(auth, ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses);
+
+  const peopleSource = _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people);
+  let pageCandidateIds = candidatePersonaIds;
+  let peopleSearchMs = 0;
+  let searchTokens = [];
+  if (query) {
+    const searchStartedAt = Date.now();
+    searchTokens = query.split(/\s+/).map(token => token.trim()).filter(Boolean);
+    const candidateSet = new Set(candidatePersonaIds);
+    let matchingNameIds = null;
+    searchTokens.forEach(token => {
+      const matches = SUNARPCore.searchRecordsByFields(
+        peopleSource,
+        token,
+        ['persona_id', 'nombres', 'apellidos', 'correo_institucional'],
+        { matchCase: false }
+      );
+      const tokenIds = new Set((matches.records || []).map(person => _accessText_(person.persona_id)));
+      matchingNameIds = matchingNameIds === null
+        ? tokenIds
+        : new Set(Array.from(matchingNameIds).filter(id => tokenIds.has(id)));
+    });
+    const nameMatches = Array.from(matchingNameIds || []).filter(id => candidateSet.has(id));
+    // Se conserva la búsqueda por nombre de sede sin convertirla en una
+    // autorización: solo agrega cuentas que ya superaron sede/rol.
+    const siteMatches = matchingRows.filter(row =>
+      row.sede_nombre.toLocaleLowerCase().includes(query.toLocaleLowerCase())
+    ).map(row => row.persona_id);
+    pageCandidateIds = Array.from(new Set(nameMatches.concat(siteMatches)));
+    peopleSearchMs = Date.now() - searchStartedAt;
+  }
+
+  if (!pageCandidateIds.length) {
+    return {
+      items: [], total: 0, page, pageSize, totalPages: 1,
+      integrity: indexed.value.integrity || {}
+    };
+  }
+
+  const accessModuleId = _accessResolveModuleId_(
+    auth,
+    ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses
+  );
   const peopleQueryStartedAt = Date.now();
   const peoplePage = SUNARPCore.queryRecords(
-    _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
+    peopleSource,
     {
-      filters: { persona_id: candidatePersonaIds },
-      search: query,
-      searchFields: query ? ['persona_id', 'nombres', 'apellidos', 'correo_institucional'] : [],
-      searchAny: siteSearchPersonaIds.length
-        ? [{ field: 'persona_id', values: siteSearchPersonaIds }] : [],
+      filters: { persona_id: pageCandidateIds },
+      search: '',
+      searchFields: [],
+      searchAny: [],
       authorization: {
-        context: auth, moduleId: accessModuleId,
+        context: auth,
+        moduleId: accessModuleId,
         permissionCode: 'USUARIOS_ADMINISTRAR'
       },
       idField: 'persona_id',
       sortBy: 'apellidos',
       sortDirection: 'asc',
-      offset, limit: pageSize, cacheSeconds: 60,
+      offset,
+      limit: pageSize,
+      cacheSeconds: 60,
       schemaVersion: 'access-users-page-v1'
     }
   );
@@ -3194,7 +3240,8 @@ function getAccessUsers(filters) {
       correo_institucional: _accessText_(person.correo_institucional),
       nombres: _accessText_(person.nombres),
       apellidos: _accessText_(person.apellidos),
-      nombre_completo: [_accessText_(person.nombres), _accessText_(person.apellidos)].filter(Boolean).join(' '),
+      nombre_completo: [_accessText_(person.nombres), _accessText_(person.apellidos)]
+        .filter(Boolean).join(' '),
       sede_ids: metadata.sede_ids || [],
       sede_nombre: metadata.sede_nombre || '',
       active: metadata.active === true,
@@ -3204,15 +3251,23 @@ function getAccessUsers(filters) {
   const result = {
     items,
     total: Number(peoplePage.total) || 0,
-    page, pageSize,
+    page,
+    pageSize,
     totalPages: Math.max(1, Math.ceil((Number(peoplePage.total) || 0) / pageSize)),
     integrity: indexed.value.integrity || {}
   };
   console.log('[AccessManagement] Users page timing:', JSON.stringify({
-    authorizationMs, indexLookupMs,
-    candidateFilterMs: peopleQueryStartedAt - filterStartedAt,
-    peopleQueryMs, candidateCount: candidatePersonaIds.length,
-    returned: items.length, page, pageSize, total: result.total,
+    authorizationMs,
+    indexLookupMs,
+    candidateFilterMs: peopleSearchMs ? Math.max(0, peopleSearchMs) : Date.now() - filterStartedAt,
+    peopleSearchMs,
+    peopleQueryMs,
+    candidateCount: pageCandidateIds.length,
+    returned: items.length,
+    searchTokens,
+    page,
+    pageSize,
+    total: result.total,
     cacheHit: indexed.cacheHit === true,
     totalMs: Date.now() - requestStartedAt
   }));

@@ -130,7 +130,7 @@ function makeSecurityData(overrides = {}) {
 
 function createAdapterSandbox(data, email = 'prueba@sunarp.gob.pe') {
   const sandbox = vm.createContext({
-    console: { log: () => {}, warn: () => {}, error: () => {} },
+    console: { log: () => {}, info: () => {}, warn: () => {}, error: () => {} },
     getIntranetDataSource: (sourceKey, sheetName, headerRow) => ({ sourceKey, sheetName, headerRow })
   });
 
@@ -172,6 +172,14 @@ function createAdapterSandbox(data, email = 'prueba@sunarp.gob.pe') {
         ? rows.map(record => Object.fromEntries(projectionFields.map(field => [field, record[field]])))
         : rows;
       return { records: projectedRows, total: projectedRows.length };
+    },
+    searchRecordsByFields: (source, query, fields, options) => {
+      const key = dataKeyBySheet[source.sheetName] || source.sheetName;
+      const expected = String(query || '').toLowerCase();
+      const rows = (data[key] || []).filter(record =>
+        fields.some(field => String(record[field] === undefined || record[field] === null ? '' : record[field]).toLowerCase().includes(expected))
+      );
+      return { records: rows, total: rows.length };
     },
     queryRecords: (source, options) => {
       const key = dataKeyBySheet[source.sheetName] || source.sheetName;
@@ -498,7 +506,7 @@ test('el historial conserva compatibilidad con SUNARP Core v9 mientras admite le
   assert.ok(implementation.includes('listTailRecords'));
 });
 
-test('getAccessUsers filtra localmente el índice compartido y excluye relaciones entre sedes', () => {
+test('getAccessUsers filtra por ámbitos efectivos y no por adscripciones funcionales', () => {
   const data = makeSecurityData();
   data.personas.push(
     { persona_id: 'PER_118', nombres: 'Ana', apellidos: 'Zeta', correo_institucional: 'ana.zeta@sunarp.gob.pe' },
@@ -529,6 +537,11 @@ test('getAccessUsers filtra localmente el índice compartido y excluye relacione
     { id: 'EST_CENTRAL', sede_id: 'SEDE_CENTRAL', active: true },
     { id: 'EST_CENTRAL_2', sede_id: 'SEDE_CENTRAL', active: true }
   ];
+  data.ambitosAcceso = data.ambitosAcceso.filter(scope => !(scope.persona_id === 'PER_117' && scope.modulo_id === 'MOD_INFO_PERSONAL'));
+  data.ambitosAcceso.push({
+    persona_id: 'PER_117', modulo_id: 'MOD_INFO_PERSONAL', tipo_ambito_id: 'SEDE',
+    referencia_id: 'SEDE_1', incluir_descendientes: 'NO', active: true
+  });
   data.ambitosAcceso.push({
     persona_id: 'PER_118', modulo_id: 'MOD_INFO_PERSONAL', tipo_ambito_id: 'SEDE',
     referencia_id: 'SEDE_1', incluir_descendientes: 'NO', active: true
@@ -670,6 +683,7 @@ test('getAccessUsers incluye cuentas por ámbito organizacional aunque no tengan
     persona_id: 'PER_122', modulo_id: 'MOD_INFO_PERSONAL',
     rol_id: 'ROL_EDITOR', active: true
   });
+  data.ambitosAcceso = data.ambitosAcceso.filter(scope => !(scope.persona_id === 'PER_117' && scope.modulo_id === 'MOD_INFO_PERSONAL'));
   data.ambitosAcceso.push({
     persona_id: 'PER_122', modulo_id: 'MOD_INFO_PERSONAL',
     tipo_ambito_id: 'ESTRUCTURA_ORG', referencia_id: 'EST_COMUNICACIONES',
@@ -778,7 +792,7 @@ test('la consulta de usuarios reutiliza la vista materializada, pagina en servid
   const end = accessSource.indexOf('function _accessAuditTimestamp_(', start);
   const implementation = accessSource.slice(start, end);
   assert.ok(helper.includes('getOrBuildCachedValue'));
-  assert.ok(helper.includes('access-users-index-v2'));
+  assert.ok(helper.includes('access-users-index-v3'));
   assert.ok(helper.includes("_directorySource_('asignaciones')"));
   assert.ok(helper.includes('structureSiteId !== localSiteId'));
   assert.ok(helper.includes('rows.sort'));
@@ -1434,7 +1448,7 @@ test('el listado de usuarios se consulta al seleccionar un filtro y admite Todas
   assert.match(accessSource, /function getAccessUsers\(filters\)/);
   assert.match(accessSource, /const allSitesSelected = filters\.all_sedes === true/);
   assert.match(accessSource, /if \(!sedeId && !roleId && !allSitesSelected\) return \{ items: \[\], total: 0 \}/);
-  assert.match(accessSource, /access-users-index-v2/);
+  assert.match(accessSource, /access-users-index-v3/);
   assert.match(accessSource, /indexed\.value\.rows\.forEach/);
   assert.doesNotMatch(accessSource, /access-users-index-v1/);
   assert.match(accessUiSource, /createField\('Sede', siteSelect\)/);
