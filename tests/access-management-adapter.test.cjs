@@ -2247,7 +2247,7 @@ test('los filtros de Información de personal navegan la unión autorizada sin e
   const hierarchyEnd = directoryUiSource.indexOf('function getHierarchyNodes(parentId)', hierarchyStart);
   const hierarchy = directoryUiSource.slice(hierarchyStart, hierarchyEnd);
   assert.ok(hierarchy.includes('if (localId)'));
-  assert.ok(hierarchy.includes('state.hierarchyIndex.selectableByLocal.get(localId)'));
+  assert.ok(hierarchy.includes('index.selectableByLocal.get(localId)'));
   assert.ok(hierarchy.includes('selectableByLocal.forEach(ids => ids.forEach'));
   assert.ok(hierarchy.includes('return { selectableIds }'));
 
