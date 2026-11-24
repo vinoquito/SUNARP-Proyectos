@@ -2079,7 +2079,8 @@ test('el ingreso no carga personas, asignaciones ni datos personales; la sede se
   assert.doesNotMatch(initial, /includePersonalData|includePeople|includeAssignments|tipo_documento|numero_documento|_directoryLoadContext_/);
 
   assert.match(siteData, /includePersonalData:\s*false/);
-  assert.match(siteData, /includePeople:\s*false/);
+  assert.match(siteData, /includePeople:\s*true/);
+  assert.match(siteData, /includeDocumentTypes:\s*false/);
   assert.match(siteData, /includeAssignments:\s*false/);
   assert.match(siteData, /records,/);
   assert.match(serviceSource, /filter_local_id: local \? _directoryKey_\(local\.id\) : _directoryKey_\(assignment\.local_id\)/);

@@ -1543,38 +1543,6 @@ function getDirectoryInitialData() {
  * La respuesta contiene únicamente tiempos y conteos; nunca devuelve datos
  * personales ni asignaciones. La autorización se vuelve a comprobar aquí.
  */
-function warmDirectoryContextCache() {
-  const startedAt = Date.now();
-  const authorizationStartedAt = Date.now();
-  _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
-  const authorizationElapsed = Date.now() - authorizationStartedAt;
-
-  const contextStartedAt = Date.now();
-  const context = _directoryLoadContext_({
-    includePersonalData: false,
-    includePeople: true,
-    includeAssignments: false,
-    includeDocumentTypes: false,
-    validateSnapshot: false
-  });
-  const contextElapsed = Date.now() - contextStartedAt;
-  const result = {
-    warmed: true,
-    serverMs: Date.now() - startedAt,
-    authorizationMs: authorizationElapsed,
-    contextMs: contextElapsed,
-    peopleRowsLoaded: (context.personas || []).length,
-    catalogCounts: {
-      sites: (context.sedes || []).length,
-      locals: (context.locales || []).length,
-      structures: (context.estructuraOrg || []).length,
-      structureLocalRelations: (context.estructuraLocal || []).length
-    }
-  };
-  console.log('[DirectoryService] Context cache warmup:', JSON.stringify(result));
-  return result;
-}
-
 /**
  * Carga una vez todas las asignaciones autorizadas de la sede seleccionada.
  * Los filtros, la búsqueda y la paginación posteriores se ejecutan en el
@@ -3287,4 +3255,37 @@ function clearDirectoryCache() {
       : 'No se pudo invalidar una o más fuentes del directorio.',
     sources: result.sources
   };
+}
+
+
+function warmDirectoryContextCache() {
+  const startedAt = Date.now();
+  const authorizationStartedAt = Date.now();
+  _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
+  const authorizationElapsed = Date.now() - authorizationStartedAt;
+
+  const contextStartedAt = Date.now();
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: true,
+    includeAssignments: false,
+    includeDocumentTypes: false,
+    validateSnapshot: false
+  });
+  const contextElapsed = Date.now() - contextStartedAt;
+  const result = {
+    warmed: true,
+    serverMs: Date.now() - startedAt,
+    authorizationMs: authorizationElapsed,
+    contextMs: contextElapsed,
+    peopleRowsLoaded: (context.personas || []).length,
+    catalogCounts: {
+      sites: (context.sedes || []).length,
+      locals: (context.locales || []).length,
+      structures: (context.estructuraOrg || []).length,
+      structureLocalRelations: (context.estructuraLocal || []).length
+    }
+  };
+  console.log('[DirectoryService] Context cache warmup:', JSON.stringify(result));
+  return result;
 }
