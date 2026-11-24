@@ -1435,11 +1435,21 @@ function searchAccessPersonByDocument(payload) {
 }
 
 function _accessRecordUser_(auth, payload, action) {
+  const startedAt = Date.now();
+  let stage = 'person-resolution';
+  let personLookupMs = 0;
+  let documentLookupMs = 0;
+  let accountLookupMs = 0;
+  let continuityMs = 0;
+  let writeMs = 0;
+  try {
   const source = _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.users);
   const personaId = _accessText_(payload.persona_id);
   const active = _accessNormalizeActive_(payload.active, 'El estado de la cuenta');
   if (!personaId) throw new Error('Selecciona una persona del directorio.');
+  const personLookupStartedAt = Date.now();
   const person = _accessFindPersonById_(personaId);
+  personLookupMs = Date.now() - personLookupStartedAt;
   if (!person) throw new Error('La persona seleccionada no existe en personas.');
   _accessValidateEmail_(person.correo_institucional);
   if (
@@ -1467,6 +1477,8 @@ function _accessRecordUser_(auth, payload, action) {
       payload.numero_documento,
       'Número de documento'
     );
+    stage = 'document-lookup';
+    const documentLookupStartedAt = Date.now();
     const documentLookup = SUNARPCore.findRecordsByFields(
       _accessDirectorySource_('servidores datos personales'),
       { numero_documento: documentNumber },
@@ -1478,6 +1490,7 @@ function _accessRecordUser_(auth, payload, action) {
         projectionFields: ['servidor_id', 'tipo_documento', 'numero_documento']
       }
     );
+    documentLookupMs = Date.now() - documentLookupStartedAt;
     const documentMatches = (documentLookup.records || []).filter(record =>
       _accessNormalizeStoredDocumentValue_(record.tipo_documento) === documentTypeId &&
       _accessNormalizeStoredDocumentValue_(record.numero_documento) === documentNumber
@@ -1497,6 +1510,8 @@ function _accessRecordUser_(auth, payload, action) {
     throw new Error('No puedes desactivar tu propia cuenta mientras administras el gestor.');
   }
 
+  stage = 'account-lookup';
+  const accountLookupStartedAt = Date.now();
   const matchingUsers = _accessFindSecurityRecords_(
     ACCESS_MANAGEMENT_CONFIG.sheets.users,
     'persona_id',
@@ -1506,11 +1521,14 @@ function _accessRecordUser_(auth, payload, action) {
   if (matchingUsers.length > 1) {
     throw new Error('La persona tiene más de una cuenta registrada en Usuarios.');
   }
+  accountLookupMs = Date.now() - accountLookupStartedAt;
   const existing = matchingUsers[0] || null;
   if (action === 'create' && existing) throw new Error('La persona ya tiene una cuenta registrada.');
   if (action === 'edit' && !existing) throw new Error('No se encontró la cuenta que deseas actualizar.');
 
   const nextUser = { persona_id: personaId, active };
+  stage = 'continuity-validation';
+  const continuityStartedAt = Date.now();
   const data = _accessLoadAdministratorContinuityData_();
   const after = _accessCopyData_(data);
   const continuityUserIndex = after.usuarios.findIndex(row =>
@@ -1519,9 +1537,12 @@ function _accessRecordUser_(auth, payload, action) {
   if (continuityUserIndex >= 0) after.usuarios[continuityUserIndex] = nextUser;
   else after.usuarios.push(nextUser);
   _accessAssertAdministratorContinuity_(data, after);
+  continuityMs = Date.now() - continuityStartedAt;
 
   const name = [person.nombres, person.apellidos].map(_accessText_).filter(Boolean).join(' ');
-  return _accessRunAudited_(auth, {
+  stage = 'write';
+  const writeStartedAt = Date.now();
+  const result = _accessRunAudited_(auth, {
     accion: action === 'create' ? 'CREAR_USUARIO' : 'EDITAR_USUARIO',
     modulo: ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses,
     tipo_entidad: 'USUARIO',
@@ -1543,6 +1564,33 @@ function _accessRecordUser_(auth, payload, action) {
       auditAfter: nextUser
     };
   });
+  writeMs = Date.now() - writeStartedAt;
+  console.log('[AccessManagement] User record stages:', JSON.stringify({
+    action,
+    personLookupMs,
+    documentLookupMs,
+    accountLookupMs,
+    continuityMs,
+    writeMs,
+    totalMs: Date.now() - startedAt,
+    success: Boolean(result && result.success)
+  }));
+  return result;
+  } catch (error) {
+    console.error('[AccessManagement] User record failed:', JSON.stringify({
+      action,
+      stage,
+      personLookupMs,
+      documentLookupMs,
+      accountLookupMs,
+      continuityMs,
+      writeMs,
+      totalMs: Date.now() - startedAt,
+      errorName: error && error.name || 'Error',
+      errorMessage: error && error.message || String(error)
+    }));
+    throw error;
+  }
 }
 
 
