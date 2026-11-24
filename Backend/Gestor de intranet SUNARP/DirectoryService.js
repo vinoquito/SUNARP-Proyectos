@@ -775,11 +775,18 @@ function _directorySortAssignments_(records, context) {
 
   sortable.sort((a, b) => {
     if (a.sedeOrder !== b.sedeOrder) return a.sedeOrder - b.sedeOrder;
+    // Las adscripciones orgánicas se agrupan primero por su ruta real.
+    // Las adscripciones solo a local, sin estructura declarada, quedan al final
+    // y nunca reciben una unidad orgánica artificial.
+    const hasStructureA = a.structurePath.length > 0;
+    const hasStructureB = b.structurePath.length > 0;
+    if (hasStructureA !== hasStructureB) return hasStructureA ? -1 : 1;
     const pathDiff = _directoryCompareStructurePaths_(a.structurePath, b.structurePath);
     if (pathDiff) return pathDiff;
     const localDiff = _directoryCompare_(a.localName, b.localName);
     if (localDiff) return localDiff;
     return _directoryCompare_(Number(a.record.order), Number(b.record.order)) ||
+      _directoryCompare_(a.record.asignacion_id, b.record.asignacion_id) ||
       _directoryCompare_(a.record.apellidos, b.record.apellidos) ||
       _directoryCompare_(a.record.nombres, b.record.nombres);
   });
@@ -1668,6 +1675,16 @@ function _directoryBuildSiteData_(
   enrichedRecords.forEach(record => records.push(record));
   const peopleEnrichmentElapsed = Date.now() - peopleEnrichmentStartedAt;
 
+  // La consulta base ordena por el campo order, pero ese orden es local a cada
+  // adscripción. Aplicar una única ordenación por ruta orgánica asegura que la
+  // unidad padre aparezca antes que sus dependencias y conserva order dentro
+  // de cada unidad, con asignacion_id como desempate estable.
+  const hierarchySortStartedAt = Date.now();
+  const hierarchyOrderedRecords = _directorySortAssignments_(records, context);
+  records.length = 0;
+  hierarchyOrderedRecords.forEach(record => records.push(record));
+  const hierarchySortElapsed = Date.now() - hierarchySortStartedAt;
+
   const recordsOutsideSelectedSite = records.filter(record =>
     _directoryKey_(record.filter_sede_id || record.sede_id) !== selectedSedeId
   );
@@ -1819,6 +1836,7 @@ function _directoryBuildSiteData_(
     context: contextElapsed,
     queryAndHydration: queryElapsed,
     peopleEnrichment: peopleEnrichmentElapsed,
+    hierarchySort: hierarchySortElapsed,
     total: Date.now() - startedAt,
     selectedSedeId,
     candidatePages: pageCount,

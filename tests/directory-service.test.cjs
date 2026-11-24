@@ -42,6 +42,7 @@ vm.runInContext(
     'createPersonalDataMap: _directoryCreatePersonalDataMap_,' +
     'resolveDocumentTypesSource: _directoryResolveDocumentTypesSource_,' +
     'buildFilterContract: _directoryBuildFilterContract_,' +
+    'sortAssignments: _directorySortAssignments_,' +
     'getAuthorizedSedeIds: _directoryGetAuthorizedSedeIds_,' +
     'buildAssignmentQuery: _directoryBuildAssignmentQuery_,' +
     'executeAssignmentQuery: _directoryExecuteAssignmentQuery_' +
@@ -61,22 +62,30 @@ vm.runInContext(
   { filename: 'DirectoryHierarchyFilters.js' }
 );
 
-test('los filtros jerárquicos incluyen ancestros reales seleccionables y descendientes con asignaciones', () => {
+test('Gerencia General incluye sus dependencias reales y excluye la raíz independiente Dirección Técnica Registral', () => {
   const structures = [
-    { id: 'ORG_ROOT', name: 'Gerencia Registral', parent_id: '', sede_id: 'SEDE_A' },
-    { id: 'ORG_DIR', name: 'Dirección Técnica Registral', parent_id: 'ORG_ROOT', sede_id: 'SEDE_A' },
-    { id: 'ORG_UNIT', name: 'Unidad X', parent_id: 'ORG_DIR', sede_id: 'SEDE_A' },
-    { id: 'ORG_OTHER', name: 'Unidad sin asignaciones', parent_id: 'ORG_DIR', sede_id: 'SEDE_A' },
-    { id: 'ORG_SITE_B', name: 'Órgano de otra sede', parent_id: '', sede_id: 'SEDE_B' }
+    { id: 'GG', name: 'Gerencia General', parent_id: '', sede_id: 'SEDE_A', order: 1 },
+    { id: 'UF_INT', name: 'UF Integridad', parent_id: 'GG', sede_id: 'SEDE_A', order: 1 },
+    { id: 'UF_GD', name: 'UF Gestión Documental', parent_id: 'GG', sede_id: 'SEDE_A', order: 2 },
+    { id: 'TD', name: 'Trámite Documentario', parent_id: 'UF_GD', sede_id: 'SEDE_A', order: 1 },
+    { id: 'AC', name: 'Archivo Central', parent_id: 'UF_GD', sede_id: 'SEDE_A', order: 2 },
+    { id: 'DTR', name: 'Dirección Técnica Registral', parent_id: '', sede_id: 'SEDE_A', order: 2 },
+    { id: 'OTHER_SITE', name: 'Órgano de otra sede', parent_id: '', sede_id: 'SEDE_B', order: 1 }
   ];
   const records = [
-    { estructura_id: 'ORG_UNIT', filter_sede_id: 'SEDE_A', filter_local_id: 'LOCAL_A' },
-    { estructura_id: 'ORG_SITE_B', filter_sede_id: 'SEDE_B', filter_local_id: 'LOCAL_B' }
+    { estructura_id: 'GG', filter_sede_id: 'SEDE_A', filter_local_id: 'LOCAL_A' },
+    { estructura_id: 'UF_INT', filter_sede_id: 'SEDE_A', filter_local_id: 'LOCAL_A' },
+    { estructura_id: 'TD', filter_sede_id: 'SEDE_A', filter_local_id: 'LOCAL_A' },
+    { estructura_id: 'AC', filter_sede_id: 'SEDE_A', filter_local_id: 'LOCAL_A' },
+    { estructura_id: 'DTR', filter_sede_id: 'SEDE_A', filter_local_id: 'LOCAL_A' },
+    { estructura_id: 'OTHER_SITE', filter_sede_id: 'SEDE_B', filter_local_id: 'LOCAL_B' }
   ];
   const ids = hierarchySandbox.buildHierarchyFilterSets(records, structures, 'SEDE_A', 'LOCAL_A');
-  assert.deepEqual([...ids].sort(), ['ORG_DIR', 'ORG_ROOT', 'ORG_UNIT']);
+  assert.deepEqual([...ids].sort(), ['AC', 'GG', 'TD', 'UF_GD', 'UF_INT']);
+  assert.equal(ids.has('UF_GD'), true, 'La dependencia intermedia aparece por tener descendientes asignados');
+  assert.equal(ids.has('DTR'), false, 'La raíz independiente no aparece como opción contextual');
+  assert.equal(ids.has('OTHER_SITE'), false);
 });
-
 test('los filtros jerárquicos excluyen estructuras de otras sedes y locales', () => {
   const structures = [
     { id: 'ROOT_A', name: 'Gerencia A', parent_id: '', sede_id: 'SEDE_A' },
@@ -99,6 +108,46 @@ test('la interfaz no genera opciones artificiales de contexto ni deshabilita anc
   assert.match(frontendScript, /_directoryGetHierarchyDisplayPath_\(/);
 });
 
+test('las asignaciones se agrupan por jerarquía, respetan order por unidad y conservan un desempate estable', () => {
+  const structures = [
+    { id: 'GG', name: 'Gerencia General', parent_id: '', sede_id: 'SEDE_A', order: 1 },
+    { id: 'UF_INT', name: 'UF Integridad', parent_id: 'GG', sede_id: 'SEDE_A', order: 1 },
+    { id: 'UF_GD', name: 'UF Gestión Documental', parent_id: 'GG', sede_id: 'SEDE_A', order: 2 },
+    { id: 'TD', name: 'Trámite Documentario', parent_id: 'UF_GD', sede_id: 'SEDE_A', order: 1 },
+    { id: 'AC', name: 'Archivo Central', parent_id: 'UF_GD', sede_id: 'SEDE_A', order: 2 },
+    { id: 'DTR', name: 'Dirección Técnica Registral', parent_id: '', sede_id: 'SEDE_A', order: 2 }
+  ];
+  const relations = structures.map(node => ({
+    id: 'REL_' + node.id,
+    estructura_id: node.id,
+    local_id: 'LOCAL_A',
+    active: true
+  }));
+  const context = {
+    estructuraOrg: structures,
+    estructuraLocal: relations,
+    locales: [
+      { id: 'LOCAL_A', name: 'Edificio administrativo Primavera', sede_id: 'SEDE_A', active: true },
+      { id: 'LOCAL_B', name: 'Local sin estructura', sede_id: 'SEDE_A', active: true }
+    ],
+    sedes: [{ id: 'SEDE_A', name: 'Sede Central' }],
+    cargos: []
+  };
+  const records = [
+    { asignacion_id: 'AC_01', estructura_local_id: 'REL_AC', local_id: 'LOCAL_A', order: 1 },
+    { asignacion_id: 'DTR_01', estructura_local_id: 'REL_DTR', local_id: 'LOCAL_A', order: 1 },
+    { asignacion_id: 'TD_01', estructura_local_id: 'REL_TD', local_id: 'LOCAL_A', order: 1 },
+    { asignacion_id: 'UF_INT_01', estructura_local_id: 'REL_UF_INT', local_id: 'LOCAL_A', order: 1 },
+    { asignacion_id: 'GG_02', estructura_local_id: 'REL_GG', local_id: 'LOCAL_A', order: 2 },
+    { asignacion_id: 'GG_01', estructura_local_id: 'REL_GG', local_id: 'LOCAL_A', order: 1 },
+    { asignacion_id: 'LOCAL_ONLY_01', estructura_local_id: '', local_id: 'LOCAL_B', order: 1 }
+  ];
+  const ordered = api.sortAssignments(records, context);
+  assert.deepEqual(
+    ordered.map(record => record.asignacion_id),
+    ['GG_01', 'GG_02', 'UF_INT_01', 'TD_01', 'AC_01', 'DTR_01', 'LOCAL_ONLY_01']
+  );
+});
 test('el servicio, el frontend y las pruebas Core tienen sintaxis válida', () => {
   assert.doesNotThrow(() => new vm.Script(serviceSource));
   assert.doesNotThrow(() => new vm.Script(frontendScript));

@@ -661,6 +661,8 @@ const DirectoryPage = (() => {
           ? '—'
           : String(record.anexo),
 
+      sede_display: record.sede_name || '—',
+
       dependencia_display: record.estructura_name || '—',
 
       local_display: record.local_name || '—',
@@ -703,10 +705,11 @@ const DirectoryPage = (() => {
       data: prepareRows(getFilteredRecords()),
       emptyMessage: 'No se encontraron registros para los filtros seleccionados.',
       columns: [
-        { key: 'servidor', label: 'Servidor', searchable: true },
+        { key: 'servidor', label: 'Nombre', searchable: true },
         { key: 'cargo_name', label: 'Cargo', searchable: true },
+        { key: 'sede_display', label: 'Sede', searchable: true },
+        { key: 'dependencia_display', label: 'Órgano / Unidad', searchable: true },
         { key: 'anexo_display', label: 'Anexo', align: 'center', searchable: true },
-        { key: 'dependencia_display', label: 'Dependencia', searchable: true },
         { key: 'local_display', label: 'Local', searchable: true },
         {
           key: 'active',
