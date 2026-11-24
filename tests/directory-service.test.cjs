@@ -1233,7 +1233,7 @@ test('getDirectoryAuthorizedData agrega todas las sedes solo bajo un ámbito TOT
     return {
       catalogs: { sedes: context.sedes },
       records: [
-        { asignacion_id: 'ASG_A', filter_sede_id: 'SEDE_A' },
+        { asignacion_id: 'ASG_A', filter_sede_id: 'SEDE_1' },
         { asignacion_id: 'ASG_B', filter_sede_id: 'SEDE_2' }
       ],
       summary: { assignments: 2 },
