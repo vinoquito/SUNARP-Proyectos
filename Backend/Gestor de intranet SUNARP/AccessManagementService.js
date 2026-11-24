@@ -3138,14 +3138,12 @@ function getAccessUsers(filters) {
   const query = _accessText_(filters.search);
   const allSitesSelected = filters.all_sedes === true;
   if (!sedeId && !roleId && !allSitesSelected) return { items: [], total: 0 };
-
   const page = Math.max(1, Number.parseInt(filters.page, 10) || 1);
   const pageSize = Math.min(100, Math.max(1, Number.parseInt(filters.pageSize, 10) || 10));
   const offset = (page - 1) * pageSize;
   const indexStartedAt = Date.now();
   const indexed = _accessBuildUserListingIndex_();
   const indexLookupMs = Date.now() - indexStartedAt;
-
   const filterStartedAt = Date.now();
   const matchingRows = indexed.value.rows.filter(row => {
     if (sedeId && !row.sede_ids.includes(sedeId)) return false;
@@ -3174,24 +3172,27 @@ function getAccessUsers(filters) {
     const searchStartedAt = Date.now();
     searchTokens = query.split(/\s+/).map(token => token.trim()).filter(Boolean);
     const candidateSet = new Set(candidatePersonaIds);
-    let matchingNameIds = null;
-    searchTokens.forEach(token => {
-      const matches = SUNARPCore.searchRecordsByFields(
-        peopleSource,
-        token,
-        ['persona_id', 'nombres', 'apellidos', 'correo_institucional'],
-        { matchCase: false }
-      );
-      const tokenIds = new Set((matches.records || []).map(person => _accessText_(person.persona_id)));
-      matchingNameIds = matchingNameIds === null
-        ? tokenIds
-        : new Set(Array.from(matchingNameIds).filter(id => tokenIds.has(id)));
-    });
-    const nameMatches = Array.from(matchingNameIds || []).filter(id => candidateSet.has(id));
-    // Se conserva la búsqueda por nombre de sede sin convertirla en una
-    // autorización: solo agrega cuentas que ya superaron sede/rol.
+    const firstToken = searchTokens[0] || query;
+    const searchResult = SUNARPCore.searchRecordsByFields(
+      peopleSource,
+      firstToken,
+      ['persona_id', 'nombres', 'apellidos', 'correo_institucional'],
+      { matchCase: false }
+    );
+    const queryLower = query.toLocaleLowerCase();
+    const nameMatches = (searchResult.records || []).filter(person => {
+      const personaId = _accessText_(person.persona_id);
+      if (!candidateSet.has(personaId)) return false;
+      const combined = [
+        personaId,
+        _accessText_(person.nombres),
+        _accessText_(person.apellidos),
+        _accessText_(person.correo_institucional)
+      ].join(' ').toLocaleLowerCase();
+      return combined.includes(queryLower);
+    }).map(person => _accessText_(person.persona_id));
     const siteMatches = matchingRows.filter(row =>
-      row.sede_nombre.toLocaleLowerCase().includes(query.toLocaleLowerCase())
+      row.sede_nombre.toLocaleLowerCase().includes(queryLower)
     ).map(row => row.persona_id);
     pageCandidateIds = Array.from(new Set(nameMatches.concat(siteMatches)));
     peopleSearchMs = Date.now() - searchStartedAt;
@@ -3203,7 +3204,6 @@ function getAccessUsers(filters) {
       integrity: indexed.value.integrity || {}
     };
   }
-
   const accessModuleId = _accessResolveModuleId_(
     auth,
     ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses
@@ -3257,18 +3257,11 @@ function getAccessUsers(filters) {
     integrity: indexed.value.integrity || {}
   };
   console.log('[AccessManagement] Users page timing:', JSON.stringify({
-    authorizationMs,
-    indexLookupMs,
+    authorizationMs, indexLookupMs,
     candidateFilterMs: peopleSearchMs ? Math.max(0, peopleSearchMs) : Date.now() - filterStartedAt,
-    peopleSearchMs,
-    peopleQueryMs,
-    candidateCount: pageCandidateIds.length,
-    returned: items.length,
-    searchTokens,
-    page,
-    pageSize,
-    total: result.total,
-    cacheHit: indexed.cacheHit === true,
+    peopleSearchMs, peopleQueryMs, candidateCount: pageCandidateIds.length,
+    returned: items.length, searchTokens, page, pageSize,
+    total: result.total, cacheHit: indexed.cacheHit === true,
     totalMs: Date.now() - requestStartedAt
   }));
   return result;

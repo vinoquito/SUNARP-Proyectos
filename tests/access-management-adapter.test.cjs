@@ -656,7 +656,8 @@ test('la búsqueda documental comprueba la cuenta por persona_id sin cargar el s
   assert.equal(result.found, true);
   assert.equal(result.canEnableAccount, false);
   assert.equal(documentQuery.sheet, 'servidores datos personales');
-  assert.deepEqual(documentQuery.filters, { numero_documento: '12345678' });
+  assert.equal(documentQuery.filters.numero_documento, '12345678');
+  assert.deepEqual(Object.keys(documentQuery.filters), ['numero_documento']);
   assert.equal(documentQuery.ignoreWhitespace, true);
   assert.equal(
     documentQuery.projectionFields.join(','),
@@ -793,16 +794,15 @@ test('la consulta de usuarios reutiliza la vista materializada, pagina en servid
   const implementation = accessSource.slice(start, end);
   assert.ok(helper.includes('getOrBuildCachedValue'));
   assert.ok(helper.includes('access-users-index-v3'));
-  assert.ok(helper.includes("_directorySource_('asignaciones')"));
-  assert.ok(helper.includes('structureSiteId !== localSiteId'));
-  assert.ok(helper.includes('rows.sort'));
-  assert.ok(implementation.includes('indexed.value.rows.forEach'));
-  assert.ok(implementation.includes('items.push(row)'));
-  assert.ok(implementation.includes('totalPages'));
-  assert.ok(implementation.includes('items.length < pageSize'));
-  assert.ok(implementation.includes('indexed.value.rows.forEach'));
-  assert.ok(implementation.includes('if (query && !['));
-  assert.doesNotMatch(implementation, /rows\\.splice|rows\\.slice/);
+  assert.ok(helper.includes("_accessSecuritySource_('EstructuraOrg')"));
+  assert.ok(helper.includes('ACCESS_MANAGEMENT_CONFIG.sheets.scopes'));
+  assert.doesNotMatch(helper, /asignaciones|estructura_local/);
+  assert.ok(implementation.includes('SUNARPCore.queryRecords'));
+  assert.ok(implementation.includes('filters: { persona_id: pageCandidateIds }'));
+  assert.ok(implementation.includes('offset'));
+  assert.ok(implementation.includes('limit: pageSize'));
+  assert.ok(implementation.includes('searchRecordsByFields'));
+  assert.ok(implementation.includes('peoplePage.records'));
   const uiStart = accessUiSource.indexOf('function renderUsers(host) {');
   const uiEnd = accessUiSource.indexOf('function openUserModal(row) {', uiStart);
   const uiImplementation = accessUiSource.slice(uiStart, uiEnd);
@@ -1449,7 +1449,8 @@ test('el listado de usuarios se consulta al seleccionar un filtro y admite Todas
   assert.match(accessSource, /const allSitesSelected = filters\.all_sedes === true/);
   assert.match(accessSource, /if \(!sedeId && !roleId && !allSitesSelected\) return \{ items: \[\], total: 0 \}/);
   assert.match(accessSource, /access-users-index-v3/);
-  assert.match(accessSource, /indexed\.value\.rows\.forEach/);
+  assert.match(accessSource, /matchingRows = indexed\.value\.rows\.filter/);
+  assert.match(accessSource, /SUNARPCore\.queryRecords/);
   assert.doesNotMatch(accessSource, /access-users-index-v1/);
   assert.match(accessUiSource, /createField\('Sede', siteSelect\)/);
   assert.match(accessUiSource, /createField\('Rol', roleSelect\)/);
