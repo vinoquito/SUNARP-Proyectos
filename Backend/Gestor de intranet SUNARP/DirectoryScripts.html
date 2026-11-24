@@ -224,6 +224,7 @@ const DirectoryPage = (() => {
     hierarchyIndex: null,
     activeSedeId: '',
     siteDataCache: new Map(),
+    contextWarmupPromise: null,
     siteRequestId: 0,
     siteLoading: false,
     loading: false,
@@ -1920,6 +1921,29 @@ async function deleteDirectoryEntry(record) {
   }
 
 
+  function startDirectoryContextWarmup() {
+    if (state.contextWarmupPromise || !state.authorizedSedes.length) return;
+    const startedAt = performance.now();
+    state.contextWarmupPromise = callServer('warmDirectoryContextCache')
+      .then(result => {
+        console.info('[DirectoryPage] Contexto preparado:', {
+          warmupClientMs: Math.round(performance.now() - startedAt),
+          warmupServerMs: result ? result.serverMs : null,
+          authorizationMs: result ? result.authorizationMs : null,
+          contextMs: result ? result.contextMs : null,
+          peopleRowsLoaded: result ? result.peopleRowsLoaded : null
+        });
+        return result;
+      })
+      .catch(error => {
+        // El precalentamiento es oportunista. La carga de sede mantiene su
+        // propia ruta autorizada y puede construir el contexto si falla.
+        console.warn('[DirectoryPage] No se pudo precalentar el contexto:', error.message || error);
+        return null;
+      });
+  }
+
+
   async function loadSelectedSede(sedeId, force = false) {
     const selectedSedeId = key(sedeId);
     const elements = getElements();
@@ -1967,7 +1991,14 @@ async function deleteDirectoryEntry(record) {
       const useClientCache = Boolean(cachedData);
       let result = useClientCache ? cachedData : null;
       let roundTripMs = 0;
+      let contextWarmupWaitMs = 0;
       if (!result) {
+        if (state.contextWarmupPromise) {
+          const warmupWaitStartedAt = performance.now();
+          await state.contextWarmupPromise;
+          contextWarmupWaitMs = performance.now() - warmupWaitStartedAt;
+        }
+        if (requestId !== state.siteRequestId) return;
         const requestStartedAt = performance.now();
         result = await callServer('getDirectorySiteData', selectedSedeId);
         roundTripMs = performance.now() - requestStartedAt;
@@ -2009,6 +2040,7 @@ async function deleteDirectoryEntry(record) {
         source: useClientCache ? 'session-cache' : 'server',
         serverMs,
         roundTripMs: Math.round(roundTripMs),
+        contextWarmupWaitMs: Math.round(contextWarmupWaitMs),
         roundTripResidualMs: serverMs === null || useClientCache
           ? null
           : Math.round(Math.max(0, roundTripMs - serverMs)),
@@ -2090,6 +2122,9 @@ async function deleteDirectoryEntry(record) {
       bindEvents();
       state.loaded = true;
       setPageActions();
+      // Se lanza después de mostrar los filtros y no bloquea la entrada.
+      // La primera selección espera solo si el precalentamiento sigue activo.
+      startDirectoryContextWarmup();
 
       const clientSetupMs = performance.now() - clientSetupStartedAt;
       const diagnostics = result.diagnostics || {};

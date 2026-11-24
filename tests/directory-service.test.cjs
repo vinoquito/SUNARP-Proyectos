@@ -1304,6 +1304,37 @@ test('Piura se resuelve por estructura_local_id sin depender de local_id físico
   assert.equal(enriched.filter_local_id, 'ZR_I_PIURA');
 });
 
+test('warmDirectoryContextCache exige permiso y precarga contexto sin devolver personas ni asignaciones', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  let requiredPermission = '';
+  let receivedOptions = null;
+  vmContext._directoryAuthorizationContext_ = permissionCode => {
+    requiredPermission = permissionCode;
+    return { auth: { personaId: 'PER_001' } };
+  };
+  vmContext._directoryLoadContext_ = options => {
+    receivedOptions = options;
+    return {
+      personas: [{ persona_id: 'PER_001' }, { persona_id: 'PER_002' }],
+      sedes: [{ id: 'SEDE_1' }],
+      locales: [{ id: 'LOC_1' }],
+      estructuraOrg: [{ id: 'ORG_1' }],
+      estructuraLocal: [{ id: 'REL_1' }],
+      asignaciones: []
+    };
+  };
+  const result = vmContext.warmDirectoryContextCache();
+  assert.equal(requiredPermission, 'INFORMACION_PERSONAL_VER');
+  assert.equal(receivedOptions.includePeople, true);
+  assert.equal(receivedOptions.includeAssignments, false);
+  assert.equal(receivedOptions.includePersonalData, false);
+  assert.equal(receivedOptions.includeDocumentTypes, false);
+  assert.equal(result.warmed, true);
+  assert.equal(result.peopleRowsLoaded, 2);
+  assert.equal(Object.prototype.hasOwnProperty.call(result, 'personas'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(result, 'records'), false);
+});
 test('la carga de contexto agrupa las fuentes de Directorios telefónicos en una lectura Core', () => {
   assert.match(serviceSource, /const context = requests\.length[\s\S]*?listRecordsFromSourcesCached\(requests/);
   assert.doesNotMatch(serviceSource, /const operationalRequests = requests\.filter/);
@@ -2147,6 +2178,9 @@ test('Información de personal carga por sede una vez y usa filtros, búsqueda y
   assert.match(frontendSource, /DIRECTORY_SITE_CLIENT_CACHE_MAX_ENTRIES = 5/);
   assert.match(frontendSource, /function getSiteClientCacheData\(/);
   assert.match(frontendSource, /function rememberSiteClientCacheData\(/);
+  assert.match(frontendSource, /callServer\('warmDirectoryContextCache'\)/);
+  assert.match(frontendSource, /await state\.contextWarmupPromise/);
+  assert.match(frontendSource, /contextWarmupWaitMs/);
   assert.match(frontendSource, /Date\.now\(\) - entry\.loadedAt >= DIRECTORY_SITE_CLIENT_CACHE_TTL_MS/);
   assert.match(frontendSource, /state\.siteDataCache\.set\(id, \{ data, loadedAt: Date\.now\(\) \}\)/);
   assert.match(frontendSource, /state\.catalogs = result\.catalogs;/);
