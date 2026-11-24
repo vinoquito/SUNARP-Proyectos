@@ -408,7 +408,7 @@ test('getAccessUsers reutiliza un índice compartido entre páginas, sedes y rol
     asignaciones: [], estructura_local: [], estructura_org: [], locales: [], sede: []
   });
   const sandbox = createAdapterSandbox(data);
-  sandbox._accessRequirePermission_ = () => ({ authenticated: true });
+  sandbox._accessRequirePermission_ = () => ({ authenticated: true, modules: data.modulos });
   const materialized = new Map();
   let materializationCount = 0;
   let indexSources = null;
