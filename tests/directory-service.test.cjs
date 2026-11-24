@@ -179,8 +179,8 @@ test('el índice cliente conserva hijos directos, ancestros intermedios y separa
   const selected = index.selectableByLocal.get('LOCAL_A');
   assert.deepEqual([...selected].sort(), ['AC', 'DTR', 'GG', 'TD', 'UF_GD', 'UF_INT']);
   assert.deepEqual(
-    index.childrenByParent.get('GG').map(node => node.id),
-    ['UF_INT', 'UF_GD'],
+    Array.from(index.childrenByParent.get('GG'), node => node.id).join(','),
+    'UF_INT,UF_GD',
     'Gerencia General solo muestra sus hijos directos; Dirección Técnica Registral es otra raíz'
   );
   assert.deepEqual(
@@ -972,6 +972,9 @@ test('listDirectoryAssignments pagina mediante Core y no carga asignaciones comp
   ]);
   const vmContext = vm.createContext({});
   vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  vmContext.getIntranetDataSource = (sourceKey, sheetName, headerRow) => ({
+    sourceKey, sheetName, headerRow
+  });
   vmContext._directoryAuthorizationContext_ = () => authorization;
   vmContext._directoryLoadContext_ = options => {
     assert.equal(options.includeAssignments, false);
@@ -1159,6 +1162,9 @@ test('getDirectorySiteData entrega catálogos exclusivos de la sede elegida incl
   ]);
   const vmContext = vm.createContext({});
   vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  vmContext.getIntranetDataSource = (sourceKey, sheetName, headerRow) => ({
+    sourceKey, sheetName, headerRow
+  });
   vmContext._directoryAuthorizationContext_ = () => authorization;
   vmContext._directoryLoadContext_ = () => context;
   vmContext._accessRecordIsAllowed_ = () => true;
@@ -1269,7 +1275,7 @@ test('el caché del sitio depende de identidad, permisos y generaciones de las f
   assert.match(serviceSource, /DIRECTORY_DATA_CACHE_TTL = 60/);
   assert.match(serviceSource, /DIRECTORY_CATALOG_CACHE_TTL = 60/);
   assert.match(serviceSource, /DIRECTORY_SITE_SNAPSHOT_CACHE_TTL = 60/);
-  assert.match(serviceSource, /directory-site-snapshot:v2:/);
+  assert.match(serviceSource, /directory-site-snapshot:v3:/);
   assert.match(serviceSource, /_directoryAuthorizationCacheFingerprint_/);
   assert.match(serviceSource, /_directoryGetSiteDataCacheSources_/);
   assert.match(serviceSource, /cacheSeconds: 60/);
@@ -2082,7 +2088,8 @@ test('el contrato de filtros reconoce TOTAL sin convertirlo en una selección re
 test('Información de personal carga por sede una vez y usa filtros, búsqueda y paginación locales', () => {
   assert.match(frontendSource, /callServer\('getDirectorySiteData', selectedSedeId\)/);
   assert.match(frontendSource, /mode:\s*'client'/);
-  assert.match(frontendSource, /data:\s*prepareRows\(getFilteredRecords\(\)\)/);
+  assert.match(frontendSource, /const preparedRows = prepareRows\(filteredRecords\)/);
+  assert.match(frontendSource, /data:\s*preparedRows/);
   assert.match(frontendSource, /state\.table\.setData\(options\.data\)/);
   assert.match(frontendSource, /siteDataCache/);
   assert.match(frontendSource, /DIRECTORY_SITE_CLIENT_CACHE_TTL_MS = 55000/);
