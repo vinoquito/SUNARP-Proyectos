@@ -1442,7 +1442,7 @@ function _accessRecordUser_(auth, payload, action) {
       }
     );
     const documentMatches = (documentLookup.records || []).filter(record =>
-      _accessNormalizeStoredDocumentValue_(record.tipo_documento) === documentType &&
+      _accessNormalizeStoredDocumentValue_(record.tipo_documento) === documentTypeId &&
       _accessNormalizeStoredDocumentValue_(record.numero_documento) === documentNumber
     );
 
