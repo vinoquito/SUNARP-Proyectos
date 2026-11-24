@@ -968,7 +968,7 @@ test('la consulta de usuarios reutiliza la vista materializada, pagina en servid
 
 test('la auditoría envía fecha_hora como ISO string compatible entre proyectos Apps Script', () => {
   const sandbox = createAdapterSandbox(makeSecurityData());
-  vm.runInContext("Utilities = { getUuid: function () { return 'EVT_TEST_001'; } };", sandbox);
+  vm.runInContext("globalThis.Utilities = { getUuid: function () { return 'EVT_TEST_001'; } };", sandbox);
   sandbox._accessSecuritySource_ = sheet => ({ sheetName: sheet });
   const headers = [
     'evento_id', 'fecha_hora', 'actor_correo', 'actor_nombre', 'accion',
@@ -978,6 +978,8 @@ test('la auditoría envía fecha_hora como ISO string compatible entre proyectos
   ];
   sandbox.SUNARPCore.getSourceInfoCached = () => ({ headers });
   let saved = null;
+  let auditFailure = null;
+  sandbox.console.error = (...args) => { auditFailure = args.map(String).join(' '); };
   sandbox.SUNARPCore.appendAuditEvent = (_source, record, idField) => {
     saved = { record, idField };
     return { success: true };
@@ -993,6 +995,7 @@ test('la auditoría envía fecha_hora como ISO string compatible entre proyectos
       detalle: 'Alta de cuenta'
     }
   );
+  assert.ok(result, auditFailure || 'La escritura de auditoría no devolvió resultado.');
   assert.equal(result.success, true);
   assert.equal(saved.idField, 'evento_id');
   assert.equal(typeof saved.record.fecha_hora, 'string');
