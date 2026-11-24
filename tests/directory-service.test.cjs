@@ -125,15 +125,19 @@ vm.runInContext(
 );
 
 const hierarchyHelperMatch = frontendScript.match(/function _directoryBuildHierarchyFilterSets_\([\s\S]*?\n  \}/);
-assert.ok(hierarchyHelperMatch, 'El frontend debe incluir el cálculo puro de estructuras seleccionables');
+assert.ok(hierarchyHelperMatch, 'El frontend debe calcular las rutas de estructuras con asignaciones autorizadas');
+const hierarchyChildrenSource = extractFrontendFunction('_directoryGetSelectableHierarchyChildren_');
+assert.ok(hierarchyChildrenSource, 'El frontend debe resolver únicamente hijos jerárquicos directos');
 const hierarchySandbox = vm.createContext({});
 vm.runInContext(
-  hierarchyHelperMatch[0] + '\nthis.buildHierarchyFilterSets = _directoryBuildHierarchyFilterSets_;',
+  hierarchyHelperMatch[0] + '\n' + hierarchyChildrenSource +
+    '\nthis.buildHierarchyFilterSets = _directoryBuildHierarchyFilterSets_;' +
+    '\nthis.getSelectableChildren = _directoryGetSelectableHierarchyChildren_;',
   hierarchySandbox,
   { filename: 'DirectoryHierarchyFilters.js' }
 );
 
-test('los filtros muestran solo estructuras con asignaciones autorizadas y mantienen raíces reales independientes', () => {
+test('los filtros conservan ancestros intermedios y mantienen raíces reales independientes', () => {
   const structures = [
     { id: 'GG', name: 'Gerencia General', parent_id: '', sede_id: 'SEDE_A', order: 1 },
     { id: 'UF_INT', name: 'UF Integridad', parent_id: 'GG', sede_id: 'SEDE_A', order: 1 },
@@ -152,8 +156,19 @@ test('los filtros muestran solo estructuras con asignaciones autorizadas y manti
     { estructura_id: 'OTHER_SITE', filter_sede_id: 'SEDE_B', filter_local_id: 'LOCAL_B' }
   ];
   const ids = hierarchySandbox.buildHierarchyFilterSets(records, structures, { scopes: [{ type: 'SEDE', referenceId: 'SEDE_A', includeDescendants: false }] }, 'SEDE_A');
-  assert.deepEqual([...ids].sort(), ['AC', 'DTR', 'GG', 'TD', 'UF_INT']);
-  assert.equal(ids.has('UF_GD'), false, 'Una dependencia sin asignaciones propias no se agrega como opción contextual');
+  assert.deepEqual([...ids].sort(), ['AC', 'DTR', 'GG', 'TD', 'UF_GD', 'UF_INT']);
+  assert.equal(ids.has('UF_GD'), true, 'La dependencia intermedia se conserva porque contiene asignaciones autorizadas en sus descendientes');
+  const hierarchyIndex = hierarchyIndexSandbox.buildIndex(records, structures);
+  assert.deepEqual(
+    Array.from(hierarchySandbox.getSelectableChildren('GG', hierarchyIndex, ids), node => node.id),
+    ['UF_INT', 'UF_GD'],
+    'Después de Gerencia General solo aparecen sus hijos directos'
+  );
+  assert.deepEqual(
+    Array.from(hierarchySandbox.getSelectableChildren('UF_GD', hierarchyIndex, ids), node => node.id),
+    ['TD', 'AC'],
+    'Trámite Documentario y Archivo Central aparecen un nivel debajo de Unidad Funcional de Gestión Documental'
+  );
   assert.equal(ids.has('DTR'), true, 'La raíz independiente puede aparecer en el nivel raíz si tiene asignaciones propias');
   assert.equal(structures.find(node => node.id === 'DTR').parent_id, '', 'Dirección Técnica Registral no pertenece a Gerencia General');
   assert.equal(ids.has('OTHER_SITE'), false);
@@ -190,7 +205,7 @@ test('la cascada se activa solo con herencia del ámbito y omite el nodo raíz y
     { scopes: [{ type: 'SEDE', referenceId: 'SEDE_A', includeDescendants: false }] },
     'SEDE_A'
   );
-  assert.deepEqual([...wholeSite].sort(), ['AREA_A', 'AREA_B', 'SIBLING', 'ZR_I']);
+  assert.deepEqual([...wholeSite].sort(), ['AREA_A', 'AREA_B', 'SIBLING', 'SITE_ROOT', 'ZR_I']);
 });
 
 
@@ -271,7 +286,7 @@ test('el índice cliente conserva rutas reales sin convertir ancestros en opcion
   assert.equal(hierarchyIndexSandbox.matchesSubtree('UF_INT', 'UF_GD', index), false);
 });
 
-test('los filtros jerárquicos excluyen estructuras de otras sedes y locales', () => {
+test('los filtros jerárquicos conservan ancestros reales, pero excluyen otras sedes y ámbitos locales', () => {
   const structures = [
     { id: 'ROOT_A', name: 'Gerencia A', parent_id: '', sede_id: 'SEDE_A' },
     { id: 'UNIT_A', name: 'Unidad A', parent_id: 'ROOT_A', sede_id: 'SEDE_A' },
@@ -284,8 +299,8 @@ test('los filtros jerárquicos excluyen estructuras de otras sedes y locales', (
     { estructura_id: 'UNIT_A', filter_sede_id: 'SEDE_A', filter_local_id: 'LOCAL_OTHER' }
   ];
   const ids = hierarchySandbox.buildHierarchyFilterSets(records, structures, { scopes: [{ type: 'SEDE', referenceId: 'SEDE_A', includeDescendants: false }] }, 'SEDE_A');
-  assert.deepEqual([...ids].sort(), ['UNIT_A']);
-  assert.equal(ids.has('ROOT_A'), false, 'El ancestro sin asignaciones no se ofrece como opción contextual');
+  assert.deepEqual([...ids].sort(), ['ROOT_A', 'UNIT_A']);
+  assert.equal(ids.has('ROOT_A'), true, 'El ancestro real se conserva para no aplanar los niveles');
   assert.deepEqual([...hierarchySandbox.buildHierarchyFilterSets(records, structures, { scopes: [{ type: 'LOCAL', referenceId: 'LOCAL_A', includeDescendants: false }] }, 'SEDE_A')], []);
 });
 
