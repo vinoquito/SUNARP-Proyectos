@@ -209,14 +209,19 @@ test('los filtros jerárquicos excluyen estructuras de otras sedes y locales', (
     { estructura_id: 'UNIT_A', filter_sede_id: 'SEDE_A', filter_local_id: 'LOCAL_OTHER' }
   ];
   const ids = hierarchySandbox.buildHierarchyFilterSets(records, structures, 'SEDE_A', 'LOCAL_A');
-  assert.deepEqual([...ids].sort(), ['ROOT_A', 'UNIT_A']);
+  assert.deepEqual([...ids].sort(), ['UNIT_A']);
+  assert.equal(ids.has('ROOT_A'), false, 'El ancestro sin asignaciones no se ofrece como opción contextual');
   assert.deepEqual([...hierarchySandbox.buildHierarchyFilterSets(records, structures, '', 'LOCAL_A')], []);
 });
 
 test('la interfaz limita cada selector a hijos directos y no presenta opciones contextuales artificiales', () => {
   assert.doesNotMatch(frontendScript, /contextualIds|\(contexto\)|option\.disabled\s*=\s*contextualOnly/);
   assert.match(frontendScript, /option\.textContent = key\(node\.name\)/);
-  assert.match(frontendScript, /childrenByParent\.get\(key\(parentId\)\)/);
+  assert.match(frontendScript, /index\.childrenByParent\.get\(selectedParentId\)/);
+  assert.match(frontendScript, /Array\.from\(index\.structureById\.values\(\)\)/);
+  assert.match(frontendScript, /!selectableIds\.has\(nodeParentId\)/);
+  assert.match(frontendScript, /selectableByLocal\.get\(localId\)\.add\(structureId\)/);
+  assert.doesNotMatch(frontendScript, /selectableIds\.add\(keyOf\(node\.id\)\)/);
 });
 
 

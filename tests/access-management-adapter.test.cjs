@@ -2193,7 +2193,9 @@ test('la jerarquía del Directorio muestra los hijos directos con sus nombres re
   assert.ok(start >= 0 && end > start);
   const implementation = directoryUiSource.slice(start, end);
   assert.ok(implementation.includes('option.textContent = key(node.name)'));
-  assert.ok(directoryUiSource.includes('childrenByParent.get(key(parentId))'));
+  assert.ok(directoryUiSource.includes('index.childrenByParent.get(selectedParentId)'));
+  assert.ok(directoryUiSource.includes('Array.from(index.structureById.values())'));
+  assert.ok(directoryUiSource.includes('!selectableIds.has(nodeParentId)'));
   assert.equal(implementation.includes('contextualIds'), false);
   assert.equal(implementation.includes('(contexto)'), false);
   assert.equal(implementation.includes('option.disabled'), false);
