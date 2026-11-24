@@ -1250,7 +1250,7 @@ test('getDirectoryAuthorizedData agrega todas las sedes solo bajo un ámbito TOT
   };
   const result = vmContext.getDirectoryAuthorizedData();
   assert.equal(requestedSiteId, '');
-  assert.deepEqual(Array.from(result.catalogs.sedes, item => item.id), ['SEDE_A', 'SEDE_2']);
+  assert.deepEqual(Array.from(result.catalogs.sedes, item => item.id), ['SEDE_1', 'SEDE_2']);
   assert.deepEqual(Array.from(result.records, item => item.filter_sede_id), ['SEDE_1', 'SEDE_2']);
   assert.equal(result.summary.assignments, 2);
 
