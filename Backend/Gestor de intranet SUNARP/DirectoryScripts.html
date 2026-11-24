@@ -9,16 +9,15 @@
     const scopes = filterContract && Array.isArray(filterContract.scopes)
       ? filterContract.scopes
       : [];
-    const hasBroadSiteScope = scopes.some(scope =>
-      scope.type === 'TOTAL' ||
-      (scope.type === 'SEDE' && String(scope.referenceId || '').trim() === site)
+    const hasTotalScope = scopes.some(scope => scope.type === 'TOTAL');
+    const hasBroadSiteScope = hasTotalScope || scopes.some(scope =>
+      scope.type === 'SEDE' && String(scope.referenceId || '').trim() === site
     );
     const inheritedRoots = scopes
       .filter(scope => scope.type === 'ESTRUCTURA_ORG' &&
         scope.includeDescendants === true && String(scope.referenceId || '').trim())
       .map(scope => String(scope.referenceId).trim());
-    if (!site || (!hasBroadSiteScope && !inheritedRoots.length)) return new Set();
-
+    if ((!site && !hasTotalScope) || (!hasBroadSiteScope && !inheritedRoots.length)) return new Set();
     const structureMap = new Map((structures || []).map(node => [
       String(node.id || '').trim(), node
     ]));
@@ -41,7 +40,7 @@
     (records || []).forEach(record => {
       const recordSite = String(record.filter_sede_id || record.sede_id || '').trim();
       const structureId = String(record.estructura_id || '').trim();
-      if (recordSite !== site || !structureId || !structureMap.has(structureId)) return;
+      if ((site && recordSite !== site) || !recordSite || !structureId || !structureMap.has(structureId)) return;
       if (hasBroadSiteScope || inheritedRoots.some(rootId => isDescendantOf(structureId, rootId))) {
         selectableIds.add(structureId);
       }
@@ -232,6 +231,7 @@ const DirectoryPage = (() => {
     records: [],
     catalogs: null,
     authorizedSedes: [],
+    hasTotalScope: false,
     table: null,
     hierarchyPath: [],
     hierarchyIndex: null,
@@ -446,7 +446,10 @@ const DirectoryPage = (() => {
       .filter(item => isActive(item))
       .slice()
       .sort(sortByName);
-    updateFilterOptions(select, 'Sede determinada por el ámbito autorizado', sedes);
+    const placeholder = state.hasTotalScope && sedes.length > 1
+      ? 'Todas las sedes autorizadas'
+      : 'Sede determinada por el ámbito autorizado';
+    updateFilterOptions(select, placeholder, sedes);
     const wrapper = select.closest('.sunarp-filter');
     if (sedes.length === 1) select.value = key(sedes[0].id);
     select.disabled = sedes.length <= 1;
@@ -458,8 +461,10 @@ const DirectoryPage = (() => {
     if (!select) return;
     const elements = getElements();
     const siteId = key(elements.sedeFilter && elements.sedeFilter.value);
+    const allAuthorizedSites = state.activeSedeId === '__ALL__' && !siteId;
+    const hasLoadedSite = Boolean(siteId && siteId === state.activeSedeId);
     const wrapper = select.closest('.sunarp-filter');
-    if (!siteId || siteId !== state.activeSedeId) {
+    if (!allAuthorizedSites && !hasLoadedSite) {
       updateFilterOptions(select, 'Cargos de la información autorizada', []);
       select.disabled = true;
       if (wrapper) wrapper.hidden = true;
@@ -654,8 +659,10 @@ const DirectoryPage = (() => {
     container.replaceChildren();
     const elements = getElements();
     const siteId = key(elements.sedeFilter && elements.sedeFilter.value);
+    const allAuthorizedSites = state.activeSedeId === '__ALL__' && !siteId;
+    const hasLoadedSite = Boolean(siteId && siteId === state.activeSedeId);
     const selectableIds = getHierarchyFilterSets().selectableIds;
-    if (!siteId || siteId !== state.activeSedeId || selectableIds.size <= 1) {
+    if ((!allAuthorizedSites && !hasLoadedSite) || selectableIds.size <= 1) {
       state.hierarchyPath = [];
       container.hidden = true;
       return;
@@ -1853,7 +1860,12 @@ async function deleteDirectoryEntry(record) {
     const elements = getElements();
     if (!elements.sedeFilter || !elements.cargoFilter) return;
     elements.sedeFilter.addEventListener('change', () => {
-      loadSelectedSede(elements.sedeFilter.value);
+      const selectedSedeId = key(elements.sedeFilter.value);
+      if (!selectedSedeId && state.hasTotalScope && state.authorizedSedes.length > 1) {
+        load(true);
+        return;
+      }
+      loadSelectedSede(selectedSedeId);
     });
     elements.cargoFilter.addEventListener('change', () => {
       refreshDependentFilters('cargo');
@@ -1926,6 +1938,10 @@ async function deleteDirectoryEntry(record) {
     const selectedSedeId = key(sedeId);
     const elements = getElements();
     const requestId = ++state.siteRequestId;
+
+    if (!selectedSedeId && state.hasTotalScope && state.authorizedSedes.length > 1) {
+      return load(true);
+    }
 
     if (!selectedSedeId) {
       state.activeSedeId = '';
@@ -2049,6 +2065,7 @@ async function deleteDirectoryEntry(record) {
 
 
   async function refreshActiveSede() {
+    if (state.activeSedeId === '__ALL__') return load(true);
     const elements = getElements();
     const selectedSedeId = state.activeSedeId ||
       key(elements.sedeFilter && elements.sedeFilter.value);
@@ -2056,7 +2073,6 @@ async function deleteDirectoryEntry(record) {
     state.siteDataCache.delete(selectedSedeId);
     return loadSelectedSede(selectedSedeId, true);
   }
-
 
   async function load(force = false) {
     if (state.loading) return;
@@ -2070,6 +2086,7 @@ async function deleteDirectoryEntry(record) {
     state.loading = true;
     let finishLoading = null;
     let autoLoadedSoleSede = false;
+    let autoLoadedAllSites = false;
     try {
       if (window.SUNARPUI && typeof SUNARPUI.beginLoading === 'function') {
         finishLoading = SUNARPUI.beginLoading();
@@ -2082,6 +2099,7 @@ async function deleteDirectoryEntry(record) {
       }
       const clientSetupStartedAt = performance.now();
       state.authorizedSedes = result.catalogs.sedes;
+      state.hasTotalScope = Boolean(result.scopeSummary && result.scopeSummary.total === true);
       state.catalogs = { sedes: state.authorizedSedes };
       state.records = [];
       state.hierarchyIndex = null;
@@ -2103,7 +2121,45 @@ async function deleteDirectoryEntry(record) {
       const serverMs = Number.isFinite(Number(diagnostics.serverMs))
         ? Number(diagnostics.serverMs)
         : null;
-      if (state.authorizedSedes.length === 1) {
+      if (state.hasTotalScope && state.authorizedSedes.length > 1) {
+        const allSitesStartedAt = performance.now();
+        const allSitesResult = await callServer('getDirectoryAuthorizedData');
+        if (!allSitesResult || !allSitesResult.catalogs ||
+            !Array.isArray(allSitesResult.catalogs.sedes) ||
+            !Array.isArray(allSitesResult.records)) {
+          throw new Error('El servidor devolvió una carga incompleta de todos los ámbitos autorizados.');
+        }
+        state.authorizedSedes = allSitesResult.catalogs.sedes;
+        state.catalogs = allSitesResult.catalogs;
+        state.records = allSitesResult.records;
+        state.activeSedeId = '__ALL__';
+        state.hierarchyPath = [];
+        state.hierarchyIndex = _directoryBuildHierarchyClientIndex_(
+          state.records,
+          state.catalogs.estructuraOrg || []
+        );
+        state.hierarchySelectableIds = _directoryBuildHierarchyFilterSets_(
+          state.records,
+          state.catalogs.estructuraOrg || [],
+          state.catalogs.filterContract,
+          ''
+        );
+        if (elements.sedeFilter) elements.sedeFilter.value = '';
+        if (elements.cargoFilter) elements.cargoFilter.value = '';
+        populateSedeFilter();
+        if (elements.sedeFilter) elements.sedeFilter.value = '';
+        populateCargoFilter();
+        renderHierarchyFilters();
+        renderTable();
+        autoLoadedAllSites = true;
+        console.info('[DirectoryPage] Todos los ámbitos TOTAL cargados:', {
+          authorizedSedes: state.authorizedSedes.length,
+          records: state.records.length,
+          roundTripMs: Math.round(performance.now() - allSitesStartedAt),
+          serverStages: allSitesResult.diagnostics && allSitesResult.diagnostics.stages || null,
+          cache: allSitesResult.diagnostics && allSitesResult.diagnostics.cache || null
+        });
+      } else if (state.authorizedSedes.length === 1) {
         const soleSedeId = key(state.authorizedSedes[0].id);
         if (soleSedeId) {
           if (elements.sedeFilter) elements.sedeFilter.value = soleSedeId;
@@ -2113,7 +2169,7 @@ async function deleteDirectoryEntry(record) {
           });
           await loadSelectedSede(soleSedeId);
         }
-      } else if (state.authorizedSedes.length > 1) {
+      } else if (!autoLoadedAllSites && state.authorizedSedes.length > 1) {
         startDirectoryContextWarmup();
       }
       console.info('[DirectoryPage] Selector inicial de sedes:', {
@@ -2126,9 +2182,10 @@ async function deleteDirectoryEntry(record) {
         clientSetupMs: Math.round(clientSetupMs),
         authorizedSedes: state.authorizedSedes.length,
         autoLoadedSoleSede,
-        assignmentRecordsLoaded: 0
+        autoLoadedAllSites,
+        assignmentRecordsLoaded: autoLoadedAllSites ? state.records.length : 0
       });
-      if (force && !autoLoadedSoleSede && previousSedeId &&
+      if (force && !autoLoadedSoleSede && !autoLoadedAllSites && previousSedeId &&
           state.authorizedSedes.some(item => key(item.id) === previousSedeId)) {
         elements.sedeFilter.value = previousSedeId;
         await loadSelectedSede(previousSedeId, true);
