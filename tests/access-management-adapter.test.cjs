@@ -756,6 +756,8 @@ test('el diagnóstico de acceso mide identidad, relaciones de autorización, con
   assert.match(accessSource, /currentUserLookupMs/);
   assert.match(accessSource, /authorizationResolutionMs/);
   assert.match(accessSource, /User configuration timing/);
+  assert.match(accessSource, /Tab data timing/);
+  assert.match(accessSource, /_getAccessManagementTabData_\(tabId\)/);
   assert.match(accessSource, /Save user timing/);
   assert.match(accessUiSource, /roundTripMs/);
   assert.match(accessUiSource, /getAccessManagementTabData/);

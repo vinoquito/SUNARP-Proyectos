@@ -2842,6 +2842,28 @@ function getAccessManagementData() {
 
 /** Devuelve únicamente los datos necesarios para actualizar una pestaña. */
 function getAccessManagementTabData(tabId) {
+  const startedAt = Date.now();
+  const tab = _accessText_(tabId).toLowerCase();
+  try {
+    const result = _getAccessManagementTabData_(tabId);
+    console.log('[AccessManagement] Tab data timing:', JSON.stringify({
+      tab,
+      durationMs: Date.now() - startedAt,
+      success: true
+    }));
+    return result;
+  } catch (error) {
+    console.error('[AccessManagement] Tab data failed:', JSON.stringify({
+      tab,
+      durationMs: Date.now() - startedAt,
+      errorName: error && error.name || 'Error',
+      errorMessage: error && error.message || String(error)
+    }));
+    throw error;
+  }
+}
+
+function _getAccessManagementTabData_(tabId) {
   const tab = _accessText_(tabId).toLowerCase();
   const s = ACCESS_MANAGEMENT_CONFIG.sheets;
 
