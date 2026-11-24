@@ -421,7 +421,7 @@ test('getAccessUsers reutiliza un índice compartido entre páginas, sedes y rol
   let materializationCount = 0;
   let indexSources = null;
   sandbox.SUNARPCore.getOrBuildCachedValue = (key, sources, builder, ttl) => {
-    assert.equal(key, 'access-users-index-v3');
+    assert.equal(key, 'access-users-index-v4');
     assert.equal(ttl, 60);
     indexSources = sources.map(source => source.sheetName);
     if (materialized.has(key)) return { value: materialized.get(key), cacheHit: true, cacheStored: true };
@@ -580,7 +580,7 @@ test('getAccessUsers filtra por ámbitos efectivos y no por adscripciones funcio
   const cache = new Map();
   let buildCount = 0;
   sandbox.SUNARPCore.getOrBuildCachedValue = (key, sources, builder, ttl) => {
-    assert.equal(key, 'access-users-index-v3');
+    assert.equal(key, 'access-users-index-v4');
     assert.equal(sources.length, 8);
     assert.equal(ttl, 60);
     if (cache.has(key)) return { value: cache.get(key), cacheHit: true, cacheStored: true };
@@ -945,7 +945,7 @@ test('la consulta de usuarios reutiliza la vista materializada, pagina en servid
   const end = accessSource.indexOf('function _accessAuditTimestamp_(', start);
   const implementation = accessSource.slice(start, end);
   assert.ok(helper.includes('getOrBuildCachedValue'));
-  assert.ok(helper.includes('access-users-index-v3'));
+  assert.ok(helper.includes('access-users-index-v4'));
   assert.ok(helper.includes("_accessSecuritySource_('EstructuraOrg')"));
   assert.ok(helper.includes('ACCESS_MANAGEMENT_CONFIG.sheets.scopes'));
   assert.doesNotMatch(helper, /asignaciones|estructura_local/);
@@ -1600,7 +1600,7 @@ test('el listado de usuarios se consulta al seleccionar un filtro y admite Todas
   assert.match(accessSource, /function getAccessUsers\(filters\)/);
   assert.match(accessSource, /const allSitesSelected = filters\.all_sedes === true/);
   assert.match(accessSource, /if \(!sedeId && !roleId && !allSitesSelected\) return \{ items: \[\], total: 0 \}/);
-  assert.match(accessSource, /access-users-index-v3/);
+  assert.match(accessSource, /access-users-index-v4/);
   assert.match(accessSource, /matchingRows = indexed\.value\.rows\.filter/);
   assert.match(accessSource, /SUNARPCore\.queryRecords/);
   assert.doesNotMatch(accessSource, /access-users-index-v1/);

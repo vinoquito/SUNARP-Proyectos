@@ -328,6 +328,35 @@ function _accessMergeUniqueRows_(collections, fields) {
 
 function _accessLoadAdministratorContinuityData_() {
   const s = ACCESS_MANAGEMENT_CONFIG.sheets;
+  const sources = [
+    _accessSecuritySource_(s.modules),
+    _accessSecuritySource_(s.roles),
+    _accessSecuritySource_(s.permissions),
+    _accessSecuritySource_(s.rolePermissions),
+    _accessSecuritySource_(s.userRoles),
+    _accessSecuritySource_(s.users),
+    _accessSecuritySource_(s.scopes)
+  ];
+  const cacheStartedAt = Date.now();
+  const cached = SUNARPCore.getOrBuildCachedValue(
+    'access-admin-continuity:v1',
+    sources,
+    () => _accessBuildAdministratorContinuityData_(),
+    60
+  );
+  if (!cached || !cached.value) {
+    throw new Error('SUNARP Core no devolvió los datos de continuidad del administrador.');
+  }
+  console.log('[AccessManagement] Administrator continuity cache:', JSON.stringify({
+    cacheHit: cached.cacheHit === true,
+    cacheStored: cached.cacheStored === true,
+    durationMs: Date.now() - cacheStartedAt
+  }));
+  return cached.value;
+}
+
+function _accessBuildAdministratorContinuityData_() {
+  const s = ACCESS_MANAGEMENT_CONFIG.sheets;
   const moduleMatches = _accessFindSecurityRecords_(
     s.modules, 'codigo', [ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses],
     ACCESS_MANAGEMENT_FIELDS.modules, { matchCase: false }
@@ -907,7 +936,7 @@ function _accessWriteAudit_(actor, event) {
 
     const record = {
       evento_id: Utilities.getUuid(),
-      fecha_hora: now,
+      fecha_hora: now.toISOString(),
       actor_correo: _accessText_(actor && actor.email),
       actor_nombre: _accessText_(actor && actor.name),
       accion: _accessUpper_(event.accion),
@@ -2812,11 +2841,18 @@ function getAccessManagementData() {
     requiredHeaders: ['id', 'name']
   });
 
-  // Agrupar fuentes del mismo libro en una sola lectura Core evita abrir
-  // repetidamente el archivo de Seguridad durante el bootstrap.
-  const bootstrapCatalogs = bootstrapRequests.length
-    ? SUNARPCore.listRecordsFromSourcesCached(bootstrapRequests, 60)
-    : {};
+  // Agrupar y materializar los catálogos iniciales. Core invalida esta vista
+  // cuando cambia la generación de cualquiera de las pestañas dependientes.
+  const bootstrapSources = bootstrapRequests.map(request => request.source);
+  const bootstrapCache = bootstrapRequests.length
+    ? SUNARPCore.getOrBuildCachedValue(
+        'access-management-bootstrap:v1',
+        bootstrapSources,
+        () => SUNARPCore.listRecordsFromSourcesCached(bootstrapRequests, 60),
+        60
+      )
+    : { value: {}, cacheHit: true, cacheStored: false };
+  const bootstrapCatalogs = bootstrapCache && bootstrapCache.value || {};
   const modules = bootstrapCatalogs.modules || [];
   const roles = bootstrapCatalogs.roles || [];
   const scopeTypes = bootstrapCatalogs.scopeTypes || [];
@@ -2826,6 +2862,7 @@ function getAccessManagementData() {
   console.log('[AccessManagement] Bootstrap ms:', JSON.stringify({
     authorization: authElapsed,
     catalogs: catalogElapsed,
+    catalogCacheHit: Boolean(bootstrapCache && bootstrapCache.cacheHit),
     sites: sitesElapsed,
     totalBeforeResponse: Date.now() - startedAt
   }));
@@ -3122,8 +3159,8 @@ function _accessBuildUserListingIndex_() {
   if (typeof SUNARPCore.getOrBuildCachedValue !== 'function') {
     throw new Error('El listado de usuarios requiere getOrBuildCachedValue.');
   }
-  // La sede administrativa se deriva de los ámbitos efectivos, no de la
-  // adscripción funcional de la persona en Directorios.
+  // Las fuentes de catálogos forman parte de la generación de la vista, pero
+  // solo se consultan por los IDs que aparecen realmente en AmbitosAcceso.
   const sources = [
     _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.users),
     _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.userRoles),
@@ -3139,14 +3176,11 @@ function _accessBuildUserListingIndex_() {
     { key: 'userRoles', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.userRoles), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.userRoles },
     { key: 'modules', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.modules), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.modules },
     { key: 'roles', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.roles), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.roles },
-    { key: 'scopes', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.scopes), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.scopes },
-    { key: 'sites', source: _accessSecuritySource_('Sedes'), requiredHeaders: ['id', 'name'] },
-    { key: 'structures', source: _accessSecuritySource_('EstructuraOrg'), requiredHeaders: ['id', 'sede_id'] },
-    { key: 'locals', source: _accessDirectorySource_('locales'), requiredHeaders: ['id', 'sede_id'] }
+    { key: 'scopes', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.scopes), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.scopes }
   ];
   const indexStartedAt = Date.now();
   const cached = SUNARPCore.getOrBuildCachedValue(
-    'access-users-index-v3',
+    'access-users-index-v4',
     sources,
     () => {
       const readStartedAt = Date.now();
@@ -3159,41 +3193,27 @@ function _accessBuildUserListingIndex_() {
       const roles = new Map((data.roles || []).filter(_accessCatalogIsActive_).map(item => [
         _accessText_(item.rol_id), item
       ]));
-      const sites = new Map((data.sites || []).filter(_accessCatalogIsActive_).map(item => [
-        _accessText_(item.id), _accessText_(item.name)
-      ]));
-      const structures = new Map((data.structures || []).filter(_accessCatalogIsActive_).map(item => [
-        _accessText_(item.id), item
-      ]));
-      const locals = new Map((data.locals || []).filter(_accessCatalogIsActive_).map(item => [
-        _accessText_(item.id), item
-      ]));
-      const siteIdsByPerson = new Map();
-      const totalScopePeople = new Set();
+
+      const referenceIds = { SEDE: new Set(), ESTRUCTURA_ORG: new Set(), LOCAL: new Set() };
+      const activeScopes = [];
       const integrity = {
-        activeScopes: 0, invalidScopes: 0, multiSiteAccounts: 0,
-        totalScopeAccounts: 0, sample: []
+        activeScopes: 0,
+        invalidScopes: 0,
+        multiSiteAccounts: 0,
+        totalScopeAccounts: 0,
+        sample: []
       };
-      const addSite = (personaId, siteId) => {
-        const personId = _accessText_(personaId);
-        const id = _accessText_(siteId);
-        if (!personId || !id || !sites.has(id)) return false;
-        if (!siteIdsByPerson.has(personId)) siteIdsByPerson.set(personId, new Set());
-        siteIdsByPerson.get(personId).add(id);
-        return true;
-      };
+      const totalScopePeople = new Set();
       (data.scopes || []).forEach(scope => {
         if (!_accessIsActive_(scope.active)) return;
         const personaId = _accessText_(scope.persona_id);
         const module = modules.get(_accessText_(scope.modulo_id));
         if (!personaId || !module) return;
-        // TOTAL en MOD_ACCESOS es el permiso administrativo global, no una
-        // adscripción funcional que deba aparecer como sede de la cuenta.
+        // El TOTAL administrativo de MOD_ACCESOS no es un ámbito funcional.
         if (_accessUpper_(module.codigo) === ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses) return;
         integrity.activeScopes++;
         const type = _accessUpper_(scope.tipo_ambito_id);
         const referenceId = _accessText_(scope.referencia_id);
-        let siteId = '';
         if (type === 'TOTAL') {
           if (referenceId) {
             integrity.invalidScopes++;
@@ -3203,30 +3223,61 @@ function _accessBuildUserListingIndex_() {
             return;
           }
           totalScopePeople.add(personaId);
+          activeScopes.push({ personaId, type, referenceId: '' });
           return;
         }
-        if (type === 'SEDE') siteId = referenceId;
-        else if (type === 'ESTRUCTURA_ORG') {
-          const structure = structures.get(referenceId);
-          siteId = structure ? _accessText_(structure.sede_id) : '';
-        } else if (type === 'LOCAL') {
-          const local = locals.get(referenceId);
-          siteId = local ? _accessText_(local.sede_id) : '';
-        } else {
-          integrity.invalidScopes++;
-          if (integrity.sample.length < 10) integrity.sample.push({
-            persona_id: personaId, tipo_ambito_id: type, issue: 'unsupported-scope-type'
-          });
-          return;
-        }
-        if (!addSite(personaId, siteId)) {
+        if (!Object.prototype.hasOwnProperty.call(referenceIds, type) || !referenceId) {
           integrity.invalidScopes++;
           if (integrity.sample.length < 10) integrity.sample.push({
             persona_id: personaId, tipo_ambito_id: type,
-            referencia_id: referenceId, issue: 'unresolved-scope-reference'
+            referencia_id: referenceId, issue: 'unsupported-scope-type-or-reference'
+          });
+          return;
+        }
+        referenceIds[type].add(referenceId);
+        activeScopes.push({ personaId, type, referenceId });
+      });
+
+      const orgLookupStartedAt = Date.now();
+      const sites = _accessFindOrgCatalogByIds_('SEDE', Array.from(referenceIds.SEDE));
+      const structures = _accessFindOrgCatalogByIds_('ESTRUCTURA_ORG', Array.from(referenceIds.ESTRUCTURA_ORG));
+      const locals = _accessFindOrgCatalogByIds_('LOCAL', Array.from(referenceIds.LOCAL));
+      const orgLookupMs = Date.now() - orgLookupStartedAt;
+      const siteById = new Map(sites.map(item => [_accessText_(item.id), item]));
+      const structureById = new Map(structures.map(item => [_accessText_(item.id), item]));
+      const localById = new Map(locals.map(item => [_accessText_(item.id), item]));
+
+      const siteIdsByPerson = new Map();
+      const addSite = (personaId, siteId) => {
+        const personId = _accessText_(personaId);
+        const id = _accessText_(siteId);
+        if (!personId || !id) return false;
+        if (!siteIdsByPerson.has(personId)) siteIdsByPerson.set(personId, new Set());
+        siteIdsByPerson.get(personId).add(id);
+        return true;
+      };
+      activeScopes.forEach(scope => {
+        let siteId = '';
+        if (scope.type === 'TOTAL') return;
+        if (scope.type === 'SEDE') {
+          const site = siteById.get(scope.referenceId);
+          siteId = site ? _accessText_(site.id) : '';
+        } else if (scope.type === 'ESTRUCTURA_ORG') {
+          const structure = structureById.get(scope.referenceId);
+          siteId = structure ? _accessText_(structure.sede_id) : '';
+        } else if (scope.type === 'LOCAL') {
+          const local = localById.get(scope.referenceId);
+          siteId = local ? _accessText_(local.sede_id) : '';
+        }
+        if (!addSite(scope.personaId, siteId)) {
+          integrity.invalidScopes++;
+          if (integrity.sample.length < 10) integrity.sample.push({
+            persona_id: scope.personaId, tipo_ambito_id: scope.type,
+            referencia_id: scope.referenceId, issue: 'unresolved-scope-reference'
           });
         }
       });
+
       const activeRoleIds = new Set(roles.keys());
       const rolesByPerson = new Map();
       (data.userRoles || []).filter(item => _accessIsActive_(item.active)).forEach(item => {
@@ -3235,37 +3286,45 @@ function _accessBuildUserListingIndex_() {
         const roleId = _accessText_(item.rol_id);
         if (!personaId || !modules.has(moduleId) || !activeRoleIds.has(roleId)) return;
         if (!rolesByPerson.has(personaId)) rolesByPerson.set(personaId, []);
-        rolesByPerson.get(personaId).push({ modulo_id: moduleId, rol_id: _accessUpper_(roleId) });
+        rolesByPerson.get(personaId).push({
+          modulo_id: moduleId,
+          rol_id: _accessUpper_(roleId)
+        });
       });
-      const allSiteIds = Array.from(sites.keys()).sort();
+
       const rows = (data.users || []).map(user => {
         const personaId = _accessText_(user.persona_id);
         const hasTotalScope = totalScopePeople.has(personaId);
         const scopedSiteIds = Array.from(siteIdsByPerson.get(personaId) || []).sort();
         const invalidMultiSite = !hasTotalScope && scopedSiteIds.length > 1;
         if (invalidMultiSite) integrity.multiSiteAccounts++;
-        const sedeIds = hasTotalScope ? allSiteIds : (invalidMultiSite ? [] : scopedSiteIds);
         if (hasTotalScope) integrity.totalScopeAccounts++;
         return {
           persona_id: personaId,
-          sede_ids: sedeIds,
-          sede_nombre: sedeIds.map(id => sites.get(id) || id).join(' · '),
+          sede_ids: invalidMultiSite ? [] : scopedSiteIds,
+          all_sedes: hasTotalScope,
+          sede_nombre: hasTotalScope ? 'Todas las sedes' :
+            (invalidMultiSite ? '' : scopedSiteIds.join(' · ')),
           active: _accessIsActive_(user.active),
           roles: rolesByPerson.get(personaId) || []
         };
       }).filter(row => row.persona_id);
+
       const indexBuildMs = Date.now() - buildStartedAt;
       console.log('[AccessManagement] User metadata index built:', JSON.stringify({
-        users: rows.length, activeScopes: integrity.activeScopes,
+        users: rows.length,
+        activeScopes: integrity.activeScopes,
         invalidScopes: integrity.invalidScopes,
         multiSiteAccounts: integrity.multiSiteAccounts,
         totalScopeAccounts: integrity.totalScopeAccounts,
-        sourceReadMs, indexBuildMs
+        sourceReadMs,
+        orgLookupMs,
+        indexBuildMs
       }));
       if (integrity.invalidScopes || integrity.multiSiteAccounts) {
         console.warn('[AccessManagement] User scope index anomalies:', JSON.stringify(integrity));
       }
-      return { rows, integrity, sourceReadMs, indexBuildMs };
+      return { rows, integrity, sourceReadMs, orgLookupMs, indexBuildMs };
     },
     60
   );
@@ -3273,8 +3332,10 @@ function _accessBuildUserListingIndex_() {
     throw new Error('SUNARP Core no devolvió un índice administrativo válido para el listado de usuarios.');
   }
   console.log('[AccessManagement] User metadata index response:', JSON.stringify({
-    cacheHit: cached.cacheHit === true, cacheStored: cached.cacheStored === true,
-    users: cached.value.rows.length, durationMs: Date.now() - indexStartedAt
+    cacheHit: cached.cacheHit === true,
+    cacheStored: cached.cacheStored === true,
+    users: cached.value.rows.length,
+    durationMs: Date.now() - indexStartedAt
   }));
   return cached;
 }
@@ -3298,7 +3359,7 @@ function getAccessUsers(filters) {
   const indexLookupMs = Date.now() - indexStartedAt;
   const filterStartedAt = Date.now();
   const matchingRows = indexed.value.rows.filter(row => {
-    if (sedeId && !row.sede_ids.includes(sedeId)) return false;
+    if (sedeId && !row.all_sedes && !row.sede_ids.includes(sedeId)) return false;
     if (roleId && !row.roles.some(role => _accessUpper_(role.rol_id) === roleId)) return false;
     return true;
   });
@@ -3395,6 +3456,7 @@ function getAccessUsers(filters) {
       nombre_completo: [_accessText_(person.nombres), _accessText_(person.apellidos)]
         .filter(Boolean).join(' '),
       sede_ids: metadata.sede_ids || [],
+      all_sedes: metadata.all_sedes === true,
       sede_nombre: metadata.sede_nombre || '',
       active: metadata.active === true,
       roles: metadata.roles || []
