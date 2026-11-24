@@ -2110,7 +2110,12 @@ async function deleteDirectoryEntry(record) {
       if (elements.sedeFilter) elements.sedeFilter.value = '';
       if (elements.cargoFilter) elements.cargoFilter.value = '';
       clearDirectoryTable('Cargando únicamente la información de tus ámbitos autorizados...');
-      populateSedeFilter();
+      if (state.hasTotalScope && state.authorizedSedes.length > 1) {
+        const sedeWrapper = elements.sedeFilter && elements.sedeFilter.closest('.sunarp-filter');
+        if (sedeWrapper) sedeWrapper.hidden = true;
+      } else {
+        populateSedeFilter();
+      }
       populateCargoFilter();
       renderHierarchyFilters();
       bindEvents();

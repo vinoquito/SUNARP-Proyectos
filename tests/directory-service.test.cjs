@@ -194,6 +194,20 @@ test('la cascada se activa solo con herencia del ámbito y omite el nodo raíz y
 });
 
 
+
+test('el selector Sede para TOTAL permanece oculto hasta que termina la carga agregada', () => {
+  const loadStart = frontendSource.indexOf('async function load(force = false)');
+  const loadEnd = frontendSource.indexOf('/* =====================================================', loadStart);
+  const load = frontendSource.slice(loadStart, loadEnd);
+  const hide = load.indexOf('if (state.hasTotalScope && state.authorizedSedes.length > 1)');
+  const request = load.indexOf("callServer('getDirectoryAuthorizedData')");
+  const show = load.indexOf('populateSedeFilter();', request);
+  assert.ok(hide >= 0 && request > hide && show > request);
+  assert.ok(load.slice(hide, request).includes('sedeWrapper.hidden = true'));
+  assert.ok(load.slice(request, show).includes('state.records = allSitesResult.records'));
+  assert.ok(load.slice(request, show).includes("state.activeSedeId = '__ALL__'"));
+});
+
 test('el ámbito TOTAL genera las opciones jerárquicas de todas las sedes sin seleccionar una', () => {
   const structures = [
     { id: 'A_UNIT', name: 'Unidad A', parent_id: '', sede_id: 'SEDE_A' },
