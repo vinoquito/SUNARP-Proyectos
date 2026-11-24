@@ -56,8 +56,60 @@ const api = sandbox.directoryTestApi;
 function extractFrontendFunction(functionName) {
   const start = frontendScript.indexOf('function ' + functionName + '(');
   if (start < 0) return '';
-  const next = frontendScript.indexOf('\n  function ', start + 1);
-  return frontendScript.slice(start, next < 0 ? frontendScript.length : next);
+  const bodyStart = frontendScript.indexOf('{', start);
+  if (bodyStart < 0) return '';
+  let depth = 0;
+  let quote = '';
+  let escaped = false;
+  let lineComment = false;
+  let blockComment = false;
+  for (let index = bodyStart; index < frontendScript.length; index++) {
+    const current = frontendScript[index];
+    const next = frontendScript[index + 1];
+    if (lineComment) {
+      if (current === '\n') lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (current === '*' && next === '/') {
+        blockComment = false;
+        index++;
+      }
+      continue;
+    }
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (current === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (current === quote) quote = '';
+      continue;
+    }
+    if (current === '/' && next === '/') {
+      lineComment = true;
+      index++;
+      continue;
+    }
+    if (current === '/' && next === '*') {
+      blockComment = true;
+      index++;
+      continue;
+    }
+    if (current === "'" || current === '"' || current === String.fromCharCode(96)) {
+      quote = current;
+      continue;
+    }
+    if (current === '{') depth++;
+    else if (current === '}') {
+      depth--;
+      if (depth === 0) return frontendScript.slice(start, index + 1);
+    }
+  }
+  return '';
 }
 const hierarchyIndexSource = extractFrontendFunction('_directoryBuildHierarchyClientIndex_');
 const hierarchySubtreeSource = extractFrontendFunction('_directoryMatchesHierarchySubtree_');
