@@ -749,6 +749,119 @@ test('getAccessUsers incluye cuentas por ámbito organizacional aunque no tengan
   assert.ok(!readRequests.includes('estructura_local'));
 });
 
+
+test('crear usuario, asignar rol y ámbito, listar por sede y bloquear duplicidad documental', () => {
+  const data = makeSecurityData();
+  data.ambitosAcceso = data.ambitosAcceso.filter(scope =>
+    !(scope.persona_id === 'PER_117' && scope.modulo_id === 'MOD_INFO_PERSONAL')
+  );
+  data.personas.push({
+    persona_id: 'PER_122',
+    nombres: 'Nueva',
+    apellidos: 'Editora',
+    correo_institucional: 'nueva.editora@sunarp.gob.pe'
+  });
+  data.sedes = [{ id: 'SEDE_CENTRAL', name: 'Sede Central', active: true }];
+  data.securityOrg = [{
+    id: 'EST_COMMS',
+    name: 'Unidad de Comunicaciones',
+    sede_id: 'SEDE_CENTRAL',
+    active: true
+  }];
+  data['servidores datos personales'] = [{
+    servidor_id: 'PER_122',
+    tipo_documento: 'D N I',
+    numero_documento: '12 345 678'
+  }];
+
+  const sandbox = createAdapterSandbox(data);
+  sandbox._accessLoadDocumentTypeRecords_ = () => [{ id: 'DNI', name: 'DNI' }];
+  sandbox._accessAddMetadata_ = (_sheet, record) => record;
+  sandbox._accessRunAudited_ = (_auth, _event, execute) => execute().value;
+  const documentLookups = [];
+  const originalFind = sandbox.SUNARPCore.findRecordsByFields;
+  sandbox.SUNARPCore.findRecordsByFields = (source, filters, options) => {
+    if (source.sheetName === 'servidores datos personales') {
+      documentLookups.push({ filters, options });
+      assert.equal(options.ignoreWhitespace, true);
+      const normalize = value => String(value || '').replace(/\s+/g, '').toUpperCase();
+      const records = data['servidores datos personales'].filter(record =>
+        normalize(record.numero_documento) === normalize(filters.numero_documento)
+      );
+      return { records, total: records.length };
+    }
+    return originalFind(source, filters, options);
+  };
+  sandbox.SUNARPCore.insertRecord = (source, record) => {
+    assert.equal(source.sheetName, 'Usuarios');
+    data.usuarios.push(record);
+    return { success: true };
+  };
+  sandbox.SUNARPCore.syncRecordsByKey = (
+    source, filters, keyFields, desiredRecords, activeField
+  ) => {
+    const key = source.sheetName === 'UsuarioRol' ? 'usuarioRol' : 'ambitosAcceso';
+    const matches = record => Object.keys(filters).every(field =>
+      String(record[field] || '') === String(filters[field] || '')
+    );
+    data[key] = (data[key] || []).filter(record => !matches(record));
+    desiredRecords.forEach(record => data[key].push(Object.assign({}, filters, record, {
+      [activeField]: true
+    })));
+    return { success: true, inserted: desiredRecords.length, updated: 0, deactivated: 0 };
+  };
+
+  const accountPayload = {
+    action: 'create',
+    persona_id: 'PER_122',
+    active: true,
+    tipo_documento: 'DNI',
+    numero_documento: '12345678'
+  };
+  const created = sandbox.saveAccessUser(accountPayload);
+  assert.equal(created.success, true);
+  assert.equal(data.usuarios.filter(user => user.persona_id === 'PER_122').length, 1);
+
+  const configured = sandbox.saveAccessUserConfiguration({
+    persona_id: 'PER_122',
+    accesos: [{
+      modulo_id: 'MOD_INFO_PERSONAL',
+      rol_id: 'ROL_EDITOR',
+      ambitos: [{
+        tipo_ambito_id: 'ESTRUCTURA_ORG',
+        referencia_id: 'EST_COMMS',
+        incluir_descendientes: 'NO'
+      }]
+    }]
+  });
+  assert.equal(configured.success, true);
+  assert.equal(data.usuarioRol.some(row =>
+    row.persona_id === 'PER_122' && row.modulo_id === 'MOD_INFO_PERSONAL' &&
+    row.rol_id === 'ROL_EDITOR' && row.active === true
+  ), true);
+  assert.equal(data.ambitosAcceso.some(row =>
+    row.persona_id === 'PER_122' && row.tipo_ambito_id === 'ESTRUCTURA_ORG' &&
+    row.referencia_id === 'EST_COMMS' && row.active === true
+  ), true);
+
+  const listed = sandbox.getAccessUsers({
+    sede_id: 'SEDE_CENTRAL',
+    rol_id: 'ROL_EDITOR',
+    page: 1,
+    pageSize: 10
+  });
+  assert.equal(listed.total, 1);
+  assert.equal(listed.items[0].persona_id, 'PER_122');
+  assert.equal(listed.items[0].sede_nombre, 'Sede Central');
+
+  assert.throws(
+    () => sandbox.saveAccessUser(accountPayload),
+    /ya tiene una cuenta registrada/i
+  );
+  assert.equal(data.usuarios.filter(user => user.persona_id === 'PER_122').length, 1);
+  assert.equal(documentLookups.length, 2);
+});
+
 test('la selección de filtros invalida RPC anteriores y consulta inmediatamente', () => {
   const start = accessUiSource.indexOf('function loadFilteredUsers()');
   const end = accessUiSource.indexOf('siteSelect.addEventListener', start);
