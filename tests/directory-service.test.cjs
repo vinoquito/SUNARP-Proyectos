@@ -184,8 +184,8 @@ test('el índice cliente conserva hijos directos, ancestros intermedios y separa
     'Gerencia General solo muestra sus hijos directos; Dirección Técnica Registral es otra raíz'
   );
   assert.deepEqual(
-    index.structurePathById.get('TD').map(node => node.id),
-    ['GG', 'UF_GD', 'TD']
+    Array.from(index.structurePathById.get('TD'), node => node.id).join(','),
+    'GG,UF_GD,TD'
   );
   assert.equal(index.recordsByLocal.get('LOCAL_A').length, 5);
   assert.equal(index.localOptionsById.has('LOCAL_B'), true);
@@ -1334,6 +1334,9 @@ test('getDirectorySiteData carga todas las asignaciones de una sola sede con pag
   ]);
   const vmContext = vm.createContext({});
   vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  vmContext.getIntranetDataSource = (sourceKey, sheetName, headerRow) => ({
+    sourceKey, sheetName, headerRow
+  });
   vmContext._directoryAuthorizationContext_ = () => authorization;
   vmContext._directoryLoadContext_ = options => {
     assert.equal(options.includeAssignments, false);
