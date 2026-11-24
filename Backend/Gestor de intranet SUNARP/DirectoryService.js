@@ -783,10 +783,11 @@ function _directorySortAssignments_(records, context) {
     if (hasStructureA !== hasStructureB) return hasStructureA ? -1 : 1;
     const pathDiff = _directoryCompareStructurePaths_(a.structurePath, b.structurePath);
     if (pathDiff) return pathDiff;
-    const localDiff = _directoryCompare_(a.localName, b.localName);
-    if (localDiff) return localDiff;
+    // El orden explícito de las adscripciones prevalece dentro de cada unidad,
+    // aunque la unidad tenga relaciones con más de un local físico.
     return _directoryCompare_(Number(a.record.order), Number(b.record.order)) ||
       _directoryCompare_(a.record.asignacion_id, b.record.asignacion_id) ||
+      _directoryCompare_(a.localName, b.localName) ||
       _directoryCompare_(a.record.apellidos, b.record.apellidos) ||
       _directoryCompare_(a.record.nombres, b.record.nombres);
   });

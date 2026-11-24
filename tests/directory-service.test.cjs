@@ -234,12 +234,16 @@ test('las asignaciones se agrupan por jerarquía, respetan order por unidad y co
     local_id: 'LOCAL_A',
     active: true
   }));
+  relations.push({
+    id: 'REL_GG_C', estructura_id: 'GG', local_id: 'LOCAL_C', active: true
+  });
   const context = {
     estructuraOrg: structures,
     estructuraLocal: relations,
     locales: [
       { id: 'LOCAL_A', name: 'Edificio administrativo Primavera', sede_id: 'SEDE_A', active: true },
-      { id: 'LOCAL_B', name: 'Local sin estructura', sede_id: 'SEDE_A', active: true }
+      { id: 'LOCAL_B', name: 'Local sin estructura', sede_id: 'SEDE_A', active: true },
+      { id: 'LOCAL_C', name: 'AAA Local secundario', sede_id: 'SEDE_A', active: true }
     ],
     sedes: [{ id: 'SEDE_A', name: 'Sede Central' }],
     cargos: []
@@ -251,12 +255,13 @@ test('las asignaciones se agrupan por jerarquía, respetan order por unidad y co
     { asignacion_id: 'UF_INT_01', estructura_local_id: 'REL_UF_INT', local_id: 'LOCAL_A', order: 1 },
     { asignacion_id: 'GG_02', estructura_local_id: 'REL_GG', local_id: 'LOCAL_A', order: 2 },
     { asignacion_id: 'GG_01', estructura_local_id: 'REL_GG', local_id: 'LOCAL_A', order: 1 },
+    { asignacion_id: 'GG_03', estructura_local_id: 'REL_GG_C', local_id: 'LOCAL_C', order: 3 },
     { asignacion_id: 'LOCAL_ONLY_01', estructura_local_id: '', local_id: 'LOCAL_B', order: 1 }
   ];
   const ordered = api.sortAssignments(records, context);
   assert.deepEqual(
     ordered.map(record => record.asignacion_id),
-    ['GG_01', 'GG_02', 'UF_INT_01', 'TD_01', 'AC_01', 'DTR_01', 'LOCAL_ONLY_01']
+    ['GG_01', 'GG_02', 'GG_03', 'UF_INT_01', 'TD_01', 'AC_01', 'DTR_01', 'LOCAL_ONLY_01']
   );
 });
 test('el servicio, el frontend y las pruebas Core tienen sintaxis válida', () => {
