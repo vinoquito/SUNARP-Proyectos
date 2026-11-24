@@ -1953,7 +1953,7 @@ test('Información de personal presenta filtros en cascada Sede, Local, Unidad o
   assert.match(directoryUiSource, /function getHierarchyFilterSets\(\)/);
   assert.match(directoryUiSource, /appendHierarchyLevel\('', 0\)/);
   assert.match(directoryUiSource, /recordLocalId = key\(record\.filter_local_id \|\| record\.local_id\)/);
-  assert.match(directoryUiSource, /recordSedeId = key\(record\.filter_sede_id \|\| record\.sede_id\)/);
+  assert.match(directoryUiSource, /recordSiteId = key\(record\.filter_sede_id \|\| record\.sede_id\)/);
 });
 
 test('los cambios de filtro calculan cargos sobre la instantánea local sin nuevas consultas', () => {
@@ -2042,13 +2042,13 @@ test('el bootstrap de accesos agrupa catálogos del libro de Seguridad en una le
 
 
 
-test('la jerarquía del Directorio permite seleccionar ancestros reales y muestra rutas completas', () => {
+test('la jerarquía del Directorio muestra los hijos directos con sus nombres reales', () => {
   const start = directoryUiSource.indexOf('function appendHierarchyLevel(');
   const end = directoryUiSource.indexOf('function renderHierarchyFilters()', start);
   assert.ok(start >= 0 && end > start);
   const implementation = directoryUiSource.slice(start, end);
-  assert.ok(implementation.includes('_directoryGetHierarchyDisplayPath_('));
-  assert.ok(implementation.includes('option.textContent = _directoryGetHierarchyDisplayPath_('));
+  assert.ok(implementation.includes('option.textContent = key(node.name)'));
+  assert.ok(directoryUiSource.includes('childrenByParent.get(key(parentId))'));
   assert.equal(implementation.includes('contextualIds'), false);
   assert.equal(implementation.includes('(contexto)'), false);
   assert.equal(implementation.includes('option.disabled'), false);
@@ -2094,15 +2094,21 @@ test('los filtros de Información de personal exigen seleccionar cada padre ante
   assert.ok(localFilter.includes('if (!siteId || siteId !== state.activeSedeId)'));
   assert.ok(localFilter.includes("updateFilterOptions(select, 'Selecciona primero una sede', [])"));
   assert.ok(localFilter.includes('select.disabled = true'));
-  assert.ok(localFilter.includes('record.filter_local_id || record.local_id'));
+  assert.ok(localFilter.includes('state.hierarchyIndex.localOptionsById.values()'));
   assert.equal(localFilter.includes('state.hierarchyPath'), false);
 
   const hierarchyStart = directoryUiSource.indexOf('function getHierarchyFilterSets()');
   const hierarchyEnd = directoryUiSource.indexOf('function getHierarchyNodes(parentId)', hierarchyStart);
   const hierarchy = directoryUiSource.slice(hierarchyStart, hierarchyEnd);
-  assert.ok(hierarchy.includes('if (!siteId || siteId !== state.activeSedeId || !localId)'));
+  assert.ok(hierarchy.includes('if (!siteId || siteId !== state.activeSedeId || !localId || !state.hierarchyIndex)'));
+  assert.ok(hierarchy.includes('state.hierarchyIndex.selectableByLocal.get(localId)'));
   assert.ok(hierarchy.includes('return { selectableIds: new Set() }'));
-  assert.ok(hierarchy.includes('_directoryBuildHierarchyFilterSets_('));
+
+  const nodesStart = directoryUiSource.indexOf('function getHierarchyNodes(parentId)');
+  const nodesEnd = directoryUiSource.indexOf('function getHierarchyLabel(', nodesStart);
+  const hierarchyNodes = directoryUiSource.slice(nodesStart, nodesEnd);
+  assert.ok(hierarchyNodes.includes('childrenByParent.get(key(parentId))'));
+  assert.ok(hierarchyNodes.includes('selectableIds.has(key(node.id))'));
 
   const renderStart = directoryUiSource.indexOf('function renderHierarchyFilters()');
   const renderEnd = directoryUiSource.indexOf('function hasAvailableFilterSelection(filter)', renderStart);

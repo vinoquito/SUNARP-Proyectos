@@ -53,15 +53,21 @@ vm.runInContext(
 
 const api = sandbox.directoryTestApi;
 
-const hierarchyIndexMatch = frontendScript.match(/function _directoryBuildHierarchyClientIndex_\\([\\s\\S]*?\\n  \\}/);
-const hierarchySubtreeMatch = frontendScript.match(/function _directoryMatchesHierarchySubtree_\\([\\s\\S]*?\\n  \\}/);
-assert.ok(hierarchyIndexMatch, 'El frontend debe precalcular sus índices jerárquicos por sede');
-assert.ok(hierarchySubtreeMatch, 'El frontend debe resolver pertenencia a subárbol mediante índice');
+function extractFrontendFunction(functionName) {
+  const start = frontendScript.indexOf('function ' + functionName + '(');
+  if (start < 0) return '';
+  const next = frontendScript.indexOf('\n  function ', start + 1);
+  return frontendScript.slice(start, next < 0 ? frontendScript.length : next);
+}
+const hierarchyIndexSource = extractFrontendFunction('_directoryBuildHierarchyClientIndex_');
+const hierarchySubtreeSource = extractFrontendFunction('_directoryMatchesHierarchySubtree_');
+assert.ok(hierarchyIndexSource, 'El frontend debe precalcular sus índices jerárquicos por sede');
+assert.ok(hierarchySubtreeSource, 'El frontend debe resolver pertenencia a subárbol mediante índice');
 const hierarchyIndexSandbox = vm.createContext({});
 vm.runInContext(
-  hierarchyIndexMatch[0] + '\\n' + hierarchySubtreeMatch[0] +
-    '\\nthis.buildIndex = _directoryBuildHierarchyClientIndex_;' +
-    '\\nthis.matchesSubtree = _directoryMatchesHierarchySubtree_;',
+  hierarchyIndexSource + '\n' + hierarchySubtreeSource +
+    '\nthis.buildIndex = _directoryBuildHierarchyClientIndex_;' +
+    '\nthis.matchesSubtree = _directoryMatchesHierarchySubtree_;',
   hierarchyIndexSandbox,
   { filename: 'DirectoryHierarchyIndex.js' }
 );
@@ -75,7 +81,7 @@ vm.runInContext(
   { filename: 'DirectoryHierarchyFilters.js' }
 );
 
-test('Gerencia General incluye sus dependencias reales y excluye la raíz independiente Dirección Técnica Registral', () => {
+test('Gerencia General incluye sus dependencias reales y mantiene Dirección Técnica Registral como raíz independiente', () => {
   const structures = [
     { id: 'GG', name: 'Gerencia General', parent_id: '', sede_id: 'SEDE_A', order: 1 },
     { id: 'UF_INT', name: 'UF Integridad', parent_id: 'GG', sede_id: 'SEDE_A', order: 1 },
