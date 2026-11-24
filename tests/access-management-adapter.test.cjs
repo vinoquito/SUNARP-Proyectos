@@ -1426,13 +1426,13 @@ test('el bootstrap difiere catálogos organizacionales y el editor los carga en 
   assert.equal(scopeCatalogs.estructuraLocal.length, 1);
   const scopeReads = reads.filter(batch => batch.includes('DIRECTORY:estructura_local'));
   assert.equal(scopeReads.length, 1, 'El editor agrupa las cinco fuentes organizacionales en una lectura.');
-  assert.deepEqual(scopeReads[0].sort(), [
+  assert.equal(JSON.stringify(Array.from(scopeReads[0]).sort()), JSON.stringify([
     'DIRECTORY:estructura_local',
     'DIRECTORY:locales',
     'DIRECTORY:tipos_estructura',
     'SECURITY:EstructuraOrg',
     'SECURITY:Sedes'
-  ].sort());
+  ].sort()));
 
   const callsBeforeSecondOpen = reads.length;
   const second = sandbox.getAccessScopeCatalogs();
