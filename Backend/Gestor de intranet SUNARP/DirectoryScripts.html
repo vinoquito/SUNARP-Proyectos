@@ -4,24 +4,47 @@
    * las unidades con asignaciones coincidentes y sus ancestros reales.
    * Los ancestros son seleccionables; nunca se crean opciones de contexto.
    */
-  function _directoryBuildHierarchyFilterSets_(records, structures, siteId, localId) {
+  function _directoryBuildHierarchyFilterSets_(records, structures, filterContract, siteId) {
     const site = String(siteId || '').trim();
-    const local = String(localId || '').trim();
+    const scopes = filterContract && Array.isArray(filterContract.scopes)
+      ? filterContract.scopes
+      : [];
+    const hasBroadSiteScope = scopes.some(scope =>
+      scope.type === 'TOTAL' ||
+      (scope.type === 'SEDE' && String(scope.referenceId || '').trim() === site)
+    );
+    const inheritedRoots = scopes
+      .filter(scope => scope.type === 'ESTRUCTURA_ORG' &&
+        scope.includeDescendants === true && String(scope.referenceId || '').trim())
+      .map(scope => String(scope.referenceId).trim());
+    if (!site || (!hasBroadSiteScope && !inheritedRoots.length)) return new Set();
+
     const structureMap = new Map((structures || []).map(node => [
       String(node.id || '').trim(), node
     ]));
+    const isDescendantOf = (structureId, rootId) => {
+      if (!structureId || !rootId || structureId === rootId) return false;
+      let current = structureMap.get(structureId);
+      const visited = new Set();
+      while (current) {
+        const id = String(current.id || '').trim();
+        if (!id || visited.has(id)) return false;
+        visited.add(id);
+        const parentId = String(current.parent_id || '').trim();
+        if (!parentId) return false;
+        if (parentId === rootId) return true;
+        current = structureMap.get(parentId) || null;
+      }
+      return false;
+    };
     const selectableIds = new Set();
-    if (!site || !local) return selectableIds;
     (records || []).forEach(record => {
       const recordSite = String(record.filter_sede_id || record.sede_id || '').trim();
-      const recordLocal = String(record.filter_local_id || record.local_id || '').trim();
       const structureId = String(record.estructura_id || '').trim();
-      if (recordSite !== site || recordLocal !== local || !structureId) return;
-      const structure = structureMap.get(structureId);
-      if (!structure || String(structure.sede_id || '').trim() !== site) return;
-      // Solo la estructura vinculada al registro autorizado es seleccionable.
-      // Sus ancestros reales sirven para resolver la ruta, no se agregan como opciones.
-      selectableIds.add(structureId);
+      if (recordSite !== site || !structureId || !structureMap.has(structureId)) return;
+      if (hasBroadSiteScope || inheritedRoots.some(rootId => isDescendantOf(structureId, rootId))) {
+        selectableIds.add(structureId);
+      }
     });
     return selectableIds;
   }
@@ -212,6 +235,7 @@ const DirectoryPage = (() => {
     table: null,
     hierarchyPath: [],
     hierarchyIndex: null,
+    hierarchySelectableIds: new Set(),
     activeSedeId: '',
     siteDataCache: new Map(),
     contextWarmupPromise: null,
@@ -351,19 +375,13 @@ const DirectoryPage = (() => {
     const excluded = excludedFilters || new Set();
     const elements = getElements();
     const siteId = elements.sedeFilter ? key(elements.sedeFilter.value) : '';
-    const localId = elements.localFilter ? key(elements.localFilter.value) : '';
     const cargoId = elements.cargoFilter ? key(elements.cargoFilter.value) : '';
     const selectedStructureId = !excluded.has('hierarchy') && state.hierarchyPath.length
       ? key(state.hierarchyPath[state.hierarchyPath.length - 1])
       : '';
-    const indexedLocalRecords = !excluded.has('local') && localId && state.hierarchyIndex
-      ? state.hierarchyIndex.recordsByLocal.get(localId) || []
-      : state.records;
-    return indexedLocalRecords.filter(record => {
+    return state.records.filter(record => {
       const recordSiteId = key(record.filter_sede_id || record.sede_id);
-      const recordLocalId = key(record.filter_local_id || record.local_id);
       if (!excluded.has('sede') && siteId && recordSiteId !== siteId) return false;
-      if (!excluded.has('local') && localId && recordLocalId !== localId) return false;
       if (!excluded.has('cargo') && cargoId && key(record.cargo_id) !== cargoId) return false;
       if (selectedStructureId && !_directoryMatchesHierarchySubtree_(
         record.estructura_id, selectedStructureId, state.hierarchyIndex
@@ -371,7 +389,6 @@ const DirectoryPage = (() => {
       return true;
     });
   }
-
 
   function getUsedCatalogItems(records, field, catalog) {
     const usedIds = new Set(
@@ -440,33 +457,14 @@ const DirectoryPage = (() => {
   }
 
   function populateLocalFilter() {
+    // La adscripción física no es un paso para obtener resultados. El backend
+    // ya devuelve la unión autorizada; Local nunca bloquea la carga ni la tabla.
     const select = getElements().localFilter;
     if (!select) return;
+    select.value = '';
+    select.disabled = true;
     const wrapper = select.closest('.sunarp-filter');
-    const siteId = key(getElements().sedeFilter && getElements().sedeFilter.value);
-    if (!siteId || siteId !== state.activeSedeId) {
-      updateFilterOptions(select, 'Los locales autorizados se cargan con la sede', []);
-      select.disabled = true;
-      if (wrapper) wrapper.hidden = true;
-      return;
-    }
-    const locals = state.hierarchyIndex
-      ? Array.from(state.hierarchyIndex.localOptionsById.values())
-      : [];
-    locals.sort(sortByName);
-    updateFilterOptions(
-      select,
-      locals.length ? 'Todos los locales autorizados' : 'No hay locales autorizados en esta sede',
-      locals
-    );
-    if (locals.length === 1) {
-      select.value = key(locals[0].id);
-      select.disabled = true;
-      if (wrapper) wrapper.hidden = true;
-    } else {
-      select.disabled = locals.length === 0;
-      if (wrapper) wrapper.hidden = locals.length <= 1;
-    }
+    if (wrapper) wrapper.hidden = true;
   }
 
   function populateCargoFilter() {
@@ -474,10 +472,11 @@ const DirectoryPage = (() => {
     if (!select) return;
     const elements = getElements();
     const siteId = key(elements.sedeFilter && elements.sedeFilter.value);
-    const localId = key(elements.localFilter && elements.localFilter.value);
+    const wrapper = select.closest('.sunarp-filter');
     if (!siteId || siteId !== state.activeSedeId) {
-      updateFilterOptions(select, 'Los cargos se cargan con la información autorizada', []);
+      updateFilterOptions(select, 'Cargos de la información autorizada', []);
       select.disabled = true;
+      if (wrapper) wrapper.hidden = true;
       return;
     }
     const options = new Map();
@@ -487,50 +486,67 @@ const DirectoryPage = (() => {
       options.set(id, { id, name: key(record.cargo_name) || id });
     });
     const cargos = Array.from(options.values()).sort(sortByName);
-    updateFilterOptions(
-      select,
-      cargos.length
-        ? (localId ? 'Todos los cargos de este local' : 'Todos los cargos autorizados')
-        : 'No hay cargos para esta selección',
-      cargos
-    );
-    select.disabled = cargos.length === 0;
+    updateFilterOptions(select, 'Todos los cargos autorizados', cargos);
+    select.disabled = cargos.length <= 1;
+    if (wrapper) wrapper.hidden = cargos.length <= 1;
   }
 
   function getHierarchyFilterSets() {
-    const elements = getElements();
-    const siteId = key(elements.sedeFilter && elements.sedeFilter.value);
-    const localId = key(elements.localFilter && elements.localFilter.value);
-    const index = state.hierarchyIndex;
-    if (!siteId || siteId !== state.activeSedeId || !index) {
-      return { selectableIds: new Set() };
-    }
-    if (localId) {
-      return { selectableIds: index.selectableByLocal.get(localId) || new Set() };
-    }
-    const selectableIds = new Set();
-    index.selectableByLocal.forEach(ids => ids.forEach(id => selectableIds.add(key(id))));
-    return { selectableIds };
+    return { selectableIds: state.hierarchySelectableIds || new Set() };
   }
 
   function getHierarchyNodes(parentId) {
     const selectableIds = getHierarchyFilterSets().selectableIds;
     const index = state.hierarchyIndex;
-    if (!index) return [];
+    if (!index || !selectableIds.size) return [];
     const selectedParentId = key(parentId);
-    const candidates = selectedParentId
-      ? (index.childrenByParent.get(selectedParentId) || [])
-      : Array.from(index.structureById.values());
-    return candidates.filter(node => {
-      const id = key(node.id);
-      const nodeParentId = key(node.parent_id);
-      if (!selectableIds.has(id)) return false;
-      // Si el padre no tiene registros autorizados, el nodo real se presenta
-      // como raíz visible; no se crea ni se muestra un ancestro contextual.
-      return selectedParentId
-        ? nodeParentId === selectedParentId
-        : !selectableIds.has(nodeParentId);
-    });
+    const contract = state.catalogs && state.catalogs.filterContract;
+    const scopes = contract && Array.isArray(contract.scopes) ? contract.scopes : [];
+    const activeSiteId = key(state.activeSedeId);
+    const broadScope = scopes.some(scope =>
+      scope.type === 'TOTAL' ||
+      (scope.type === 'SEDE' && key(scope.referenceId) === activeSiteId)
+    );
+    const inheritedRoots = scopes.filter(scope =>
+      scope.type === 'ESTRUCTURA_ORG' &&
+      scope.includeDescendants === true &&
+      key(scope.referenceId)
+    ).map(scope => key(scope.referenceId));
+    const result = [];
+    const seen = new Set();
+    const collectChildren = parent => {
+      const children = index.childrenByParent.get(key(parent)) || [];
+      children.forEach(node => {
+        const id = key(node.id);
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        if (selectableIds.has(id)) {
+          result.push(node);
+        } else {
+          // Los nodos intermedios sin asignaciones no se ofrecen como opciones.
+          collectChildren(id);
+        }
+      });
+    };
+    if (selectedParentId) {
+      if (!selectableIds.has(selectedParentId)) return [];
+      collectChildren(selectedParentId);
+    } else if (broadScope) {
+      const roots = Array.from(index.structureById.values()).filter(node => {
+        const parent = key(node.parent_id);
+        return !parent || !index.structureById.has(parent);
+      });
+      roots.forEach(node => {
+        const id = key(node.id);
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        if (selectableIds.has(id)) result.push(node);
+        else collectChildren(id);
+      });
+    } else {
+      inheritedRoots.forEach(rootId => collectChildren(rootId));
+    }
+    return result;
   }
 
   function getHierarchyLabel(nodes, level) {
@@ -652,11 +668,8 @@ const DirectoryPage = (() => {
     container.replaceChildren();
     const elements = getElements();
     const siteId = key(elements.sedeFilter && elements.sedeFilter.value);
-    const localId = key(elements.localFilter && elements.localFilter.value);
-    const index = state.hierarchyIndex;
-    const hasAuthorizedRecords = Boolean(index && index.recordsByLocal.size > 0);
-    const validLocal = Boolean(index && (!localId || index.recordsByLocal.has(localId)));
-    if (!siteId || siteId !== state.activeSedeId || !hasAuthorizedRecords || !validLocal) {
+    const selectableIds = getHierarchyFilterSets().selectableIds;
+    if (!siteId || siteId !== state.activeSedeId || selectableIds.size <= 1) {
       state.hierarchyPath = [];
       container.hidden = true;
       return;
@@ -677,28 +690,12 @@ const DirectoryPage = (() => {
       return !selected || (state.catalogs.cargos || []).some(item => key(item.id) === selected);
     }
     if (filter === 'hierarchy') {
-      const structures = state.hierarchyIndex
-        ? state.hierarchyIndex.structureById
-        : new Map();
       const selectableIds = getHierarchyFilterSets().selectableIds;
-      return state.hierarchyPath.every((id, index) => {
-        const node = structures.get(key(id));
-        if (!node || !selectableIds.has(key(id))) return false;
-        if (index === 0) return !selectableIds.has(key(node.parent_id));
-        return key(node.parent_id) === key(state.hierarchyPath[index - 1]);
-      });
+      return state.hierarchyPath.every(id => selectableIds.has(key(id)));
     }
     return true;
   }
 
-  /**
-   * Recalcula los filtros relacionados cuando cambia
-   * cualquiera de ellos.
-   *
-   * Se conserva el filtro que acaba de modificar el usuario.
-   * Los demás se limpian cuando dejan de tener registros
-   * compatibles con las nuevas selecciones.
-   */
   function refreshDependentFilters(changedFilter) {
     const startedAt = performance.now();
     if (changedFilter === 'sede') return;
@@ -710,8 +707,7 @@ const DirectoryPage = (() => {
       });
       return;
     }
-    if (changedFilter === 'local') state.hierarchyPath = [];
-    if (['local', 'hierarchy'].includes(changedFilter)) {
+    if (changedFilter === 'hierarchy') {
       const elements = getElements();
       if (elements.cargoFilter) elements.cargoFilter.value = '';
     }
@@ -729,7 +725,6 @@ const DirectoryPage = (() => {
       totalMs: Math.round(performance.now() - startedAt)
     });
   }
-
 
   function getFilteredRecords() {
     return getRecordsForFilters(new Set());
@@ -1870,20 +1865,15 @@ async function deleteDirectoryEntry(record) {
   function bindEvents() {
     if (state.eventsBound) return;
     const elements = getElements();
-    if (!elements.sedeFilter || !elements.localFilter || !elements.cargoFilter) return;
-
+    if (!elements.sedeFilter || !elements.cargoFilter) return;
     elements.sedeFilter.addEventListener('change', () => {
       loadSelectedSede(elements.sedeFilter.value);
-    });
-    elements.localFilter.addEventListener('change', () => {
-      refreshDependentFilters('local');
     });
     elements.cargoFilter.addEventListener('change', () => {
       refreshDependentFilters('cargo');
     });
     state.eventsBound = true;
   }
-
 
   function clearDirectoryTable(message) {
     const container = getElements().table;
@@ -1956,6 +1946,7 @@ async function deleteDirectoryEntry(record) {
       state.records = [];
       state.hierarchyPath = [];
       state.hierarchyIndex = null;
+      state.hierarchySelectableIds = new Set();
       state.catalogs = { sedes: state.authorizedSedes || [] };
       if (elements.localFilter) elements.localFilter.value = '';
       if (elements.cargoFilter) elements.cargoFilter.value = '';
@@ -2021,6 +2012,12 @@ async function deleteDirectoryEntry(record) {
         state.records,
         state.catalogs.estructuraOrg || []
       );
+      state.hierarchySelectableIds = _directoryBuildHierarchyFilterSets_(
+        state.records,
+        state.catalogs.estructuraOrg || [],
+        state.catalogs.filterContract,
+        selectedSedeId
+      );
       const clientIndexMs = performance.now() - indexStartedAt;
 
       const filtersStartedAt = performance.now();
@@ -2056,6 +2053,7 @@ async function deleteDirectoryEntry(record) {
       state.activeSedeId = '';
       state.records = [];
       state.hierarchyIndex = null;
+      state.hierarchySelectableIds = new Set();
       state.catalogs = { sedes: state.authorizedSedes || [] };
       elements.sedeFilter.value = '';
       populateLocalFilter();
@@ -2106,6 +2104,7 @@ async function deleteDirectoryEntry(record) {
       state.catalogs = { sedes: state.authorizedSedes };
       state.records = [];
       state.hierarchyIndex = null;
+      state.hierarchySelectableIds = new Set();
       state.activeSedeId = '';
       state.hierarchyPath = [];
       state.siteDataCache.clear();

@@ -151,13 +151,48 @@ test('los filtros muestran solo estructuras con asignaciones autorizadas y manti
     { estructura_id: 'DTR', filter_sede_id: 'SEDE_A', filter_local_id: 'LOCAL_A' },
     { estructura_id: 'OTHER_SITE', filter_sede_id: 'SEDE_B', filter_local_id: 'LOCAL_B' }
   ];
-  const ids = hierarchySandbox.buildHierarchyFilterSets(records, structures, 'SEDE_A', 'LOCAL_A');
+  const ids = hierarchySandbox.buildHierarchyFilterSets(records, structures, { scopes: [{ type: 'SEDE', referenceId: 'SEDE_A', includeDescendants: false }] }, 'SEDE_A');
   assert.deepEqual([...ids].sort(), ['AC', 'DTR', 'GG', 'TD', 'UF_INT']);
   assert.equal(ids.has('UF_GD'), false, 'Una dependencia sin asignaciones propias no se agrega como opción contextual');
   assert.equal(ids.has('DTR'), true, 'La raíz independiente puede aparecer en el nivel raíz si tiene asignaciones propias');
   assert.equal(structures.find(node => node.id === 'DTR').parent_id, '', 'Dirección Técnica Registral no pertenece a Gerencia General');
   assert.equal(ids.has('OTHER_SITE'), false);
 });
+
+test('la cascada se activa solo con herencia del ámbito y omite el nodo raíz ya autorizado', () => {
+  const structures = [
+    { id: 'SITE_ROOT', parent_id: '', sede_id: 'SEDE_A' },
+    { id: 'ZR_I', parent_id: 'SITE_ROOT', sede_id: 'SEDE_A' },
+    { id: 'AREA_A', parent_id: 'ZR_I', sede_id: 'SEDE_A' },
+    { id: 'AREA_B', parent_id: 'ZR_I', sede_id: 'SEDE_A' },
+    { id: 'SIBLING', parent_id: 'SITE_ROOT', sede_id: 'SEDE_A' }
+  ];
+  const records = [
+    { estructura_id: 'ZR_I', filter_sede_id: 'SEDE_A' },
+    { estructura_id: 'AREA_A', filter_sede_id: 'SEDE_A' },
+    { estructura_id: 'AREA_B', filter_sede_id: 'SEDE_A' },
+    { estructura_id: 'SIBLING', filter_sede_id: 'SEDE_A' }
+  ];
+  const inherited = hierarchySandbox.buildHierarchyFilterSets(
+    records, structures,
+    { scopes: [{ type: 'ESTRUCTURA_ORG', referenceId: 'ZR_I', includeDescendants: true }] },
+    'SEDE_A'
+  );
+  assert.deepEqual([...inherited].sort(), ['AREA_A', 'AREA_B']);
+  const fixedUnit = hierarchySandbox.buildHierarchyFilterSets(
+    records, structures,
+    { scopes: [{ type: 'ESTRUCTURA_ORG', referenceId: 'AREA_A', includeDescendants: false }] },
+    'SEDE_A'
+  );
+  assert.deepEqual([...fixedUnit], []);
+  const wholeSite = hierarchySandbox.buildHierarchyFilterSets(
+    records, structures,
+    { scopes: [{ type: 'SEDE', referenceId: 'SEDE_A', includeDescendants: false }] },
+    'SEDE_A'
+  );
+  assert.deepEqual([...wholeSite].sort(), ['AREA_A', 'AREA_B', 'SIBLING', 'ZR_I']);
+});
+
 test('el índice cliente conserva rutas reales sin convertir ancestros en opciones seleccionables', () => {
   const structures = [
     { id: 'GG', name: 'Gerencia General', parent_id: '', sede_id: 'SEDE_A', order: 1 },
@@ -208,10 +243,10 @@ test('los filtros jerárquicos excluyen estructuras de otras sedes y locales', (
     { estructura_id: 'UNIT_B', filter_sede_id: 'SEDE_B', filter_local_id: 'LOCAL_B' },
     { estructura_id: 'UNIT_A', filter_sede_id: 'SEDE_A', filter_local_id: 'LOCAL_OTHER' }
   ];
-  const ids = hierarchySandbox.buildHierarchyFilterSets(records, structures, 'SEDE_A', 'LOCAL_A');
+  const ids = hierarchySandbox.buildHierarchyFilterSets(records, structures, { scopes: [{ type: 'SEDE', referenceId: 'SEDE_A', includeDescendants: false }] }, 'SEDE_A');
   assert.deepEqual([...ids].sort(), ['UNIT_A']);
   assert.equal(ids.has('ROOT_A'), false, 'El ancestro sin asignaciones no se ofrece como opción contextual');
-  assert.deepEqual([...hierarchySandbox.buildHierarchyFilterSets(records, structures, '', 'LOCAL_A')], []);
+  assert.deepEqual([...hierarchySandbox.buildHierarchyFilterSets(records, structures, { scopes: [{ type: 'LOCAL', referenceId: 'LOCAL_A', includeDescendants: false }] }, 'SEDE_A')], []);
 });
 
 test('la interfaz limita cada selector a hijos directos y no presenta opciones contextuales artificiales', () => {
