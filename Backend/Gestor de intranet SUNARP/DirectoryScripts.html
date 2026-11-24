@@ -212,7 +212,8 @@
 
 const DirectoryPage = (() => {
 
-  const DIRECTORY_SITE_CLIENT_CACHE_TTL_MS = 55000;
+  const DIRECTORY_SITE_CLIENT_CACHE_TTL_MS = 600000;
+  const DIRECTORY_SITE_CLIENT_CACHE_MAX_ENTRIES = 5;
 
   const state = {
     records: [],
@@ -731,36 +732,52 @@ const DirectoryPage = (() => {
     return getRecordsForFilters(new Set());
   }
 
+  function getStructureDisplayParts(record) {
+    const path = key(record && record.estructura_path);
+    const names = path
+      ? path.split(' / ').map(item => item.trim()).filter(Boolean)
+      : [key(record && record.estructura_name)].filter(Boolean);
+    return {
+      primary: names[0] || '—',
+      secondary: names.slice(1).join(' / ')
+    };
+  }
+
+
+  function renderStackedTableCell(primaryValue, secondaryValue) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'directory-table-cell-stack';
+    const primary = document.createElement('div');
+    primary.textContent = key(primaryValue) || '—';
+    wrapper.appendChild(primary);
+    const secondaryText = key(secondaryValue);
+    if (secondaryText) {
+      const secondary = document.createElement('small');
+      secondary.textContent = secondaryText;
+      wrapper.appendChild(secondary);
+    }
+    return wrapper;
+  }
+
+
   function prepareRows(records) {
-
-    return records.map(record => ({
-
-      ...record,
-
-      servidor: [
-        record.nombres,
-        record.apellidos
-      ].filter(Boolean).join(' '),
-
-      anexo_display:
-        record.anexo === '' ||
-        record.anexo === null ||
-        record.anexo === undefined
-          ? '—'
-          : String(record.anexo),
-
-      sede_display: record.sede_name || '—',
-
-      dependencia_display: record.estructura_name || '—',
-
-      local_display: record.local_name || '—',
-
-      estado_display: isActive(record)
-        ? 'Activo'
-        : 'Inactivo'
-
-    }));
-
+    return records.map(record => {
+      const structureDisplay = getStructureDisplayParts(record);
+      return {
+        ...record,
+        servidor: [record.nombres, record.apellidos].filter(Boolean).join(' '),
+        anexo_display:
+          record.anexo === '' || record.anexo === null || record.anexo === undefined
+            ? '—'
+            : String(record.anexo),
+        sede_display: record.sede_name || '—',
+        local_display: record.local_name || '—',
+        dependencia_display: record.estructura_path || record.estructura_name || '—',
+        dependencia_primary_display: structureDisplay.primary,
+        dependencia_secondary_display: structureDisplay.secondary,
+        estado_display: isActive(record) ? 'Activo' : 'Inactivo'
+      };
+    });
   }
 
 
@@ -802,10 +819,30 @@ const DirectoryPage = (() => {
       columns: [
         { key: 'servidor', label: 'Nombre', searchable: true },
         { key: 'cargo_name', label: 'Cargo', searchable: true },
-        { key: 'sede_display', label: 'Sede', searchable: true },
-        { key: 'dependencia_display', label: 'Órgano / Unidad', searchable: true },
+        {
+          key: 'sede_display',
+          label: 'Sede',
+          searchable: true,
+          format: (_value, record) => [record.sede_display, record.local_display].filter(Boolean).join(' '),
+          render: (_value, record) => renderStackedTableCell(
+            record.sede_display,
+            record.local_display
+          )
+        },
+        {
+          key: 'dependencia_display',
+          label: 'Órgano / Unidad',
+          searchable: true,
+          format: (_value, record) => [
+            record.dependencia_primary_display,
+            record.dependencia_secondary_display
+          ].filter(Boolean).join(' '),
+          render: (_value, record) => renderStackedTableCell(
+            record.dependencia_primary_display,
+            record.dependencia_secondary_display
+          )
+        },
         { key: 'anexo_display', label: 'Anexo', align: 'center', searchable: true },
-        { key: 'local_display', label: 'Local', searchable: true },
         {
           key: 'active',
           label: 'Estado',
@@ -1855,6 +1892,34 @@ async function deleteDirectoryEntry(record) {
   }
 
 
+  function getSiteClientCacheData(sedeId) {
+    const id = key(sedeId);
+    const entry = state.siteDataCache.get(id);
+    if (!entry) return null;
+    if (!entry.data || Date.now() - entry.loadedAt >= DIRECTORY_SITE_CLIENT_CACHE_TTL_MS) {
+      state.siteDataCache.delete(id);
+      return null;
+    }
+    // LRU: actualizar la posición sin renovar loadedAt. La vigencia se mide
+    // desde la respuesta del servidor y no se prolonga por cada visita.
+    state.siteDataCache.delete(id);
+    state.siteDataCache.set(id, entry);
+    return entry.data;
+  }
+
+
+  function rememberSiteClientCacheData(sedeId, data) {
+    const id = key(sedeId);
+    if (!id || !data) return;
+    state.siteDataCache.delete(id);
+    state.siteDataCache.set(id, { data, loadedAt: Date.now() });
+    while (state.siteDataCache.size > DIRECTORY_SITE_CLIENT_CACHE_MAX_ENTRIES) {
+      const oldestId = state.siteDataCache.keys().next().value;
+      state.siteDataCache.delete(oldestId);
+    }
+  }
+
+
   async function loadSelectedSede(sedeId, force = false) {
     const selectedSedeId = key(sedeId);
     const elements = getElements();
@@ -1898,14 +1963,9 @@ async function deleteDirectoryEntry(record) {
     clearDirectoryTable('Cargando información de la sede seleccionada...');
 
     try {
-      const cacheEntry = state.siteDataCache.get(selectedSedeId);
-      const useClientCache = Boolean(
-        !force &&
-        cacheEntry &&
-        cacheEntry.data &&
-        Date.now() - cacheEntry.loadedAt < DIRECTORY_SITE_CLIENT_CACHE_TTL_MS
-      );
-      let result = useClientCache ? cacheEntry.data : null;
+      const cachedData = force ? null : getSiteClientCacheData(selectedSedeId);
+      const useClientCache = Boolean(cachedData);
+      let result = useClientCache ? cachedData : null;
       let roundTripMs = 0;
       if (!result) {
         const requestStartedAt = performance.now();
@@ -1918,10 +1978,7 @@ async function deleteDirectoryEntry(record) {
       }
 
       const clientProcessingStartedAt = performance.now();
-      state.siteDataCache.set(selectedSedeId, {
-        data: result,
-        loadedAt: Date.now()
-      });
+      if (!useClientCache) rememberSiteClientCacheData(selectedSedeId, result);
       state.records = result.records;
       state.catalogs = result.catalogs;
       state.activeSedeId = selectedSedeId;

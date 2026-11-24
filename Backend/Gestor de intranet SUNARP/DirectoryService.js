@@ -38,10 +38,12 @@ const DIRECTORY_SERVICE_CONFIG = Object.freeze({
 
 // Core invalida por generación las escrituras propias. Las hojas y fórmulas
 // editadas externamente (incluido IMPORTRANGE) no publican esa generación;
-// limitar las instantáneas derivadas a 60 s acota su ventana de obsolescencia.
-const DIRECTORY_DATA_CACHE_TTL = 60;
-const DIRECTORY_CATALOG_CACHE_TTL = 60;
-const DIRECTORY_SITE_SNAPSHOT_CACHE_TTL = 60;
+// los TTL acotan la obsolescencia externa y permiten reutilizar sedes entre
+// cambios de filtro. Las escrituras Core invalidan estas entradas por fuente.
+const DIRECTORY_DATA_CACHE_TTL = 300;
+const DIRECTORY_CATALOG_CACHE_TTL = 300;
+const DIRECTORY_SITE_SNAPSHOT_CACHE_TTL = 600;
+const DIRECTORY_ASSIGNMENT_QUERY_CACHE_TTL = 300;
 
 const DIRECTORY_REQUIRED_HEADERS = Object.freeze({
   personas: ['persona_id', 'nombres', 'apellidos', 'correo_institucional'],
@@ -185,11 +187,41 @@ function _directoryResolveDocumentTypesSource_() {
   return source;
 }
 
+function _directoryLoadAuthorizationCatalog_() {
+  // La autorización conserva sus fuentes propias: Sedes y EstructuraOrg
+  // proceden de Seguridad; los locales proceden de Directorios telefónicos.
+  // Se agrupan en una sola lectura Core y se reutilizan 5 minutos.
+  const catalogs = SUNARPCore.listRecordsFromSourcesCached([
+    {
+      key: 'sedes',
+      source: getIntranetDataSource('SECURITY', 'Sedes', 1),
+      requiredHeaders: ['id', 'name']
+    },
+    {
+      key: 'estructuraOrg',
+      source: getIntranetDataSource('SECURITY', 'EstructuraOrg', 1),
+      requiredHeaders: ['id', 'name', 'parent_id', 'sede_id']
+    },
+    {
+      key: 'locales',
+      source: _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.locales),
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.locales
+    }
+  ], DIRECTORY_CATALOG_CACHE_TTL);
+
+  return {
+    sedes: (catalogs.sedes || []).filter(_directoryIsActive_),
+    estructuraOrg: (catalogs.estructuraOrg || []).filter(_directoryIsActive_),
+    locales: (catalogs.locales || []).filter(_directoryIsActive_)
+  };
+}
+
+
 function _directoryAuthorizationContext_(permissionCode) {
   const moduleId = 'MOD_INFO_PERSONAL';
   const requiredPermissionCode = permissionCode || 'INFORMACION_PERSONAL_VER';
   const auth = requirePermission_(requiredPermissionCode, moduleId);
-  const catalog = _accessOrgCatalog_();
+  const catalog = _directoryLoadAuthorizationCatalog_();
 
   return {
     auth: auth,
@@ -517,28 +549,17 @@ function _directoryLoadContextFromSheets_(options) {
     });
   }
 
-  // Las fuentes operativas y los catálogos usan TTL máximo de 60 s para
-  // detectar cambios externos en hojas y fórmulas que no invalidan Core.
-  // Las réplicas conservan sus dependencias maestras declaradas en AppConfig.
-  const operationalRequests = requests.filter(request =>
-    !(request.source.dependencies || []).length &&
-    request.source.sheetName !== DIRECTORY_SERVICE_CONFIG.sheets.documentTypes
-  );
-  const catalogRequests = requests.filter(request =>
-    (request.source.dependencies || []).length > 0 ||
-    request.source.sheetName === DIRECTORY_SERVICE_CONFIG.sheets.documentTypes
-  );
-  const context = {};
-  if (operationalRequests.length) {
-    Object.assign(context, SUNARPCore.listRecordsFromSourcesCached(
-      operationalRequests, DIRECTORY_DATA_CACHE_TTL
-    ));
-  }
-  if (catalogRequests.length) {
-    Object.assign(context, SUNARPCore.listRecordsFromSourcesCached(
-      catalogRequests, DIRECTORY_CATALOG_CACHE_TTL
-    ));
-  }
+  // Todas las fuentes de Directorios telefónicos comparten el mismo TTL y
+  // se agrupan en una sola llamada Core. Esto abre el archivo una vez y lee
+  // sus pestañas juntas, en lugar de abrirlo por separado para datos y
+  // catálogos aunque ambos TTL fueran idénticos.
+  const context = requests.length
+    ? SUNARPCore.listRecordsFromSourcesCached(requests, Math.min(
+        DIRECTORY_DATA_CACHE_TTL,
+        DIRECTORY_CATALOG_CACHE_TTL
+      ))
+    : {};
+
   if (!Array.isArray(context.personas)) context.personas = [];
   if (!Array.isArray(context.datosPersonales)) context.datosPersonales = [];
   if (!Array.isArray(context.asignaciones)) context.asignaciones = [];
@@ -1157,8 +1178,8 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
       searchFields: search ? ['condicion_cargo', 'anexo', 'observaciones'] : [],
       searchAny,
       authorization: authorizationForQuery,
-      cacheSeconds: 60,
-      candidateCacheSeconds: 60,
+      cacheSeconds: DIRECTORY_ASSIGNMENT_QUERY_CACHE_TTL,
+      candidateCacheSeconds: DIRECTORY_ASSIGNMENT_QUERY_CACHE_TTL,
       schemaVersion: 'directory-assignment-query-v1',
       sortBy: options.sortBy || 'order',
       sortDirection: options.sortDirection || 'asc'
@@ -1210,32 +1231,60 @@ function _directoryExecuteAssignmentQuery_(context, authorization, options, idFi
  * de personas y un único mapa de relaciones. La consulta de personas proyecta
  * únicamente las columnas de presentación necesarias para la tabla principal.
  */
-function _directoryEnrichAssignmentRecords_(assignments, context, relationMap) {
+function _directoryEnrichAssignmentRecords_(assignments, context, relationMap, diagnostics) {
   const records = Array.isArray(assignments) ? assignments : [];
-  if (!records.length) return [];
+  if (!records.length) {
+    if (diagnostics) Object.assign(diagnostics, {
+      peopleSource: 'none', uniquePeople: 0, peopleRowsLoaded: 0
+    });
+    return [];
+  }
   const personaIds = Array.from(new Set(records.map(item =>
     _directoryKey_(item.persona_id)
   ).filter(Boolean)));
-  const peopleResult = personaIds.length
-    ? SUNARPCore.findRecordsByFields(
-        _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
-        { persona_id: personaIds },
-        {
-          searchField: 'persona_id',
-          requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas,
-          projectionFields: DIRECTORY_REQUIRED_HEADERS.personas
-        }
-      )
-    : { records: [], total: 0 };
-  const people = peopleResult.records || [];
-  if (Number(peopleResult.total) !== personaIds.length || people.length !== personaIds.length) {
-    throw new Error('Una o más asignaciones visibles no tienen una persona válida en el directorio.');
+  const preloadedPeople = Array.isArray(context.personas) ? context.personas : [];
+  const preloadedPeopleMap = _directoryCreateMap_(preloadedPeople, 'persona_id');
+  const canUsePreloadedPeople = personaIds.every(id => preloadedPeopleMap.has(id));
+
+  let peopleMap;
+  let peopleSource;
+  if (canUsePreloadedPeople) {
+    if (preloadedPeopleMap.size !== preloadedPeople.length) {
+      throw new Error('La tabla personas contiene identificadores duplicados o incompletos.');
+    }
+    peopleMap = preloadedPeopleMap;
+    peopleSource = 'grouped-context';
+  } else {
+    // Compatibilidad para consultas puntuales que no cargan el catálogo de
+    // personas completo: una única búsqueda proyectada, nunca una búsqueda
+    // por asignación.
+    const peopleResult = personaIds.length
+      ? SUNARPCore.findRecordsByFields(
+          _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+          { persona_id: personaIds },
+          {
+            searchField: 'persona_id',
+            requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas,
+            projectionFields: DIRECTORY_REQUIRED_HEADERS.personas
+          }
+        )
+      : { records: [], total: 0 };
+    const people = peopleResult.records || [];
+    if (Number(peopleResult.total) !== personaIds.length || people.length !== personaIds.length) {
+      throw new Error('Una o más asignaciones visibles no tienen una persona válida en el directorio.');
+    }
+    peopleMap = _directoryCreateMap_(people, 'persona_id');
+    if (peopleMap.size !== personaIds.length) {
+      throw new Error('El conjunto de personas contiene identificadores duplicados o incompletos.');
+    }
+    peopleSource = 'projected-batch';
   }
 
-  const peopleMap = _directoryCreateMap_(people, 'persona_id');
-  if (peopleMap.size !== personaIds.length) {
-    throw new Error('El conjunto de personas contiene identificadores duplicados o incompletos.');
-  }
+  if (diagnostics) Object.assign(diagnostics, {
+    peopleSource,
+    uniquePeople: personaIds.length,
+    peopleRowsLoaded: preloadedPeople.length
+  });
   const resolvedRelationMap = relationMap ||
     _directoryCreateMap_(_directoryBuildRelations_(context, false));
   return records.map(item => {
@@ -1499,10 +1548,6 @@ function _directoryGetSiteDataCacheSources_() {
   const sources = directorySheetKeys.map(key =>
     _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets[key])
   );
-  sources.push(_directorySource_(
-    DIRECTORY_SERVICE_CONFIG.sheets.documentTypes,
-    'MASTER_DATA'
-  ));
   [
     'Sedes', 'EstructuraOrg', 'Usuarios', 'Modulos', 'Roles',
     'UsuarioRol', 'Permisos', 'RolPermiso', 'AmbitosAcceso'
@@ -1561,8 +1606,9 @@ function getDirectorySiteData(sedeId) {
   const authorizationElapsed = Date.now() - authorizationStartedAt;
   const siteContextOptions = {
     includePersonalData: false,
-    includePeople: false,
+    includePeople: true,
     includeAssignments: false,
+    includeDocumentTypes: false,
     validateSnapshot: false
   };
 
@@ -1597,7 +1643,7 @@ function getDirectorySiteData(sedeId) {
       typeof SUNARPCore.getOrBuildCachedValue === 'function' &&
       _directoryKey_(authorization.auth && authorization.auth.personaId)) {
     const authorizationFingerprint = _directoryAuthorizationCacheFingerprint_(authorization);
-    const cacheKey = 'directory-site-snapshot:v3:' +
+    const cacheKey = 'directory-site-snapshot:v4:' +
       _directoryKey_(authorization.auth.personaId) + ':' +
       selectedSedeId + ':' + authorizationFingerprint;
     const cacheLookupStartedAt = Date.now();
@@ -1616,6 +1662,7 @@ function getDirectorySiteData(sedeId) {
     console.log('[DirectoryService] Site snapshot cache:', JSON.stringify({
       cacheHit: siteSnapshotCacheHit,
       cacheStored: siteSnapshotCacheStored,
+      cacheReason: cached && cached.cacheReason || '',
       selectedSedeId,
       durationMs: snapshotCacheLookupElapsed
     }));
@@ -1739,7 +1786,10 @@ function _directoryBuildSiteData_(
   const relationIndexElapsed = Date.now() - relationIndexStartedAt;
 
   const peopleEnrichmentStartedAt = Date.now();
-  const enrichedRecords = _directoryEnrichAssignmentRecords_(records, context, relationMap);
+  const peopleEnrichmentDiagnostics = {};
+  const enrichedRecords = _directoryEnrichAssignmentRecords_(
+    records, context, relationMap, peopleEnrichmentDiagnostics
+  );
   records.length = 0;
   enrichedRecords.forEach(record => records.push(record));
   const peopleEnrichmentElapsed = Date.now() - peopleEnrichmentStartedAt;
@@ -1914,6 +1964,9 @@ function _directoryBuildSiteData_(
       coreQueryMs: coreQueryElapsed,
       relationResolutionMs: relationIndexElapsed,
       peopleEnrichmentMs: peopleEnrichmentElapsed,
+      peopleSource: peopleEnrichmentDiagnostics.peopleSource || 'unknown',
+      uniquePeople: peopleEnrichmentDiagnostics.uniquePeople || 0,
+      peopleRowsLoaded: peopleEnrichmentDiagnostics.peopleRowsLoaded || 0,
       hierarchySortingMs: hierarchySortElapsed,
       filterContractMs: filterContractElapsed,
       catalogAndFilterContractMs: catalogAndFilterContractElapsed
@@ -1934,6 +1987,9 @@ function _directoryBuildSiteData_(
     coreQuery: coreQueryElapsed,
     relationResolution: relationIndexElapsed,
     peopleEnrichment: peopleEnrichmentElapsed,
+    peopleSource: peopleEnrichmentDiagnostics.peopleSource || 'unknown',
+    uniquePeople: peopleEnrichmentDiagnostics.uniquePeople || 0,
+    peopleRowsLoaded: peopleEnrichmentDiagnostics.peopleRowsLoaded || 0,
     hierarchySort: hierarchySortElapsed,
     filterContract: filterContractElapsed,
     catalogAndFilterContract: catalogAndFilterContractElapsed,

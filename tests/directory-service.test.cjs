@@ -1194,10 +1194,7 @@ test('getDirectorySiteData entrega catálogos exclusivos de la sede elegida incl
 
 test('el enriquecimiento de asignaciones resuelve personas en una sola búsqueda proyectada por lote', () => {
   const context = assignmentContext();
-  context.personas.push({
-    persona_id: 'PER_002', nombres: 'Luis', apellidos: 'Rojas',
-    correo_institucional: 'luis@sunarp.gob.pe'
-  });
+  context.personas = [];
   const vmContext = vm.createContext({});
   vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
   vmContext._directorySource_ = name => name;
@@ -1239,6 +1236,37 @@ test('el enriquecimiento de asignaciones resuelve personas en una sola búsqueda
   assert.deepEqual(Array.from(enriched, item => item.filter_sede_id), ['SEDE_1', 'SEDE_1']);
 });
 
+test('el enriquecimiento usa las personas ya cargadas en el contexto y evita una segunda lectura masiva', () => {
+  const context = assignmentContext();
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  vmContext._directorySource_ = name => name;
+  let peopleQueries = 0;
+  vmContext.SUNARPCore = {
+    findRecordsByFields: () => {
+      peopleQueries++;
+      throw new Error('No debe volver a consultar personas: ya están en el contexto agrupado.');
+    }
+  };
+  const assignments = [{
+    asignacion_id: 'ASG_001',
+    persona_id: 'PER_001',
+    cargo_id: 'CAR_001',
+    estructura_local_id: 'REL_1',
+    local_id: 'LOC_1',
+    active: true,
+    order: 1
+  }];
+  const diagnostics = {};
+  const enriched = vmContext._directoryEnrichAssignmentRecords_(
+    assignments, context, null, diagnostics
+  );
+  assert.equal(peopleQueries, 0);
+  assert.equal(enriched.length, 1);
+  assert.equal(enriched[0].nombres, 'Ana');
+  assert.equal(diagnostics.peopleSource, 'grouped-context');
+  assert.equal(diagnostics.uniquePeople, 1);
+});
 test('Piura se resuelve por estructura_local_id sin depender de local_id físico', () => {
   const context = {
     personas: [{ persona_id: 'PER_001', nombres: 'Ana', apellidos: 'Pérez' }],
@@ -1276,11 +1304,21 @@ test('Piura se resuelve por estructura_local_id sin depender de local_id físico
   assert.equal(enriched.filter_local_id, 'ZR_I_PIURA');
 });
 
+test('la carga de contexto agrupa las fuentes de Directorios telefónicos en una lectura Core', () => {
+  assert.match(serviceSource, /const context = requests\.length[\s\S]*?listRecordsFromSourcesCached\(requests/);
+  assert.doesNotMatch(serviceSource, /const operationalRequests = requests\.filter/);
+  assert.doesNotMatch(serviceSource, /const catalogRequests = requests\.filter/);
+  assert.match(serviceSource, /includePeople: true,[\s\S]*?includeDocumentTypes: false/);
+  assert.match(serviceSource, /_directoryLoadAuthorizationCatalog_/);
+  assert.match(serviceSource, /getIntranetDataSource\('SECURITY', 'EstructuraOrg', 1\)/);
+  assert.match(serviceSource, /_directorySource_\(DIRECTORY_SERVICE_CONFIG\.sheets\.locales\)/);
+});
 test('el caché del sitio depende de identidad, permisos y generaciones de las fuentes', () => {
-  assert.match(serviceSource, /DIRECTORY_DATA_CACHE_TTL = 60/);
-  assert.match(serviceSource, /DIRECTORY_CATALOG_CACHE_TTL = 60/);
-  assert.match(serviceSource, /DIRECTORY_SITE_SNAPSHOT_CACHE_TTL = 60/);
-  assert.match(serviceSource, /directory-site-snapshot:v3:/);
+  assert.match(serviceSource, /DIRECTORY_DATA_CACHE_TTL = 300/);
+  assert.match(serviceSource, /DIRECTORY_CATALOG_CACHE_TTL = 300/);
+  assert.match(serviceSource, /DIRECTORY_SITE_SNAPSHOT_CACHE_TTL = 600/);
+  assert.match(serviceSource, /DIRECTORY_ASSIGNMENT_QUERY_CACHE_TTL = 300/);
+  assert.match(serviceSource, /directory-site-snapshot:v4:/);
   assert.match(serviceSource, /_directoryAuthorizationCacheFingerprint_/);
   assert.match(serviceSource, /_directoryGetSiteDataCacheSources_/);
   assert.match(serviceSource, /cacheSeconds: 60/);
@@ -1345,8 +1383,9 @@ test('getDirectorySiteData carga todas las asignaciones de una sola sede con pag
   vmContext._directoryAuthorizationContext_ = () => authorization;
   vmContext._directoryLoadContext_ = options => {
     assert.equal(options.includeAssignments, false);
-    assert.equal(options.includePeople, false);
+    assert.equal(options.includePeople, true);
     assert.equal(options.includePersonalData, false);
+    assert.equal(options.includeDocumentTypes, false);
     assert.equal(options.validateSnapshot, false);
     return context;
   };
@@ -2098,9 +2137,15 @@ test('Información de personal carga por sede una vez y usa filtros, búsqueda y
   assert.match(frontendSource, /mode:\s*'client'/);
   assert.match(frontendSource, /const preparedRows = prepareRows\(filteredRecords\)/);
   assert.match(frontendSource, /data:\s*preparedRows/);
+  assert.match(frontendSource, /renderStackedTableCell\([\s\S]*?record\.local_display/);
+  assert.match(frontendSource, /record\.estructura_path[\s\S]*?dependencia_secondary_display/);
+  assert.doesNotMatch(frontendSource, /key: 'local_display', label: 'Local'/);
   assert.match(frontendSource, /state\.table\.setData\(options\.data\)/);
   assert.match(frontendSource, /siteDataCache/);
-  assert.match(frontendSource, /DIRECTORY_SITE_CLIENT_CACHE_TTL_MS = 55000/);
+  assert.match(frontendSource, /DIRECTORY_SITE_CLIENT_CACHE_TTL_MS = 600000/);
+  assert.match(frontendSource, /DIRECTORY_SITE_CLIENT_CACHE_MAX_ENTRIES = 5/);
+  assert.match(frontendSource, /function getSiteClientCacheData\(/);
+  assert.match(frontendSource, /function rememberSiteClientCacheData\(/);
   assert.match(frontendSource, /Date\.now\(\) - cacheEntry\.loadedAt < DIRECTORY_SITE_CLIENT_CACHE_TTL_MS/);
   assert.match(frontendSource, /state\.siteDataCache\.set\(selectedSedeId, \{\s*data: result,\s*loadedAt: Date\.now\(\)/);
   assert.match(frontendSource, /state\.catalogs = result\.catalogs;/);
