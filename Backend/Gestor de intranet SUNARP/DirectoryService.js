@@ -1507,6 +1507,9 @@ function getDirectoryInitialData() {
       active: _directoryIsActive_(item)
     }))
     .sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  const hasTotalScope = scopes.length === 1 &&
+    _directoryText_(scopes[0].tipo_ambito_id).toUpperCase() === 'TOTAL' &&
+    !_directoryKey_(scopes[0].referencia_id);
   const catalogElapsed = Date.now() - catalogStartedAt;
 
   const serverElapsed = Date.now() - startedAt;
@@ -1528,6 +1531,10 @@ function getDirectoryInitialData() {
 
   return {
     catalogs: { sedes },
+    scopeSummary: {
+      total: hasTotalScope,
+      types: Array.from(scopeTypes)
+    },
     records: [],
     summary: { people: 0, assignments: 0 },
     diagnostics
@@ -1712,6 +1719,69 @@ function getDirectorySiteData(sedeId) {
 }
 
 
+function getDirectoryAuthorizedData() {
+  const startedAt = Date.now();
+  const authorizationStartedAt = Date.now();
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
+  const authorizationElapsed = Date.now() - authorizationStartedAt;
+  const moduleAccess = (authorization.auth.moduleAccess || []).find(item =>
+    _directoryKey_(item.modulo_id) === _directoryKey_(authorization.moduleId)
+  );
+  const scopes = moduleAccess && Array.isArray(moduleAccess.scopes)
+    ? moduleAccess.scopes
+    : [];
+  const hasExclusiveTotalScope = scopes.length === 1 &&
+    _directoryText_(scopes[0].tipo_ambito_id).toUpperCase() === 'TOTAL' &&
+    !_directoryKey_(scopes[0].referencia_id);
+  if (!hasExclusiveTotalScope) {
+    throw new Error('La carga de todas las sedes requiere un ámbito TOTAL exclusivo en Información de personal.');
+  }
+
+  const siteContextOptions = {
+    includePersonalData: false,
+    includePeople: true,
+    includeAssignments: false,
+    includeDocumentTypes: false,
+    validateSnapshot: false
+  };
+  const authorizationFingerprint = _directoryAuthorizationCacheFingerprint_(authorization);
+  const cacheKey = 'directory-authorized-snapshot:v1:' +
+    _directoryKey_(authorization.auth && authorization.auth.personaId) + ':' +
+    authorizationFingerprint;
+  const cacheStartedAt = Date.now();
+  const cached = SUNARPCore.getOrBuildCachedValue(
+    cacheKey,
+    _directoryGetSiteDataCacheSources_(),
+    () => _directoryBuildSiteData_(
+      '', authorization, startedAt, authorizationElapsed, siteContextOptions
+    ),
+    DIRECTORY_SITE_SNAPSHOT_CACHE_TTL
+  );
+  if (!cached || !cached.value || !Array.isArray(cached.value.records) ||
+      !cached.value.catalogs || !Array.isArray(cached.value.catalogs.sedes)) {
+    throw new Error('SUNARP Core no devolvió una instantánea completa de los ámbitos autorizados.');
+  }
+  const diagnostics = Object.assign({}, cached.value.diagnostics || {}, {
+    serverMs: Date.now() - startedAt,
+    stages: Object.assign({}, cached.value.diagnostics && cached.value.diagnostics.stages || {}, {
+      authorizationMs: authorizationElapsed,
+      snapshotCacheLookupMs: Date.now() - cacheStartedAt
+    }),
+    cache: Object.assign({}, cached.value.diagnostics && cached.value.diagnostics.cache || {}, {
+      authorizedSnapshotCacheHit: cached.cacheHit === true,
+      authorizedSnapshotCacheStored: cached.cacheStored === true
+    })
+  });
+  console.log('[DirectoryService] Authorized all-sites snapshot:', JSON.stringify({
+    cacheHit: cached.cacheHit === true,
+    cacheStored: cached.cacheStored === true,
+    records: cached.value.records.length,
+    authorizedSedes: cached.value.catalogs.sedes.length,
+    totalMs: Date.now() - startedAt
+  }));
+  return Object.assign({}, cached.value, { diagnostics });
+}
+
 function _directoryBuildSiteData_(
   selectedSedeId, authorization, startedAt, authorizationElapsed, siteContextOptions
 ) {
@@ -1725,16 +1795,30 @@ function _directoryBuildSiteData_(
   const contextElapsed = Date.now() - contextStartedAt;
 
   const authorizedSedeIds = _directoryGetAuthorizedSedeIds_(authorization, context.sedes || []);
-  if (!authorizedSedeIds.has(selectedSedeId)) {
+  const allAuthorizedSites = !selectedSedeId;
+  if (allAuthorizedSites) {
+    const moduleAccess = (authorization.auth.moduleAccess || []).find(item =>
+      _directoryKey_(item.modulo_id) === _directoryKey_(authorization.moduleId)
+    );
+    const scopes = moduleAccess && Array.isArray(moduleAccess.scopes) ? moduleAccess.scopes : [];
+    const hasExclusiveTotalScope = scopes.length === 1 &&
+      _directoryText_(scopes[0].tipo_ambito_id).toUpperCase() === 'TOTAL' &&
+      !_directoryKey_(scopes[0].referencia_id);
+    if (!hasExclusiveTotalScope) {
+      throw new Error('La consulta agregada requiere un ámbito TOTAL exclusivo.');
+    }
+  } else if (!authorizedSedeIds.has(selectedSedeId)) {
     throw new Error('No tienes permiso para consultar la sede seleccionada.');
   }
-  const selectedSede = (context.sedes || []).find(item =>
+  const selectedSede = allAuthorizedSites ? null : (context.sedes || []).find(item =>
     _directoryKey_(item.id) === selectedSedeId && _directoryIsActive_(item)
   );
-  if (!selectedSede) throw new Error('La sede seleccionada no existe o está inactiva.');
+  if (!allAuthorizedSites && !selectedSede) throw new Error('La sede seleccionada no existe o está inactiva.');
 
   const queryDescriptorStartedAt = Date.now();
-  const assignmentQueryOptions = { active: 'all', sedeId: selectedSedeId };
+  const assignmentQueryOptions = allAuthorizedSites
+    ? { active: 'all' }
+    : { active: 'all', sedeId: selectedSedeId };
   const assignmentQueryDescriptor = _directoryBuildAssignmentQuery_(
     context, authorization, assignmentQueryOptions
   );
@@ -1812,9 +1896,12 @@ function _directoryBuildSiteData_(
   hierarchyOrderedRecords.forEach(record => records.push(record));
   const hierarchySortElapsed = Date.now() - hierarchySortStartedAt;
 
-  const recordsOutsideSelectedSite = records.filter(record =>
-    _directoryKey_(record.filter_sede_id || record.sede_id) !== selectedSedeId
-  );
+  const recordsOutsideSelectedSite = records.filter(record => {
+    const recordSedeId = _directoryKey_(record.filter_sede_id || record.sede_id);
+    return allAuthorizedSites
+      ? (!recordSedeId || !authorizedSedeIds.has(recordSedeId))
+      : recordSedeId !== selectedSedeId;
+  });
   if (recordsOutsideSelectedSite.length) {
     console.error('[DirectoryService] Consulta por sede con adscripciones resueltas fuera de la sede:', JSON.stringify({
       selectedSedeId,
@@ -1846,9 +1933,10 @@ function _directoryBuildSiteData_(
   // catálogos continúan utilizando la réplica de Directorios telefónicos.
   // Los catálogos de esta respuesta pertenecen exclusivamente a la sede
   // seleccionada, incluso cuando los ámbitos del usuario incluyen TOTAL.
-  const siteActiveStructure = activeStructure.filter(node =>
-    _directoryKey_(node.sede_id) === selectedSedeId
-  );
+  const siteActiveStructure = activeStructure.filter(node => {
+    const nodeSedeId = _directoryKey_(node.sede_id);
+    return allAuthorizedSites ? authorizedSedeIds.has(nodeSedeId) : nodeSedeId === selectedSedeId;
+  });
   const permittedStructures = siteActiveStructure.filter(node =>
     _accessRecordIsAllowed_(
       authorization.auth,
@@ -1864,7 +1952,9 @@ function _directoryBuildSiteData_(
   permittedStructures.forEach(node => {
     let current = structureMap.get(_directoryKey_(node.parent_id));
     const visited = new Set();
-    while (current && _directoryKey_(current.sede_id) === selectedSedeId) {
+    while (current && (allAuthorizedSites
+      ? authorizedSedeIds.has(_directoryKey_(current.sede_id))
+      : _directoryKey_(current.sede_id) === selectedSedeId)) {
       const id = _directoryKey_(current.id);
       if (!id || visited.has(id)) break;
       hierarchyDisplayIds.add(id);
@@ -1876,15 +1966,20 @@ function _directoryBuildSiteData_(
     hierarchyDisplayIds.has(_directoryKey_(node.id))
   );
 
-  const scopedRelations = relations.filter(item =>
-    item.active &&
-    _directoryKey_(item.sede_id) === selectedSedeId &&
-    _directoryKey_(item.local_sede_id) === selectedSedeId &&
-    allowedStructureIds.has(_directoryKey_(item.estructura_id))
-  );
+  const scopedRelations = relations.filter(item => {
+    const relationSedeId = _directoryKey_(item.sede_id);
+    const localSedeId = _directoryKey_(item.local_sede_id);
+    const siteAllowed = allAuthorizedSites
+      ? authorizedSedeIds.has(relationSedeId)
+      : relationSedeId === selectedSedeId;
+    return item.active && siteAllowed && localSedeId === relationSedeId &&
+      allowedStructureIds.has(_directoryKey_(item.estructura_id));
+  });
   const scopedLocals = (context.locales || []).filter(local =>
     _directoryIsActive_(local) &&
-    _directoryKey_(local.sede_id) === selectedSedeId &&
+    (allAuthorizedSites
+      ? authorizedSedeIds.has(_directoryKey_(local.sede_id))
+      : _directoryKey_(local.sede_id) === selectedSedeId) &&
     _accessRecordIsAllowed_(
       authorization.auth,
       'MOD_INFO_PERSONAL',
@@ -1901,11 +1996,12 @@ function _directoryBuildSiteData_(
   );
   const catalogLocals = (context.locales || []).filter(local =>
     _directoryIsActive_(local) &&
-    _directoryKey_(local.sede_id) === selectedSedeId &&
+    (allAuthorizedSites
+      ? authorizedSedeIds.has(_directoryKey_(local.sede_id))
+      : _directoryKey_(local.sede_id) === selectedSedeId) &&
     (relationLocalIds.has(_directoryKey_(local.id)) ||
       scopedLocalIds.has(_directoryKey_(local.id)))
   );
-  const allowedSedeIds = _directoryGetAuthorizedSedeIds_(authorization, context.sedes || []);
   const allowedLocalTypes = new Set(
     catalogLocals.map(item => _directoryKey_(item.tipo_local_id))
   );
@@ -1924,8 +2020,8 @@ function _directoryBuildSiteData_(
   const usedLocalIds = new Set(selectable.localIds || []);
   const scopedSedes = (context.sedes || []).filter(item =>
     _directoryIsActive_(item) &&
-    _directoryKey_(item.id) === selectedSedeId &&
-    allowedSedeIds.has(_directoryKey_(item.id))
+    authorizedSedeIds.has(_directoryKey_(item.id)) &&
+    (allAuthorizedSites || _directoryKey_(item.id) === selectedSedeId)
   );
   const scopedCargos = (context.cargos || []).filter(_directoryIsActive_);
 
@@ -2002,13 +2098,14 @@ function _directoryBuildSiteData_(
     filterContract: filterContractElapsed,
     catalogAndFilterContract: catalogAndFilterContractElapsed,
     total: serverElapsed,
-    selectedSedeId,
+    selectedSedeId: allAuthorizedSites ? 'ALL_AUTHORIZED' : selectedSedeId,
     candidatePages: pageCount,
     candidateCacheHits,
     authorizedSnapshotCacheHits,
     records: records.length,
     totalAssignments: expectedTotal || 0,
     siteCatalogsRestricted: true,
+    allAuthorizedSites,
     relationIntegrity
   }));
 
@@ -2030,7 +2127,7 @@ function _directoryBuildSiteData_(
       cargos: scopedCargos,
       filterContract,
       filterVisibility: {
-        sede: false,
+        sede: allAuthorizedSites && scopedSedes.length > 1,
         cargo: usedCargoIds.size > 1,
         hierarchy: usedStructureIds.size > 1
       }
