@@ -193,6 +193,32 @@ test('la cascada se activa solo con herencia del ámbito y omite el nodo raíz y
   assert.deepEqual([...wholeSite].sort(), ['AREA_A', 'AREA_B', 'SIBLING', 'ZR_I']);
 });
 
+
+test('el ámbito TOTAL genera las opciones jerárquicas de todas las sedes sin seleccionar una', () => {
+  const structures = [
+    { id: 'A_UNIT', name: 'Unidad A', parent_id: '', sede_id: 'SEDE_A' },
+    { id: 'B_UNIT', name: 'Unidad B', parent_id: '', sede_id: 'SEDE_B' }
+  ];
+  const records = [
+    { estructura_id: 'A_UNIT', filter_sede_id: 'SEDE_A' },
+    { estructura_id: 'B_UNIT', filter_sede_id: 'SEDE_B' }
+  ];
+  const total = hierarchySandbox.buildHierarchyFilterSets(
+    records,
+    structures,
+    { scopes: [{ type: 'TOTAL', referenceId: '', includeDescendants: false }] },
+    ''
+  );
+  assert.deepEqual([...total].sort(), ['A_UNIT', 'B_UNIT']);
+  const noTotal = hierarchySandbox.buildHierarchyFilterSets(
+    records,
+    structures,
+    { scopes: [{ type: 'SEDE', referenceId: 'SEDE_A', includeDescendants: false }] },
+    ''
+  );
+  assert.deepEqual([...noTotal], []);
+});
+
 test('el índice cliente conserva rutas reales sin convertir ancestros en opciones seleccionables', () => {
   const structures = [
     { id: 'GG', name: 'Gerencia General', parent_id: '', sede_id: 'SEDE_A', order: 1 },
@@ -1189,6 +1215,55 @@ test('la consulta TOTAL excluye relaciones estructura_local incoherentes entre s
   assert.equal(relationCandidates.includes('REL_1'), true);
 });
 
+
+test('getDirectoryAuthorizedData agrega todas las sedes solo bajo un ámbito TOTAL exclusivo', () => {
+  const context = assignmentContext();
+  context.sedes.push({ id: 'SEDE_2', name: 'Piura', active: true });
+  const authorization = createDirectoryQueryAuthorization(context, [
+    { tipo_ambito_id: 'TOTAL', referencia_id: '', incluir_descendientes: false }
+  ]);
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  vmContext._directoryAuthorizationContext_ = () => authorization;
+  vmContext._directoryAuthorizationCacheFingerprint_ = () => 'authorized-fingerprint';
+  vmContext._directoryGetSiteDataCacheSources_ = () => ['authorized-sources'];
+  let requestedSiteId = null;
+  vmContext._directoryBuildSiteData_ = (siteId) => {
+    requestedSiteId = siteId;
+    return {
+      catalogs: { sedes: context.sedes },
+      records: [
+        { asignacion_id: 'ASG_A', filter_sede_id: 'SEDE_A' },
+        { asignacion_id: 'ASG_B', filter_sede_id: 'SEDE_2' }
+      ],
+      summary: { assignments: 2 },
+      diagnostics: { serverMs: 5, stages: {} }
+    };
+  };
+  vmContext.SUNARPCore = {
+    getOrBuildCachedValue: (key, sources, builder, ttl) => {
+      assert.match(key, /^directory-authorized-snapshot:v1:/);
+      assert.deepEqual(Array.from(sources), ['authorized-sources']);
+      assert.ok(ttl > 0);
+      return { value: builder(), cacheHit: false, cacheStored: true };
+    }
+  };
+  const result = vmContext.getDirectoryAuthorizedData();
+  assert.equal(requestedSiteId, '');
+  assert.deepEqual(Array.from(result.catalogs.sedes, item => item.id), ['SEDE_A', 'SEDE_2']);
+  assert.deepEqual(Array.from(result.records, item => item.filter_sede_id), ['SEDE_A', 'SEDE_2']);
+  assert.equal(result.summary.assignments, 2);
+
+  const restrictedAuthorization = createDirectoryQueryAuthorization(context, [
+    { tipo_ambito_id: 'SEDE', referencia_id: 'SEDE_A', incluir_descendientes: false }
+  ]);
+  vmContext._directoryAuthorizationContext_ = () => restrictedAuthorization;
+  assert.throws(
+    () => vmContext.getDirectoryAuthorizedData(),
+    /ámbito TOTAL exclusivo/i
+  );
+});
+
 test('getDirectorySiteData entrega catálogos exclusivos de la sede elegida incluso con ámbito TOTAL', () => {
   const context = assignmentContext();
   context.sedes.push({ id: 'SEDE_2', name: 'Piura', active: true });
@@ -1231,6 +1306,20 @@ test('getDirectorySiteData entrega catálogos exclusivos de la sede elegida incl
   assert.deepEqual(Array.from(result.catalogs.estructuraOrg, item => item.id), ['EST_1']);
   assert.deepEqual(Array.from(result.catalogs.estructuraLocal, item => item.id), ['REL_1']);
   assert.deepEqual(Array.from(result.catalogs.sedes, item => item.id), ['SEDE_1']);
+});
+
+
+test('el snapshot agregado vuelve a verificar TOTAL y limita estructuras, locales y relaciones a sedes autorizadas', () => {
+  const start = serviceSource.indexOf('function _directoryBuildSiteData_(');
+  const end = serviceSource.indexOf('function listDirectoryPeople(', start);
+  const implementation = serviceSource.slice(start, end);
+  assert.ok(implementation.includes('const allAuthorizedSites = !selectedSedeId'));
+  assert.ok(implementation.includes('hasExclusiveTotalScope'));
+  assert.ok(implementation.includes('authorizedSedeIds.has(recordSedeId)'));
+  assert.ok(implementation.includes('authorizedSedeIds.has(nodeSedeId)'));
+  assert.ok(implementation.includes('authorizedSedeIds.has(relationSedeId)'));
+  assert.ok(implementation.includes('authorizedSedeIds.has(_directoryKey_(local.sede_id))'));
+  assert.ok(implementation.includes('allAuthorizedSites && scopedSedes.length > 1'));
 });
 
 test('el enriquecimiento de asignaciones resuelve personas en una sola búsqueda proyectada por lote', () => {
@@ -2209,6 +2298,11 @@ test('el contrato de filtros reconoce TOTAL sin convertirlo en una selección re
 
 test('Información de personal carga automáticamente la única sede autorizada sin filtrar por Local', () => {
   assert.match(frontendSource, /state\.authorizedSedes\.length === 1/);
+  assert.match(frontendSource, /result\.scopeSummary && result\.scopeSummary\.total/);
+  assert.match(frontendSource, /callServer\('getDirectoryAuthorizedData'\)/);
+  assert.match(frontendSource, /state\.activeSedeId = '__ALL__'/);
+  assert.match(frontendSource, /autoLoadedAllSites = true/);
+  assert.match(frontendSource, /Todas las sedes autorizadas/);
   assert.match(frontendSource, /autoLoadedSoleSede = true/);
   assert.match(frontendSource, /await loadSelectedSede\(soleSedeId\)/);
   assert.match(frontendSource, /wrapper\.hidden = sedes\.length <= 1/);

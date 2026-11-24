@@ -2312,6 +2312,9 @@ test('los cambios de filtro calculan cargos sobre la instantánea local sin nuev
 
 test('Información de personal registra por separado el selector de sedes y la carga de una sede', () => {
   assert.match(directorySource, /\[DirectoryService\] Initial site selector ms:/);
+  assert.match(directorySource, /scopeSummary:\s*\{/);
+  assert.match(directorySource, /function getDirectoryAuthorizedData\(\)/);
+  assert.match(directorySource, /directory-authorized-snapshot:v1/);
   assert.match(directorySource, /\[DirectoryService\] Site data ms:/);
   assert.match(directoryUiSource, /Selector inicial de sedes:/);
   assert.match(directoryUiSource, /Sede cargada:/);
