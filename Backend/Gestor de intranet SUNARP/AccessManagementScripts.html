@@ -91,40 +91,29 @@
 
 
   function rpc(method, ...args) {
-    const startedAt = performance.now();
-    const traceMethod = [
-      'getAccessManagementData',
-      'getAccessUsers',
-      'searchAccessPersonByDocument'
-    ].includes(method);
     return new Promise((resolve, reject) => {
       const runner = google.script.run
-        .withSuccessHandler(value => {
-          if (traceMethod) console.info('[AccessManagementPage] RPC completed:', {
-            method,
-            roundTripMs: Math.round(performance.now() - startedAt)
-          });
-          resolve(value);
-        })
-        .withFailureHandler(error => {
-          if (traceMethod) console.error('[AccessManagementPage] RPC failed:', {
-            method,
-            roundTripMs: Math.round(performance.now() - startedAt),
-            errorMessage: error && error.message || 'Error sin mensaje'
-          });
-          reject(new Error(
+        .withSuccessHandler(resolve)
+        .withFailureHandler(error => reject(
+          new Error(
             error && error.message
               ? error.message
               : 'No se pudo completar la operación.'
-          ));
-        });
+          )
+        ));
+
       if (typeof runner[method] !== 'function') {
-        reject(new Error('No existe la función del servidor "' + method + '".'));
+        reject(
+          new Error(`No existe la función del servidor "${method}".`)
+        );
         return;
       }
+
       runner[method](...args);
     });
   }
+
+
   function setMessage(message, isError) {
     const host = $('#accessPageMessage');
 

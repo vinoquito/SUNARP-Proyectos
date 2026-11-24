@@ -1259,10 +1259,6 @@ function _accessNormalizeDocumentValue_(value, label) {
 }
 
 
-function _accessNormalizeStoredDocumentValue_(value) {
-  return _accessText_(value).replace(/\s+/g, '').toUpperCase();
-}
-
 function _accessLoadDocumentTypeRecords_() {
   return _accessLoadDocumentTypes_().filter(_accessCatalogIsActive_);
 }
@@ -1286,117 +1282,120 @@ function getAccessDocumentTypes() {
  * La consulta y la resolución persona_id se realizan en el servidor.
  */
 function searchAccessPersonByDocument(payload) {
-  const startedAt = Date.now();
-  let stage = 'authorization';
-  try {
-    const auth = _accessRequirePermission_('USUARIOS_ADMINISTRAR');
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-      throw new Error('Debes indicar el tipo y número de documento.');
-    }
-    stage = 'input-normalization';
-    const documentType = _accessNormalizeDocumentValue_(payload.tipo_documento, 'Tipo de documento');
-    const documentNumber = _accessNormalizeDocumentValue_(payload.numero_documento, 'Número de documento');
+  const auth = _accessRequirePermission_('USUARIOS_ADMINISTRAR');
 
-    stage = 'document-lookup';
-    const lookupStartedAt = Date.now();
-    const documentLookup = SUNARPCore.findRecordsByFields(
-      _accessDirectorySource_('servidores datos personales'),
-      { numero_documento: documentNumber },
-      {
-        searchField: 'numero_documento',
-        matchCase: false,
-        ignoreWhitespace: true,
-        requiredHeaders: ['servidor_id', 'tipo_documento', 'numero_documento'],
-        projectionFields: ['servidor_id', 'tipo_documento', 'numero_documento']
-      }
-    );
-    const matches = (documentLookup.records || []).filter(record =>
-      _accessNormalizeStoredDocumentValue_(record.tipo_documento) === documentType &&
-      _accessNormalizeStoredDocumentValue_(record.numero_documento) === documentNumber
-    );
-    console.info('[AccessManagement] Document lookup:', JSON.stringify({
-      method: 'searchAccessPersonByDocument',
-      stage,
-      durationMs: Date.now() - lookupStartedAt,
-      candidates: Number(documentLookup.total) || 0,
-      matchingDocuments: matches.length
-    }));
-    if (!matches.length) {
-      return { found: false, message: 'No se encontró una persona con ese tipo y número de documento.' };
-    }
-    if (matches.length > 1) {
-      throw new Error('El documento aparece asociado a más de un registro. Debe corregirse la duplicidad antes de habilitar una cuenta.');
-    }
-
-    stage = 'document-type-resolution';
-    const documentRecord = matches[0];
-    const documentTypeRecord = _accessLoadDocumentTypeRecords_().find(item =>
-      _accessNormalizeStoredDocumentValue_(item.id) === documentType
-    );
-    if (!documentTypeRecord) {
-      throw new Error('El tipo de documento de la persona no existe en el catálogo tipo_documento_identidad.');
-    }
-
-    stage = 'person-resolution';
-    const personaId = _accessText_(documentRecord.servidor_id);
-    const person = _accessFindPersonById_(personaId);
-    if (!person) {
-      throw new Error('El documento está registrado, pero no se pudo resolver la persona en el directorio.');
-    }
-    const name = [_accessText_(person.nombres), _accessText_(person.apellidos)].filter(Boolean).join(' ');
-    const email = _accessText_(person.correo_institucional);
-    const emailIsValid = /^[^\s@]+@sunarp\.gob\.pe$/i.test(email);
-    const existingUsers = _accessFindSecurityRecords_(
-      ACCESS_MANAGEMENT_CONFIG.sheets.users, 'persona_id', [personaId],
-      ACCESS_MANAGEMENT_FIELDS.users
-    );
-    if (existingUsers.length > 1) {
-      throw new Error('La persona tiene más de una cuenta registrada en Usuarios.');
-    }
-    const existingUser = existingUsers[0] || null;
-    const personIsActive = !Object.prototype.hasOwnProperty.call(person, 'active') ||
-      _accessIsActive_(person.active);
-    let reason = '';
-    if (!personIsActive) reason = 'La persona está inactiva en el directorio.';
-    else if (!emailIsValid) reason = 'La persona no tiene un correo institucional válido del dominio sunarp.gob.pe.';
-
-    console.info('[AccessManagement] Document search completed:', JSON.stringify({
-      method: 'searchAccessPersonByDocument',
-      stage: 'completed',
-      durationMs: Date.now() - startedAt,
-      personResolved: true,
-      accountExists: Boolean(existingUser)
-    }));
-    return {
-      found: true,
-      canEnableAccount: personIsActive && emailIsValid && !existingUser,
-      existingAccount: existingUser
-        ? { exists: true, active: _accessIsActive_(existingUser.active) }
-        : { exists: false, active: false },
-      reason,
-      person: {
-        persona_id: personaId,
-        nombres: _accessText_(person.nombres),
-        apellidos: _accessText_(person.apellidos),
-        nombre_completo: name,
-        correo_institucional: email,
-        tipo_documento: documentType,
-        tipo_documento_name: _accessText_(documentTypeRecord.name),
-        numero_documento: documentNumber
-      }
-    };
-  } catch (error) {
-    console.error('[AccessManagement] Document search failed:', JSON.stringify({
-      method: 'searchAccessPersonByDocument',
-      stage,
-      durationMs: Date.now() - startedAt,
-      errorName: error && error.name || 'Error',
-      errorMessage: error && error.message || String(error)
-    }));
-    throw error;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('Debes indicar el tipo y número de documento.');
   }
+
+  const documentType = _accessNormalizeDocumentValue_(
+    payload.tipo_documento,
+    'Tipo de documento'
+  );
+  const documentNumber = _accessNormalizeDocumentValue_(
+    payload.numero_documento,
+    'Número de documento'
+  );
+
+  const documentLookup = SUNARPCore.findRecordsByFields(
+    _accessDirectorySource_('servidores datos personales'),
+    { tipo_documento: documentType, numero_documento: documentNumber },
+    {
+      searchField: 'numero_documento',
+      matchCase: false,
+      requiredHeaders: ['servidor_id', 'tipo_documento', 'numero_documento'],
+      projectionFields: ['servidor_id', 'tipo_documento', 'numero_documento']
+    }
+  );
+  const matches = documentLookup.records.filter(record =>
+    _accessText_(record.tipo_documento).replace(/\\s+/g, '').toUpperCase() === documentType
+  );
+
+  if (!matches.length) {
+    return {
+      found: false,
+      message: 'No se encontró una persona con ese tipo y número de documento.'
+    };
+  }
+
+  if (matches.length > 1) {
+    throw new Error(
+      'El documento aparece asociado a más de un registro. Debe corregirse la duplicidad antes de habilitar una cuenta.'
+    );
+  }
+
+  const documentRecord = matches[0];
+  const documentTypeRecord = _accessLoadDocumentTypeRecords_().find(item =>
+    _accessText_(item.id).toUpperCase() ===
+    _accessText_(documentRecord.tipo_documento).toUpperCase()
+  );
+
+  if (!documentTypeRecord) {
+    throw new Error(
+      'El tipo de documento de la persona no existe en el catálogo tipo_documento_identidad.'
+    );
+  }
+
+  const personaId = _accessText_(documentRecord.servidor_id);
+  const person = _accessFindPersonById_(personaId);
+  if (!person) {
+    throw new Error('El documento está registrado, pero no se pudo resolver la persona en el directorio.');
+  }
+  const name = [
+    _accessText_(person.nombres),
+    _accessText_(person.apellidos)
+  ].filter(Boolean).join(' ');
+  const email = _accessText_(person.correo_institucional);
+  const emailIsValid = /^[^\s@]+@sunarp\.gob\.pe$/i.test(email);
+  const existingUsers = _accessFindSecurityRecords_(
+    ACCESS_MANAGEMENT_CONFIG.sheets.users,
+    'persona_id',
+    [personaId],
+    ACCESS_MANAGEMENT_FIELDS.users
+  );
+  if (existingUsers.length > 1) {
+    throw new Error('La persona tiene más de una cuenta registrada en Usuarios.');
+  }
+  const existingUser = existingUsers[0] || null;
+  const personIsActive =
+    !Object.prototype.hasOwnProperty.call(person, 'active') ||
+    _accessIsActive_(person.active);
+
+  let reason = '';
+  if (!personIsActive) {
+    reason = 'La persona está inactiva en el directorio.';
+  } else if (!emailIsValid) {
+    reason = 'La persona no tiene un correo institucional válido del dominio sunarp.gob.pe.';
+  }
+
+  return {
+    found: true,
+    canEnableAccount: personIsActive && emailIsValid && !existingUser,
+    existingAccount: existingUser ? {
+      exists: true,
+      active: _accessIsActive_(existingUser.active)
+    } : {
+      exists: false,
+      active: false
+    },
+    reason,
+    person: {
+      persona_id: personaId,
+      nombres: _accessText_(person.nombres),
+      apellidos: _accessText_(person.apellidos),
+      nombre_completo: name,
+      correo_institucional: email,
+      tipo_documento: _accessText_(documentRecord.tipo_documento),
+      tipo_documento_name: _accessText_(documentTypeRecord.name),
+      numero_documento: _accessText_(documentRecord.numero_documento)
+    }
+  };
 }
 
+
+/**
+ * Crea o actualiza un usuario.
+ */
 function _accessRecordUser_(auth, payload, action) {
   const source = _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.users);
   const personaId = _accessText_(payload.persona_id);
@@ -1426,24 +1425,13 @@ function _accessRecordUser_(auth, payload, action) {
       throw new Error('Selecciona un tipo de documento vigente del catálogo institucional.');
     }
 
-    const documentNumber = _accessNormalizeDocumentValue_(
-      payload.numero_documento,
-      'Número de documento'
-    );
     const documentLookup = SUNARPCore.findRecordsByFields(
       _accessDirectorySource_('servidores datos personales'),
-      { numero_documento: documentNumber },
-      {
-        searchField: 'numero_documento',
-        matchCase: false,
-        ignoreWhitespace: true,
-        requiredHeaders: ['servidor_id', 'tipo_documento', 'numero_documento'],
-        projectionFields: ['servidor_id', 'tipo_documento', 'numero_documento']
-      }
+      { tipo_documento: documentTypeId, numero_documento: payload.numero_documento },
+      { searchField: 'numero_documento', matchCase: false, requiredHeaders: ['servidor_id', 'tipo_documento', 'numero_documento'] }
     );
-    const documentMatches = (documentLookup.records || []).filter(record =>
-      _accessNormalizeStoredDocumentValue_(record.tipo_documento) === documentType &&
-      _accessNormalizeStoredDocumentValue_(record.numero_documento) === documentNumber
+    const documentMatches = documentLookup.records.filter(record =>
+      _accessText_(record.tipo_documento).replace(/\\s+/g, '').toUpperCase() === documentTypeId
     );
 
     if (
@@ -2968,256 +2956,287 @@ function getAccessUserConfiguration(personaId) {
  */
 function _accessBuildUserListingIndex_() {
   if (typeof SUNARPCore.getOrBuildCachedValue !== 'function') {
-    throw new Error('El listado de usuarios requiere getOrBuildCachedValue.');
+    throw new Error(
+      'El listado de usuarios requiere la versión de SUNARP Core que incorpora getOrBuildCachedValue.'
+    );
   }
-  // La sede administrativa se deriva de los ámbitos efectivos, no de la
-  // adscripción funcional de la persona en Directorios.
+
+  // La clave no depende de los filtros de sede/rol. Las generaciones de todas
+  // las fuentes mantienen un único índice compartido y lo invalidan tras CRUD.
   const sources = [
     _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.users),
     _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.userRoles),
-    _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.modules),
+    // Roles y ámbitos también forman parte de las dependencias de invalidación
+    // del índice administrativo, aunque no se materialicen en su payload.
     _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.roles),
     _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.scopes),
-    _accessSecuritySource_('Sedes'),
-    _accessSecuritySource_('EstructuraOrg'),
-    _accessDirectorySource_('locales')
+    _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
+    _directorySource_('asignaciones'),
+    _directorySource_('estructura_local'),
+    _directorySource_('estructura_org'),
+    _directorySource_('locales'),
+    _directorySource_('sede')
   ];
   const requests = [
-    { key: 'users', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.users), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.users },
-    { key: 'userRoles', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.userRoles), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.userRoles },
-    { key: 'modules', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.modules), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.modules },
-    { key: 'roles', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.roles), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.roles },
-    { key: 'scopes', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.scopes), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.scopes },
-    { key: 'sites', source: _accessSecuritySource_('Sedes'), requiredHeaders: ['id', 'name'] },
-    { key: 'structures', source: _accessSecuritySource_('EstructuraOrg'), requiredHeaders: ['id', 'sede_id'] },
-    { key: 'locals', source: _accessDirectorySource_('locales'), requiredHeaders: ['id', 'sede_id'] }
+    {
+      key: 'users',
+      source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.users),
+      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.users
+    },
+    {
+      key: 'userRoles',
+      source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.userRoles),
+      requiredHeaders: ACCESS_MANAGEMENT_FIELDS.userRoles
+    },
+    {
+      key: 'relations',
+      source: _directorySource_('estructura_local'),
+      requiredHeaders: ['id', 'estructura_id', 'local_id']
+    },
+    {
+      key: 'structures',
+      source: _directorySource_('estructura_org'),
+      requiredHeaders: ['id', 'sede_id']
+    },
+    {
+      key: 'locals',
+      source: _directorySource_('locales'),
+      requiredHeaders: ['id', 'sede_id']
+    },
+    {
+      key: 'sites',
+      source: _directorySource_('sede'),
+      requiredHeaders: ['id', 'name']
+    }
   ];
+
   const indexStartedAt = Date.now();
   const cached = SUNARPCore.getOrBuildCachedValue(
-    'access-users-index-v3',
+    'access-users-index-v2',
     sources,
     () => {
-      const readStartedAt = Date.now();
-      const data = SUNARPCore.listRecordsFromSourcesCached(requests, 60);
-      const sourceReadMs = Date.now() - readStartedAt;
       const buildStartedAt = Date.now();
-      const modules = new Map((data.modules || []).filter(_accessCatalogIsActive_).map(item => [
-        _accessText_(item.modulo_id), item
+      const data = SUNARPCore.listRecordsFromSourcesCached(requests, 60);
+      const accounts = data.users || [];
+      const userRoles = data.userRoles || [];
+      const relations = data.relations || [];
+      const structures = new Map((data.structures || []).map(item => [
+        _accessText_(item.id), item
       ]));
-      const roles = new Map((data.roles || []).filter(_accessCatalogIsActive_).map(item => [
-        _accessText_(item.rol_id), item
+      const locals = new Map((data.locals || []).map(item => [
+        _accessText_(item.id), item
       ]));
-      const sites = new Map((data.sites || []).filter(_accessCatalogIsActive_).map(item => [
+      const siteNames = new Map((data.sites || []).map(item => [
         _accessText_(item.id), _accessText_(item.name)
       ]));
-      const structures = new Map((data.structures || []).filter(_accessCatalogIsActive_).map(item => [
-        _accessText_(item.id), item
-      ]));
-      const locals = new Map((data.locals || []).filter(_accessCatalogIsActive_).map(item => [
-        _accessText_(item.id), item
-      ]));
-      const siteIdsByPerson = new Map();
-      const totalScopePeople = new Set();
+
       const integrity = {
-        activeScopes: 0, invalidScopes: 0, multiSiteAccounts: 0,
-        totalScopeAccounts: 0, sample: []
+        total: relations.length,
+        missingStructure: 0,
+        missingLocal: 0,
+        missingSite: 0,
+        crossSite: 0,
+        invalidAssignments: 0,
+        sample: []
       };
-      const addSite = (personaId, siteId) => {
-        const personId = _accessText_(personaId);
-        const id = _accessText_(siteId);
-        if (!personId || !id || !sites.has(id)) return false;
-        if (!siteIdsByPerson.has(personId)) siteIdsByPerson.set(personId, new Set());
-        siteIdsByPerson.get(personId).add(id);
-        return true;
-      };
-      (data.scopes || []).forEach(scope => {
-        if (!_accessIsActive_(scope.active)) return;
-        const personaId = _accessText_(scope.persona_id);
-        const module = modules.get(_accessText_(scope.modulo_id));
-        if (!personaId || !module) return;
-        // TOTAL en MOD_ACCESOS es el permiso administrativo global, no una
-        // adscripción funcional que deba aparecer como sede de la cuenta.
-        if (_accessUpper_(module.codigo) === ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses) return;
-        integrity.activeScopes++;
-        const type = _accessUpper_(scope.tipo_ambito_id);
-        const referenceId = _accessText_(scope.referencia_id);
-        let siteId = '';
-        if (type === 'TOTAL') {
-          if (referenceId) {
-            integrity.invalidScopes++;
-            if (integrity.sample.length < 10) integrity.sample.push({
-              persona_id: personaId, tipo_ambito_id: type, issue: 'total-with-reference'
-            });
+      const validRelations = new Map();
+      relations.forEach(relation => {
+        const relationId = _accessText_(relation.id);
+        const structure = structures.get(_accessText_(relation.estructura_id));
+        const local = locals.get(_accessText_(relation.local_id));
+        if (!structure) integrity.missingStructure++;
+        if (!local) integrity.missingLocal++;
+        if (!structure || !local) {
+          if (integrity.sample.length < 10) integrity.sample.push({
+            estructura_local_id: relationId,
+            issue: !structure && !local ? 'missing-structure-and-local' :
+              (!structure ? 'missing-structure' : 'missing-local')
+          });
+          return;
+        }
+
+        const structureSiteId = _accessText_(structure.sede_id);
+        const localSiteId = _accessText_(local.sede_id);
+        if (!structureSiteId || !localSiteId) {
+          integrity.missingSite++;
+          if (integrity.sample.length < 10) integrity.sample.push({
+            estructura_local_id: relationId,
+            estructura_sede_id: structureSiteId,
+            local_sede_id: localSiteId,
+            issue: 'missing-site'
+          });
+          return;
+        }
+        if (structureSiteId !== localSiteId) {
+          integrity.crossSite++;
+          if (integrity.sample.length < 10) integrity.sample.push({
+            estructura_local_id: relationId,
+            estructura_sede_id: structureSiteId,
+            local_id: _accessText_(local.id),
+            local_sede_id: localSiteId,
+            issue: 'cross-site'
+          });
+          return;
+        }
+        if (relationId) {
+          validRelations.set(relationId, {
+            relation,
+            localId: _accessText_(local.id),
+            sedeId: structureSiteId
+          });
+        }
+      });
+
+      const sitesByPerson = new Map();
+      const assignmentHeaders = [
+        'asignacion_id', 'persona_id', 'estructura_local_id', 'local_id', 'active'
+      ];
+      const collectAssignments = rows => {
+        (rows || []).forEach(assignment => {
+          if (!_accessIsActive_(assignment.active)) return;
+          const personaId = _accessText_(assignment.persona_id);
+          const relationId = _accessText_(assignment.estructura_local_id);
+          const localId = _accessText_(assignment.local_id);
+          if (!personaId) return;
+
+          let assignedSiteId = '';
+          if (relationId) {
+            const validRelation = validRelations.get(relationId);
+            if (!validRelation ||
+                (localId && localId !== validRelation.localId)) {
+              integrity.invalidAssignments++;
+              return;
+            }
+            assignedSiteId = validRelation.sedeId;
+          } else if (localId) {
+            const local = locals.get(localId);
+            assignedSiteId = local ? _accessText_(local.sede_id) : '';
+            if (!assignedSiteId) {
+              integrity.invalidAssignments++;
+              return;
+            }
+          } else {
+            integrity.invalidAssignments++;
             return;
           }
-          totalScopePeople.add(personaId);
-          return;
-        }
-        if (type === 'SEDE') siteId = referenceId;
-        else if (type === 'ESTRUCTURA_ORG') {
-          const structure = structures.get(referenceId);
-          siteId = structure ? _accessText_(structure.sede_id) : '';
-        } else if (type === 'LOCAL') {
-          const local = locals.get(referenceId);
-          siteId = local ? _accessText_(local.sede_id) : '';
-        } else {
-          integrity.invalidScopes++;
-          if (integrity.sample.length < 10) integrity.sample.push({
-            persona_id: personaId, tipo_ambito_id: type, issue: 'unsupported-scope-type'
-          });
-          return;
-        }
-        if (!addSite(personaId, siteId)) {
-          integrity.invalidScopes++;
-          if (integrity.sample.length < 10) integrity.sample.push({
-            persona_id: personaId, tipo_ambito_id: type,
-            referencia_id: referenceId, issue: 'unresolved-scope-reference'
-          });
-        }
-      });
-      const activeRoleIds = new Set(roles.keys());
+
+          if (!sitesByPerson.has(personaId)) sitesByPerson.set(personaId, new Set());
+          sitesByPerson.get(personaId).add(assignedSiteId);
+        });
+      };
+
+      const validRelationIds = Array.from(validRelations.keys());
+      const localIds = Array.from(locals.keys()).filter(Boolean);
+      if (validRelationIds.length) {
+        const result = SUNARPCore.findRecordsByFields(
+          _directorySource_('asignaciones'),
+          { estructura_local_id: validRelationIds },
+          {
+            searchField: 'estructura_local_id',
+            requiredHeaders: assignmentHeaders,
+            projectionFields: assignmentHeaders
+          }
+        );
+        collectAssignments(result.records);
+      }
+      if (localIds.length) {
+        const result = SUNARPCore.findRecordsByFields(
+          _directorySource_('asignaciones'),
+          { local_id: localIds, estructura_local_id: '' },
+          {
+            searchField: 'local_id',
+            requiredHeaders: assignmentHeaders,
+            projectionFields: assignmentHeaders
+          }
+        );
+        collectAssignments(result.records);
+      }
+
+      const accountPersonaIds = Array.from(new Set(accounts.map(item =>
+        _accessText_(item.persona_id)
+      ).filter(Boolean)));
+      const peopleResult = accountPersonaIds.length
+        ? SUNARPCore.findRecordsByFields(
+            _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
+            { persona_id: accountPersonaIds },
+            {
+              searchField: 'persona_id',
+              requiredHeaders: ACCESS_MANAGEMENT_FIELDS.people,
+              projectionFields: [
+                'persona_id', 'correo_institucional', 'nombres', 'apellidos'
+              ]
+            }
+          )
+        : { records: [], total: 0 };
+      const people = new Map((peopleResult.records || []).map(person => [
+        _accessText_(person.persona_id), person
+      ]));
+
       const rolesByPerson = new Map();
-      (data.userRoles || []).filter(item => _accessIsActive_(item.active)).forEach(item => {
-        const personaId = _accessText_(item.persona_id);
-        const moduleId = _accessText_(item.modulo_id);
-        const roleId = _accessText_(item.rol_id);
-        if (!personaId || !modules.has(moduleId) || !activeRoleIds.has(roleId)) return;
-        if (!rolesByPerson.has(personaId)) rolesByPerson.set(personaId, []);
-        rolesByPerson.get(personaId).push({ modulo_id: moduleId, rol_id: _accessUpper_(roleId) });
+      userRoles.filter(item => _accessIsActive_(item.active)).forEach(item => {
+        const id = _accessText_(item.persona_id);
+        if (!id) return;
+        if (!rolesByPerson.has(id)) rolesByPerson.set(id, []);
+        rolesByPerson.get(id).push({
+          modulo_id: _accessText_(item.modulo_id),
+          rol_id: _accessUpper_(item.rol_id)
+        });
       });
-      const allSiteIds = Array.from(sites.keys()).sort();
-      const rows = (data.users || []).map(user => {
+
+      const rows = accounts.map(user => {
         const personaId = _accessText_(user.persona_id);
-        const hasTotalScope = totalScopePeople.has(personaId);
-        const scopedSiteIds = Array.from(siteIdsByPerson.get(personaId) || []).sort();
-        const invalidMultiSite = !hasTotalScope && scopedSiteIds.length > 1;
-        if (invalidMultiSite) integrity.multiSiteAccounts++;
-        const sedeIds = hasTotalScope ? allSiteIds : (invalidMultiSite ? [] : scopedSiteIds);
-        if (hasTotalScope) integrity.totalScopeAccounts++;
+        const person = people.get(personaId) || {};
+        const sedeIds = Array.from(sitesByPerson.get(personaId) || []).sort();
         return {
           persona_id: personaId,
+          correo_institucional: _accessText_(person.correo_institucional),
+          nombres: _accessText_(person.nombres),
+          apellidos: _accessText_(person.apellidos),
+          nombre_completo: [_accessText_(person.nombres), _accessText_(person.apellidos)]
+            .filter(Boolean).join(' '),
           sede_ids: sedeIds,
-          sede_nombre: sedeIds.map(id => sites.get(id) || id).join(' · '),
+          sede_nombre: sedeIds.map(id => siteNames.get(id) || id).join(' · '),
           active: _accessIsActive_(user.active),
           roles: rolesByPerson.get(personaId) || []
         };
       }).filter(row => row.persona_id);
-      const indexBuildMs = Date.now() - buildStartedAt;
-      console.log('[AccessManagement] User metadata index built:', JSON.stringify({
-        users: rows.length, activeScopes: integrity.activeScopes,
-        invalidScopes: integrity.invalidScopes,
-        multiSiteAccounts: integrity.multiSiteAccounts,
-        totalScopeAccounts: integrity.totalScopeAccounts,
-        sourceReadMs, indexBuildMs
+      rows.sort((left, right) =>
+        left.nombre_completo.localeCompare(right.nombre_completo, 'es') ||
+        left.persona_id.localeCompare(right.persona_id, 'es')
+      );
+
+      console.log('[AccessManagement] Shared user index built:', JSON.stringify({
+        users: rows.length,
+        relations: integrity.total,
+        crossSiteRelations: integrity.crossSite,
+        missingStructure: integrity.missingStructure,
+        missingLocal: integrity.missingLocal,
+        missingSite: integrity.missingSite,
+        invalidAssignments: integrity.invalidAssignments,
+        durationMs: Date.now() - buildStartedAt
       }));
-      if (integrity.invalidScopes || integrity.multiSiteAccounts) {
-        console.warn('[AccessManagement] User scope index anomalies:', JSON.stringify(integrity));
+      if (integrity.crossSite || integrity.missingStructure ||
+          integrity.missingLocal || integrity.missingSite ||
+          integrity.invalidAssignments) {
+        console.warn('[AccessManagement] Organizational index anomalies:', JSON.stringify(integrity));
       }
-      return { rows, integrity, sourceReadMs, indexBuildMs };
+      return { rows, integrity };
     },
     60
   );
+
   if (!cached || !cached.value || !Array.isArray(cached.value.rows)) {
-    throw new Error('SUNARP Core no devolvió un índice administrativo válido para el listado de usuarios.');
+    throw new Error('SUNARP Core no devolvió un índice compartido válido para el listado de usuarios.');
   }
-  console.log('[AccessManagement] User metadata index response:', JSON.stringify({
-    cacheHit: cached.cacheHit === true, cacheStored: cached.cacheStored === true,
-    users: cached.value.rows.length, durationMs: Date.now() - indexStartedAt
+  console.log('[AccessManagement] Shared user index response:', JSON.stringify({
+    cacheHit: cached.cacheHit === true,
+    cacheStored: cached.cacheStored === true,
+    users: cached.value.rows.length,
+    durationMs: Date.now() - indexStartedAt
   }));
   return cached;
 }
 
-function getAccessUsers(filters) {
-  const requestStartedAt = Date.now();
-  const authStartedAt = Date.now();
-  const auth = _accessRequirePermission_('USUARIOS_ADMINISTRAR');
-  const authorizationMs = Date.now() - authStartedAt;
-  filters = filters && typeof filters === 'object' ? filters : {};
-  const sedeId = _accessText_(filters.sede_id);
-  const roleId = _accessUpper_(filters.rol_id);
-  const query = _accessText_(filters.search);
-  const allSitesSelected = filters.all_sedes === true;
-  if (!sedeId && !roleId && !allSitesSelected) return { items: [], total: 0 };
-  const page = Math.max(1, Number.parseInt(filters.page, 10) || 1);
-  const pageSize = Math.min(100, Math.max(1, Number.parseInt(filters.pageSize, 10) || 10));
-  const offset = (page - 1) * pageSize;
-  const indexStartedAt = Date.now();
-  const indexed = _accessBuildUserListingIndex_();
-  const indexLookupMs = Date.now() - indexStartedAt;
-  const filterStartedAt = Date.now();
-  const matchingRows = indexed.value.rows.filter(row => {
-    if (sedeId && !row.sede_ids.includes(sedeId)) return false;
-    if (roleId && !row.roles.some(role => _accessUpper_(role.rol_id) === roleId)) return false;
-    return true;
-  });
-  const candidatePersonaIds = matchingRows.map(row => row.persona_id);
-  if (!candidatePersonaIds.length) {
-    console.log('[AccessManagement] Users page timing:', JSON.stringify({
-      authorizationMs, indexLookupMs, candidateFilterMs: Date.now() - filterStartedAt,
-      peopleQueryMs: 0, candidateCount: 0, page, pageSize,
-      totalMs: Date.now() - requestStartedAt, cacheHit: indexed.cacheHit === true
-    }));
-    return { items: [], total: 0, page, pageSize, totalPages: 1, integrity: indexed.value.integrity || {} };
-  }
-  const siteSearchPersonaIds = query
-    ? matchingRows.filter(row => row.sede_nombre.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
-      .map(row => row.persona_id)
-    : [];
-  const accessModuleId = _accessResolveModuleId_(auth, ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses);
-  const peopleQueryStartedAt = Date.now();
-  const peoplePage = SUNARPCore.queryRecords(
-    _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people),
-    {
-      filters: { persona_id: candidatePersonaIds },
-      search: query,
-      searchFields: query ? ['persona_id', 'nombres', 'apellidos', 'correo_institucional'] : [],
-      searchAny: siteSearchPersonaIds.length
-        ? [{ field: 'persona_id', values: siteSearchPersonaIds }] : [],
-      authorization: {
-        context: auth, moduleId: accessModuleId,
-        permissionCode: 'USUARIOS_ADMINISTRAR'
-      },
-      idField: 'persona_id',
-      sortBy: 'apellidos',
-      sortDirection: 'asc',
-      offset, limit: pageSize, cacheSeconds: 60,
-      schemaVersion: 'access-users-page-v1'
-    }
-  );
-  const peopleQueryMs = Date.now() - peopleQueryStartedAt;
-  const rowsById = new Map(matchingRows.map(row => [row.persona_id, row]));
-  const items = (peoplePage.records || []).map(person => {
-    const personaId = _accessText_(person.persona_id);
-    const metadata = rowsById.get(personaId) || {};
-    return {
-      persona_id: personaId,
-      correo_institucional: _accessText_(person.correo_institucional),
-      nombres: _accessText_(person.nombres),
-      apellidos: _accessText_(person.apellidos),
-      nombre_completo: [_accessText_(person.nombres), _accessText_(person.apellidos)].filter(Boolean).join(' '),
-      sede_ids: metadata.sede_ids || [],
-      sede_nombre: metadata.sede_nombre || '',
-      active: metadata.active === true,
-      roles: metadata.roles || []
-    };
-  });
-  const result = {
-    items,
-    total: Number(peoplePage.total) || 0,
-    page, pageSize,
-    totalPages: Math.max(1, Math.ceil((Number(peoplePage.total) || 0) / pageSize)),
-    integrity: indexed.value.integrity || {}
-  };
-  console.log('[AccessManagement] Users page timing:', JSON.stringify({
-    authorizationMs, indexLookupMs,
-    candidateFilterMs: peopleQueryStartedAt - filterStartedAt,
-    peopleQueryMs, candidateCount: candidatePersonaIds.length,
-    returned: items.length, page, pageSize, total: result.total,
-    cacheHit: indexed.cacheHit === true,
-    totalMs: Date.now() - requestStartedAt
-  }));
-  return result;
-}
 
 function getAccessUsers(filters) {
   _accessRequirePermission_('USUARIOS_ADMINISTRAR');
