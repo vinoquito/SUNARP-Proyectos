@@ -133,7 +133,7 @@ vm.runInContext(
   { filename: 'DirectoryHierarchyFilters.js' }
 );
 
-test('Gerencia General incluye sus dependencias reales y mantiene Dirección Técnica Registral como raíz independiente', () => {
+test('los filtros muestran solo estructuras con asignaciones autorizadas y mantienen raíces reales independientes', () => {
   const structures = [
     { id: 'GG', name: 'Gerencia General', parent_id: '', sede_id: 'SEDE_A', order: 1 },
     { id: 'UF_INT', name: 'UF Integridad', parent_id: 'GG', sede_id: 'SEDE_A', order: 1 },
@@ -152,13 +152,13 @@ test('Gerencia General incluye sus dependencias reales y mantiene Dirección Té
     { estructura_id: 'OTHER_SITE', filter_sede_id: 'SEDE_B', filter_local_id: 'LOCAL_B' }
   ];
   const ids = hierarchySandbox.buildHierarchyFilterSets(records, structures, 'SEDE_A', 'LOCAL_A');
-  assert.deepEqual([...ids].sort(), ['AC', 'DTR', 'GG', 'TD', 'UF_GD', 'UF_INT']);
-  assert.equal(ids.has('UF_GD'), true, 'La dependencia intermedia aparece por tener descendientes asignados');
+  assert.deepEqual([...ids].sort(), ['AC', 'DTR', 'GG', 'TD', 'UF_INT']);
+  assert.equal(ids.has('UF_GD'), false, 'Una dependencia sin asignaciones propias no se agrega como opción contextual');
   assert.equal(ids.has('DTR'), true, 'La raíz independiente puede aparecer en el nivel raíz si tiene asignaciones propias');
   assert.equal(structures.find(node => node.id === 'DTR').parent_id, '', 'Dirección Técnica Registral no pertenece a Gerencia General');
   assert.equal(ids.has('OTHER_SITE'), false);
 });
-test('el índice cliente conserva hijos directos, ancestros intermedios y separa raíces independientes por local', () => {
+test('el índice cliente conserva rutas reales sin convertir ancestros en opciones seleccionables', () => {
   const structures = [
     { id: 'GG', name: 'Gerencia General', parent_id: '', sede_id: 'SEDE_A', order: 1 },
     { id: 'UF_INT', name: 'UF Integridad', parent_id: 'GG', sede_id: 'SEDE_A', order: 1 },
@@ -177,12 +177,13 @@ test('el índice cliente conserva hijos directos, ancestros intermedios y separa
   ];
   const index = hierarchyIndexSandbox.buildIndex(records, structures);
   const selected = index.selectableByLocal.get('LOCAL_A');
-  assert.deepEqual([...selected].sort(), ['AC', 'DTR', 'GG', 'TD', 'UF_GD', 'UF_INT']);
+  assert.deepEqual([...selected].sort(), ['AC', 'DTR', 'GG', 'TD', 'UF_INT']);
   assert.deepEqual(
     Array.from(index.childrenByParent.get('GG'), node => node.id).join(','),
     'UF_INT,UF_GD',
-    'Gerencia General solo muestra sus hijos directos; Dirección Técnica Registral es otra raíz'
+    'La relación real entre padre e hijos se conserva para los nodos que sí tienen registros'
   );
+  assert.equal(selected.has('UF_GD'), false, 'El ancestro sin registros no se ofrece como filtro');
   assert.deepEqual(
     Array.from(index.structurePathById.get('TD'), node => node.id).join(','),
     'GG,UF_GD,TD'

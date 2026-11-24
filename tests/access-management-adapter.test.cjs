@@ -2254,8 +2254,10 @@ test('los filtros de Información de personal navegan la unión autorizada sin e
   const nodesStart = directoryUiSource.indexOf('function getHierarchyNodes(parentId)');
   const nodesEnd = directoryUiSource.indexOf('function getHierarchyLabel(', nodesStart);
   const hierarchyNodes = directoryUiSource.slice(nodesStart, nodesEnd);
-  assert.ok(hierarchyNodes.includes('childrenByParent.get(key(parentId))'));
-  assert.ok(hierarchyNodes.includes('selectableIds.has(key(node.id))'));
+  assert.ok(hierarchyNodes.includes('index.childrenByParent.get(selectedParentId)'));
+  assert.ok(hierarchyNodes.includes('Array.from(index.structureById.values())'));
+  assert.ok(hierarchyNodes.includes('!selectableIds.has(nodeParentId)'));
+  assert.ok(hierarchyNodes.includes('selectableIds.has(id)'));
 
   const renderStart = directoryUiSource.indexOf('function renderHierarchyFilters()');
   const renderEnd = directoryUiSource.indexOf('function hasAvailableFilterSelection(filter)', renderStart);

@@ -12,29 +12,20 @@
     ]));
     const selectableIds = new Set();
     if (!site || !local) return selectableIds;
-
     (records || []).forEach(record => {
       const recordSite = String(record.filter_sede_id || record.sede_id || '').trim();
       const recordLocal = String(record.filter_local_id || record.local_id || '').trim();
       const structureId = String(record.estructura_id || '').trim();
       if (recordSite !== site || recordLocal !== local || !structureId) return;
-
-      let current = structureMap.get(structureId);
-      const visited = new Set();
-      while (current) {
-        const currentId = String(current.id || '').trim();
-        if (!currentId || visited.has(currentId)) break;
-        if (String(current.sede_id || '').trim() !== site) break;
-        visited.add(currentId);
-        selectableIds.add(currentId);
-        const parentId = String(current.parent_id || '').trim();
-        current = parentId ? structureMap.get(parentId) || null : null;
-      }
+      const structure = structureMap.get(structureId);
+      if (!structure || String(structure.sede_id || '').trim() !== site) return;
+      // Solo la estructura vinculada al registro autorizado es seleccionable.
+      // Sus ancestros reales sirven para resolver la ruta, no se agregan como opciones.
+      selectableIds.add(structureId);
     });
     return selectableIds;
   }
 
-  /** Devuelve la ruta completa de una estructura real de la misma sede. */
   function _directoryGetHierarchyDisplayPath_(node, structures) {
     const structureMap = new Map((structures || []).map(item => [
       String(item.id || '').trim(), item
@@ -162,13 +153,12 @@
       }
       const structureId = keyOf(record.estructura_id);
       if (!structureId) return;
-      const path = resolvePath(structureId);
-      if (!path.length) return;
+      const structure = structureById.get(structureId);
+      if (!structure || keyOf(structure.sede_id) !== siteId) return;
       if (!selectableByLocal.has(localId)) selectableByLocal.set(localId, new Set());
-      const selectableIds = selectableByLocal.get(localId);
-      path.forEach(node => {
-        if (keyOf(node.sede_id) === siteId) selectableIds.add(keyOf(node.id));
-      });
+      // Los ancestros se conservan en structurePathById para trazabilidad,
+      // pero solo se ofrecen estructuras con asignaciones autorizadas.
+      selectableByLocal.get(localId).add(structureId);
     });
 
     return {
@@ -527,15 +517,22 @@ const DirectoryPage = (() => {
     const selectableIds = getHierarchyFilterSets().selectableIds;
     const index = state.hierarchyIndex;
     if (!index) return [];
-    return (index.childrenByParent.get(key(parentId)) || [])
-      .filter(node => selectableIds.has(key(node.id)));
+    const selectedParentId = key(parentId);
+    const candidates = selectedParentId
+      ? (index.childrenByParent.get(selectedParentId) || [])
+      : Array.from(index.structureById.values());
+    return candidates.filter(node => {
+      const id = key(node.id);
+      const nodeParentId = key(node.parent_id);
+      if (!selectableIds.has(id)) return false;
+      // Si el padre no tiene registros autorizados, el nodo real se presenta
+      // como raíz visible; no se crea ni se muestra un ancestro contextual.
+      return selectedParentId
+        ? nodeParentId === selectedParentId
+        : !selectableIds.has(nodeParentId);
+    });
   }
 
-
-  /**
-   * Determina la etiqueta del nivel jerárquico.
-   * También se utiliza en el formulario de registro.
-   */
   function getHierarchyLabel(nodes, level) {
     const types = [
       ...new Set(
@@ -683,16 +680,16 @@ const DirectoryPage = (() => {
       const structures = state.hierarchyIndex
         ? state.hierarchyIndex.structureById
         : new Map();
+      const selectableIds = getHierarchyFilterSets().selectableIds;
       return state.hierarchyPath.every((id, index) => {
         const node = structures.get(key(id));
-        if (!node) return false;
-        const expectedParent = index ? key(state.hierarchyPath[index - 1]) : '';
-        return key(node.parent_id) === expectedParent;
+        if (!node || !selectableIds.has(key(id))) return false;
+        if (index === 0) return !selectableIds.has(key(node.parent_id));
+        return key(node.parent_id) === key(state.hierarchyPath[index - 1]);
       });
     }
     return true;
   }
-
 
   /**
    * Recalcula los filtros relacionados cuando cambia
