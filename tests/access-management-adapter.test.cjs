@@ -2314,7 +2314,7 @@ test('Información de personal omite Local y solo muestra cascada cuando el ámb
   assert.match(directoryViewSource, /id="directoryHierarchyFilters"/);
   assert.match(directoryViewSource, /id="directoryCargoFilter"/);
   assert.doesNotMatch(directoryUiSource, /localFilter: document\.getElementById\(/);
-  assert.match(directoryUiSource, /function populateLocalFilter\(\)/);
+  assert.doesNotMatch(directoryUiSource, /populateLocalFilter|localFilter|directoryLocalFilter/);
   assert.match(directoryUiSource, /function getHierarchyFilterSets\(\)/);
   assert.match(directoryUiSource, /appendHierarchyLevel\('', 0\)/);
   assert.match(directoryUiSource, /state\.hierarchySelectableIds = _directoryBuildHierarchyFilterSets_/);
@@ -2487,12 +2487,7 @@ test('los botones de Administración de accesos notifican errores sincrónicos y
 
 
 test('Información de personal muestra directamente la unión del ámbito y solo crea filtros para descendientes heredados', () => {
-  const localStart = directoryUiSource.indexOf('function populateLocalFilter()');
-  const localEnd = directoryUiSource.indexOf('function populateCargoFilter()', localStart);
-  const localFilter = directoryUiSource.slice(localStart, localEnd);
-  assert.ok(localFilter.includes('wrapper.hidden = true'));
-  assert.ok(localFilter.includes('select.disabled = true'));
-  assert.doesNotMatch(localFilter, /localOptionsById|Todos los locales autorizados/);
+  assert.doesNotMatch(directoryUiSource, /localFilter|populateLocalFilter|directoryLocalFilter/);
 
   const recordsStart = directoryUiSource.indexOf('function getRecordsForFilters(');
   const recordsEnd = directoryUiSource.indexOf('function getUsedCatalogItems(', recordsStart);
