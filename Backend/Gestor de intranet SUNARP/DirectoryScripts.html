@@ -4,6 +4,12 @@
    * las unidades con asignaciones coincidentes y sus ancestros reales.
    * Los ancestros son seleccionables; nunca se crean opciones de contexto.
    */
+  /**
+   * Devuelve todos los nodos reales que forman las rutas hacia asignaciones
+   * autorizadas. Incluye ancestros intermedios aunque no tengan asignaciones
+   * propias: omitirlos aplana la jerarquía y muestra nietos como hermanos.
+   * No incluye ramas sin registros autorizados ni cruza límites de sede.
+   */
   function _directoryBuildHierarchyFilterSets_(records, structures, filterContract, siteId) {
     const site = String(siteId || '').trim();
     const scopes = filterContract && Array.isArray(filterContract.scopes)
@@ -17,35 +23,93 @@
       .filter(scope => scope.type === 'ESTRUCTURA_ORG' &&
         scope.includeDescendants === true && String(scope.referenceId || '').trim())
       .map(scope => String(scope.referenceId).trim());
-    if ((!site && !hasTotalScope) || (!hasBroadSiteScope && !inheritedRoots.length)) return new Set();
+
+    if ((!site && !hasTotalScope) || (!hasBroadSiteScope && !inheritedRoots.length)) {
+      return new Set();
+    }
+
+    const keyOf = value => String(value === null || value === undefined ? '' : value).trim();
     const structureMap = new Map((structures || []).map(node => [
-      String(node.id || '').trim(), node
-    ]));
-    const isDescendantOf = (structureId, rootId) => {
-      if (!structureId || !rootId || structureId === rootId) return false;
-      let current = structureMap.get(structureId);
-      const visited = new Set();
-      while (current) {
-        const id = String(current.id || '').trim();
-        if (!id || visited.has(id)) return false;
-        visited.add(id);
-        const parentId = String(current.parent_id || '').trim();
-        if (!parentId) return false;
-        if (parentId === rootId) return true;
-        current = structureMap.get(parentId) || null;
-      }
-      return false;
-    };
+      keyOf(node && node.id), node
+    ]).filter(entry => entry[0]));
     const selectableIds = new Set();
-    (records || []).forEach(record => {
-      const recordSite = String(record.filter_sede_id || record.sede_id || '').trim();
-      const structureId = String(record.estructura_id || '').trim();
-      if ((site && recordSite !== site) || !recordSite || !structureId || !structureMap.has(structureId)) return;
-      if (hasBroadSiteScope || inheritedRoots.some(rootId => isDescendantOf(structureId, rootId))) {
-        selectableIds.add(structureId);
+
+    const addPathToAuthorizedRoot = (structureId, expectedSiteId, stopAtId) => {
+      const path = [];
+      const visited = new Set();
+      let current = structureMap.get(keyOf(structureId));
+      let reachedScopeRoot = !stopAtId;
+      let invalidCycle = false;
+
+      while (current) {
+        const id = keyOf(current.id);
+        if (!id || visited.has(id)) {
+          invalidCycle = true;
+          break;
+        }
+        if (keyOf(current.sede_id) !== expectedSiteId) break;
+        visited.add(id);
+
+        if (stopAtId && id === stopAtId) {
+          reachedScopeRoot = true;
+          break;
+        }
+
+        path.push(id);
+        const parentId = keyOf(current.parent_id);
+        if (!parentId) break;
+
+        const parent = structureMap.get(parentId);
+        if (!parent || keyOf(parent.sede_id) !== expectedSiteId) break;
+        current = parent;
       }
+
+      if (invalidCycle || !reachedScopeRoot) return false;
+      path.forEach(id => selectableIds.add(id));
+      return true;
+    };
+
+    (records || []).forEach(record => {
+      const recordSite = keyOf(record && (record.filter_sede_id || record.sede_id));
+      const structureId = keyOf(record && record.estructura_id);
+      if ((site && recordSite !== site) || !recordSite || !structureId) return;
+
+      const structure = structureMap.get(structureId);
+      if (!structure || keyOf(structure.sede_id) !== recordSite) return;
+
+      if (hasBroadSiteScope) {
+        addPathToAuthorizedRoot(structureId, recordSite, '');
+        return;
+      }
+
+      inheritedRoots.forEach(rootId => {
+        const root = structureMap.get(rootId);
+        if (!root || keyOf(root.sede_id) !== recordSite) return;
+        addPathToAuthorizedRoot(structureId, recordSite, rootId);
+      });
     });
+
     return selectableIds;
+  }
+
+  /**
+   * Obtiene exclusivamente los hijos directos seleccionables de un nodo.
+   * Nunca salta un nivel para encontrar descendientes con asignaciones.
+   */
+  function _directoryGetSelectableHierarchyChildren_(parentId, hierarchyIndex, selectableIds) {
+    const keyOf = value => String(value === null || value === undefined ? '' : value).trim();
+    const parentKey = keyOf(parentId);
+    if (!parentKey || !hierarchyIndex || !hierarchyIndex.structureById) return [];
+
+    const parent = hierarchyIndex.structureById.get(parentKey);
+    if (!parent) return [];
+    const parentSiteId = keyOf(parent.sede_id);
+    const allowedIds = selectableIds instanceof Set ? selectableIds : new Set();
+
+    return (hierarchyIndex.childrenByParent.get(parentKey) || []).filter(node =>
+      keyOf(node && node.sede_id) === parentSiteId &&
+      allowedIds.has(keyOf(node && node.id))
+    );
   }
 
   function _directoryGetHierarchyDisplayPath_(node, structures) {
@@ -490,6 +554,7 @@ const DirectoryPage = (() => {
     const selectableIds = getHierarchyFilterSets().selectableIds;
     const index = state.hierarchyIndex;
     if (!index || !selectableIds.size) return [];
+
     const selectedParentId = key(parentId);
     const contract = state.catalogs && state.catalogs.filterContract;
     const scopes = contract && Array.isArray(contract.scopes) ? contract.scopes : [];
@@ -503,40 +568,50 @@ const DirectoryPage = (() => {
       scope.includeDescendants === true &&
       key(scope.referenceId)
     ).map(scope => key(scope.referenceId));
-    const result = [];
-    const seen = new Set();
-    const collectChildren = parent => {
-      const children = index.childrenByParent.get(key(parent)) || [];
-      children.forEach(node => {
-        const id = key(node.id);
-        if (!id || seen.has(id)) return;
-        seen.add(id);
-        if (selectableIds.has(id)) {
-          result.push(node);
-        } else {
-          // Los nodos intermedios sin asignaciones no se ofrecen como opciones.
-          collectChildren(id);
-        }
-      });
-    };
+
     if (selectedParentId) {
       if (!selectableIds.has(selectedParentId)) return [];
-      collectChildren(selectedParentId);
-    } else if (broadScope) {
-      const roots = Array.from(index.structureById.values()).filter(node => {
-        const parent = key(node.parent_id);
-        return !parent || !index.structureById.has(parent);
-      });
-      roots.forEach(node => {
-        const id = key(node.id);
-        if (!id || seen.has(id)) return;
-        seen.add(id);
-        if (selectableIds.has(id)) result.push(node);
-        else collectChildren(id);
-      });
-    } else {
-      inheritedRoots.forEach(rootId => collectChildren(rootId));
+      return _directoryGetSelectableHierarchyChildren_(
+        selectedParentId, index, selectableIds
+      );
     }
+
+    const result = [];
+    const seen = new Set();
+    const appendUnique = nodes => {
+      (nodes || []).forEach(node => {
+        const id = key(node && node.id);
+        if (!id || seen.has(id) || !selectableIds.has(id)) return;
+        seen.add(id);
+        result.push(node);
+      });
+    };
+
+    if (broadScope) {
+      const roots = Array.from(index.structureById.values()).filter(node => {
+        const parentId = key(node && node.parent_id);
+        if (!parentId) return true;
+        const parent = index.structureById.get(parentId);
+        return !parent || key(parent.sede_id) !== key(node.sede_id);
+      });
+      roots.sort((a, b) => {
+        const orderA = Number(a.order);
+        const orderB = Number(b.order);
+        const normalizedA = Number.isFinite(orderA) ? orderA : Number.MAX_SAFE_INTEGER;
+        const normalizedB = Number.isFinite(orderB) ? orderB : Number.MAX_SAFE_INTEGER;
+        return normalizedA - normalizedB ||
+          key(a.name).localeCompare(key(b.name), 'es', { sensitivity: 'base' }) ||
+          key(a.id).localeCompare(key(b.id));
+      });
+      appendUnique(roots);
+    } else {
+      inheritedRoots.forEach(rootId => {
+        appendUnique(_directoryGetSelectableHierarchyChildren_(
+          rootId, index, selectableIds
+        ));
+      });
+    }
+
     return result;
   }
 
