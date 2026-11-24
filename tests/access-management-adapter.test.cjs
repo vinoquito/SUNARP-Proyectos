@@ -2240,16 +2240,16 @@ test('el contexto del Directorio reutiliza catálogos ensamblados por generació
   assert.match(implementation, /DIRECTORY_CATALOG_CACHE_TTL/);
 });
 
-test('Información de personal presenta filtros en cascada Sede, Local, Unidad orgánica y Cargo', () => {
+test('Información de personal omite Local y solo muestra cascada cuando el ámbito lo hereda', () => {
   assert.match(directoryViewSource, /id="directorySedeFilter"/);
-  assert.match(directoryViewSource, /id="directoryLocalFilter"/);
+  assert.doesNotMatch(directoryViewSource, /directoryLocalFilter/);
   assert.match(directoryViewSource, /id="directoryHierarchyFilters"/);
   assert.match(directoryViewSource, /id="directoryCargoFilter"/);
-  assert.match(directoryUiSource, /localFilter: document\.getElementById\(/);
+  assert.doesNotMatch(directoryUiSource, /localFilter: document\.getElementById\(/);
   assert.match(directoryUiSource, /function populateLocalFilter\(\)/);
   assert.match(directoryUiSource, /function getHierarchyFilterSets\(\)/);
   assert.match(directoryUiSource, /appendHierarchyLevel\('', 0\)/);
-  assert.match(directoryUiSource, /recordLocalId = key\(record\.filter_local_id \|\| record\.local_id\)/);
+  assert.match(directoryUiSource, /state\.hierarchySelectableIds = _directoryBuildHierarchyFilterSets_/);
   assert.match(directoryUiSource, /recordSiteId = key\(record\.filter_sede_id \|\| record\.sede_id\)/);
 });
 
@@ -2345,9 +2345,9 @@ test('la jerarquía del Directorio muestra los hijos directos con sus nombres re
   assert.ok(start >= 0 && end > start);
   const implementation = directoryUiSource.slice(start, end);
   assert.ok(implementation.includes('option.textContent = key(node.name)'));
-  assert.ok(directoryUiSource.includes('index.childrenByParent.get(selectedParentId)'));
+  assert.ok(directoryUiSource.includes('index.childrenByParent.get(key(parent))'));
   assert.ok(directoryUiSource.includes('Array.from(index.structureById.values())'));
-  assert.ok(directoryUiSource.includes('!selectableIds.has(nodeParentId)'));
+  assert.ok(directoryUiSource.includes('scope.includeDescendants === true'));
   assert.equal(implementation.includes('contextualIds'), false);
   assert.equal(implementation.includes('(contexto)'), false);
   assert.equal(implementation.includes('option.disabled'), false);
@@ -2410,7 +2410,7 @@ test('Información de personal muestra directamente la unión del ámbito y solo
   assert.ok(hierarchyNodes.includes("scope.type === 'ESTRUCTURA_ORG'"));
   assert.ok(hierarchyNodes.includes('scope.includeDescendants === true'));
   assert.ok(hierarchyNodes.includes('collectChildren(rootId)'));
-  assert.ok(hierarchyNodes.includes('Una estructura intermedia sin asignaciones no se ofrece'));
+  assert.ok(hierarchyNodes.includes('Los nodos intermedios sin asignaciones no se ofrecen'));
 
   const renderStart = directoryUiSource.indexOf('function renderHierarchyFilters()');
   const renderEnd = directoryUiSource.indexOf('function hasAvailableFilterSelection(filter)', renderStart);

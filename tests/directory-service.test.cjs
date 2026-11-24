@@ -249,13 +249,13 @@ test('los filtros jerárquicos excluyen estructuras de otras sedes y locales', (
   assert.deepEqual([...hierarchySandbox.buildHierarchyFilterSets(records, structures, { scopes: [{ type: 'LOCAL', referenceId: 'LOCAL_A', includeDescendants: false }] }, 'SEDE_A')], []);
 });
 
-test('la interfaz limita cada selector a hijos directos y no presenta opciones contextuales artificiales', () => {
+test('la interfaz limita la cascada a nodos reales autorizados y no presenta contexto artificial', () => {
   assert.doesNotMatch(frontendScript, /contextualIds|\(contexto\)|option\.disabled\s*=\s*contextualOnly/);
   assert.match(frontendScript, /option\.textContent = key\(node\.name\)/);
-  assert.match(frontendScript, /index\.childrenByParent\.get\(selectedParentId\)/);
+  assert.match(frontendScript, /index\.childrenByParent\.get\(key\(parent\)\)/);
   assert.match(frontendScript, /Array\.from\(index\.structureById\.values\(\)\)/);
-  assert.match(frontendScript, /!selectableIds\.has\(nodeParentId\)/);
-  assert.match(frontendScript, /selectableByLocal\.get\(localId\)\.add\(structureId\)/);
+  assert.match(frontendScript, /scope\.includeDescendants === true/);
+  assert.match(frontendScript, /state\.hierarchySelectableIds = _directoryBuildHierarchyFilterSets_/);
   assert.doesNotMatch(frontendScript, /selectableIds\.add\(keyOf\(node\.id\)\)/);
 });
 
@@ -2207,14 +2207,14 @@ test('el contrato de filtros reconoce TOTAL sin convertirlo en una selección re
 });
 
 
-test('Información de personal abre directamente la única sede autorizada y no exige seleccionar local', () => {
+test('Información de personal carga automáticamente la única sede autorizada sin filtrar por Local', () => {
   assert.match(frontendSource, /state\.authorizedSedes\.length === 1/);
   assert.match(frontendSource, /autoLoadedSoleSede = true/);
   assert.match(frontendSource, /await loadSelectedSede\(soleSedeId\)/);
   assert.match(frontendSource, /wrapper\.hidden = sedes\.length <= 1/);
-  assert.match(frontendSource, /const hasAuthorizedRecords = Boolean\(index && index\.recordsByLocal\.size > 0\)/);
-  assert.match(frontendSource, /selectableByLocal\.forEach\(ids => ids\.forEach/);
-  assert.doesNotMatch(frontendSource, /if \(!siteId \|\| siteId !== state\.activeSedeId \|\| !localId/);
+  assert.match(frontendSource, /state\.hierarchySelectableIds = _directoryBuildHierarchyFilterSets_/);
+  assert.doesNotMatch(frontendSource, /localFilter\.addEventListener/);
+  assert.doesNotMatch(frontendSource, /recordsByLocal\.size > 0/);
 });
 
 test('Información de personal carga por sede una vez y usa filtros, búsqueda y paginación locales', () => {
@@ -2245,7 +2245,9 @@ test('Información de personal carga por sede una vez y usa filtros, búsqueda y
   assert.match(frontendSource, /function populateSedeFilter\([\s\S]*?wrapper\.hidden = sedes\.length <= 1/);
   assert.match(frontendSource, /state\.authorizedSedes\.length === 1/);
   assert.match(frontendSource, /await loadSelectedSede\(soleSedeId\)/);
-  assert.match(frontendSource, /selectableByLocal\.forEach\(ids => ids\.forEach/);
+  assert.match(frontendSource, /scope\.includeDescendants === true/);
+  assert.match(frontendSource, /state\.hierarchySelectableIds/);
+  assert.doesNotMatch(frontendSource, /selectableByLocal\.forEach/);
   assert.doesNotMatch(frontendSource, /!siteId \|\| siteId !== state\.activeSedeId \|\| !localId/);
   assert.match(uiDataTableSource, /setData\(nextData\)/);
 });

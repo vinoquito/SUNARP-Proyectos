@@ -1971,6 +1971,7 @@ async function deleteDirectoryEntry(record) {
     state.records = [];
     state.hierarchyPath = [];
     state.hierarchyIndex = null;
+    state.hierarchySelectableIds = new Set();
     state.catalogs = { sedes: state.authorizedSedes || [] };
     if (elements.localFilter) elements.localFilter.value = '';
     if (elements.cargoFilter) elements.cargoFilter.value = '';
