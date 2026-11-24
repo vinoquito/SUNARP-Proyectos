@@ -307,7 +307,7 @@ test('los filtros jerárquicos conservan ancestros reales, pero excluyen otras s
 test('la interfaz limita la cascada a hijos directos reales y no presenta contexto artificial', () => {
   assert.doesNotMatch(frontendScript, /contextualIds|\\(contexto\\)|option\\.disabled\\s*=\\s*contextualOnly/);
   assert.match(frontendScript, /option\\.textContent = key\\(node\\.name\\)/);
-  assert.match(frontendScript, /index\\.childrenByParent\\.get\\(parentKey\\)/);
+  assert.match(frontendScript, /hierarchyIndex\\.childrenByParent\\.get\\(parentKey\\)/);
   assert.match(frontendScript, /Array\\.from\\(index\\.structureById\\.values\\(\\)\\)/);
   assert.match(frontendScript, /scope\\.includeDescendants === true/);
   assert.match(frontendScript, /state\\.hierarchySelectableIds = _directoryBuildHierarchyFilterSets_/);
