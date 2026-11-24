@@ -305,19 +305,22 @@ test('los filtros jerárquicos conservan ancestros reales, pero excluyen otras s
 });
 
 test('la interfaz limita la cascada a hijos directos reales y no presenta contexto artificial', () => {
-  assert.doesNotMatch(frontendScript, /contextualIds|\\(contexto\\)|option\\.disabled\\s*=\\s*contextualOnly/);
-  assert.match(frontendScript, /option\\.textContent = key\\(node\\.name\\)/);
-  assert.match(frontendScript, /hierarchyIndex\\.childrenByParent\\.get\\(parentKey\\)/);
-  assert.match(frontendScript, /Array\\.from\\(index\\.structureById\\.values\\(\\)\\)/);
-  assert.match(frontendScript, /scope\\.includeDescendants === true/);
-  assert.match(frontendScript, /state\\.hierarchySelectableIds = _directoryBuildHierarchyFilterSets_/);
-  assert.match(frontendScript, /_directoryGetSelectableHierarchyChildren_\\(/);
+  assert.equal(frontendScript.includes('contextualIds'), false);
+  assert.equal(frontendScript.includes('(contexto)'), false);
+  assert.equal(frontendScript.includes('option.disabled'), false);
+  assert.ok(frontendScript.includes('option.textContent = key(node.name)'));
+  assert.ok(frontendScript.includes('hierarchyIndex.childrenByParent.get(parentKey)'));
+  assert.ok(frontendScript.includes('Array.from(index.structureById.values())'));
+  assert.ok(frontendScript.includes('scope.includeDescendants === true'));
+  assert.ok(frontendScript.includes('state.hierarchySelectableIds = _directoryBuildHierarchyFilterSets_'));
+  assert.ok(frontendScript.includes('_directoryGetSelectableHierarchyChildren_('));
+
   const getHierarchyStart = frontendScript.indexOf('function getHierarchyNodes(parentId)');
   const getHierarchyEnd = frontendScript.indexOf('function getHierarchyLabel(', getHierarchyStart);
   const getHierarchySource = frontendScript.slice(getHierarchyStart, getHierarchyEnd);
-  assert.match(getHierarchySource, /_directoryGetSelectableHierarchyChildren_/);
-  assert.doesNotMatch(getHierarchySource, /collectChildren/);
-  assert.doesNotMatch(frontendScript, /selectableIds\\.add\\(keyOf\\(node\\.id\\)\\)/);
+  assert.ok(getHierarchySource.includes('_directoryGetSelectableHierarchyChildren_'));
+  assert.equal(getHierarchySource.includes('collectChildren'), false);
+  assert.equal(frontendScript.includes('selectableIds.add(keyOf(node.id)'), false);
 });;
 
 
