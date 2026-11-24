@@ -2437,7 +2437,7 @@ test('la jerarquía del Directorio muestra los hijos directos con sus nombres re
   assert.ok(start >= 0 && end > start);
   const implementation = directoryUiSource.slice(start, end);
   assert.ok(implementation.includes('option.textContent = key(node.name)'));
-  assert.ok(directoryUiSource.includes('index.childrenByParent.get(key(parent))'));
+  assert.ok(directoryUiSource.includes('hierarchyIndex.childrenByParent.get(parentKey)'));
   assert.ok(directoryUiSource.includes('Array.from(index.structureById.values())'));
   assert.ok(directoryUiSource.includes('scope.includeDescendants === true'));
   assert.equal(implementation.includes('contextualIds'), false);
@@ -2496,8 +2496,9 @@ test('Información de personal muestra directamente la unión del ámbito y solo
   const hierarchyNodes = directoryUiSource.slice(nodesStart, nodesEnd);
   assert.ok(hierarchyNodes.includes("scope.type === 'ESTRUCTURA_ORG'"));
   assert.ok(hierarchyNodes.includes('scope.includeDescendants === true'));
-  assert.ok(hierarchyNodes.includes('collectChildren(rootId)'));
-  assert.ok(hierarchyNodes.includes('Los nodos intermedios sin asignaciones no se ofrecen'));
+  assert.ok(hierarchyNodes.includes('_directoryGetSelectableHierarchyChildren_'));
+  assert.equal(hierarchyNodes.includes('collectChildren'), false);
+  assert.equal(hierarchyNodes.includes('Los nodos intermedios sin asignaciones no se ofrecen'), false);
 
   const renderStart = directoryUiSource.indexOf('function renderHierarchyFilters()');
   const renderEnd = directoryUiSource.indexOf('function hasAvailableFilterSelection(filter)', renderStart);
