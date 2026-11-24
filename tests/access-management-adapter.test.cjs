@@ -968,7 +968,7 @@ test('la consulta de usuarios reutiliza la vista materializada, pagina en servid
 
 test('la auditoría envía fecha_hora como ISO string compatible entre proyectos Apps Script', () => {
   const sandbox = createAdapterSandbox(makeSecurityData());
-  sandbox.Utilities = { getUuid: () => 'EVT_TEST_001' };
+  vm.runInContext("Utilities = { getUuid: function () { return 'EVT_TEST_001'; } };", sandbox);
   sandbox._accessSecuritySource_ = sheet => ({ sheetName: sheet });
   const headers = [
     'evento_id', 'fecha_hora', 'actor_correo', 'actor_nombre', 'accion',
@@ -2399,27 +2399,29 @@ test('Nueva cuenta monta el formulario antes de mostrar la alerta del contenedor
 test('el bootstrap de Administración reutiliza catálogos mientras no cambie su generación', () => {
   const sandbox = createAdapterSandbox(makeSecurityData());
   const cache = new Map();
-  let catalogBuilds = 0;
+  const readCounts = [];
   const list = sandbox.SUNARPCore.listRecordsFromSourcesCached;
-  const authContextCache = sandbox.SUNARPCore.getOrBuildCachedValue;
   sandbox.SUNARPCore.getOrBuildCachedValue = (key, sources, builder, ttl) => {
-    if (String(key).startsWith('access-auth-context:')) {
-      return authContextCache(key, sources, builder, ttl);
+    const cacheKey = String(key);
+    assert.ok(ttl === 60 || ttl === 3600);
+    if (cache.has(cacheKey)) {
+      return { value: cache.get(cacheKey), cacheHit: true, cacheStored: true };
     }
-    assert.equal(key, 'access-management-bootstrap:v1');
-    assert.equal(ttl, 60);
-    if (cache.has(key)) return { value: cache.get(key), cacheHit: true, cacheStored: true };
     const value = builder();
-    cache.set(key, value);
+    cache.set(cacheKey, value);
     return { value, cacheHit: false, cacheStored: true };
   };
   sandbox.SUNARPCore.listRecordsFromSourcesCached = (...args) => {
-    catalogBuilds++;
+    readCounts.push(args[0].map(request => request.source.sheetName));
     return list(...args);
   };
   const first = sandbox.getAccessManagementData();
+  const firstReadCount = readCounts.length;
   const second = sandbox.getAccessManagementData();
-  assert.equal(catalogBuilds, 1);
+  assert.equal(firstReadCount, 2, 'Una lectura para identidad y otra para catálogos iniciales');
+  assert.equal(readCounts.length, firstReadCount, 'La segunda entrada no debe volver a leer catálogos.');
+  assert.ok(cache.has('access-auth-context:v1:prueba@sunarp.gob.pe'));
+  assert.ok(cache.has('access-management-bootstrap:v1'));
   assert.deepEqual(
     Array.from(first.modules, item => item.modulo_id),
     Array.from(second.modules, item => item.modulo_id)
