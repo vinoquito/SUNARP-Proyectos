@@ -866,6 +866,29 @@ test('crear usuario, asignar rol y ámbito, listar por sede y bloquear duplicida
   assert.equal(listed.items[0].persona_id, 'PER_122');
   assert.equal(listed.items[0].sede_nombre, 'Sede Central');
 
+  const edited = sandbox.saveAccessUserConfiguration({
+    persona_id: 'PER_122',
+    accesos: [{
+      modulo_id: 'MOD_INFO_PERSONAL',
+      rol_id: 'ROL_ADMIN',
+      ambitos: [{
+        tipo_ambito_id: 'SEDE',
+        referencia_id: 'SEDE_CENTRAL',
+        incluir_descendientes: 'NO'
+      }]
+    }]
+  });
+  assert.equal(edited.success, true);
+  const oldRoleList = sandbox.getAccessUsers({
+    sede_id: 'SEDE_CENTRAL', rol_id: 'ROL_EDITOR', page: 1, pageSize: 10
+  });
+  const updatedRoleList = sandbox.getAccessUsers({
+    sede_id: 'SEDE_CENTRAL', rol_id: 'ROL_ADMIN', page: 1, pageSize: 10
+  });
+  assert.equal(oldRoleList.total, 0, 'La lista deja de incluir el rol anterior después de editar');
+  assert.equal(updatedRoleList.total, 1, 'La lista refleja el nuevo rol y el ámbito de sede');
+  assert.equal(updatedRoleList.items[0].persona_id, 'PER_122');
+
   assert.throws(
     () => sandbox.saveAccessUser(accountPayload),
     /ya tiene una cuenta registrada/i
