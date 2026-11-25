@@ -1674,8 +1674,9 @@ function getDirectoryFormData(action) {
     )
   })).filter(scope => ['TOTAL', 'SEDE', 'LOCAL', 'ESTRUCTURA_ORG'].includes(scope.type));
 
-  const isTotal = scopes.length === 1 &&
-    scopes[0].type === 'TOTAL' && !scopes[0].referenceId;
+  const isTotal = scopes.some(scope =>
+    scope.type === 'TOTAL' && !scope.referenceId
+  );
   const hasSiteScope = isTotal || scopes.some(scope => scope.type === 'SEDE');
   const structureScopes = scopes.filter(scope =>
     scope.type === 'ESTRUCTURA_ORG' && scope.referenceId
