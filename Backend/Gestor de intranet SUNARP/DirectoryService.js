@@ -1691,14 +1691,12 @@ function getDirectoryFormData(action) {
     active: true
   })).sort((a, b) => a.name.localeCompare(b.name, 'es'));
 
-  if (!isTotal && sedes.length > 1) {
-    throw new Error('El ámbito de Información de personal no puede abarcar varias sedes para esta operación.');
-  }
   if (!sedes.length) {
     throw new Error('No se encontró una sede válida dentro de tus ámbitos autorizados para registrar información de personal.');
   }
 
-  const fixedSedeId = isTotal ? '' : _directoryKey_(sedes[0].id);
+  const siteMode = isTotal || sedes.length > 1 ? 'selectable' : 'fixed';
+  const fixedSedeId = siteMode === 'fixed' ? _directoryKey_(sedes[0].id) : '';
   const structureMap = _directoryCreateMap_(context.estructuraOrg || []);
   const localMap = _directoryCreateMap_(context.locales || []);
   const activeStructures = (context.estructuraOrg || []).filter(_directoryIsActive_);
@@ -1848,7 +1846,7 @@ function getDirectoryFormData(action) {
     operation,
     scope: {
       total: isTotal,
-      siteMode: isTotal ? 'selectable' : 'fixed',
+      siteMode,
       fixedSedeId,
       localMode,
       fixedLocalId: localMode === 'fixed' && filteredLocals.length === 1 ? filteredLocals[0].id : '',
@@ -3426,18 +3424,7 @@ function _saveDirectoryEntryPrimary_(payload) {
   }
 
   if (!isNewPerson && isNewAssignment) {
-    // Una asignación adicional nunca crea ni modifica identidad o ficha personal.
-    const assignment = saveDirectoryAssignment({
-      persona_id: personaId,
-      cargo_id: payload.cargo_id,
-      condicion_cargo: payload.condicion_cargo,
-      anexo: payload.anexo,
-      estructura_local_id: payload.estructura_local_id,
-      local_id: payload.local_id,
-      observaciones: payload.observaciones,
-      active: true
-    });
-    return Object.assign({}, assignment, { message: 'La asignación se registró correctamente.' });
+    throw new Error('Las asignaciones adicionales deben guardarse desde el formulario completo del servidor.');
   }
 
   const personPayload = {
@@ -3490,8 +3477,9 @@ function _saveDirectoryEntryPrimary_(payload) {
     let personalDataUpdated = false;
     let assignmentUpdated = false;
     try {
-      const person = _saveDirectoryPerson_(personPayload);
       personUpdated = true;
+      const person = _saveDirectoryPerson_(personPayload);
+      personalDataUpdated = true;
       const personalData = saveDirectoryPersonalData({
         servidor_id: personaId,
         tipo_documento: normalizedDocument.tipo_documento,
@@ -3500,7 +3488,7 @@ function _saveDirectoryEntryPrimary_(payload) {
         fecha_inicio_servicios: payload.fecha_inicio_servicios,
         fecha_cese: payload.fecha_cese
       });
-      personalDataUpdated = true;
+      assignmentUpdated = true;
       const assignment = saveDirectoryAssignment({
         asignacion_id: assignmentId,
         persona_id: personaId,
@@ -3511,7 +3499,6 @@ function _saveDirectoryEntryPrimary_(payload) {
         local_id: payload.local_id,
         observaciones: payload.observaciones
       });
-      assignmentUpdated = true;
       return { success: true, message: 'Persona, datos personales y asignación actualizados.', person, personalData, assignment };
     } catch (error) {
       const rollbackErrors = [];
