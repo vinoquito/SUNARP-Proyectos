@@ -1934,6 +1934,14 @@ const DirectoryPage = (() => {
           directLocalSelect.value = key(relation.local_id);
         }
       });
+      if (!assignment && index > 0) {
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className = 'sunarp-btn sunarp-btn-outline';
+        removeButton.textContent = 'Quitar asignación';
+        removeButton.addEventListener('click', () => row.remove());
+        row.appendChild(removeButton);
+      }
     }
 
     if (!form || !assignmentsContainer || !firstAssignmentRow || !cancelButton) {
