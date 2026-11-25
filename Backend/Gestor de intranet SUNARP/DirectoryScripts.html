@@ -10,6 +10,10 @@
    * propias: omitirlos aplana la jerarquía y muestra nietos como hermanos.
    * No incluye ramas sin registros autorizados ni cruza límites de sede.
    */
+  /**
+   * Construye los nodos orgánicos navegables a partir de asignaciones ya
+   * autorizadas. Conserva los padres reales y respeta cada raíz de ámbito.
+   */
   function _directoryBuildHierarchyFilterSets_(records, structures, filterContract, siteId) {
     const site = String(siteId || '').trim();
     const scopes = filterContract && Array.isArray(filterContract.scopes)
@@ -19,12 +23,11 @@
     const hasBroadSiteScope = hasTotalScope || scopes.some(scope =>
       scope.type === 'SEDE' && String(scope.referenceId || '').trim() === site
     );
-    const inheritedRoots = scopes
-      .filter(scope => scope.type === 'ESTRUCTURA_ORG' &&
-        scope.includeDescendants === true && String(scope.referenceId || '').trim())
-      .map(scope => String(scope.referenceId).trim());
+    const structureScopes = scopes.filter(scope =>
+      scope.type === 'ESTRUCTURA_ORG' && String(scope.referenceId || '').trim()
+    );
 
-    if ((!site && !hasTotalScope) || (!hasBroadSiteScope && !inheritedRoots.length)) {
+    if ((!site && !hasTotalScope) || (!hasBroadSiteScope && !structureScopes.length)) {
       return new Set();
     }
 
@@ -34,37 +37,29 @@
     ]).filter(entry => entry[0]));
     const selectableIds = new Set();
 
-    const addPathToAuthorizedRoot = (structureId, expectedSiteId, stopAtId) => {
+    const addPathWithinScope = (structureId, expectedSiteId, scopeRootId) => {
       const path = [];
       const visited = new Set();
       let current = structureMap.get(keyOf(structureId));
-      let reachedScopeRoot = !stopAtId;
-      let invalidCycle = false;
+      let reachedScopeRoot = false;
 
       while (current) {
         const id = keyOf(current.id);
-        if (!id || visited.has(id)) {
-          invalidCycle = true;
-          break;
-        }
-        if (keyOf(current.sede_id) !== expectedSiteId) break;
+        if (!id || visited.has(id) || keyOf(current.sede_id) !== expectedSiteId) return false;
         visited.add(id);
-
-        if (stopAtId && id === stopAtId) {
+        path.push(id);
+        if (id === scopeRootId) {
           reachedScopeRoot = true;
           break;
         }
-
-        path.push(id);
         const parentId = keyOf(current.parent_id);
         if (!parentId) break;
-
         const parent = structureMap.get(parentId);
         if (!parent || keyOf(parent.sede_id) !== expectedSiteId) break;
         current = parent;
       }
 
-      if (invalidCycle || !reachedScopeRoot) return false;
+      if (!reachedScopeRoot) return false;
       path.forEach(id => selectableIds.add(id));
       return true;
     };
@@ -78,24 +73,38 @@
       if (!structure || keyOf(structure.sede_id) !== recordSite) return;
 
       if (hasBroadSiteScope) {
-        addPathToAuthorizedRoot(structureId, recordSite, '');
+        let current = structure;
+        const visited = new Set();
+        while (current) {
+          const id = keyOf(current.id);
+          if (!id || visited.has(id) || keyOf(current.sede_id) !== recordSite) break;
+          visited.add(id);
+          selectableIds.add(id);
+          const parentId = keyOf(current.parent_id);
+          const parent = parentId ? structureMap.get(parentId) : null;
+          current = parent && keyOf(parent.sede_id) === recordSite ? parent : null;
+        }
         return;
       }
 
-      inheritedRoots.forEach(rootId => {
+      structureScopes.forEach(scope => {
+        const rootId = keyOf(scope.referenceId);
         const root = structureMap.get(rootId);
         if (!root || keyOf(root.sede_id) !== recordSite) return;
-        addPathToAuthorizedRoot(structureId, recordSite, rootId);
+        const includeDescendants = scope.includeDescendants === true;
+        if (structureId === rootId) {
+          selectableIds.add(rootId);
+          return;
+        }
+        if (includeDescendants) {
+          addPathWithinScope(structureId, recordSite, rootId);
+        }
       });
     });
 
     return selectableIds;
   }
 
-  /**
-   * Obtiene exclusivamente los hijos directos seleccionables de un nodo.
-   * Nunca salta un nivel para encontrar descendientes con asignaciones.
-   */
   function _directoryGetSelectableHierarchyChildren_(parentId, hierarchyIndex, selectableIds) {
     const keyOf = value => String(value === null || value === undefined ? '' : value).trim();
     const parentKey = keyOf(parentId);
@@ -510,14 +519,19 @@ const DirectoryPage = (() => {
       .filter(item => isActive(item))
       .slice()
       .sort(sortByName);
-    const placeholder = state.hasTotalScope && sedes.length > 1
-      ? 'Todas las sedes autorizadas'
-      : 'Sede determinada por el ámbito autorizado';
+    const isTotalSelection = state.hasTotalScope === true;
+    const fixedSingleSede = !isTotalSelection && sedes.length === 1;
+    const placeholder = isTotalSelection
+      ? 'Seleccione una opción'
+      : fixedSingleSede
+        ? 'Sede determinada por el ámbito autorizado'
+        : 'Seleccione una sede';
     updateFilterOptions(select, placeholder, sedes);
     const wrapper = select.closest('.sunarp-filter');
-    if (sedes.length === 1) select.value = key(sedes[0].id);
-    select.disabled = sedes.length <= 1;
-    if (wrapper) wrapper.hidden = sedes.length <= 1;
+    if (fixedSingleSede) select.value = key(sedes[0].id);
+    else if (isTotalSelection) select.value = '';
+    select.disabled = sedes.length === 0 || (!isTotalSelection && fixedSingleSede);
+    if (wrapper) wrapper.hidden = fixedSingleSede;
   }
 
   function populateCargoFilter() {
@@ -525,10 +539,9 @@ const DirectoryPage = (() => {
     if (!select) return;
     const elements = getElements();
     const siteId = key(elements.sedeFilter && elements.sedeFilter.value);
-    const allAuthorizedSites = state.activeSedeId === '__ALL__' && !siteId;
     const hasLoadedSite = Boolean(siteId && siteId === state.activeSedeId);
     const wrapper = select.closest('.sunarp-filter');
-    if (!allAuthorizedSites && !hasLoadedSite) {
+    if (!hasLoadedSite) {
       updateFilterOptions(select, 'Cargos de la información autorizada', []);
       select.disabled = true;
       if (wrapper) wrapper.hidden = true;
@@ -543,11 +556,48 @@ const DirectoryPage = (() => {
     const cargos = Array.from(options.values()).sort(sortByName);
     updateFilterOptions(select, 'Todos los cargos autorizados', cargos);
     select.disabled = cargos.length <= 1;
-    if (wrapper) wrapper.hidden = cargos.length <= 1;
+    if (wrapper) wrapper.hidden = cargos.length === 0;
   }
 
   function getHierarchyFilterSets() {
     return { selectableIds: state.hierarchySelectableIds || new Set() };
+  }
+
+  /**
+   * Obtiene las raíces ESTRUCTURA_ORG visibles para la sede activa.
+   * Elimina referencias redundantes cubiertas por una raíz ancestro que
+   * ya concede acceso a sus descendientes.
+   */
+  function _directoryGetHierarchyScopeRoots_(scopes, hierarchyIndex, selectableIds, siteId) {
+    const keyOf = value => String(value === null || value === undefined ? '' : value).trim();
+    const site = keyOf(siteId);
+    const byId = new Map();
+    (Array.isArray(scopes) ? scopes : []).forEach(scope => {
+      if (!scope || scope.type !== 'ESTRUCTURA_ORG') return;
+      const id = keyOf(scope.referenceId);
+      if (!id || !selectableIds.has(id)) return;
+      const node = hierarchyIndex && hierarchyIndex.structureById
+        ? hierarchyIndex.structureById.get(id)
+        : null;
+      if (!node || keyOf(node.sede_id) !== site) return;
+      const current = byId.get(id);
+      byId.set(id, {
+        referenceId: id,
+        includeDescendants: Boolean(scope.includeDescendants || (current && current.includeDescendants)),
+        node
+      });
+    });
+
+    const roots = Array.from(byId.values());
+    return roots.filter(candidate => !roots.some(other =>
+      other.referenceId !== candidate.referenceId &&
+      other.includeDescendants &&
+      _directoryMatchesHierarchySubtree_(
+        candidate.referenceId,
+        other.referenceId,
+        hierarchyIndex
+      )
+    ));
   }
 
   function getHierarchyNodes(parentId) {
@@ -563,11 +613,6 @@ const DirectoryPage = (() => {
       scope.type === 'TOTAL' ||
       (scope.type === 'SEDE' && key(scope.referenceId) === activeSiteId)
     );
-    const inheritedRoots = scopes.filter(scope =>
-      scope.type === 'ESTRUCTURA_ORG' &&
-      scope.includeDescendants === true &&
-      key(scope.referenceId)
-    ).map(scope => key(scope.referenceId));
 
     if (selectedParentId) {
       if (!selectableIds.has(selectedParentId)) return [];
@@ -576,43 +621,35 @@ const DirectoryPage = (() => {
       );
     }
 
-    const result = [];
-    const seen = new Set();
-    const appendUnique = nodes => {
-      (nodes || []).forEach(node => {
-        const id = key(node && node.id);
-        if (!id || seen.has(id) || !selectableIds.has(id)) return;
-        seen.add(id);
-        result.push(node);
-      });
-    };
-
-    if (broadScope) {
-      const roots = Array.from(index.structureById.values()).filter(node => {
-        const parentId = key(node && node.parent_id);
-        if (!parentId) return true;
-        const parent = index.structureById.get(parentId);
-        return !parent || key(parent.sede_id) !== key(node.sede_id);
-      });
-      roots.sort((a, b) => {
-        const orderA = Number(a.order);
-        const orderB = Number(b.order);
-        const normalizedA = Number.isFinite(orderA) ? orderA : Number.MAX_SAFE_INTEGER;
-        const normalizedB = Number.isFinite(orderB) ? orderB : Number.MAX_SAFE_INTEGER;
-        return normalizedA - normalizedB ||
-          key(a.name).localeCompare(key(b.name), 'es', { sensitivity: 'base' }) ||
-          key(a.id).localeCompare(key(b.id));
-      });
-      appendUnique(roots);
-    } else {
-      inheritedRoots.forEach(rootId => {
-        appendUnique(_directoryGetSelectableHierarchyChildren_(
-          rootId, index, selectableIds
-        ));
-      });
+    if (!broadScope) {
+      const scopeRoots = _directoryGetHierarchyScopeRoots_(
+        scopes, index, selectableIds, activeSiteId
+      );
+      if (scopeRoots.length === 1) {
+        const root = scopeRoots[0];
+        return root.includeDescendants
+          ? _directoryGetSelectableHierarchyChildren_(root.referenceId, index, selectableIds)
+          : [];
+      }
+      return scopeRoots.map(item => item.node);
     }
 
-    return result;
+    const roots = Array.from(index.structureById.values()).filter(node => {
+      const parentId = key(node && node.parent_id);
+      if (!parentId) return true;
+      const parent = index.structureById.get(parentId);
+      return !parent || key(parent.sede_id) !== key(node.sede_id);
+    });
+    roots.sort((a, b) => {
+      const orderA = Number(a.order);
+      const orderB = Number(b.order);
+      const normalizedA = Number.isFinite(orderA) ? orderA : Number.MAX_SAFE_INTEGER;
+      const normalizedB = Number.isFinite(orderB) ? orderB : Number.MAX_SAFE_INTEGER;
+      return normalizedA - normalizedB ||
+        key(a.name).localeCompare(key(b.name), 'es', { sensitivity: 'base' }) ||
+        key(a.id).localeCompare(key(b.id));
+    });
+    return roots.filter(node => selectableIds.has(key(node && node.id)));
   }
 
   function getHierarchyLabel(nodes, level) {
@@ -734,10 +771,9 @@ const DirectoryPage = (() => {
     container.replaceChildren();
     const elements = getElements();
     const siteId = key(elements.sedeFilter && elements.sedeFilter.value);
-    const allAuthorizedSites = state.activeSedeId === '__ALL__' && !siteId;
     const hasLoadedSite = Boolean(siteId && siteId === state.activeSedeId);
     const selectableIds = getHierarchyFilterSets().selectableIds;
-    if ((!allAuthorizedSites && !hasLoadedSite) || selectableIds.size <= 1) {
+    if (!hasLoadedSite || selectableIds.size <= 1) {
       state.hierarchyPath = [];
       container.hidden = true;
       return;
@@ -1935,12 +1971,7 @@ async function deleteDirectoryEntry(record) {
     const elements = getElements();
     if (!elements.sedeFilter || !elements.cargoFilter) return;
     elements.sedeFilter.addEventListener('change', () => {
-      const selectedSedeId = key(elements.sedeFilter.value);
-      if (!selectedSedeId && state.hasTotalScope && state.authorizedSedes.length > 1) {
-        load(true);
-        return;
-      }
-      loadSelectedSede(selectedSedeId);
+      loadSelectedSede(key(elements.sedeFilter.value));
     });
     elements.cargoFilter.addEventListener('change', () => {
       refreshDependentFilters('cargo');
@@ -2014,11 +2045,8 @@ async function deleteDirectoryEntry(record) {
     const elements = getElements();
     const requestId = ++state.siteRequestId;
 
-    if (!selectedSedeId && state.hasTotalScope && state.authorizedSedes.length > 1) {
-      return load(true);
-    }
-
     if (!selectedSedeId) {
+      state.siteLoading = false;
       state.activeSedeId = '';
       state.records = [];
       state.hierarchyPath = [];
@@ -2138,7 +2166,6 @@ async function deleteDirectoryEntry(record) {
     }
   }
 
-
   async function refreshActiveSede() {
     if (state.activeSedeId === '__ALL__') return load(true);
     const elements = getElements();
@@ -2161,7 +2188,6 @@ async function deleteDirectoryEntry(record) {
     state.loading = true;
     let finishLoading = null;
     let autoLoadedSoleSede = false;
-    let autoLoadedAllSites = false;
     try {
       if (window.SUNARPUI && typeof SUNARPUI.beginLoading === 'function') {
         finishLoading = SUNARPUI.beginLoading();
@@ -2184,13 +2210,10 @@ async function deleteDirectoryEntry(record) {
       state.siteDataCache.clear();
       if (elements.sedeFilter) elements.sedeFilter.value = '';
       if (elements.cargoFilter) elements.cargoFilter.value = '';
-      clearDirectoryTable('Cargando únicamente la información de tus ámbitos autorizados...');
-      if (state.hasTotalScope && state.authorizedSedes.length > 1) {
-        const sedeWrapper = elements.sedeFilter && elements.sedeFilter.closest('.sunarp-filter');
-        if (sedeWrapper) sedeWrapper.hidden = true;
-      } else {
-        populateSedeFilter();
-      }
+      clearDirectoryTable(state.hasTotalScope
+        ? 'Selecciona una sede para consultar la información de personal.'
+        : 'Cargando únicamente la información de tus ámbitos autorizados...');
+      populateSedeFilter();
       populateCargoFilter();
       renderHierarchyFilters();
       bindEvents();
@@ -2201,45 +2224,10 @@ async function deleteDirectoryEntry(record) {
       const serverMs = Number.isFinite(Number(diagnostics.serverMs))
         ? Number(diagnostics.serverMs)
         : null;
-      if (state.hasTotalScope && state.authorizedSedes.length > 1) {
-        const allSitesStartedAt = performance.now();
-        const allSitesResult = await callServer('getDirectoryAuthorizedData');
-        if (!allSitesResult || !allSitesResult.catalogs ||
-            !Array.isArray(allSitesResult.catalogs.sedes) ||
-            !Array.isArray(allSitesResult.records)) {
-          throw new Error('El servidor devolvió una carga incompleta de todos los ámbitos autorizados.');
-        }
-        state.authorizedSedes = allSitesResult.catalogs.sedes;
-        state.catalogs = allSitesResult.catalogs;
-        state.records = allSitesResult.records;
-        state.activeSedeId = '__ALL__';
-        state.hierarchyPath = [];
-        state.hierarchyIndex = _directoryBuildHierarchyClientIndex_(
-          state.records,
-          state.catalogs.estructuraOrg || []
-        );
-        state.hierarchySelectableIds = _directoryBuildHierarchyFilterSets_(
-          state.records,
-          state.catalogs.estructuraOrg || [],
-          state.catalogs.filterContract,
-          ''
-        );
-        if (elements.sedeFilter) elements.sedeFilter.value = '';
-        if (elements.cargoFilter) elements.cargoFilter.value = '';
-        populateSedeFilter();
-        if (elements.sedeFilter) elements.sedeFilter.value = '';
-        populateCargoFilter();
-        renderHierarchyFilters();
-        renderTable();
-        autoLoadedAllSites = true;
-        console.info('[DirectoryPage] Todos los ámbitos TOTAL cargados:', {
-          authorizedSedes: state.authorizedSedes.length,
-          records: state.records.length,
-          roundTripMs: Math.round(performance.now() - allSitesStartedAt),
-          serverStages: allSitesResult.diagnostics && allSitesResult.diagnostics.stages || null,
-          cache: allSitesResult.diagnostics && allSitesResult.diagnostics.cache || null
-        });
-      } else if (state.authorizedSedes.length === 1) {
+
+      // TOTAL siempre requiere una elección explícita, incluso cuando solo
+      // existe una sede autorizada. Los ámbitos fijos se aplican directamente.
+      if (!state.hasTotalScope && state.authorizedSedes.length === 1) {
         const soleSedeId = key(state.authorizedSedes[0].id);
         if (soleSedeId) {
           if (elements.sedeFilter) elements.sedeFilter.value = soleSedeId;
@@ -2249,9 +2237,10 @@ async function deleteDirectoryEntry(record) {
           });
           await loadSelectedSede(soleSedeId);
         }
-      } else if (!autoLoadedAllSites && state.authorizedSedes.length > 1) {
+      } else if (!state.hasTotalScope && state.authorizedSedes.length > 1) {
         startDirectoryContextWarmup();
       }
+
       console.info('[DirectoryPage] Selector inicial de sedes:', {
         serverMs,
         roundTripMs: Math.round(roundTripMs),
@@ -2261,11 +2250,12 @@ async function deleteDirectoryEntry(record) {
         serverStages: diagnostics.stages || null,
         clientSetupMs: Math.round(clientSetupMs),
         authorizedSedes: state.authorizedSedes.length,
+        totalScopeRequiresSelection: state.hasTotalScope,
         autoLoadedSoleSede,
-        autoLoadedAllSites,
-        assignmentRecordsLoaded: autoLoadedAllSites ? state.records.length : 0
+        assignmentRecordsLoaded: autoLoadedSoleSede ? state.records.length : 0
       });
-      if (force && !autoLoadedSoleSede && !autoLoadedAllSites && previousSedeId &&
+
+      if (force && !autoLoadedSoleSede && previousSedeId &&
           state.authorizedSedes.some(item => key(item.id) === previousSedeId)) {
         elements.sedeFilter.value = previousSedeId;
         await loadSelectedSede(previousSedeId, true);
@@ -2287,7 +2277,6 @@ async function deleteDirectoryEntry(record) {
       if (typeof finishLoading === 'function') finishLoading();
     }
   }
-
 
   /* =====================================================
      15. NAVEGACIÓN
