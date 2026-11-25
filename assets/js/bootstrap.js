@@ -1,4 +1,4 @@
-document.write(\`
+document.write(`
 
     <!-- CORE -->
     <script src="assets/js/core/utils.js"><\/script>
@@ -22,4 +22,4 @@ document.write(\`
     <script src="assets/js/components/layout/navbar.js"><\/script>
     <script src="assets/js/components/layout/page-header.js"><\/script>
     <script src="assets/js/components/layout/footer.js"><\/script>
-\`);
+`);
