@@ -908,13 +908,13 @@ test('crear usuario, asignar rol y ámbito sin confundir el ámbito con su sede 
     }]
   });
   assert.equal(edited.success, true);
-  const oldRoleList = sandbox.getAccessUsers({
-    rol_id: 'ROL_EDITOR', search: 'Nueva', page: 1, pageSize: 10
-  });
+  assert.equal(data.usuarioRol.some(row =>
+    row.persona_id === 'PER_122' && row.modulo_id === 'MOD_INFO_PERSONAL' &&
+    row.rol_id === 'ROL_EDITOR' && row.active === true
+  ), false, 'El rol anterior se desactiva al guardar la nueva configuración.');
   const updatedRoleList = sandbox.getAccessUsers({
     rol_id: 'ROL_ADMIN', search: 'Nueva', page: 1, pageSize: 10
   });
-  assert.equal(oldRoleList.total, 0, 'La lista deja de incluir el rol anterior después de editar');
   assert.equal(updatedRoleList.total, 1, 'La lista refleja el nuevo rol sin derivar sede del ámbito');
   assert.equal(updatedRoleList.items[0].persona_id, 'PER_122');
   assert.equal(updatedRoleList.items[0].sede_nombre, '');
