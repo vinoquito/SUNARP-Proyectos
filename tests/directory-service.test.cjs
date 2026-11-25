@@ -2267,22 +2267,17 @@ test('las consultas puntuales de asignaciones comprueban permiso y ámbito en Co
 });
 
 
-test('deleteDirectoryPerson valida el ámbito con las asignaciones puntuales, no con el contexto vacío', () => {
+test('deleteDirectoryPerson elimina persona, ficha y asignaciones cuando no hay acciones operativas', () => {
   const vmContext = vm.createContext({});
   vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
-  const person = {
-    persona_id: 'PER_009',
-    nombres: 'Ana',
-    apellidos: 'Pérez'
-  };
+  const person = { persona_id: 'PER_009', nombres: 'Ana', apellidos: 'Pérez' };
   const linkedAssignment = {
-    asignacion_id: 'ASG_009',
-    persona_id: 'PER_009',
-    estructura_local_id: 'REL_1',
-    local_id: '',
-    active: true
+    asignacion_id: 'ASG_009', persona_id: 'PER_009',
+    estructura_local_id: 'REL_1', local_id: '', active: true
   };
   let assignmentsChecked = null;
+  let auditEvent = null;
+  const deleted = [];
 
   vmContext._directoryAuthorizationContext_ = () => ({ auth: {}, structures: [], locals: [] });
   vmContext._directoryLoadContext_ = options => {
@@ -2294,20 +2289,64 @@ test('deleteDirectoryPerson valida el ámbito con las asignaciones puntuales, no
     assignmentsChecked = assignments;
   };
   vmContext._directorySource_ = name => name;
+  vmContext._accessSecuritySource_ = name => name;
+  vmContext.ACCESS_MANAGEMENT_CONFIG = { sheets: { audit: 'Auditoria' } };
   vmContext.SUNARPCore = {
     findRecordsByFields: (source, filters) => {
-      assert.equal(source, 'asignaciones');
-      assert.deepEqual(JSON.parse(JSON.stringify(filters)), { persona_id: 'PER_009' });
-      return { records: [linkedAssignment], total: 1 };
-    }
+      if (source === 'asignaciones') {
+        assert.deepEqual(JSON.parse(JSON.stringify(filters)), { persona_id: 'PER_009' });
+        return { records: [linkedAssignment], total: 1 };
+      }
+      assert.equal(source, 'servidores datos personales');
+      return { records: [], total: 0 };
+    },
+    searchRecordsByFields: () => ({ records: [], total: 0 }),
+    deleteRecord: (source, key, id) => { deleted.push({ source, key, id }); return { success: true }; }
+  };
+  vmContext._accessRunAudited_ = (_auth, event, callback) => {
+    auditEvent = event;
+    return callback().value;
   };
 
-  assert.throws(
-    () => vmContext.deleteDirectoryPerson('PER_009'),
-    /tiene 1 asignación/
-  );
+  const result = vmContext.deleteDirectoryPerson('PER_009');
+  assert.equal(result.success, true);
   assert.equal(assignmentsChecked.length, 1);
   assert.equal(assignmentsChecked[0].asignacion_id, 'ASG_009');
+  assert.deepEqual(deleted, [
+    { source: 'asignaciones', key: 'asignacion_id', id: 'ASG_009' },
+    { source: 'personas', key: 'persona_id', id: 'PER_009' }
+  ]);
+  assert.equal(auditEvent.tipo_entidad, 'SERVIDOR');
+  assert.equal(auditEvent.registro_id, 'PER_009');
+});
+
+test('deleteDirectoryPerson bloquea la eliminación si hay acciones externas registradas', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  const person = { persona_id: 'PER_009', nombres: 'Ana', apellidos: 'Pérez' };
+  let deleted = false;
+  vmContext._directoryAuthorizationContext_ = () => ({ auth: {}, structures: [], locals: [] });
+  vmContext._directoryLoadContext_ = () => ({ asignaciones: [], estructuraLocal: [], estructuraOrg: [], locales: [] });
+  vmContext._directoryFindPersonById_ = () => person;
+  vmContext._directoryAssertPersonMutationScope_ = () => true;
+  vmContext._directorySource_ = name => name;
+  vmContext._accessSecuritySource_ = name => name;
+  vmContext.ACCESS_MANAGEMENT_CONFIG = { sheets: { audit: 'Auditoria' } };
+  vmContext.SUNARPCore = {
+    findRecordsByFields: source => {
+      assert.equal(source, 'asignaciones');
+      return { records: [], total: 0 };
+    },
+    searchRecordsByFields: (_source, id) => ({
+      records: id === 'PER_009' ? [{
+        registro_id: 'PER_009', modulo: 'OTRO_MODULO',
+        accion: 'REGISTRAR_ACTUACION', resultado: 'OK'
+      }] : []
+    }),
+    deleteRecord: () => { deleted = true; }
+  };
+  assert.throws(() => vmContext.deleteDirectoryPerson('PER_009'), /acciones registradas en el entorno/);
+  assert.equal(deleted, false);
 });
 
 test('la validación de contexto parcial conserva las relaciones sin exigir cargar todas las personas', () => {
