@@ -581,7 +581,7 @@ test('getAccessUsers filtra por sede de adscripción y no por ámbitos de acceso
   let buildCount = 0;
   sandbox.SUNARPCore.getOrBuildCachedValue = (key, sources, builder, ttl) => {
     assert.equal(key, 'access-users-index-v5');
-    assert.equal(sources.length, 8);
+    assert.equal(sources.length, 9);
     assert.equal(ttl, 60);
     if (cache.has(key)) return { value: cache.get(key), cacheHit: true, cacheStored: true };
     buildCount++;
@@ -673,7 +673,7 @@ test('la búsqueda documental comprueba la cuenta por persona_id sin cargar el s
 });
 
 
-test('getAccessUsers incluye cuentas por ámbito organizacional aunque no tengan asignaciones en Directorios', () => {
+test('getAccessUsers determina la sede por asignaciones activas y no por ámbitos de acceso', () => {
   const data = makeSecurityData();
   data.personas.push({
     persona_id: 'PER_122', nombres: 'Nueva', apellidos: 'Editora',
@@ -702,6 +702,19 @@ test('getAccessUsers incluye cuentas por ámbito organizacional aunque no tengan
     local_id: 'LOC_' + index,
     active: true
   }));
+  data.asignaciones.push({
+    asignacion_id: 'ASG_PER_122', persona_id: 'PER_122',
+    estructura_local_id: 'REL_PER_122', local_id: 'LOC_PER_122', active: true
+  });
+  data.estructura_local = [{
+    id: 'REL_PER_122', estructura_id: 'EST_COMUNICACIONES', local_id: 'LOC_PER_122'
+  }];
+  data.estructura_org = [{
+    id: 'EST_COMUNICACIONES', sede_id: 'SEDE_CENTRAL'
+  }];
+  data.locales = [{
+    id: 'LOC_PER_122', sede_id: 'SEDE_CENTRAL'
+  }];
 
   const sandbox = createAdapterSandbox(data);
   sandbox._accessRequirePermission_ = () => ({
@@ -766,7 +779,7 @@ test('el diagnóstico de acceso mide identidad, relaciones de autorización, con
   assert.match(accessUiSource, /\^saveAccess/);
 });
 
-test('crear usuario, asignar rol y ámbito, listar por sede y bloquear duplicidad documental', () => {
+test('crear usuario, asignar rol y ámbito sin confundir el ámbito con su sede de adscripción', () => {
   const data = makeSecurityData();
   data.ambitosAcceso = data.ambitosAcceso.filter(scope =>
     !(scope.persona_id === 'PER_117' && scope.modulo_id === 'MOD_INFO_PERSONAL')
@@ -861,14 +874,13 @@ test('crear usuario, asignar rol y ámbito, listar por sede y bloquear duplicida
   ), true);
 
   const listed = sandbox.getAccessUsers({
-    sede_id: 'SEDE_CENTRAL',
     rol_id: 'ROL_EDITOR',
     page: 1,
     pageSize: 10
   });
   assert.equal(listed.total, 1);
   assert.equal(listed.items[0].persona_id, 'PER_122');
-  assert.equal(listed.items[0].sede_nombre, 'Sede Central');
+  assert.equal(listed.items[0].sede_nombre, '', 'El ámbito de acceso no debe inventar una sede de adscripción.');
 
   const edited = sandbox.saveAccessUserConfiguration({
     persona_id: 'PER_122',
@@ -884,14 +896,15 @@ test('crear usuario, asignar rol y ámbito, listar por sede y bloquear duplicida
   });
   assert.equal(edited.success, true);
   const oldRoleList = sandbox.getAccessUsers({
-    sede_id: 'SEDE_CENTRAL', rol_id: 'ROL_EDITOR', page: 1, pageSize: 10
+    rol_id: 'ROL_EDITOR', page: 1, pageSize: 10
   });
   const updatedRoleList = sandbox.getAccessUsers({
-    sede_id: 'SEDE_CENTRAL', rol_id: 'ROL_ADMIN', page: 1, pageSize: 10
+    rol_id: 'ROL_ADMIN', page: 1, pageSize: 10
   });
   assert.equal(oldRoleList.total, 0, 'La lista deja de incluir el rol anterior después de editar');
-  assert.equal(updatedRoleList.total, 1, 'La lista refleja el nuevo rol y el ámbito de sede');
+  assert.equal(updatedRoleList.total, 1, 'La lista refleja el nuevo rol sin derivar sede del ámbito');
   assert.equal(updatedRoleList.items[0].persona_id, 'PER_122');
+  assert.equal(updatedRoleList.items[0].sede_nombre, '');
 
   assert.throws(
     () => sandbox.saveAccessUser(accountPayload),
@@ -946,12 +959,13 @@ test('la consulta de usuarios reutiliza la vista materializada, pagina en servid
   const implementation = accessSource.slice(start, end);
   assert.ok(helper.includes('getOrBuildCachedValue'));
   assert.ok(helper.includes('access-users-index-v5'));
-  assert.ok(helper.includes("_accessSecuritySource_('EstructuraOrg')"));
-  assert.ok(helper.includes('ACCESS_MANAGEMENT_CONFIG.sheets.scopes'));
-  assert.ok(helper.includes("_accessFindOrgCatalogByIds_('ESTRUCTURA_ORG'"));
-  assert.ok(helper.includes("_accessFindOrgCatalogByIds_('LOCAL'"));
-  assert.ok(helper.includes('orgLookupMs'));
-  assert.doesNotMatch(helper, /asignaciones|estructura_local/);
+  assert.ok(helper.includes("_accessDirectorySource_('asignaciones')"));
+  assert.ok(helper.includes("_accessDirectorySource_('estructura_local')"));
+  assert.ok(helper.includes("_accessDirectorySource_('estructura_org')"));
+  assert.ok(helper.includes("_accessDirectorySource_('locales')"));
+  assert.doesNotMatch(helper, /ACCESS_MANAGEMENT_CONFIG\.sheets\.scopes/);
+  assert.doesNotMatch(helper, /_accessFindOrgCatalogByIds_/);
+  assert.match(helper, /sede_nombre: siteIds\.map/);
   assert.ok(implementation.includes('SUNARPCore.queryRecords'));
   assert.ok(implementation.includes('filters: { persona_id: pageCandidateIds }'));
   assert.ok(implementation.includes('offset'));
