@@ -2051,108 +2051,80 @@ const DirectoryPage = (() => {
      ===================================================== */
 
   async function saveForm(event) {
-
     event.preventDefault();
-
     const form = event.currentTarget;
-
     if (!form.reportValidity()) return;
 
-    const id = document.getElementById(
-      'directoryFormId'
-    ).value;
-
-    const nombres = document.getElementById(
-      'directoryFormNombres'
-    ).value.trim();
-
-    const apellidos = document.getElementById(
-      'directoryFormApellidos'
-    ).value.trim();
-
-    const cargoId = document.getElementById(
-      'directoryFormCargo'
-    ).value;
-
-    const anexoInput = document.getElementById(
-      'directoryFormAnexo'
-    ).value;
-
-    const estructuraLocalId = document.getElementById('directoryFormLocal').value;
-    const localId = document.getElementById('directoryFormDirectLocal').value;
-    if (!estructuraLocalId && !localId) {
-      notify('warning', 'Selecciona una unidad orgánica o un local para la asignación.');
-      return;
-    }
-    if (estructuraLocalId && localId) {
-      const relation = state.catalogs.estructuraLocal.find(x => key(x.id) === key(estructuraLocalId));
-      if (!relation || key(relation.local_id) !== key(localId)) {
-        notify('warning', 'El local debe coincidir con el local de la relación estructura-local seleccionada.');
-        return;
-      }
-    }
-    if (!id && document.getElementById('directoryDocumentVerified')?.value !== 'true') {
+    const personaId = document.getElementById('directoryFormPersonaId').value;
+    const nombres = document.getElementById('directoryFormNombres').value.trim();
+    const apellidos = document.getElementById('directoryFormApellidos').value.trim();
+    const documentType = document.getElementById('directoryFormTipoDocumento')?.value || '';
+    const documentNumber = document.getElementById('directoryFormNumeroDocumento')?.value.trim() || '';
+    if (!personaId && document.getElementById('directoryDocumentVerified')?.value !== 'true') {
       notify('warning', 'Primero debes buscar el DNI y comprobar que no esté registrado.');
       return;
     }
 
-    const personaId = document.getElementById('directoryFormPersonaId').value;
+    const assignmentRows = Array.from(document.querySelectorAll('#directoryAssignmentsContainer .directory-assignment-row'));
+    const assignments = [];
+    for (const row of assignmentRows) {
+      const get = prefix => row.querySelector('[id^="' + prefix + '"]');
+      const relationSelect = get('directoryFormLocal');
+      const directLocalSelect = get('directoryFormDirectLocal');
+      const structureLocalId = relationSelect ? relationSelect.value : '';
+      const localId = directLocalSelect ? directLocalSelect.value : '';
+      if (!structureLocalId && !localId) {
+        notify('warning', 'Cada asignación debe tener una unidad orgánica o un local.');
+        return;
+      }
+      if (structureLocalId && localId) {
+        const relation = state.catalogs.estructuraLocal.find(item => key(item.id) === key(structureLocalId));
+        if (!relation || key(relation.local_id) !== key(localId)) {
+          notify('warning', 'El local debe coincidir con la relación estructura-local de cada asignación.');
+          return;
+        }
+      }
+      assignments.push({
+        asignacion_id: get('directoryFormAssignmentId')?.value || '',
+        cargo_id: get('directoryFormCargo')?.value || '',
+        condicion_cargo: get('directoryFormCondicionCargo')?.value.trim() || '',
+        anexo: get('directoryFormAnexo')?.value === '' ? '' : Number(get('directoryFormAnexo')?.value),
+        observaciones: get('directoryFormObservaciones')?.value.trim() || '',
+        estructura_local_id: structureLocalId,
+        local_id: localId
+      });
+    }
+    if (!assignments.length) {
+      notify('warning', 'Registra al menos una asignación.');
+      return;
+    }
+
     const payload = {
       persona_id: personaId,
-      asignacion_id: id,
       nombres,
       apellidos,
       correo_institucional: document.getElementById('directoryFormCorreoInstitucional')?.value.trim().toLowerCase() || '',
-      tipo_documento: document.getElementById('directoryFormTipoDocumento')?.value.trim() || '',
-      numero_documento: document.getElementById('directoryFormNumeroDocumento')?.value.trim() || '',
+      tipo_documento: documentType,
+      numero_documento: documentNumber,
       fecha_nacimiento: document.getElementById('directoryFormFechaNacimiento')?.value || '',
       fecha_inicio_servicios: document.getElementById('directoryFormFechaInicio')?.value || '',
       fecha_cese: document.getElementById('directoryFormFechaCese')?.value || '',
-      cargo_id: cargoId,
-      condicion_cargo: document.getElementById('directoryFormCondicionCargo').value.trim(),
-      anexo: anexoInput === '' ? '' : Number(anexoInput),
-      estructura_local_id: estructuraLocalId,
-      local_id: localId,
-      observaciones: document.getElementById('directoryFormObservaciones')?.value.trim() || ''
+      assignments
     };
 
-    const saveButton = document.getElementById(
-      'directoryFormSave'
-    );
-
+    const saveButton = document.getElementById('directoryFormSave');
     saveButton.disabled = true;
     saveButton.textContent = 'Guardando...';
-
     try {
-
-      const result = await callServer(
-        'saveDirectoryEntry',
-        payload
-      );
-
+      const result = await callServer('saveDirectoryEntry', payload);
       SUNARPUI.closeModal();
-
-      notify(
-        'success',
-        result.message || 'Registro guardado correctamente.'
-      );
-
+      notify('success', result.message || 'Servidor y asignaciones guardados correctamente.');
       await refreshActiveSede();
-
     } catch (error) {
-
-      notify(
-        'error',
-        error.message || 'No se pudo guardar el registro.'
-      );
-
+      notify('error', error.message || 'No se pudo guardar el registro.');
       saveButton.disabled = false;
-      saveButton.textContent = id
-        ? 'Guardar cambios'
-        : (personaId ? 'Registrar asignación' : 'Registrar servidor');
-
+      saveButton.textContent = personaId ? 'Guardar cambios' : 'Registrar servidor';
     }
-
   }
 
 
