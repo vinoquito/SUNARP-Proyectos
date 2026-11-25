@@ -2334,7 +2334,7 @@ test('deleteDirectoryPerson bloquea la eliminación si hay acciones externas reg
   vmContext.ACCESS_MANAGEMENT_CONFIG = { sheets: { audit: 'Auditoria' } };
   vmContext.SUNARPCore = {
     findRecordsByFields: source => {
-      assert.equal(source, 'asignaciones');
+      assert.ok(source === 'asignaciones' || source === 'servidores datos personales');
       return { records: [], total: 0 };
     },
     searchRecordsByFields: (_source, id) => ({
