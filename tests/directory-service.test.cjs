@@ -1939,6 +1939,81 @@ test('Piura se resuelve por estructura_local_id sin depender de local_id físico
   assert.equal(enriched.filter_local_id, 'ZR_I_PIURA');
 });
 
+test('el diagnóstico del Directorio conserva los tiempos internos y la caché de cada página Core', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+
+  const firstPage = vmContext._directoryBuildCorePageDiagnostics_({
+    offset: 0,
+    limit: 1000,
+    total: 1852,
+    durationMs: 5317,
+    candidateCount: 3792,
+    authorizedCount: 1852,
+    retainedForPage: 1852,
+    projectedFieldCount: 8,
+    hydratedRowCount: 1000,
+    cacheHit: false,
+    candidateCacheHit: false,
+    authorizedSnapshotCacheHit: false,
+    authorizedSnapshotSessionHit: false,
+    authorizedSnapshotCacheEligible: true,
+    authorizedSnapshotLookupMs: 2,
+    candidateCacheLookupMs: 1,
+    candidateLoadMs: 210,
+    candidateCacheStoreMs: 24,
+    candidateEvaluationMs: 1600,
+    pageHydrationMs: 90,
+    sourceGenerationMs: 2,
+    authorizedSnapshotStoreMs: 200
+  }, 1, 0, 1000, 1000);
+
+  assert.equal(firstPage.page, 1);
+  assert.equal(firstPage.offset, 0);
+  assert.equal(firstPage.recordsReturned, 1000);
+  assert.equal(firstPage.durationMs, 5317);
+  assert.equal(firstPage.stages.candidateLoadMs, 210);
+  assert.equal(firstPage.stages.candidateEvaluationMs, 1600);
+  assert.equal(firstPage.cache.authorizedSnapshotCacheEligible, true);
+  assert.equal(firstPage.cache.authorizedSnapshotSessionHit, false);
+
+  const secondPage = vmContext._directoryBuildCorePageDiagnostics_({
+    offset: 1000,
+    limit: 1000,
+    total: 1852,
+    durationMs: 487,
+    candidateCount: 3792,
+    authorizedCount: 1852,
+    retainedForPage: 1852,
+    projectedFieldCount: 8,
+    hydratedRowCount: 852,
+    cacheHit: false,
+    candidateCacheHit: true,
+    authorizedSnapshotCacheHit: false,
+    authorizedSnapshotSessionHit: true,
+    authorizedSnapshotCacheEligible: true,
+    candidateLoadMs: 0,
+    candidateEvaluationMs: 0,
+    pageHydrationMs: 35,
+    sourceGenerationMs: 1
+  }, 2, 1000, 1000, 852);
+
+  assert.equal(secondPage.page, 2);
+  assert.equal(secondPage.offset, 1000);
+  assert.equal(secondPage.recordsReturned, 852);
+  assert.equal(secondPage.durationMs, 487);
+  assert.equal(secondPage.stages.candidateLoadMs, 0);
+  assert.equal(secondPage.stages.candidateEvaluationMs, 0);
+  assert.equal(secondPage.stages.pageHydrationMs, 35);
+  assert.equal(secondPage.cache.authorizedSnapshotSessionHit, true);
+
+  const buildStart = serviceSource.indexOf('function _directoryBuildSiteData_(');
+  const buildEnd = serviceSource.indexOf('function getDirectoryInitialData(', buildStart);
+  const implementation = serviceSource.slice(buildStart, buildEnd);
+  assert.match(implementation, /corePageDiagnostics\.push\(_directoryBuildCorePageDiagnostics_/);
+  assert.match(implementation, /corePages:\s*corePageDiagnostics/);
+});
+
 test('warmDirectoryContextCache exige permiso y precarga contexto sin devolver personas ni asignaciones', () => {
   const vmContext = vm.createContext({});
   vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
