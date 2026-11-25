@@ -3346,61 +3346,220 @@ function saveDirectoryEntry(payload) {
   }
 
   const personaId = _directoryText_(payload.persona_id);
-  const existingAssignmentIds = new Set(assignments
-    .map(item => _directoryText_(item.asignacion_id)).filter(Boolean));
   const duplicatedIds = assignments.map(item => _directoryText_(item.asignacion_id))
     .filter((id, index, all) => id && all.indexOf(id) !== index);
   if (duplicatedIds.length) {
     throw new Error('El formulario contiene una asignación duplicada.');
   }
+  const existingAssignmentIds = new Set(
+    assignments.map(item => _directoryText_(item.asignacion_id)).filter(Boolean)
+  );
   if (removedAssignmentIds.some(id => existingAssignmentIds.has(id))) {
     throw new Error('Una asignación no puede modificarse y eliminarse en la misma operación.');
   }
-
   if (personaId && !assignments.some(item => _directoryText_(item.asignacion_id))) {
     throw new Error('Para editar un servidor debes conservar al menos una asignación existente en el formulario.');
   }
+
+  let previousSnapshot = null;
+  if (personaId) {
+    const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_EDITAR');
+    const context = _directoryLoadContext_({
+      includePersonalData: false,
+      includePeople: false,
+      includeAssignments: false,
+      includeDocumentTypes: false,
+      validateSnapshot: false
+    });
+    const person = _directoryFindPersonById_(personaId);
+    if (!person) throw new Error('No se encontró la persona que deseas editar.');
+    const linkedResult = SUNARPCore.findRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones),
+      { persona_id: personaId },
+      {
+        searchField: 'persona_id',
+        requiredHeaders: DIRECTORY_REQUIRED_HEADERS.asignaciones
+      }
+    );
+    const linkedAssignments = linkedResult.records || [];
+    if (Number(linkedResult.total) > linkedAssignments.length) {
+      throw new Error('No se pudieron recuperar todas las asignaciones del servidor para preparar el guardado.');
+    }
+    _directoryAssertPersonMutationScope_(
+      authorization, person, linkedAssignments, context
+    );
+    previousSnapshot = {
+      person,
+      personalData: _directoryFindPersonalDataById_(personaId),
+      assignments: linkedAssignments.map(item => Object.assign({}, item))
+    };
+  }
+
   const primaryIndex = personaId
     ? assignments.findIndex(item => _directoryText_(item.asignacion_id))
     : 0;
   const orderedAssignments = primaryIndex > 0
     ? [assignments[primaryIndex]].concat(assignments.filter((_item, index) => index !== primaryIndex))
     : assignments;
-  const primaryAssignment = orderedAssignments[0];
-  const primaryPayload = Object.assign({}, payload, primaryAssignment);
+  const primaryPayload = Object.assign({}, payload, orderedAssignments[0]);
   delete primaryPayload.assignments;
   delete primaryPayload.removed_assignment_ids;
   primaryPayload.persona_id = personaId;
-  const primaryResult = _saveDirectoryEntryPrimary_(primaryPayload);
-  const resolvedPersonaId = personaId || _directoryText_(
-    primaryResult && primaryResult.person && primaryResult.person.persona_id
-  );
-  if (!resolvedPersonaId) {
-    throw new Error('No se pudo resolver la identidad del servidor guardado.');
-  }
 
-  const savedAssignments = [];
-  if (primaryResult && primaryResult.assignment) savedAssignments.push(primaryResult.assignment);
-  for (let index = 1; index < orderedAssignments.length; index++) {
-    const assignment = Object.assign({}, orderedAssignments[index], {
-      persona_id: resolvedPersonaId
+  let primaryResult;
+  let primaryCompleted = false;
+  let resolvedPersonaId = personaId;
+  try {
+    primaryResult = _saveDirectoryEntryPrimary_(primaryPayload);
+    primaryCompleted = true;
+    resolvedPersonaId = resolvedPersonaId || _directoryText_(
+      primaryResult && primaryResult.person && primaryResult.person.persona_id
+    );
+    if (!resolvedPersonaId) {
+      throw new Error('No se pudo resolver la identidad del servidor guardado.');
+    }
+
+    const savedAssignments = [];
+    if (primaryResult && primaryResult.assignment) savedAssignments.push(primaryResult.assignment);
+    for (let index = 1; index < orderedAssignments.length; index++) {
+      const assignment = Object.assign({}, orderedAssignments[index], {
+        persona_id: resolvedPersonaId
+      });
+      const result = saveDirectoryAssignment(assignment);
+      if (result && result.assignment) savedAssignments.push(result.assignment);
+    }
+    for (const assignmentId of removedAssignmentIds) {
+      deleteDirectoryAssignment(assignmentId);
+    }
+
+    return Object.assign({}, primaryResult, {
+      success: true,
+      assignments: savedAssignments,
+      message: personaId
+        ? 'Los datos del servidor y sus asignaciones se actualizaron correctamente.'
+        : 'El servidor y todas sus asignaciones se registraron correctamente.'
     });
-    const result = saveDirectoryAssignment(assignment);
-    if (result && result.assignment) savedAssignments.push(result.assignment);
-  }
-  for (const assignmentId of removedAssignmentIds) {
-    deleteDirectoryAssignment(assignmentId);
-  }
+  } catch (error) {
+    // La operación primaria ya dispone de su propia compensación. Esta capa
+    // restaura además las demás asignaciones y cualquier baja posterior.
+    if (!primaryCompleted || !resolvedPersonaId) throw error;
 
-  return Object.assign({}, primaryResult, {
-    success: true,
-    assignments: savedAssignments,
-    message: personaId
-      ? 'Los datos del servidor y sus asignaciones se actualizaron correctamente.'
-      : 'El servidor y todas sus asignaciones se registraron correctamente.'
-  });
+    const rollbackErrors = [];
+    const assignmentSource = _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones);
+    const personalSource = _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales);
+    const personSource = _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas);
+    const oldAssignments = previousSnapshot ? previousSnapshot.assignments : [];
+    const oldAssignmentMap = new Map(oldAssignments.map(item => [
+      _directoryKey_(item.asignacion_id), item
+    ]));
+
+    try {
+      const currentResult = SUNARPCore.findRecordsByFields(
+        assignmentSource,
+        { persona_id: resolvedPersonaId },
+        {
+          searchField: 'persona_id',
+          requiredHeaders: DIRECTORY_REQUIRED_HEADERS.asignaciones
+        }
+      );
+      const currentAssignments = currentResult.records || [];
+      if (Number(currentResult.total) > currentAssignments.length) {
+        throw new Error('La consulta de recuperación no devolvió todas las asignaciones.');
+      }
+      const currentMap = new Map(currentAssignments.map(item => [
+        _directoryKey_(item.asignacion_id), item
+      ]));
+
+      currentAssignments.forEach(item => {
+        const id = _directoryKey_(item.asignacion_id);
+        if (!oldAssignmentMap.has(id)) {
+          SUNARPCore.deleteRecord(assignmentSource, 'asignacion_id', id);
+        }
+      });
+
+      oldAssignments.forEach(item => {
+        const id = _directoryKey_(item.asignacion_id);
+        const restoredFields = {
+          persona_id: item.persona_id,
+          cargo_id: item.cargo_id,
+          condicion_cargo: item.condicion_cargo,
+          anexo: item.anexo,
+          estructura_local_id: item.estructura_local_id,
+          local_id: item.local_id,
+          observaciones: item.observaciones,
+          active: _directoryNormalizeBoolean_(item.active),
+          order: item.order
+        };
+        if (currentMap.has(id)) {
+          SUNARPCore.updateRecord(
+            assignmentSource, 'asignacion_id', id, restoredFields,
+            { schema: _directoryGetAssignmentSchema_() }
+          );
+        } else {
+          SUNARPCore.insertRecord(
+            assignmentSource, item,
+            { idField: 'asignacion_id', schema: _directoryGetAssignmentSchema_() }
+          );
+        }
+      });
+    } catch (rollbackError) {
+      rollbackErrors.push('asignaciones: ' + rollbackError.message);
+    }
+
+    if (previousSnapshot) {
+      try {
+        _saveDirectoryPerson_({
+          persona_id: resolvedPersonaId,
+          nombres: previousSnapshot.person.nombres,
+          apellidos: previousSnapshot.person.apellidos,
+          correo_institucional: previousSnapshot.person.correo_institucional
+        });
+      } catch (rollbackError) {
+        rollbackErrors.push('persona: ' + rollbackError.message);
+      }
+      try {
+        if (previousSnapshot.personalData) {
+          saveDirectoryPersonalData({
+            servidor_id: resolvedPersonaId,
+            tipo_documento: previousSnapshot.personalData.tipo_documento,
+            numero_documento: previousSnapshot.personalData.numero_documento,
+            fecha_nacimiento: _directoryFormatDateInput_(previousSnapshot.personalData.fecha_nacimiento),
+            fecha_inicio_servicios: _directoryFormatDateInput_(previousSnapshot.personalData.fecha_inicio_servicios),
+            fecha_cese: _directoryFormatDateInput_(previousSnapshot.personalData.fecha_cese)
+          });
+        } else {
+          const currentPersonalData = _directoryFindPersonalDataById_(resolvedPersonaId);
+          if (currentPersonalData) {
+            SUNARPCore.deleteRecord(personalSource, 'servidor_id', resolvedPersonaId);
+          }
+        }
+      } catch (rollbackError) {
+        rollbackErrors.push('datos personales: ' + rollbackError.message);
+      }
+    } else {
+      try {
+        const currentPersonalData = _directoryFindPersonalDataById_(resolvedPersonaId);
+        if (currentPersonalData) {
+          SUNARPCore.deleteRecord(personalSource, 'servidor_id', resolvedPersonaId);
+        }
+      } catch (rollbackError) {
+        rollbackErrors.push('datos personales: ' + rollbackError.message);
+      }
+      try {
+        SUNARPCore.deleteRecord(personSource, 'persona_id', resolvedPersonaId);
+      } catch (rollbackError) {
+        rollbackErrors.push('persona: ' + rollbackError.message);
+      }
+    }
+
+    if (rollbackErrors.length) {
+      throw new Error(
+        error.message + ' La compensación requiere revisión: ' + rollbackErrors.join(' | ')
+      );
+    }
+    throw error;
+  }
 }
-
 
 function _saveDirectoryEntryPrimary_(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
