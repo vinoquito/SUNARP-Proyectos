@@ -364,14 +364,23 @@ test('los filtros combinados de auditoría retienen solo la página cronológica
   assert.equal(result.items[0].evento_id, 'EVT_003');
 });
 
-test('las pestañas de permisos y asignaciones agrupan sus catálogos en una lectura Core por pestaña', () => {
+test('las pestañas de permisos y asignaciones agrupan catálogos y reutilizan la caché compartida', () => {
   const sandbox = createAdapterSandbox(makeSecurityData());
   sandbox._accessRequirePermission_ = () => ({ authenticated: true });
+  sandbox._accessSecuritySource_ = sheet => ({ sheetName: sheet });
   const originalList = sandbox.SUNARPCore.listRecordsFromSourcesCached;
+  const cache = new Map();
   const calls = [];
+  sandbox.SUNARPCore.getOrBuildCachedValue = (key, sources, builder, ttl) => {
+    assert.equal(ttl, 3600);
+    if (cache.has(key)) return { value: cache.get(key), cacheHit: true, cacheStored: true };
+    const value = builder();
+    cache.set(key, value);
+    return { value, cacheHit: false, cacheStored: true };
+  };
   sandbox.SUNARPCore.listRecordsFromSourcesCached = (requests, ttl) => {
     calls.push({
-      keys: requests.map(request => request.key),
+      keys: Array.from(requests, request => request.key),
       ttl
     });
     return originalList(requests, ttl);
@@ -383,17 +392,15 @@ test('las pestañas de permisos y asignaciones agrupan sus catálogos en una lec
   assert.ok(permissions.permissions.length > 0);
   assert.equal(calls.length, 1);
   assert.deepEqual(Array.from(calls[0].keys).sort(), ['modules', 'operations', 'permissions'].sort());
-  assert.equal(calls[0].ttl, 60);
+  assert.equal(calls[0].ttl, 3600);
 
   calls.length = 0;
   const assignments = sandbox.getAccessManagementTabData('assignments');
   assert.equal(assignments.roles.length, 2);
   assert.ok(assignments.permissions.length > 0);
-  assert.equal(calls.length, 1);
-  assert.deepEqual(Array.from(calls[0].keys).sort(), [
-    'modules', 'operations', 'permissions', 'rolePermissions', 'roles'
-  ].sort());
-  assert.equal(calls[0].ttl, 60);
+  assert.equal(calls.length, 1, 'Solo debe consultar Roles y RolPermiso; los catálogos comunes ya están en caché.');
+  assert.deepEqual(Array.from(calls[0].keys).sort(), ['rolePermissions', 'roles'].sort());
+  assert.equal(calls[0].ttl, 3600);
 });
 
 test('getAccessUsers reutiliza un índice compartido entre páginas, sedes y roles', () => {
@@ -1818,10 +1825,8 @@ test('la actualización de Asignación de permisos usa claves reales de la insta
   const end = accessSource.indexOf("if (tab === 'operations')", start);
   assert.ok(start >= 0 && end > start);
   const endpoint = accessSource.slice(start, end);
-  assert.match(endpoint, /const catalogs = SUNARPCore\.listRecordsFromSourcesCached\(\[/);
-  assert.match(endpoint, /key: 'modules'/);
-  assert.match(endpoint, /key: 'permissions'/);
-  assert.match(endpoint, /key: 'rolePermissions'/);
+  assert.match(endpoint, /_accessLoadPermissionCatalogs_\(\)/);
+  assert.match(endpoint, /_accessLoadRolePermissionCatalogs_\(\)/);
   assert.doesNotMatch(endpoint, /_accessLoadSecurityRecords_\(/);
   assert.match(endpoint, /modules: modules\.map/);
   assert.match(endpoint, /permissions: permissions\.map/);
@@ -2468,7 +2473,7 @@ test('Permisos y Asignaciones comparten catálogos en caché y no releen hojas e
   };
   sandbox.SUNARPCore.listRecordsFromSourcesCached = (requests, ttl) => {
     assert.equal(ttl, 3600);
-    reads.push(requests.map(request => request.source.sheetName));
+    reads.push(Array.from(requests, request => request.source.sheetName));
     return originalList(requests);
   };
 
