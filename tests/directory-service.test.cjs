@@ -820,6 +820,13 @@ test('el catálogo de tipos de documento se resuelve exclusivamente desde Global
   }]);
   assert.equal(source.sourceKey, 'MASTER_DATA');
   assert.equal(source.sheetName, 'tipo_documento_identidad');
+  sandbox.SUNARPCore.listRecordsFromSourcesCached = () => ({
+    documentTypes: [
+      { id: 'DNI', name: 'Documento Nacional de Identidad', active: true },
+      { id: 'CE', name: 'Carné de extranjería', active: true },
+      { id: 'PAS', name: 'Pasaporte', active: true }
+    ]
+  });
 });
 
 test('acepta fechas ISO válidas y campos de fecha vacíos', () => {
@@ -1028,28 +1035,84 @@ test('si falla la primera asignación, el alta coordinada compensa persona y fic
   ]);
 });
 
-test('una asignación adicional no crea ni modifica persona o ficha personal', () => {
+test('el formulario completo guarda varias asignaciones en una sola operación coordinada', () => {
   const context = createDirectorySandbox();
-  let personWrites = 0;
-  let personalWrites = 0;
-  let assignmentPayload;
-  context._saveDirectoryPerson_ = () => { personWrites++; };
-  context.saveDirectoryPersonalData = () => { personalWrites++; };
+  const primaryWrites = [];
+  const assignmentWrites = [];
+  context._saveDirectoryEntryPrimary_ = payload => {
+    primaryWrites.push(payload);
+    return {
+      success: true,
+      person: { persona_id: 'PER_020' },
+      personalData: { servidor_id: 'PER_020' },
+      assignment: { asignacion_id: 'ASG_020', persona_id: 'PER_020' }
+    };
+  };
   context.saveDirectoryAssignment = payload => {
-    assignmentPayload = payload;
-    return { assignment: { asignacion_id: 'ASG_009' } };
+    assignmentWrites.push(payload);
+    return { assignment: { asignacion_id: payload.asignacion_id || 'ASG_021', persona_id: payload.persona_id } };
   };
 
   const result = context.saveDirectoryEntry({
-    persona_id: 'PER_009',
-    cargo_id: 'CAR_001',
-    estructura_local_id: 'REL_001'
+    nombres: 'Ana',
+    apellidos: 'Pérez',
+    tipo_documento: 'DNI',
+    numero_documento: '12345678',
+    assignments: [
+      { cargo_id: 'CAR_001', estructura_local_id: 'REL_001' },
+      { cargo_id: 'CAR_002', local_id: 'LOC_002' }
+    ]
   });
 
-  assert.equal(personWrites, 0);
-  assert.equal(personalWrites, 0);
-  assert.equal(assignmentPayload.persona_id, 'PER_009');
-  assert.equal(result.assignment.asignacion_id, 'ASG_009');
+  assert.equal(primaryWrites.length, 1);
+  assert.equal(primaryWrites[0].cargo_id, 'CAR_001');
+  assert.equal(primaryWrites[0].persona_id, '');
+  assert.equal(assignmentWrites.length, 1);
+  assert.equal(assignmentWrites[0].persona_id, 'PER_020');
+  assert.equal(assignmentWrites[0].cargo_id, 'CAR_002');
+  assert.equal(result.assignments.length, 2);
+  assert.equal(result.assignments[1].asignacion_id, 'ASG_021');
+});
+
+test('el formulario completo actualiza todas las asignaciones y elimina las retiradas', () => {
+  const context = createDirectorySandbox();
+  const primaryWrites = [];
+  const assignmentWrites = [];
+  const deleted = [];
+  context._saveDirectoryEntryPrimary_ = payload => {
+    primaryWrites.push(payload);
+    return {
+      success: true,
+      person: { persona_id: 'PER_030' },
+      personalData: { servidor_id: 'PER_030' },
+      assignment: { asignacion_id: payload.asignacion_id, persona_id: 'PER_030' }
+    };
+  };
+  context.saveDirectoryAssignment = payload => {
+    assignmentWrites.push(payload);
+    return { assignment: { asignacion_id: payload.asignacion_id, persona_id: payload.persona_id } };
+  };
+  context.deleteDirectoryAssignment = id => {
+    deleted.push(id);
+    return { success: true };
+  };
+
+  const result = context.saveDirectoryEntry({
+    persona_id: 'PER_030',
+    assignments: [
+      { asignacion_id: 'ASG_030', cargo_id: 'CAR_001', local_id: 'LOC_001' },
+      { asignacion_id: 'ASG_031', cargo_id: 'CAR_002', local_id: 'LOC_002' },
+      { cargo_id: 'CAR_032', local_id: 'LOC_003' }
+    ],
+    removed_assignment_ids: ['ASG_032']
+  });
+
+  assert.equal(primaryWrites.length, 1);
+  assert.equal(primaryWrites[0].asignacion_id, 'ASG_030');
+  assert.deepEqual(assignmentWrites.map(item => item.asignacion_id), ['ASG_031', '']);
+  assert.ok(assignmentWrites.every(item => item.persona_id === 'PER_030'));
+  assert.deepEqual(deleted, ['ASG_032']);
+  assert.equal(result.assignments.length, 3);
 });
 
 
@@ -1220,9 +1283,10 @@ test('el guardado directo de ficha personal aplica la unicidad documental normal
 });
 
 
-test('el formulario permite registrar y actualizar observaciones de cada asignación', () => {
-  assert.ok(frontendSource.includes('directoryFormObservaciones'));
-  assert.ok(frontendSource.includes("observaciones: document.getElementById('directoryFormObservaciones')"));
+test('el formulario permite registrar y actualizar observaciones dentro de cada asignación', () => {
+  assert.match(frontendSource, /controls\.observaciones = document\.createElement\('textarea'\)/);
+  assert.match(frontendSource, /observaciones: key\(controls\.observaciones\.value\)/);
+  assert.match(frontendSource, /directoryFormAssignments/);
 });
 
 
@@ -2267,22 +2331,18 @@ test('las consultas puntuales de asignaciones comprueban permiso y ámbito en Co
 });
 
 
-test('deleteDirectoryPerson valida el ámbito con las asignaciones puntuales, no con el contexto vacío', () => {
+test('deleteDirectoryPerson elimina el servidor y sus tres tablas relacionadas cuando no existen acciones previas', () => {
   const vmContext = vm.createContext({});
   vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
-  const person = {
-    persona_id: 'PER_009',
-    nombres: 'Ana',
-    apellidos: 'Pérez'
-  };
-  const linkedAssignment = {
-    asignacion_id: 'ASG_009',
-    persona_id: 'PER_009',
-    estructura_local_id: 'REL_1',
-    local_id: '',
-    active: true
-  };
+  const person = { persona_id: 'PER_009', nombres: 'Ana', apellidos: 'Pérez' };
+  const personalData = { servidor_id: 'PER_009', tipo_documento: 'DNI', numero_documento: '12345678' };
+  const linkedAssignments = [
+    { asignacion_id: 'ASG_009', persona_id: 'PER_009', estructura_local_id: 'REL_1', local_id: '', active: true },
+    { asignacion_id: 'ASG_010', persona_id: 'PER_009', local_id: 'LOC_1', active: true }
+  ];
   let assignmentsChecked = null;
+  const deleted = [];
+  let auditEvent = null;
 
   vmContext._directoryAuthorizationContext_ = () => ({ auth: {}, structures: [], locals: [] });
   vmContext._directoryLoadContext_ = options => {
@@ -2290,26 +2350,80 @@ test('deleteDirectoryPerson valida el ámbito con las asignaciones puntuales, no
     return { asignaciones: [], estructuraLocal: [], estructuraOrg: [], locales: [] };
   };
   vmContext._directoryFindPersonById_ = () => person;
+  vmContext._directoryFindPersonalDataById_ = () => personalData;
   vmContext._directoryAssertPersonMutationScope_ = (_authorization, _person, assignments) => {
     assignmentsChecked = assignments;
   };
   vmContext._directorySource_ = name => name;
+  vmContext._accessSecuritySource_ = name => name;
+  vmContext.ACCESS_MANAGEMENT_CONFIG = { sheets: { audit: 'Auditoria' } };
+  vmContext._accessRunAudited_ = (_auth, event, callback) => {
+    auditEvent = event;
+    return callback().value;
+  };
   vmContext.SUNARPCore = {
     findRecordsByFields: (source, filters) => {
-      assert.equal(source, 'asignaciones');
-      assert.deepEqual(JSON.parse(JSON.stringify(filters)), { persona_id: 'PER_009' });
-      return { records: [linkedAssignment], total: 1 };
+      if (source === 'asignaciones') {
+        assert.deepEqual(JSON.parse(JSON.stringify(filters)), { persona_id: 'PER_009' });
+        return { records: linkedAssignments, total: linkedAssignments.length };
+      }
+      if (source === 'Auditoria') {
+        return { records: [], total: 0 };
+      }
+      throw new Error('Fuente inesperada: ' + source);
+    },
+    deleteRecord: (source, field, id) => {
+      deleted.push([source, field, id]);
+      return { success: true };
     }
   };
 
-  assert.throws(
-    () => vmContext.deleteDirectoryPerson('PER_009'),
-    /tiene 1 asignación/
-  );
-  assert.equal(assignmentsChecked.length, 1);
-  assert.equal(assignmentsChecked[0].asignacion_id, 'ASG_009');
+  const result = vmContext.deleteDirectoryPerson('PER_009');
+  assert.equal(assignmentsChecked.length, 2);
+  assert.equal(result.success, true);
+  assert.deepEqual(deleted, [
+    ['asignaciones', 'asignacion_id', 'ASG_009'],
+    ['asignaciones', 'asignacion_id', 'ASG_010'],
+    ['servidores datos personales', 'servidor_id', 'PER_009'],
+    ['personas', 'persona_id', 'PER_009']
+  ]);
+  assert.equal(auditEvent.accion, 'ELIMINAR_SERVIDOR_DIRECTORIO');
 });
 
+test('deleteDirectoryPerson bloquea la eliminación cuando hay una acción previa de Información de personal', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  const person = { persona_id: 'PER_011', nombres: 'Luis', apellidos: 'Díaz' };
+  const assignment = { asignacion_id: 'ASG_011', persona_id: 'PER_011', local_id: 'LOC_1' };
+  const deleted = [];
+
+  vmContext._directoryAuthorizationContext_ = () => ({ auth: {}, structures: [], locals: [] });
+  vmContext._directoryLoadContext_ = () => ({ asignaciones: [], estructuraLocal: [], estructuraOrg: [], locales: [] });
+  vmContext._directoryFindPersonById_ = () => person;
+  vmContext._directoryFindPersonalDataById_ = () => null;
+  vmContext._directoryAssertPersonMutationScope_ = () => {};
+  vmContext._directorySource_ = name => name;
+  vmContext._accessSecuritySource_ = name => name;
+  vmContext.ACCESS_MANAGEMENT_CONFIG = { sheets: { audit: 'Auditoria' } };
+  vmContext._accessRunAudited_ = () => { throw new Error('No debe iniciar una eliminación auditada.'); };
+  vmContext.SUNARPCore = {
+    findRecordsByFields: source => source === 'asignaciones'
+      ? { records: [assignment], total: 1 }
+      : { records: [{
+          evento_id: 'EVT_001',
+          modulo: 'INFORMACION_PERSONAL',
+          registro_id: 'ASG_011',
+          accion: 'EDITAR_ASIGNACION_DIRECTORIO'
+        }], total: 1 },
+    deleteRecord: (...args) => { deleted.push(args); return { success: true }; }
+  };
+
+  assert.throws(
+    () => vmContext.deleteDirectoryPerson('PER_011'),
+    /acción\(es\) registradas en la auditoría institucional/
+  );
+  assert.deepEqual(deleted, []);
+});
 test('la validación de contexto parcial conserva las relaciones sin exigir cargar todas las personas', () => {
   const context = assignmentContext();
   context.personas = [];
