@@ -421,7 +421,7 @@ test('getAccessUsers reutiliza un índice compartido entre páginas, sedes y rol
   let materializationCount = 0;
   let indexSources = null;
   sandbox.SUNARPCore.getOrBuildCachedValue = (key, sources, builder, ttl) => {
-    assert.equal(key, 'access-users-index-v4');
+    assert.equal(key, 'access-users-index-v5');
     assert.equal(ttl, 60);
     indexSources = sources.map(source => source.sheetName);
     if (materialized.has(key)) return { value: materialized.get(key), cacheHit: true, cacheStored: true };
@@ -448,8 +448,8 @@ test('getAccessUsers reutiliza un índice compartido entre páginas, sedes y rol
   assert.equal(filtered.items[0].persona_id, 'PER_010');
   assert.equal(materializationCount, 1, 'Cambiar sede, rol, página o búsqueda no reconstruye el índice.');
   assert.deepEqual(Array.from(indexSources).sort(), [
-    'Usuarios', 'UsuarioRol', 'Modulos', 'Roles', 'AmbitosAcceso',
-    'Sedes', 'EstructuraOrg', 'locales'
+    'Usuarios', 'UsuarioRol', 'Modulos', 'Roles',
+    'asignaciones', 'estructura_local', 'estructura_org', 'locales', 'Sedes'
   ].sort());
 });
 test('la autorización ordinaria no expone getters de snapshots completos y la integridad global es explícita', () => {
@@ -506,7 +506,7 @@ test('el historial conserva compatibilidad con SUNARP Core v9 mientras admite le
   assert.ok(implementation.includes('listTailRecords'));
 });
 
-test('getAccessUsers filtra por ámbitos efectivos y no por adscripciones funcionales', () => {
+test('getAccessUsers filtra por sede de adscripción y no por ámbitos de acceso', () => {
   const data = makeSecurityData();
   data.personas.push(
     { persona_id: 'PER_118', nombres: 'Ana', apellidos: 'Zeta', correo_institucional: 'ana.zeta@sunarp.gob.pe' },
@@ -580,7 +580,7 @@ test('getAccessUsers filtra por ámbitos efectivos y no por adscripciones funcio
   const cache = new Map();
   let buildCount = 0;
   sandbox.SUNARPCore.getOrBuildCachedValue = (key, sources, builder, ttl) => {
-    assert.equal(key, 'access-users-index-v4');
+    assert.equal(key, 'access-users-index-v5');
     assert.equal(sources.length, 8);
     assert.equal(ttl, 60);
     if (cache.has(key)) return { value: cache.get(key), cacheHit: true, cacheStored: true };
@@ -601,9 +601,9 @@ test('getAccessUsers filtra por ámbitos efectivos y no por adscripciones funcio
   assert.deepEqual(Array.from(bySite.items, item => item.persona_id).sort(), ['PER_117', 'PER_118']);
   assert.equal(bySite.items[0].sede_nombre, 'Lima');
   assert.ok(!bySite.items.some(item => ['PER_119', 'PER_120', 'PER_121'].includes(item.persona_id)));
-  assert.equal(bySite.integrity.activeScopes, 2);
-  assert.equal(bySite.integrity.invalidScopes, 0);
-  assert.equal(bySite.integrity.multiSiteAccounts, 0);
+  assert.equal(bySite.integrity.activeAssignments, 2);
+  assert.equal(bySite.integrity.invalidAssignments, 3);
+  assert.equal(bySite.integrity.multiSiteAssignments, 0);
 
   const byRole = sandbox.getAccessUsers({ rol_id: 'ROL_ADMIN', page: 1, pageSize: 10 });
   assert.equal(byRole.total, 1);
@@ -741,12 +741,12 @@ test('getAccessUsers incluye cuentas por ámbito organizacional aunque no tengan
   assert.equal(peopleQuery.options.limit, 10);
   assert.equal(peopleQuery.options.offset, 0);
   assert.equal(peopleQuery.options.authorization.moduleId, 'MOD_ACCESOS');
-  assert.ok(indexSources.includes('AmbitosAcceso'));
-  assert.ok(indexSources.includes('EstructuraOrg'));
-  assert.ok(!indexSources.includes('asignaciones'));
-  assert.ok(!indexSources.includes('estructura_local'));
-  assert.ok(!readRequests.includes('asignaciones'));
-  assert.ok(!readRequests.includes('estructura_local'));
+  assert.ok(!indexSources.includes('AmbitosAcceso'));
+  assert.ok(indexSources.includes('asignaciones'));
+  assert.ok(indexSources.includes('estructura_local'));
+  assert.ok(indexSources.includes('estructura_org'));
+  assert.ok(readRequests.includes('asignaciones'));
+  assert.ok(readRequests.includes('estructura_local'));
 });
 
 
@@ -945,7 +945,7 @@ test('la consulta de usuarios reutiliza la vista materializada, pagina en servid
   const end = accessSource.indexOf('function _accessAuditTimestamp_(', start);
   const implementation = accessSource.slice(start, end);
   assert.ok(helper.includes('getOrBuildCachedValue'));
-  assert.ok(helper.includes('access-users-index-v4'));
+  assert.ok(helper.includes('access-users-index-v5'));
   assert.ok(helper.includes("_accessSecuritySource_('EstructuraOrg')"));
   assert.ok(helper.includes('ACCESS_MANAGEMENT_CONFIG.sheets.scopes'));
   assert.ok(helper.includes("_accessFindOrgCatalogByIds_('ESTRUCTURA_ORG'"));
@@ -1623,7 +1623,7 @@ test('el listado de usuarios se consulta al seleccionar un filtro y admite Todas
   assert.match(accessSource, /function getAccessUsers\(filters\)/);
   assert.match(accessSource, /const allSitesSelected = filters\.all_sedes === true/);
   assert.match(accessSource, /if \(!sedeId && !roleId && !allSitesSelected\) return \{ items: \[\], total: 0 \}/);
-  assert.match(accessSource, /access-users-index-v4/);
+  assert.match(accessSource, /access-users-index-v5/);
   assert.match(accessSource, /matchingRows = indexed\.value\.rows\.filter/);
   assert.match(accessSource, /SUNARPCore\.queryRecords/);
   assert.doesNotMatch(accessSource, /access-users-index-v1/);
@@ -2271,9 +2271,12 @@ test('Administración de accesos no presenta botones manuales de Actualizar y co
   assert.match(accessUiSource, /Selecciona una sede o un rol para consultar usuarios/);
 });
 
-test('el catálogo de tipos de documento se carga al abrir Nueva cuenta y no en el bootstrap de accesos', () => {
+test('el catálogo de tipos de documento se precarga en segundo plano y el formulario reutiliza la solicitud', () => {
+  assert.match(accessUiSource, /function ensureDocumentTypesLoaded\(\)/);
+  assert.match(accessUiSource, /ensureDocumentTypesLoaded\(\)\.catch/);
+  assert.match(accessUiSource, /state\.documentTypesPromise/);
   assert.match(accessUiSource, /needsDocumentTypes = !editing && state\.data\.documentTypesLoaded !== true/);
-  assert.match(accessUiSource, /rpc\('getAccessManagementTabData', 'documentTypes'\)/);
+  assert.match(accessUiSource, /ensureDocumentTypesLoaded\(\)\.then/);
   assert.match(accessSource, /if \(tab === 'documenttypes'\)/);
   const bootstrap = accessSource.slice(
     accessSource.indexOf('function getAccessManagementData()'),
