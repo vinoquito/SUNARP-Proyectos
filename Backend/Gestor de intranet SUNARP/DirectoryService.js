@@ -3825,10 +3825,14 @@ function deleteDirectoryPerson(personaId) {
     'ELIMINAR_PERSONA_DIRECTORIO',
     'ELIMINAR_SERVIDOR_DIRECTORIO'
   ]);
-  const operationalEvents = auditRows.filter(row =>
-    _directoryText_(row.modulo).toUpperCase() !== 'INFORMACION_PERSONAL' ||
-    !ownCrudActions.has(_directoryText_(row.accion).toUpperCase())
-  );
+  const operationalEvents = auditRows.filter(row => {
+    const outcome = _directoryText_(row.resultado).toUpperCase();
+    const successful = !outcome || outcome === 'OK' || outcome === 'SUCCESS';
+    return successful && (
+      _directoryText_(row.modulo).toUpperCase() !== 'INFORMACION_PERSONAL' ||
+      !ownCrudActions.has(_directoryText_(row.accion).toUpperCase())
+    );
+  });
   if (operationalEvents.length) {
     throw new Error(
       'No se puede eliminar el servidor porque tiene ' + operationalEvents.length +
