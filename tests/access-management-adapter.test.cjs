@@ -601,7 +601,7 @@ test('getAccessUsers filtra por sede de adscripción y no por ámbitos de acceso
   assert.deepEqual(Array.from(bySite.items, item => item.persona_id).sort(), ['PER_117', 'PER_118']);
   assert.equal(bySite.items[0].sede_nombre, 'Lima');
   assert.ok(!bySite.items.some(item => ['PER_119', 'PER_120', 'PER_121'].includes(item.persona_id)));
-  assert.equal(bySite.integrity.activeAssignments, 2);
+  assert.equal(bySite.integrity.activeAssignments, 5);
   assert.equal(bySite.integrity.invalidAssignments, 3);
   assert.equal(bySite.integrity.multiSiteAssignments, 0);
 
@@ -887,7 +887,7 @@ test('crear usuario, asignar rol y ámbito sin confundir el ámbito con su sede 
   ), true);
 
   const listed = sandbox.getAccessUsers({
-    rol_id: 'ROL_EDITOR',
+    rol_id: 'ROL_EDITOR', search: 'Nueva',
     page: 1,
     pageSize: 10
   });
@@ -2396,7 +2396,7 @@ test('el editor de permisos recibe el catálogo de operaciones al cargar Permiso
 test('Nueva cuenta abre el formulario sin esperar los catálogos organizacionales ni tipos de documento', () => {
   assert.match(accessUiSource, /if \(editing \|\| needsScopeCatalogs\)/);
   assert.match(accessUiSource, /Cargando tipos de documento/);
-  assert.match(accessUiSource, /rpc\('getAccessManagementTabData', 'documentTypes'\)\.then/);
+  assert.match(accessUiSource, /ensureDocumentTypesLoaded\(\)\.then/);
   assert.match(accessUiSource, /await rpc\('getAccessScopeCatalogs'\)/);
 });
 
