@@ -51,6 +51,7 @@ test('el formulario distribuye dos campos por fila y conserva las fechas en tres
   assert.match(frontendSource, /directory-form-dates-grid/);
   assert.ok(viewSource.includes('.directory-form-document-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))'));
   assert.ok(viewSource.includes('.directory-form-personal-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))'));
+  assert.ok(viewSource.includes('.directory-form-personal-grid>.directory-form-document-fields{grid-column:1/-1'));
   assert.ok(viewSource.includes('.directory-form-dates-grid{display:grid;grid-column:1/-1;grid-template-columns:repeat(3,minmax(0,1fr))'));
   assert.ok(viewSource.includes('.directory-form-field-full{grid-column:1/-1'));
   assert.match(frontendSource, /SUNARPUI\.showAlert\(/);
@@ -60,11 +61,12 @@ test('el formulario distribuye dos campos por fila y conserva las fechas en tres
 
 test('la inicialización del modal enlaza los botones y valida el fieldset correcto', () => {
   const start = frontendSource.indexOf('async function openDirectoryForm(record)');
-  const end = frontendSource.indexOf('/* El guardado compuesto se gestiona', start);
+  const end = frontendSource.indexOf('// El guardado compuesto se gestiona', start);
   assert.ok(start >= 0 && end > start);
   const implementation = frontendSource.slice(start, end);
   const guard = implementation.indexOf('if(!form||!personalFieldset||!assignmentsFieldset||');
   assert.ok(guard >= 0, 'El guard debe validar las referencias declaradas del formulario.');
+  assert.ok(implementation.includes('!documentVerified||!documentSearch||!documentClear||!documentAlert'), 'El alta debe validar todos los controles documentales antes de enlazarlos.');
   assert.equal(implementation.includes('!assignmentFieldset'), false);
   for (const binding of [
     "documentSearch.addEventListener('click'",
