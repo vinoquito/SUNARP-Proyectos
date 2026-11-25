@@ -3115,6 +3115,157 @@ function saveDirectoryEntry(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('Debes proporcionar los datos del registro.');
   }
+  if (!Array.isArray(payload.assignments)) {
+    return _saveDirectoryEntrySingle_(payload);
+  }
+  if (!payload.assignments.length) throw new Error('Debes registrar al menos una asignación.');
+
+  const assignments = payload.assignments;
+  const assignmentIds = assignments.map(item => _directoryText_(item && item.asignacion_id)).filter(Boolean);
+  if (new Set(assignmentIds).size !== assignmentIds.length) {
+    throw new Error('El formulario contiene asignaciones duplicadas.');
+  }
+
+  const personaId = _directoryText_(payload.persona_id);
+  const isNewPerson = !personaId;
+  let previousPerson = null;
+  let previousPersonalData = null;
+  let previousAssignments = [];
+  if (!isNewPerson) {
+    previousPerson = _directoryFindPersonById_(personaId);
+    if (!previousPerson) throw new Error('No se encontró la persona que se intenta editar.');
+    previousPersonalData = _directoryFindPersonalDataById_(personaId);
+    const previousResult = SUNARPCore.findRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones),
+      { persona_id: personaId },
+      { searchField: 'persona_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.asignaciones }
+    );
+    previousAssignments = previousResult.records || [];
+  }
+
+  let resolvedPersonaId = personaId;
+  const savedAssignmentIds = [];
+  try {
+    const firstPayload = Object.assign({}, payload, assignments[0]);
+    delete firstPayload.assignments;
+    const firstResult = _saveDirectoryEntrySingle_(firstPayload);
+    resolvedPersonaId = resolvedPersonaId ||
+      _directoryText_(firstResult.person && firstResult.person.persona_id) ||
+      _directoryText_(firstResult.person && firstResult.person.person && firstResult.person.person.persona_id);
+    if (!resolvedPersonaId) throw new Error('No se pudo resolver el identificador del servidor creado.');
+    const firstAssignment = firstResult.assignment && firstResult.assignment.assignment
+      ? firstResult.assignment.assignment
+      : firstResult.assignment;
+    if (firstAssignment && firstAssignment.asignacion_id) {
+      savedAssignmentIds.push(_directoryText_(firstAssignment.asignacion_id));
+    }
+
+    const savedAssignments = firstAssignment ? [firstAssignment] : [];
+    for (let index = 1; index < assignments.length; index++) {
+      const item = assignments[index];
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        throw new Error('La asignación ' + (index + 1) + ' no tiene un formato válido.');
+      }
+      const result = saveDirectoryAssignment(Object.assign({}, item, {
+        persona_id: resolvedPersonaId
+      }));
+      const assignment = result.assignment || result;
+      if (assignment && assignment.asignacion_id) {
+        savedAssignmentIds.push(_directoryText_(assignment.asignacion_id));
+      }
+      savedAssignments.push(assignment);
+    }
+
+    return Object.assign({}, firstResult, {
+      success: true,
+      assignments: savedAssignments,
+      message: isNewPerson
+        ? 'El servidor y sus ' + savedAssignments.length + ' asignación(es) se registraron correctamente.'
+        : 'Los datos del servidor y sus ' + savedAssignments.length + ' asignación(es) se actualizaron correctamente.'
+    });
+  } catch (error) {
+    const rollbackErrors = [];
+    if (isNewPerson && resolvedPersonaId) {
+      try {
+        deleteDirectoryPerson(resolvedPersonaId);
+      } catch (rollbackError) {
+        rollbackErrors.push('servidor recién creado: ' + rollbackError.message);
+      }
+    } else if (resolvedPersonaId) {
+      try {
+        _saveDirectoryPerson_({
+          persona_id: resolvedPersonaId,
+          nombres: previousPerson.nombres,
+          apellidos: previousPerson.apellidos,
+          correo_institucional: previousPerson.correo_institucional
+        });
+      } catch (rollbackError) {
+        rollbackErrors.push('identidad: ' + rollbackError.message);
+      }
+
+      try {
+        if (previousPersonalData) {
+          _saveDirectoryPersonalData_({
+            servidor_id: resolvedPersonaId,
+            tipo_documento: previousPersonalData.tipo_documento,
+            numero_documento: previousPersonalData.numero_documento,
+            fecha_nacimiento: _directoryFormatDateInput_(previousPersonalData.fecha_nacimiento),
+            fecha_inicio_servicios: _directoryFormatDateInput_(previousPersonalData.fecha_inicio_servicios),
+            fecha_cese: _directoryFormatDateInput_(previousPersonalData.fecha_cese)
+          }, false);
+        } else if (_directoryFindPersonalDataById_(resolvedPersonaId)) {
+          SUNARPCore.deleteRecord(
+            _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
+            'servidor_id',
+            resolvedPersonaId
+          );
+        }
+      } catch (rollbackError) {
+        rollbackErrors.push('datos personales: ' + rollbackError.message);
+      }
+
+      const previousIds = new Set(previousAssignments.map(item => _directoryText_(item.asignacion_id)));
+      savedAssignmentIds.filter(id => !previousIds.has(id)).forEach(id => {
+        try {
+          SUNARPCore.deleteRecord(
+            _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones),
+            'asignacion_id',
+            id
+          );
+        } catch (rollbackError) {
+          rollbackErrors.push('nueva asignación ' + id + ': ' + rollbackError.message);
+        }
+      });
+      previousAssignments.forEach(item => {
+        try {
+          saveDirectoryAssignment({
+            asignacion_id: item.asignacion_id,
+            persona_id: item.persona_id,
+            cargo_id: item.cargo_id,
+            condicion_cargo: item.condicion_cargo,
+            anexo: item.anexo,
+            estructura_local_id: item.estructura_local_id,
+            local_id: item.local_id,
+            observaciones: item.observaciones,
+            active: _directoryNormalizeBoolean_(item.active),
+            order: item.order
+          });
+        } catch (rollbackError) {
+          rollbackErrors.push('asignación ' + item.asignacion_id + ': ' + rollbackError.message);
+        }
+      });
+    }
+    if (rollbackErrors.length) {
+      throw new Error(error.message + ' La reversión de asignaciones requiere revisión: ' + rollbackErrors.join(' | '));
+    }
+    throw error;
+  }
+}
+
+function _saveDirectoryEntrySingle_(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('Debes proporcionar los datos del registro.');
+  }
   _directoryAssertAllowedFields_(payload, [
     'persona_id', 'asignacion_id', 'nombres', 'apellidos', 'correo_institucional',
     'tipo_documento', 'numero_documento', 'fecha_nacimiento',
