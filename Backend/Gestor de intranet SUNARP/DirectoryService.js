@@ -27,7 +27,8 @@ const DIRECTORY_SERVICE_CONFIG = Object.freeze({
     tiposEstructura: 'tipos_estructura',
     estructuraOrg: 'estructura_org',
     estructuraLocal: 'estructura_local',
-    cargos: 'cargos'
+    cargos: 'cargos',
+    condicionCargo: 'condicion_cargo'
   }),
 
   ids: Object.freeze({
@@ -49,6 +50,7 @@ const DIRECTORY_REQUIRED_HEADERS = Object.freeze({
   personas: ['persona_id', 'nombres', 'apellidos', 'correo_institucional'],
   datosPersonales: ['servidor_id', 'tipo_documento', 'numero_documento', 'fecha_nacimiento', 'fecha_inicio_servicios', 'fecha_cese'],
   documentTypes: ['id', 'name'],
+  condicionCargo: ['id', 'name', 'active'],
   asignaciones: [
     'asignacion_id',
     'persona_id',
@@ -1666,6 +1668,16 @@ function getDirectoryFormData(permissionCode) {
   const moduleAccess = (authorization.auth.moduleAccess || []).find(item =>
     _directoryKey_(item.modulo_id) === authorization.moduleId
   );
+  const conditionCatalog = SUNARPCore.listRecordsFromSourcesCached([{
+    key: 'conditionCargo',
+    source: _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.condicionCargo),
+    requiredHeaders: DIRECTORY_REQUIRED_HEADERS.condicionCargo
+  }], DIRECTORY_CATALOG_CACHE_TTL);
+  const canDeleteAssignments = _accessHasPermission_(
+    authorization.auth,
+    'INFORMACION_PERSONAL_ELIMINAR',
+    authorization.moduleId
+  );
   return {
     catalogs: {
       sedes: (context.sedes || []).filter(_directoryIsActive_).map(x => ({
@@ -1679,10 +1691,14 @@ function getDirectoryFormData(permissionCode) {
       estructuraOrg: (context.estructuraOrg || []).filter(_directoryIsActive_),
       estructuraLocal: (context.estructuraLocal || []).filter(_directoryIsActive_),
       cargos: (context.cargos || []).filter(_directoryIsActive_),
+      condicionCargo: (conditionCatalog.conditionCargo || []).filter(_directoryIsActive_).map(x => ({
+        id: _directoryKey_(x.id), name: _directoryText_(x.name)
+      })).filter(x => x.id && x.name),
       documentTypes: (context.documentTypes || []).filter(_directoryIsActive_).map(x => ({
         id: _directoryKey_(x.id), name: _directoryText_(x.name)
       })).filter(x => x.id && x.name)
     },
+    capabilities: { deleteAssignments: canDeleteAssignments === true },
     scopes: (moduleAccess && moduleAccess.scopes || []).filter(_directoryIsActive_).map(scope => ({
       type: _directoryText_(scope.tipo_ambito_id).toUpperCase(),
       referenceId: _directoryKey_(scope.referencia_id),
@@ -3149,9 +3165,25 @@ function saveDirectoryEntry(payload) {
   if (new Set(assignmentIds).size !== assignmentIds.length) {
     throw new Error('El formulario contiene asignaciones duplicadas.');
   }
+  if (payload.removedAssignmentIds !== undefined && !Array.isArray(payload.removedAssignmentIds)) {
+    throw new Error('La lista de asignaciones retiradas no tiene un formato válido.');
+  }
+  const removedAssignmentIds = Array.from(new Set(
+    (payload.removedAssignmentIds || []).map(_directoryText_).filter(Boolean)
+  ));
+  if (removedAssignmentIds.length !== (payload.removedAssignmentIds || []).filter(Boolean).length) {
+    throw new Error('La lista de asignaciones retiradas contiene identificadores duplicados.');
+  }
 
   const personaId = _directoryText_(payload.persona_id);
   const isNewPerson = !personaId;
+  if (isNewPerson && removedAssignmentIds.length) {
+    throw new Error('No se pueden retirar asignaciones de una persona que todavía no está registrada.');
+  }
+  if (assignmentIds.some(id => removedAssignmentIds.includes(id))) {
+    throw new Error('Una asignación no puede conservarse y retirarse al mismo tiempo.');
+  }
+
   let previousPerson = null;
   let previousPersonalData = null;
   let previousAssignments = [];
@@ -3165,13 +3197,28 @@ function saveDirectoryEntry(payload) {
       { searchField: 'persona_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.asignaciones }
     );
     previousAssignments = previousResult.records || [];
+    const previousById = new Map(previousAssignments.map(item => [
+      _directoryText_(item.asignacion_id), item
+    ]));
+    assignmentIds.forEach(id => {
+      if (!previousById.has(id)) {
+        throw new Error('La asignación ' + id + ' no pertenece a la persona que se está editando.');
+      }
+    });
+    removedAssignmentIds.forEach(id => {
+      if (!previousById.has(id)) {
+        throw new Error('La asignación ' + id + ' no pertenece a la persona que se está editando.');
+      }
+    });
   }
 
   let resolvedPersonaId = personaId;
   const savedAssignmentIds = [];
+  const deletedAssignmentIds = [];
   try {
     const firstPayload = Object.assign({}, payload, assignments[0]);
     delete firstPayload.assignments;
+    delete firstPayload.removedAssignmentIds;
     const firstResult = _saveDirectoryEntrySingle_(firstPayload);
     resolvedPersonaId = resolvedPersonaId ||
       _directoryText_(firstResult.person && firstResult.person.persona_id) ||
@@ -3199,6 +3246,14 @@ function saveDirectoryEntry(payload) {
       }
       savedAssignments.push(assignment);
     }
+
+    // La tabla de asignaciones trabaja como un borrador: retirar una fila no
+    // borra datos hasta confirmar el formulario completo. Las bajas se aplican
+    // al final, una vez guardadas todas las filas que se mantienen.
+    removedAssignmentIds.forEach(id => {
+      deleteDirectoryAssignment(id);
+      deletedAssignmentIds.push(id);
+    });
 
     return Object.assign({}, firstResult, {
       success: true,
@@ -3260,20 +3315,32 @@ function saveDirectoryEntry(payload) {
           rollbackErrors.push('nueva asignación ' + id + ': ' + rollbackError.message);
         }
       });
+      const deletedSet = new Set(deletedAssignmentIds);
       previousAssignments.forEach(item => {
         try {
-          saveDirectoryAssignment({
-            asignacion_id: item.asignacion_id,
-            persona_id: item.persona_id,
-            cargo_id: item.cargo_id,
-            condicion_cargo: item.condicion_cargo,
-            anexo: item.anexo,
-            estructura_local_id: item.estructura_local_id,
-            local_id: item.local_id,
-            observaciones: item.observaciones,
-            active: _directoryNormalizeBoolean_(item.active),
-            order: item.order
-          });
+          if (deletedSet.has(_directoryText_(item.asignacion_id))) {
+            SUNARPCore.insertRecord(
+              _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones),
+              item,
+              {
+                idField: 'asignacion_id',
+                schema: _directoryGetAssignmentSchema_()
+              }
+            );
+          } else {
+            saveDirectoryAssignment({
+              asignacion_id: item.asignacion_id,
+              persona_id: item.persona_id,
+              cargo_id: item.cargo_id,
+              condicion_cargo: item.condicion_cargo,
+              anexo: item.anexo,
+              estructura_local_id: item.estructura_local_id,
+              local_id: item.local_id,
+              observaciones: item.observaciones,
+              active: _directoryNormalizeBoolean_(item.active),
+              order: item.order
+            });
+          }
         } catch (rollbackError) {
           rollbackErrors.push('asignación ' + item.asignacion_id + ': ' + rollbackError.message);
         }

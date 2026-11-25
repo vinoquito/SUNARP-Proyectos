@@ -24,6 +24,21 @@ const scriptStart = frontendSource.split('<script>')[1];
 assert.ok(scriptStart, 'DirectoryScripts.html debe contener el bloque JavaScript principal');
 const frontendScript = scriptStart.split('</script>')[0];
 
+test('el formulario consulta el catálogo activo de condiciones del cargo y expone su capacidad de retiro', () => {
+  assert.match(serviceSource, /condicionCargo: 'condicion_cargo'/);
+  assert.match(serviceSource, /requiredHeaders: DIRECTORY_REQUIRED_HEADERS\.condicionCargo/);
+  assert.match(serviceSource, /condicionCargo: \(conditionCatalog\.conditionCargo \|\| \[\]\)\.filter\(_directoryIsActive_\)/);
+  assert.match(serviceSource, /capabilities: \{ deleteAssignments: canDeleteAssignments === true \}/);
+});
+
+test('el guardado compuesto retira únicamente las asignaciones de la persona indicada', () => {
+  assert.match(serviceSource, /payload\.removedAssignmentIds/);
+  assert.match(serviceSource, /La asignación .* no pertenece a la persona que se está editando/);
+  assert.match(serviceSource, /deleteDirectoryAssignment\(id\)/);
+  assert.match(serviceSource, /deletedSet\.has\(_directoryText_\(item\.asignacion_id\)\)/);
+  assert.match(serviceSource, /SUNARPCore\.insertRecord\([\s\S]*?_directoryGetAssignmentSchema_\(\)/);
+});
+
 test('el formulario organiza validación, datos personales y asignaciones', () => {
   const panel = frontendSource.indexOf('directoryDocumentSearchPanel');
   const validation = frontendSource.indexOf('Validar identidad');
