@@ -2059,7 +2059,7 @@ test('el caché del sitio depende de identidad, permisos y generaciones de las f
   assert.match(serviceSource, /DIRECTORY_CATALOG_CACHE_TTL = 300/);
   assert.match(serviceSource, /DIRECTORY_SITE_SNAPSHOT_CACHE_TTL = 600/);
   assert.match(serviceSource, /DIRECTORY_ASSIGNMENT_QUERY_CACHE_TTL = 300/);
-  assert.match(serviceSource, /directory-site-snapshot:v4:/);
+  assert.match(serviceSource, /directory-site-snapshot:v5:/);
   assert.match(serviceSource, /_directoryAuthorizationCacheFingerprint_/);
   assert.match(serviceSource, /_directoryGetSiteDataCacheSources_/);
   assert.match(serviceSource, /cacheSeconds: DIRECTORY_ASSIGNMENT_QUERY_CACHE_TTL/);
