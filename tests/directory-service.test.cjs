@@ -38,6 +38,12 @@ test('el formulario organiza validación, datos personales y asignaciones', () =
   assert.doesNotMatch(frontendSource, /Buscar DNI|Relación con local|Local directamente asignado/);
 });
 
+test('una única estructura autorizada en la sede seleccionada fija la raíz aunque existan ámbitos en otras sedes', () => {
+  assert.match(frontendSource, /const siteStructureScopes = plan\.structureScopes\.filter\(scope =>/);
+  assert.match(frontendSource, /key\(root\.sede_id\) === key\(sedeId\)/);
+  assert.match(frontendSource, /if \(siteStructureScopes\.length === 1\)/);
+});
+
 test('los selectores de asignación siguen el plan de ámbitos y el Local seleccionado', () => {
   assert.match(frontendSource, /_directoryGetAccessFilterPlan_\(\{ scopes \}, sedeId\)/);
   assert.match(frontendSource, /function getFormHierarchyNodes\(parentId, sedeId, localId\)/);

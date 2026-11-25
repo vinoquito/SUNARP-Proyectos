@@ -1494,14 +1494,22 @@ const DirectoryPage = (() => {
     let initialParentId = '';
 
     if (plan.entryScope === 'ESTRUCTURA_ORG') {
-      const rootIds = plan.structureScopes.map(scope => key(scope.referenceId)).filter(Boolean);
+      // El punto de entrada se determina por las referencias del ámbito que
+      // pertenecen a la sede seleccionada, no por el total de sedes autorizadas.
+      const siteStructureScopes = plan.structureScopes.filter(scope => {
+        const root = (state.catalogs.estructuraOrg || []).find(node =>
+          key(node.id) === key(scope.referenceId)
+        );
+        return root && key(root.sede_id) === key(sedeId);
+      });
+      const rootIds = siteStructureScopes.map(scope => key(scope.referenceId));
       const rootIndex = path.findIndex(id => rootIds.includes(key(id)));
       if (rootIndex >= 0) {
-        path.splice(0, plan.structureScopes.length === 1 ? rootIndex + 1 : rootIndex);
+        path.splice(0, siteStructureScopes.length === 1 ? rootIndex + 1 : rootIndex);
       }
 
-      if (plan.structureScopes.length === 1) {
-        const scope = plan.structureScopes[0];
+      if (siteStructureScopes.length === 1) {
+        const scope = siteStructureScopes[0];
         const rootId = key(scope.referenceId);
         selectedStructureId = rootId;
         if (scope.includeDescendants) initialParentId = rootId;
