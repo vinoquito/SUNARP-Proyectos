@@ -1331,18 +1331,36 @@ const DirectoryPage = (() => {
 
   function getFormHierarchyNodes(parentId, sedeId) {
 
+    const scopes = state.formScopes || [];
+    const structureScopes = scopes.filter(scope => scope.type === 'ESTRUCTURA_ORG' && scope.referenceId);
+    const broadScope = scopes.some(scope => scope.type === 'TOTAL' || scope.type === 'SEDE');
+    const allowedIds = new Set();
+    structureScopes.forEach(scope => {
+      const rootId = key(scope.referenceId);
+      allowedIds.add(rootId);
+      if (scope.includeDescendants) {
+        const queue = [rootId];
+        while (queue.length) {
+          const parent = queue.shift();
+          state.catalogs.estructuraOrg.forEach(node => {
+            if (key(node.parent_id) === parent && !allowedIds.has(key(node.id))) {
+              allowedIds.add(key(node.id));
+              queue.push(key(node.id));
+            }
+          });
+        }
+      }
+    });
     return state.catalogs.estructuraOrg
       .filter(node => {
-
-        if (parentId) {
-          return key(node.parent_id) === key(parentId);
+        if (structureScopes.length && !broadScope) {
+          if (!allowedIds.has(key(node.id))) return false;
+          return parentId
+            ? key(node.parent_id) === key(parentId)
+            : structureScopes.some(scope => key(scope.referenceId) === key(node.id));
         }
-
-        return (
-          !key(node.parent_id) &&
-          key(node.sede_id) === key(sedeId)
-        );
-
+        if (parentId) return key(node.parent_id) === key(parentId);
+        return !key(node.parent_id) && key(node.sede_id) === key(sedeId);
       })
       .sort((a, b) => {
 
@@ -1532,16 +1550,26 @@ const DirectoryPage = (() => {
 
     const scopes = state.formScopes || [];
     const siteScopes = scopes.filter(scope => scope.type === 'SEDE' && scope.referenceId);
+    const structureScopes = scopes.filter(scope => scope.type === 'ESTRUCTURA_ORG' && scope.referenceId);
+    const localScopes = scopes.filter(scope => scope.type === 'LOCAL' && scope.referenceId);
     const totalScope = scopes.length === 1 && scopes[0].type === 'TOTAL';
-    const fixedSiteId = !totalScope && siteScopes.length === 1 ? key(siteScopes[0].referenceId) : '';
-    const selectedSede = record
-      ? key(record.sede_id)
-      : (fixedSiteId || '');
-
+    const structureMapForScope = new Map((state.catalogs.estructuraOrg || []).map(node => [key(node.id), node]));
+    const localMapForScope = new Map((state.catalogs.locales || []).map(node => [key(node.id), node]));
+    const allowedSiteIds = new Set(siteScopes.map(scope => key(scope.referenceId)));
+    structureScopes.forEach(scope => {
+      const node = structureMapForScope.get(key(scope.referenceId));
+      if (node && node.sede_id) allowedSiteIds.add(key(node.sede_id));
+    });
+    localScopes.forEach(scope => {
+      const node = localMapForScope.get(key(scope.referenceId));
+      if (node && node.sede_id) allowedSiteIds.add(key(node.sede_id));
+    });
+    const fixedSiteId = !totalScope && allowedSiteIds.size === 1 ? Array.from(allowedSiteIds)[0] : '';
+    const selectedSede = record ? key(record.sede_id) : fixedSiteId;
     const selectedPath = record
       ? getFormStructurePath(record.estructura_id)
-      : [];
-
+      : (structureScopes.length === 1 ? [key(structureScopes[0].referenceId)] : []);
+    const canChooseSite = totalScope || siteScopes.length > 1;
     const cargoOptions = state.catalogs.cargos
       .filter(cargo =>
         cargo.active !== false &&
@@ -1561,6 +1589,7 @@ const DirectoryPage = (() => {
 
     const sedeOptions = state.catalogs.sedes
       .filter(sede =>
+        (totalScope || allowedSiteIds.has(key(sede.id))) &&
         sede.active !== false &&
         sede.active !== 0
       )
@@ -1582,7 +1611,10 @@ const DirectoryPage = (() => {
         : 'structure';
 
     const directLocalOptions = state.catalogs.locales
-      .filter(local => local.active !== false && local.active !== 0 &&
+      .filter(local => (totalScope || siteScopes.length || structureScopes.length
+          ? (totalScope || allowedSiteIds.has(key(local.sede_id)))
+          : (localScopes.length ? localScopes.some(scope => key(scope.referenceId) === key(local.id)) : false))
+        && local.active !== false && local.active !== 0 &&
         String(local.active).toLowerCase() !== 'false')
       .slice().sort(sortByName)
       .map(local => `<option value="${escapeHtml(local.id)}" ${record && key(record.local_id) === key(local.id) ? 'selected' : ''}>${escapeHtml(local.name)}</option>`)
@@ -1878,8 +1910,15 @@ const DirectoryPage = (() => {
       placeholder.value = '';
       placeholder.textContent = 'Selecciona un local';
       directLocalSelect.appendChild(placeholder);
+      const scopes = state.formScopes || [];
+      const localScopes = scopes.filter(scope => scope.type === 'LOCAL' && scope.referenceId);
+      const structureScopes = scopes.filter(scope => scope.type === 'ESTRUCTURA_ORG' && scope.referenceId);
+      const broadScope = scopes.some(scope => scope.type === 'TOTAL' || scope.type === 'SEDE');
+      const allowedLocalIds = new Set(localScopes.map(scope => key(scope.referenceId)));
+      const allowedStructureIds = new Set(structureScopes.map(scope => key(scope.referenceId)));
       state.catalogs.locales
         .filter(local => !sedeId || key(local.sede_id) === key(sedeId))
+        .filter(local => broadScope || (localScopes.length ? allowedLocalIds.has(key(local.id)) : structureScopes.length ? state.catalogs.estructuraLocal.some(rel => allowedStructureIds.has(key(rel.estructura_id)) && key(rel.local_id) === key(local.id)) : false))
         .slice().sort(sortByName).forEach(local => {
           const option = document.createElement('option');
           option.value = key(local.id);
@@ -1940,7 +1979,8 @@ const DirectoryPage = (() => {
     const fixedSiteId = !totalScope && siteScopes.length === 1 ? key(siteScopes[0].referenceId) : '';
     const selectedSite = formData.selectedSede || fixedSiteId;
     const siteField = sedeSelect && sedeSelect.closest('.sunarp-form-field');
-    if (siteField) siteField.hidden = !totalScope && siteScopes.length === 1;
+    if (siteField) siteField.hidden = !canChooseSite;
+    if (sedeSelect) sedeSelect.required = canChooseSite;
     if (sedeSelect && selectedSite) sedeSelect.value = selectedSite;
     renderFormHierarchy(selectedSite, formData.selectedPath, formData.selectedRelationId);
     refreshDirectLocalOptions(selectedSite, formData.selectedLocalId);
