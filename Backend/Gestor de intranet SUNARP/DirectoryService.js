@@ -1375,6 +1375,58 @@ function _directoryExecuteAssignmentQuery_(context, authorization, options, idFi
 }
 
 /**
+ * Normaliza las métricas que SUNARP Core devuelve para cada página.
+ * No realiza consultas ni lecturas adicionales: conserva el desglose generado
+ * durante la misma ejecución de queryRecords().
+ */
+function _directoryBuildCorePageDiagnostics_(
+  page, pageNumber, fallbackOffset, fallbackLimit, recordsReturned
+) {
+  const source = page || {};
+  const numberOr = (value, fallback) => {
+    if (value === null || value === undefined || value === '') return fallback;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+
+  return {
+    page: numberOr(pageNumber, 1),
+    offset: numberOr(source.offset, fallbackOffset),
+    limit: numberOr(source.limit, fallbackLimit),
+    recordsReturned: numberOr(recordsReturned, 0),
+    total: numberOr(source.total, 0),
+    durationMs: numberOr(source.durationMs, 0),
+    counts: {
+      candidateCount: numberOr(source.candidateCount, 0),
+      authorizedCount: numberOr(source.authorizedCount, 0),
+      retainedForPage: numberOr(source.retainedForPage, 0),
+      projectedFieldCount: numberOr(source.projectedFieldCount, 0),
+      hydratedRowCount: numberOr(source.hydratedRowCount, 0)
+    },
+    cache: {
+      resultCacheHit: source.cacheHit === true,
+      candidateCacheHit: source.candidateCacheHit === true,
+      authorizedSnapshotCacheHit: source.authorizedSnapshotCacheHit === true,
+      authorizedSnapshotSessionHit: source.authorizedSnapshotSessionHit === true,
+      authorizedSnapshotCacheEligible: source.authorizedSnapshotCacheEligible === true,
+      authorizedSnapshotCacheDisabledReason: String(source.authorizedSnapshotCacheDisabledReason || ''),
+      catalogGenerationMissingSource: String(source.catalogGenerationMissingSource || '')
+    },
+    stages: {
+      authorizedSnapshotLookupMs: numberOr(source.authorizedSnapshotLookupMs, 0),
+      candidateCacheLookupMs: numberOr(source.candidateCacheLookupMs, 0),
+      candidateLoadMs: numberOr(source.candidateLoadMs, 0),
+      candidateCacheStoreMs: numberOr(source.candidateCacheStoreMs, 0),
+      candidateEvaluationMs: numberOr(source.candidateEvaluationMs, 0),
+      pageHydrationMs: numberOr(source.pageHydrationMs, 0),
+      sourceGenerationMs: numberOr(source.sourceGenerationMs, 0),
+      authorizedSnapshotStoreMs: numberOr(source.authorizedSnapshotStoreMs, 0)
+    }
+  };
+}
+
+
+/**
  * Enriquece un lote completo de asignaciones con una sola búsqueda masiva
  * de personas y un único mapa de relaciones. La consulta de personas proyecta
  * únicamente las columnas de presentación necesarias para la tabla principal.
@@ -1985,6 +2037,7 @@ function _directoryBuildSiteData_(
   let candidateCacheHits = 0;
   let authorizedSnapshotCacheHits = 0;
   let authorizedSnapshotSessionHits = 0;
+  const corePageDiagnostics = [];
   const pageSize = 1000;
   const records = [];
   let offset = 0;
@@ -2018,6 +2071,9 @@ function _directoryBuildSiteData_(
     records.push.apply(records, pageRecords);
     hasMore = Boolean(page.hasMore);
     pageCount++;
+    corePageDiagnostics.push(_directoryBuildCorePageDiagnostics_(
+      page, pageCount, offset, pageSize, pageRecords.length
+    ));
 
     if (!hasMore) break;
     if (!pageRecords.length || pageCount > 10) {
@@ -2273,7 +2329,8 @@ function _directoryBuildSiteData_(
       candidateCacheHits,
       authorizedSnapshotCacheHits,
       authorizedSnapshotSessionHits
-    }
+    },
+    corePages: corePageDiagnostics
   };
   console.log('[DirectoryService] Site data ms:', JSON.stringify({
     authorization: authorizationElapsed,
@@ -2295,6 +2352,7 @@ function _directoryBuildSiteData_(
     candidateCacheHits,
     authorizedSnapshotCacheHits,
     authorizedSnapshotSessionHits,
+    corePages: corePageDiagnostics,
     records: records.length,
     totalAssignments: expectedTotal || 0,
     siteCatalogsRestricted: true,
