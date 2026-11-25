@@ -1247,13 +1247,6 @@ const DirectoryPage = (() => {
           onClick: record => openDirectoryForm(record)
         },
         {
-          label: 'Nueva asignación',
-          icon: 'plus',
-          variant: 'primary',
-          title: 'Registrar otra asignación para esta persona',
-          onClick: record => openDirectoryForm(record, { assignmentOnly: true })
-        },
-        {
           label: 'Historial',
           icon: 'history',
           variant: 'primary',
@@ -1275,7 +1268,7 @@ const DirectoryPage = (() => {
           label: 'Eliminar',
           icon: 'delete',
           variant: 'danger',
-          title: 'Eliminar asignación',
+          title: 'Eliminar servidor',
           onClick: record => deleteDirectoryEntry(record)
         }
       ]
@@ -1537,9 +1530,13 @@ const DirectoryPage = (() => {
 
     const isEditing = Boolean(record) && !assignmentOnly;
 
+    const scopes = state.formScopes || [];
+    const siteScopes = scopes.filter(scope => scope.type === 'SEDE' && scope.referenceId);
+    const totalScope = scopes.length === 1 && scopes[0].type === 'TOTAL';
+    const fixedSiteId = !totalScope && siteScopes.length === 1 ? key(siteScopes[0].referenceId) : '';
     const selectedSede = record
       ? key(record.sede_id)
-      : key(getElements().sedeFilter?.value);
+      : (fixedSiteId || '');
 
     const selectedPath = record
       ? getFormStructurePath(record.estructura_id)
@@ -1599,6 +1596,14 @@ const DirectoryPage = (() => {
           <input type="hidden" id="directoryFormMode" value="${assignmentOnly ? 'assignment' : 'person'}">
           <input type="hidden" id="directoryFormPersonaId" value="${escapeHtml(record?.persona_id || '')}">
 
+          ${!isEditing ? `
+          <div class="sunarp-form-field sunarp-form-field--full" id="directoryDocumentSearchPanel">
+            <p>Antes de registrar, busca el documento para comprobar que la persona no exista.</p>
+            <button type="button" class="sunarp-btn sunarp-btn-outline" id="directoryDocumentSearch">Buscar DNI</button>
+            <div id="directoryDocumentSearchResult" aria-live="polite"></div>
+            <input type="hidden" id="directoryDocumentVerified" value="false">
+          </div>
+          ` : ''}
           <div class="sunarp-form-field">
             <label for="directoryFormNombres">
               Nombres *
@@ -1642,8 +1647,12 @@ const DirectoryPage = (() => {
 
           <div class="sunarp-form-field">
             <label for="directoryFormTipoDocumento">Tipo de documento *</label>
-            <input type="text" class="sunarp-input" id="directoryFormTipoDocumento"
-              maxlength="30" value="${escapeHtml(record?.tipo_documento || '')}" required>
+            <select class="sunarp-select" id="directoryFormTipoDocumento" required>
+              <option value="">Selecciona un tipo de documento</option>
+              ${(state.catalogs.documentTypes || []).map(item => `
+                <option value="${escapeHtml(item.id)}" ${key(record?.tipo_documento) === key(item.id) ? 'selected' : ''}>${escapeHtml(item.name)}</option>
+              `).join('')}
+            </select>
           </div>
 
           <div class="sunarp-form-field">
@@ -1741,14 +1750,7 @@ const DirectoryPage = (() => {
             </select>
           </div>
 
-          <div class="sunarp-form-field sunarp-form-field--full">
-            <label for="directoryFormAssignmentMode">Adscripción de la asignación *</label>
-            <select id="directoryFormAssignmentMode" class="sunarp-select" required>
-              <option value="structure" ${selectedMode === 'structure' ? 'selected' : ''}>Unidad orgánica</option>
-              <option value="local" ${selectedMode === 'local' ? 'selected' : ''}>Local directamente</option>
-              <option value="both" ${selectedMode === 'both' ? 'selected' : ''}>Unidad orgánica y local</option>
-            </select>
-          </div>
+
 
           <div class="sunarp-form-field sunarp-form-field--full" id="directoryFormHierarchyField">
             <div id="directoryFormHierarchy"></div>
@@ -1783,7 +1785,7 @@ const DirectoryPage = (() => {
                 type="submit"
                 class="sunarp-btn sunarp-btn-primary"
                 id="directoryFormSave">
-                ${assignmentOnly ? 'Registrar asignación' : (isEditing ? 'Guardar cambios' : 'Registrar servidor')}
+                ${isEditing ? 'Guardar cambios' : 'Registrar servidor'}
               </button>
 
             </div>
@@ -1808,13 +1810,21 @@ const DirectoryPage = (() => {
 
   async function openDirectoryForm(record, options = {}) {
 
-    const assignmentOnly = options.assignmentOnly === true;
-    const isEditing = Boolean(record) && !assignmentOnly;
-    if (!state.activeSedeId || !state.catalogs || !Array.isArray(state.catalogs.estructuraOrg)) {
-      notify('warning', 'Selecciona una sede antes de registrar o editar información de personal.');
+    const assignmentOnly = false;
+    const isEditing = Boolean(record);
+    let previousCatalogs = state.catalogs;
+    let formRecord = record;
+    try {
+      const formDataResponse = await callServer('getDirectoryFormData');
+      if (!formDataResponse || !formDataResponse.catalogs) {
+        throw new Error('No se pudieron cargar los catálogos del formulario.');
+      }
+      state.catalogs = Object.assign({}, previousCatalogs || {}, formDataResponse.catalogs);
+      state.formScopes = formDataResponse.scopes || [];
+    } catch (error) {
+      notify('error', error.message || 'No se pudieron cargar los datos del formulario.');
       return;
     }
-    let formRecord = record;
 
     if (isEditing) {
       try {
@@ -1857,7 +1867,7 @@ const DirectoryPage = (() => {
       'directoryFormSede'
     );
 
-    const modeSelect = document.getElementById('directoryFormAssignmentMode');
+
     const relationSelect = document.getElementById('directoryFormLocal');
     const directLocalSelect = document.getElementById('directoryFormDirectLocal');
 
@@ -1904,7 +1914,7 @@ const DirectoryPage = (() => {
         directLocalSelect.value = relation ? key(relation.local_id) : '';
       }
     });
-    modeSelect.addEventListener('change', syncAssignmentMode);
+
 
 
     const cancelButton = document.getElementById(
@@ -1912,7 +1922,7 @@ const DirectoryPage = (() => {
     );
 
     // Comprobar que el formulario se haya insertado correctamente.
-    if (!form || !sedeSelect || !cancelButton) {
+    if (!form || !cancelButton) {
 
       SUNARPUI.closeModal();
 
@@ -1925,17 +1935,20 @@ const DirectoryPage = (() => {
     }
 
     // Construir los selectores jerárquicos y el local físico.
-    renderFormHierarchy(
-      formData.selectedSede,
-      formData.selectedPath,
-      formData.selectedRelationId
-    );
-
-    refreshDirectLocalOptions(formData.selectedSede, formData.selectedLocalId);
+    const scopes = state.formScopes || [];
+    const siteScopes = scopes.filter(scope => scope.type === 'SEDE' && scope.referenceId);
+    const totalScope = scopes.length === 1 && scopes[0].type === 'TOTAL';
+    const fixedSiteId = !totalScope && siteScopes.length === 1 ? key(siteScopes[0].referenceId) : '';
+    const selectedSite = formData.selectedSede || fixedSiteId;
+    const siteField = sedeSelect && sedeSelect.closest('.sunarp-form-field');
+    if (siteField) siteField.hidden = !totalScope && siteScopes.length === 1;
+    if (sedeSelect && selectedSite) sedeSelect.value = selectedSite;
+    renderFormHierarchy(selectedSite, formData.selectedPath, formData.selectedRelationId);
+    refreshDirectLocalOptions(selectedSite, formData.selectedLocalId);
     syncAssignmentMode();
 
     // Cambiar de sede reinicia la selección jerárquica.
-    sedeSelect.addEventListener('change', () => {
+    if (sedeSelect) sedeSelect.addEventListener('change', () => {
 
       renderFormHierarchy(
         sedeSelect.value,
@@ -1950,6 +1963,56 @@ const DirectoryPage = (() => {
     cancelButton.addEventListener('click', () => {
       SUNARPUI.closeModal();
     });
+
+    // El alta exige consultar el DNI antes de habilitar el guardado.
+    const documentSearchButton = document.getElementById('directoryDocumentSearch');
+    const documentVerified = document.getElementById('directoryDocumentVerified');
+    const documentSearchResult = document.getElementById('directoryDocumentSearchResult');
+    const documentTypeInput = document.getElementById('directoryFormTipoDocumento');
+    const documentNumberInput = document.getElementById('directoryFormNumeroDocumento');
+    const saveButton = document.getElementById('directoryFormSave');
+    const setDocumentVerified = verified => {
+      if (documentVerified) documentVerified.value = verified ? 'true' : 'false';
+      if (saveButton && !isEditing) saveButton.disabled = !verified;
+    };
+    if (!isEditing) {
+      setDocumentVerified(false);
+      const invalidateDocumentSearch = () => {
+        setDocumentVerified(false);
+        if (documentSearchResult) documentSearchResult.textContent = '';
+      };
+      documentTypeInput.addEventListener('change', invalidateDocumentSearch);
+      documentNumberInput.addEventListener('input', invalidateDocumentSearch);
+      documentSearchButton.addEventListener('click', async () => {
+        if (!documentTypeInput.value || !documentNumberInput.value.trim()) {
+          notify('warning', 'Selecciona el tipo e ingresa el número de documento.');
+          return;
+        }
+        documentSearchButton.disabled = true;
+        documentSearchButton.textContent = 'Buscando...';
+        try {
+          const result = await callServer('searchDirectoryPersonByDocument', {
+            tipo_documento: documentTypeInput.value,
+            numero_documento: documentNumberInput.value.trim()
+          });
+          if (result && result.found) {
+            setDocumentVerified(false);
+            documentSearchResult.textContent = 'Este documento ya está registrado para ' +
+              [result.person.nombres, result.person.apellidos].filter(Boolean).join(' ') +
+              '. No se creará una persona duplicada.';
+          } else {
+            setDocumentVerified(true);
+            documentSearchResult.textContent = 'Documento no registrado. Puedes continuar con el alta.';
+          }
+        } catch (error) {
+          setDocumentVerified(false);
+          documentSearchResult.textContent = error.message || 'No se pudo comprobar el documento.';
+        } finally {
+          documentSearchButton.disabled = false;
+          documentSearchButton.textContent = 'Buscar DNI';
+        }
+      });
+    }
 
     // Guardar el registro.
     form.addEventListener('submit', saveForm);
@@ -1990,28 +2053,22 @@ const DirectoryPage = (() => {
       'directoryFormAnexo'
     ).value;
 
-    const assignmentMode = document.getElementById('directoryFormAssignmentMode').value;
-    const estructuraLocalId = (assignmentMode === 'structure' || assignmentMode === 'both')
-      ? document.getElementById('directoryFormLocal').value
-      : '';
-    const localId = (assignmentMode === 'local' || assignmentMode === 'both')
-      ? document.getElementById('directoryFormDirectLocal').value
-      : '';
-
-    if ((assignmentMode === 'structure' || assignmentMode === 'both') && !estructuraLocalId) {
-      notify('warning', 'Selecciona la unidad orgánica y su relación con el local.');
+    const estructuraLocalId = document.getElementById('directoryFormLocal').value;
+    const localId = document.getElementById('directoryFormDirectLocal').value;
+    if (!estructuraLocalId && !localId) {
+      notify('warning', 'Selecciona una unidad orgánica o un local para la asignación.');
       return;
     }
-    if ((assignmentMode === 'local' || assignmentMode === 'both') && !localId) {
-      notify('warning', 'Selecciona el local directamente asignado.');
-      return;
-    }
-    if (assignmentMode === 'both') {
+    if (estructuraLocalId && localId) {
       const relation = state.catalogs.estructuraLocal.find(x => key(x.id) === key(estructuraLocalId));
       if (!relation || key(relation.local_id) !== key(localId)) {
         notify('warning', 'El local debe coincidir con el local de la relación estructura-local seleccionada.');
         return;
       }
+    }
+    if (!id && document.getElementById('directoryDocumentVerified')?.value !== 'true') {
+      notify('warning', 'Primero debes buscar el DNI y comprobar que no esté registrado.');
+      return;
     }
 
     const personaId = document.getElementById('directoryFormPersonaId').value;
@@ -2183,13 +2240,7 @@ async function deleteDirectoryEntry(record) {
         label: 'Nuevo servidor',
         icon: 'person_add',
         variant: 'primary',
-        onClick: () => {
-          if (!state.activeSedeId) {
-            notify('warning', 'Selecciona una sede antes de registrar un servidor.');
-            return;
-          }
-          openDirectoryForm(null);
-        }
+        onClick: () => openDirectoryForm(null)
       }
 
     ]);

@@ -1646,6 +1646,85 @@ function _directoryGetAuthorizedSedeIds_(authorization, sedes) {
   return new Set(Array.from(allowedSedeIds).filter(id => availableSedeIds.has(id)));
 }
 
+
+/**
+ * Catálogos y ámbitos efectivos para crear/editar servidores.
+ * Se consultan al abrir el formulario, no al entrar a la pantalla.
+ */
+function getDirectoryFormData() {
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_CREAR');
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeAssignments: false,
+    includeDocumentTypes: true,
+    validateSnapshot: false
+  });
+  const moduleAccess = (authorization.auth.moduleAccess || []).find(item =>
+    _directoryKey_(item.modulo_id) === authorization.moduleId
+  );
+  return {
+    catalogs: {
+      sedes: (context.sedes || []).filter(_directoryIsActive_).map(x => ({
+        id: _directoryKey_(x.id), name: _directoryText_(x.name), active: true
+      })),
+      locales: (context.locales || []).filter(_directoryIsActive_).map(x => ({
+        id: _directoryKey_(x.id), name: _directoryText_(x.name),
+        sede_id: _directoryKey_(x.sede_id), active: true
+      })),
+      tiposEstructura: (context.tiposEstructura || []).filter(_directoryIsActive_),
+      estructuraOrg: (context.estructuraOrg || []).filter(_directoryIsActive_),
+      estructuraLocal: (context.estructuraLocal || []).filter(_directoryIsActive_),
+      cargos: (context.cargos || []).filter(_directoryIsActive_),
+      documentTypes: (context.documentTypes || []).filter(_directoryIsActive_).map(x => ({
+        id: _directoryKey_(x.id), name: _directoryText_(x.name)
+      })).filter(x => x.id && x.name)
+    },
+    scopes: (moduleAccess && moduleAccess.scopes || []).filter(_directoryIsActive_).map(scope => ({
+      type: _directoryText_(scope.tipo_ambito_id).toUpperCase(),
+      referenceId: _directoryKey_(scope.referencia_id),
+      includeDescendants: _directoryNormalizeBoolean_(scope.incluir_descendientes)
+    }))
+  };
+}
+
+/** Busca el documento antes de permitir el alta y evita duplicar personas. */
+function searchDirectoryPersonByDocument(payload) {
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_CREAR');
+  if (!payload || typeof payload !== 'object') throw new Error('Debes indicar el tipo y número de documento.');
+  const type = _directoryNormalizeDocument_(payload.tipo_documento, 'Tipo de documento');
+  const number = _directoryNormalizeDocument_(payload.numero_documento, 'Número de documento');
+  const context = _directoryLoadContext_({
+    includePersonalData: true,
+    includePeople: true,
+    includeAssignments: false,
+    includeDocumentTypes: true,
+    validateSnapshot: false
+  });
+  const validType = (context.documentTypes || []).some(item =>
+    _directoryKey_(item.id).toUpperCase() === type && _directoryIsActive_(item)
+  );
+  if (!validType) throw new Error('Selecciona un tipo de documento válido del catálogo.');
+  const matches = (context.datosPersonales || []).filter(item =>
+    _directoryText_(item.tipo_documento).replace(/\\s+/g, '').toUpperCase() === type &&
+    _directoryText_(item.numero_documento).replace(/\\s+/g, '').toUpperCase() === number
+  );
+  if (matches.length > 1) throw new Error('El documento ya aparece asociado a más de una persona. Corrige la duplicidad antes de continuar.');
+  if (!matches.length) return { found: false, message: 'No existe un servidor registrado con ese documento.' };
+  const personId = _directoryKey_(matches[0].servidor_id);
+  const person = (context.personas || []).find(item => _directoryKey_(item.persona_id) === personId);
+  if (!person) throw new Error('El documento existe, pero no se pudo resolver la identidad vinculada.');
+  return {
+    found: true,
+    message: 'El documento ya está registrado.',
+    person: {
+      persona_id: personId,
+      nombres: _directoryText_(person.nombres),
+      apellidos: _directoryText_(person.apellidos)
+    }
+  };
+}
+
 function getDirectoryInitialData() {
   const startedAt = Date.now();
   const authorizationStartedAt = Date.now();
