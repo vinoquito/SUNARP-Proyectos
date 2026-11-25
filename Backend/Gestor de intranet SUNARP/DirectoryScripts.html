@@ -2161,63 +2161,27 @@ async function changeDirectoryStatus(record, active) {
  * Utiliza SweetAlert2 para solicitar confirmación.
  */
 async function deleteDirectoryEntry(record) {
-
   if (!window.Swal) {
-    throw new Error(
-      'SweetAlert2 no está disponible. Verifica su carga en SUNARP UI.'
-    );
+    throw new Error('SweetAlert2 no está disponible. Verifica su carga en SUNARP UI.');
   }
-
-  const fullName = [
-    record.nombres,
-    record.apellidos
-  ].filter(Boolean).join(' ');
-
-  // Confirmación de eliminación.
+  const fullName = [record.nombres, record.apellidos].filter(Boolean).join(' ');
   const confirmation = await Swal.fire({
-
-    title: '¿Eliminar asignación?',
-
-    text: `Se eliminará la asignación de ${fullName}. La persona y sus datos personales se conservarán.`,
-
+    title: '¿Eliminar servidor?',
+    text: 'Se eliminará el servidor y sus registros relacionados únicamente si no tiene acciones operativas registradas que deban conservarse para la trazabilidad.',
     icon: 'warning',
-
     showCancelButton: true,
-
-    confirmButtonText: 'Sí, eliminar',
-
+    confirmButtonText: 'Sí, eliminar servidor',
     cancelButtonText: 'Cancelar',
-
     reverseButtons: true,
-
     focusCancel: true,
-
-    customClass: {
-      popup: 'sunarp-swal-popup'
-    }
-
+    customClass: { popup: 'sunarp-swal-popup' }
   });
+  if (!confirmation.isConfirmed) return;
 
-  if (!confirmation.isConfirmed) {
-    return;
-  }
-
-  // Ejecutar eliminación en el servidor.
-  const result = await callServer(
-    'deleteDirectoryAssignment',
-    record.asignacion_id || record.id
-  );
-
-  // Recargar la información actualizada.
+  const result = await callServer('deleteDirectoryPerson', record.persona_id);
   await refreshActiveSede();
-
-  notify(
-    'success',
-    result.message || 'Asignación eliminada correctamente.'
-  );
-
+  notify('success', result.message || ('El servidor ' + fullName + ' se eliminó correctamente.'));
 }
-
 
   /* =====================================================
      12. ACCIÓN SUPERIOR: NUEVO SERVIDOR
