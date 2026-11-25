@@ -1058,6 +1058,60 @@ test('si falla la primera asignación, el alta coordinada compensa persona y fic
   ]);
 });
 
+test('la creación compensa una asignación parcialmente escrita antes de que falle su servicio', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  const createdPerson = { persona_id: 'PER_071', nombres: 'Mario', apellidos: 'Vega' };
+  const createdPersonalData = {
+    servidor_id: 'PER_071', tipo_documento: 'DNI', numero_documento: '87654321'
+  };
+  const partialAssignment = {
+    asignacion_id: 'ASG_PARTIAL_071',
+    persona_id: 'PER_071',
+    cargo_id: 'CAR_001',
+    local_id: 'LOC_1'
+  };
+  const deleted = [];
+
+  vmContext._directoryAssertAllowedFields_ = () => true;
+  vmContext._directorySource_ = sheet => sheet;
+  vmContext._directoryAssertDocumentAvailable_ = () => ({
+    tipo_documento: 'DNI', numero_documento: '87654321'
+  });
+  vmContext._saveDirectoryPerson_ = () => ({ person: createdPerson });
+  vmContext._saveDirectoryPersonalData_ = () => ({ personalData: createdPersonalData });
+  vmContext._directoryFindPersonalDataById_ = () => createdPersonalData;
+  vmContext.saveDirectoryAssignment = () => {
+    throw new Error('fallo después de escribir parcialmente la asignación');
+  };
+  vmContext.SUNARPCore = {
+    findRecordsByFields: (source, filters) => {
+      assert.equal(source, 'asignaciones');
+      assert.deepEqual(JSON.parse(JSON.stringify(filters)), { persona_id: 'PER_071' });
+      return { records: [partialAssignment], total: 1 };
+    },
+    deleteRecord: (source, field, id) => {
+      deleted.push([source, field, id]);
+      return { success: true };
+    }
+  };
+
+  assert.throws(() => vmContext._saveDirectoryEntryPrimary_({
+    nombres: 'Mario',
+    apellidos: 'Vega',
+    tipo_documento: 'DNI',
+    numero_documento: '87654321',
+    cargo_id: 'CAR_001',
+    local_id: 'LOC_1'
+  }), /fallo después de escribir parcialmente la asignación/);
+
+  assert.deepEqual(deleted, [
+    ['asignaciones', 'asignacion_id', 'ASG_PARTIAL_071'],
+    ['servidores datos personales', 'servidor_id', 'PER_071'],
+    ['personas', 'persona_id', 'PER_071']
+  ]);
+});
+
 test('el formulario completo guarda varias asignaciones en una sola operación coordinada', () => {
   const context = createDirectorySandbox();
   const primaryWrites = [];
