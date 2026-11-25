@@ -1329,113 +1329,229 @@ const DirectoryPage = (() => {
   }
 
 
-  function getFormHierarchyNodes(parentId, sedeId) {
-
+  function getFormHierarchyNodes(parentId, sedeId, localId) {
     const scopes = state.formScopes || [];
-    const structureScopes = scopes.filter(scope => scope.type === 'ESTRUCTURA_ORG' && scope.referenceId);
-    const broadScope = scopes.some(scope => scope.type === 'TOTAL' || scope.type === 'SEDE');
-    const allowedIds = new Set();
-    structureScopes.forEach(scope => {
-      const rootId = key(scope.referenceId);
-      allowedIds.add(rootId);
-      if (scope.includeDescendants) {
+    const plan = _directoryGetAccessFilterPlan_({ scopes }, sedeId);
+    const structures = (state.catalogs.estructuraOrg || []).filter(isActive);
+    const structureById = new Map(structures.map(node => [key(node.id), node]));
+    const selectedParentId = key(parentId);
+    const selectedSiteId = key(sedeId);
+    const effectiveLocalId = key(localId) ||
+      (plan.localMode === 'fixed' ? key(plan.localScopeIds[0]) : '');
+
+    const sortNodes = nodes => nodes.slice().sort((a, b) => {
+      const rawA = a.order;
+      const rawB = b.order;
+      const orderA = rawA === '' || rawA === null || rawA === undefined
+        ? Number.MAX_SAFE_INTEGER : Number(rawA);
+      const orderB = rawB === '' || rawB === null || rawB === undefined
+        ? Number.MAX_SAFE_INTEGER : Number(rawB);
+      return (Number.isFinite(orderA) ? orderA : Number.MAX_SAFE_INTEGER) -
+        (Number.isFinite(orderB) ? orderB : Number.MAX_SAFE_INTEGER) ||
+        key(a.name).localeCompare(key(b.name), 'es', { sensitivity: 'base' });
+    });
+
+    if (!selectedSiteId) return [];
+
+    if (plan.entryScope === 'ESTRUCTURA_ORG') {
+      const scopeRoots = plan.structureScopes
+        .map(scope => ({ scope, node: structureById.get(key(scope.referenceId)) }))
+        .filter(item => item.node && key(item.node.sede_id) === selectedSiteId);
+
+      const allowedIds = new Set();
+      scopeRoots.forEach(({ scope, node }) => {
+        const rootId = key(node.id);
+        allowedIds.add(rootId);
+        if (!scope.includeDescendants) return;
         const queue = [rootId];
         while (queue.length) {
-          const parent = queue.shift();
-          state.catalogs.estructuraOrg.forEach(node => {
-            if (key(node.parent_id) === parent && !allowedIds.has(key(node.id))) {
-              allowedIds.add(key(node.id));
-              queue.push(key(node.id));
+          const currentId = queue.shift();
+          structures.forEach(child => {
+            const childId = key(child.id);
+            if (key(child.parent_id) === currentId &&
+                key(child.sede_id) === selectedSiteId &&
+                !allowedIds.has(childId)) {
+              allowedIds.add(childId);
+              queue.push(childId);
             }
           });
         }
-      }
-    });
-    return state.catalogs.estructuraOrg
-      .filter(node => {
-        if (structureScopes.length && !broadScope) {
-          if (!allowedIds.has(key(node.id))) return false;
-          return parentId
-            ? key(node.parent_id) === key(parentId)
-            : structureScopes.some(scope => key(scope.referenceId) === key(node.id));
-        }
-        if (parentId) return key(node.parent_id) === key(parentId);
-        return !key(node.parent_id) && key(node.sede_id) === key(sedeId);
-      })
-      .sort((a, b) => {
-
-        const orderA = Number(a.order) || 0;
-        const orderB = Number(b.order) || 0;
-
-        return orderA - orderB ||
-          String(a.name).localeCompare(String(b.name), 'es');
-
       });
+
+      if (selectedParentId) {
+        if (!allowedIds.has(selectedParentId)) return [];
+        return sortNodes(structures.filter(node =>
+          key(node.parent_id) === selectedParentId &&
+          key(node.sede_id) === selectedSiteId &&
+          allowedIds.has(key(node.id))
+        ));
+      }
+
+      if (scopeRoots.length === 1) {
+        const root = scopeRoots[0];
+        return root.scope.includeDescendants
+          ? sortNodes(structures.filter(node =>
+              key(node.parent_id) === key(root.node.id) &&
+              key(node.sede_id) === selectedSiteId &&
+              allowedIds.has(key(node.id))
+            ))
+          : [];
+      }
+
+      return sortNodes(scopeRoots.map(item => item.node));
+    }
+
+    if ((plan.entryScope !== 'SITE' && plan.entryScope !== 'LOCAL') || !effectiveLocalId) {
+      return [];
+    }
+
+    const allowedIds = new Set();
+    (state.catalogs.estructuraLocal || [])
+      .filter(relation =>
+        isActive(relation) && key(relation.local_id) === effectiveLocalId
+      )
+      .forEach(relation => {
+        let current = structureById.get(key(relation.estructura_id));
+        const visited = new Set();
+        while (current) {
+          const id = key(current.id);
+          if (!id || visited.has(id) || key(current.sede_id) !== selectedSiteId) break;
+          visited.add(id);
+          allowedIds.add(id);
+          const parentId = key(current.parent_id);
+          current = parentId ? structureById.get(parentId) || null : null;
+        }
+      });
+
+    if (selectedParentId) {
+      if (!allowedIds.has(selectedParentId)) return [];
+      return sortNodes(structures.filter(node =>
+        key(node.parent_id) === selectedParentId &&
+        key(node.sede_id) === selectedSiteId &&
+        allowedIds.has(key(node.id))
+      ));
+    }
+
+    return sortNodes(structures.filter(node => {
+      if (!allowedIds.has(key(node.id)) || key(node.sede_id) !== selectedSiteId) return false;
+      const parent = structureById.get(key(node.parent_id));
+      return !parent || key(parent.sede_id) !== selectedSiteId ||
+        !allowedIds.has(key(parent.id));
+    }));
   }
 
-
-  function renderFormLocalOptions(structureId, selectedRelationId, suffix = '') {
+  function renderFormLocalOptions(structureId, selectedRelationId, selectedLocalId, suffix = '') {
     const select = document.getElementById('directoryFormLocal' + suffix);
     if (!select) return;
+    const wrapper = select.closest('.sunarp-form-field');
     select.replaceChildren();
+
     const placeholder = document.createElement('option');
     placeholder.value = '';
-    placeholder.textContent = structureId ? 'Selecciona un local' : 'Selecciona una dependencia';
+    placeholder.textContent = 'Selecciona una ubicación';
     select.appendChild(placeholder);
-    const relations = state.catalogs.estructuraLocal
+
+    const relations = (state.catalogs.estructuraLocal || [])
       .filter(relation =>
+        isActive(relation) &&
         key(relation.estructura_id) === key(structureId) &&
-        relation.active !== false && relation.active !== 0 &&
-        String(relation.active).toLowerCase() !== 'false'
+        (!key(selectedLocalId) || key(relation.local_id) === key(selectedLocalId))
+      )
+      .slice()
+      .sort((a, b) =>
+        key(a.referencia).localeCompare(key(b.referencia), 'es', { sensitivity: 'base' })
       );
+
     relations.forEach(relation => {
       const option = document.createElement('option');
       option.value = key(relation.id);
-      option.textContent = [relation.local_name, relation.referencia].filter(Boolean).join(' — ');
+      option.textContent = [relation.local_name, relation.referencia]
+        .filter(Boolean).join(' — ') || 'Ubicación registrada';
       select.appendChild(option);
     });
-    select.value = relations.some(relation => key(relation.id) === key(selectedRelationId))
-      ? key(selectedRelationId) : '';
-    select.disabled = relations.length === 0;
+
+    const selectedExists = relations.some(relation =>
+      key(relation.id) === key(selectedRelationId)
+    );
+    select.value = selectedExists
+      ? key(selectedRelationId)
+      : (relations.length === 1 ? key(relations[0].id) : '');
+
+    const needsChoice = relations.length > 1;
+    select.disabled = relations.length <= 1;
+    select.required = needsChoice;
+    if (wrapper) wrapper.hidden = !needsChoice;
   }
 
-  function renderFormHierarchy(sedeId, selectedPath, selectedRelationId, suffix = '') {
+  function renderFormHierarchy(sedeId, selectedPath, selectedRelationId, suffix = '', selectedLocalId = '') {
     const container = document.getElementById('directoryFormHierarchy' + suffix);
+    const relationSelect = document.getElementById('directoryFormLocal' + suffix);
     if (!container) return;
     container.replaceChildren();
+
+    const scopes = state.formScopes || [];
+    const plan = _directoryGetAccessFilterPlan_({ scopes }, sedeId);
+    const path = Array.isArray(selectedPath) ? selectedPath.slice() : [];
     let selectedStructureId = '';
+    let initialParentId = '';
+
+    if (plan.entryScope === 'ESTRUCTURA_ORG') {
+      const rootIds = plan.structureScopes.map(scope => key(scope.referenceId)).filter(Boolean);
+      const rootIndex = path.findIndex(id => rootIds.includes(key(id)));
+      if (rootIndex >= 0) path.splice(0, rootIndex + 1);
+
+      if (plan.structureScopes.length === 1) {
+        const scope = plan.structureScopes[0];
+        const rootId = key(scope.referenceId);
+        selectedStructureId = rootId;
+        if (scope.includeDescendants) {
+          initialParentId = rootId;
+        } else {
+          path.length = 0;
+        }
+      }
+    }
 
     function appendLevel(parentId, level) {
-      const nodes = getFormHierarchyNodes(parentId, sedeId);
+      const nodes = getFormHierarchyNodes(parentId, sedeId, selectedLocalId);
       if (!nodes.length) return;
+
       const wrapper = document.createElement('div');
-      wrapper.className = 'sunarp-form-field sunarp-form-field--full';
+      wrapper.className = 'sunarp-form-field directory-form-hierarchy-level';
       const label = document.createElement('label');
-      label.textContent = getHierarchyLabel(nodes, level);
       const select = document.createElement('select');
-      select.className = 'sunarp-select';
+      const selectId = 'directoryFormHierarchySelect' + suffix + '_' + level;
+
+      label.htmlFor = selectId;
+      label.textContent = getHierarchyLabel(nodes, level);
+      select.id = selectId;
+      select.className = 'sunarp-select directory-form-hierarchy-select';
+
       const placeholder = document.createElement('option');
       placeholder.value = '';
-      placeholder.textContent = 'Selecciona una opción';
+      placeholder.textContent = level === 0 ? 'Selecciona una opción' : 'Selecciona una dependencia';
       select.appendChild(placeholder);
+
       nodes.forEach(node => {
         const option = document.createElement('option');
         option.value = key(node.id);
-        option.textContent = node.name;
+        option.textContent = key(node.name) || key(node.id);
         select.appendChild(option);
       });
-      const previous = selectedPath[level] || '';
+
+      const previous = key(path[level]);
       const exists = nodes.some(node => key(node.id) === previous);
       const selectedValue = exists ? previous : '';
-      if (!exists) selectedPath.splice(level);
+      if (!exists && previous) path.splice(level);
       select.value = selectedValue;
+
       select.addEventListener('change', () => {
-        selectedPath.splice(level);
-        if (select.value) selectedPath.push(select.value);
-        renderFormHierarchy(sedeId, selectedPath, '', suffix);
+        path.splice(level);
+        if (select.value) path.push(select.value);
+        renderFormHierarchy(sedeId, path, '', suffix, selectedLocalId);
       });
-      label.appendChild(select);
-      wrapper.appendChild(label);
+
+      wrapper.append(label, select);
       container.appendChild(wrapper);
       if (selectedValue) {
         selectedStructureId = selectedValue;
@@ -1443,11 +1559,22 @@ const DirectoryPage = (() => {
       }
     }
 
-    appendLevel('', 0);
-    if (selectedPath.length) selectedStructureId = selectedPath[selectedPath.length - 1];
-    renderFormLocalOptions(selectedStructureId, selectedRelationId, suffix);
-  }
+    if (plan.hierarchyMode !== 'none') appendLevel(initialParentId, 0);
+    if (path.length) selectedStructureId = path[path.length - 1];
 
+    renderFormLocalOptions(
+      selectedStructureId,
+      selectedRelationId,
+      (plan.entryScope === 'SITE' || plan.entryScope === 'LOCAL') ? selectedLocalId : '',
+      suffix
+    );
+
+    if (relationSelect && !selectedStructureId) {
+      relationSelect.value = '';
+      const wrapper = relationSelect.closest('.sunarp-form-field');
+      if (wrapper) wrapper.hidden = true;
+    }
+  }
 
   /* =====================================================
      8. FORMULARIO: CONTENIDO
@@ -1462,361 +1589,20 @@ const DirectoryPage = (() => {
     const structureScopes = scopes.filter(scope => scope.type === 'ESTRUCTURA_ORG' && scope.referenceId);
     const localScopes = scopes.filter(scope => scope.type === 'LOCAL' && scope.referenceId);
     const totalScope = scopes.some(scope => scope.type === 'TOTAL');
-    const structureMapForScope = new Map((state.catalogs.estructuraOrg || []).map(node => [key(node.id), node]));
-    const localMapForScope = new Map((state.catalogs.locales || []).map(node => [key(node.id), node]));
     const allowedSiteIds = new Set(siteScopes.map(scope => key(scope.referenceId)));
     structureScopes.forEach(scope => {
-      const node = structureMapForScope.get(key(scope.referenceId));
+      const node = (state.catalogs.estructuraOrg || []).find(item =>
+        key(item.id) === key(scope.referenceId)
+      );
       if (node && node.sede_id) allowedSiteIds.add(key(node.sede_id));
     });
     localScopes.forEach(scope => {
-      const node = localMapForScope.get(key(scope.referenceId));
+      const node = (state.catalogs.locales || []).find(item =>
+        key(item.id) === key(scope.referenceId)
+      );
       if (node && node.sede_id) allowedSiteIds.add(key(node.sede_id));
     });
-    const fixedSiteId = !totalScope && allowedSiteIds.size === 1 ? Array.from(allowedSiteIds)[0] : '';
-    const selectedSede = record ? key(record.sede_id) : fixedSiteId;
-    const selectedPath = record
-      ? getFormStructurePath(record.estructura_id)
-      : (structureScopes.length === 1 ? [key(structureScopes[0].referenceId)] : []);
-    const canChooseSite = totalScope || siteScopes.length > 1;
-    const cargoOptions = state.catalogs.cargos
-      .filter(cargo =>
-        cargo.active !== false &&
-        cargo.active !== 0 &&
-        String(cargo.active).toLowerCase() !== 'false'
-      )
-      .slice()
-      .sort(sortByName)
-      .map(cargo => `
-        <option
-          value="${escapeHtml(cargo.id)}"
-          ${record && key(record.cargo_id) === key(cargo.id) ? 'selected' : ''}>
-          ${escapeHtml(cargo.name)}
-        </option>
-      `)
-      .join('');
-
-    const sedeOptions = state.catalogs.sedes
-      .filter(sede =>
-        (totalScope || allowedSiteIds.has(key(sede.id))) &&
-        sede.active !== false &&
-        sede.active !== 0
-      )
-      .slice()
-      .sort(sortByName)
-      .map(sede => `
-        <option
-          value="${escapeHtml(sede.id)}"
-          ${selectedSede === key(sede.id) ? 'selected' : ''}>
-          ${escapeHtml(sede.name)}
-        </option>
-      `)
-      .join('');
-
-    const selectedMode = record && key(record.local_id) && key(record.estructura_local_id)
-      ? 'both'
-      : record && key(record.local_id)
-        ? 'local'
-        : 'structure';
-
-    const directLocalOptions = state.catalogs.locales
-      .filter(local => (totalScope || siteScopes.length || structureScopes.length
-          ? (totalScope || allowedSiteIds.has(key(local.sede_id)))
-          : (localScopes.length ? localScopes.some(scope => key(scope.referenceId) === key(local.id)) : false))
-        && local.active !== false && local.active !== 0 &&
-        String(local.active).toLowerCase() !== 'false')
-      .slice().sort(sortByName)
-      .map(local => `<option value="${escapeHtml(local.id)}" ${record && key(record.local_id) === key(local.id) ? 'selected' : ''}>${escapeHtml(local.name)}</option>`)
-      .join('');
-
-    return {
-      html: `
-        <form id="directoryForm" class="sunarp-form-grid"><input type="hidden" id="directoryFormPersonaId" value="${escapeHtml(record?.persona_id || '')}">
-
-          ${!isEditing ? `
-          <div class="sunarp-form-field sunarp-form-field--full" id="directoryDocumentSearchPanel">
-            <p>Antes de registrar, busca el documento para comprobar que la persona no exista.</p>
-            <button type="button" class="sunarp-btn sunarp-btn-outline" id="directoryDocumentSearch">Buscar DNI</button>
-            <div id="directoryDocumentSearchResult" aria-live="polite"></div>
-            <input type="hidden" id="directoryDocumentVerified" value="false">
-          </div>
-          ` : ''}
-          <div class="sunarp-form-field">
-            <label for="directoryFormNombres">
-              Nombres *
-            </label>
-
-            <input
-              type="text"
-              class="sunarp-input"
-              id="directoryFormNombres"
-              maxlength="100"
-              value="${escapeHtml(record?.nombres || '')}"
-              required>
-          </div>
-
-          <div class="sunarp-form-field">
-            <label for="directoryFormApellidos">
-              Apellidos *
-            </label>
-
-            <input
-              type="text"
-              class="sunarp-input"
-              id="directoryFormApellidos"
-              maxlength="150"
-              value="${escapeHtml(record?.apellidos || '')}"
-              required>
-          </div>
-
-          
-          <div class="sunarp-form-field sunarp-form-field--full">
-            <label for="directoryFormCorreoInstitucional">Correo institucional</label>
-            <input
-              type="email"
-              class="sunarp-input"
-              id="directoryFormCorreoInstitucional"
-              maxlength="150"
-              placeholder="usuario@sunarp.gob.pe"
-              value="${escapeHtml(record?.correo_institucional || '')}">
-            <small>Se utiliza para vincular la identidad con la cuenta institucional de acceso.</small>
-          </div>
-
-          <div class="sunarp-form-field">
-            <label for="directoryFormTipoDocumento">Tipo de documento *</label>
-            <select class="sunarp-select" id="directoryFormTipoDocumento" required>
-              <option value="">Selecciona un tipo de documento</option>
-              ${(state.catalogs.documentTypes || []).map(item => `
-                <option value="${escapeHtml(item.id)}" ${key(record?.tipo_documento) === key(item.id) ? 'selected' : ''}>${escapeHtml(item.name)}</option>
-              `).join('')}
-            </select>
-          </div>
-
-          <div class="sunarp-form-field">
-            <label for="directoryFormNumeroDocumento">Número de documento *</label>
-            <input type="text" class="sunarp-input" id="directoryFormNumeroDocumento"
-              maxlength="30" value="${escapeHtml(record?.numero_documento || '')}" required>
-          </div>
-
-          <div class="sunarp-form-field">
-            <label for="directoryFormFechaNacimiento">Fecha de nacimiento</label>
-            <input type="date" class="sunarp-input" id="directoryFormFechaNacimiento"
-              value="${escapeHtml(record?.fecha_nacimiento || '')}">
-          </div>
-
-          <div class="sunarp-form-field">
-            <label for="directoryFormFechaInicio">Fecha de inicio de servicios</label>
-            <input type="date" class="sunarp-input" id="directoryFormFechaInicio"
-              value="${escapeHtml(record?.fecha_inicio_servicios || '')}">
-          </div>
-
-          <div class="sunarp-form-field">
-            <label for="directoryFormFechaCese">Fecha de cese</label>
-            <input type="date" class="sunarp-input" id="directoryFormFechaCese"
-              value="${escapeHtml(record?.fecha_cese || '')}">
-          </div>
-
-
-                    <div id="directoryAssignmentsContainer">
-            <div class="directory-assignment-row" id="directoryAssignmentRow" data-index="0">
-              <input type="hidden" id="directoryFormAssignmentId" value="${escapeHtml(record?.asignacion_id || record?.id || '')}">
-<div class="sunarp-form-field">
-            <label for="directoryFormCargo">
-              Cargo *
-            </label>
-
-            <select
-              id="directoryFormCargo"
-              class="sunarp-select"
-              required>
-
-              <option value="">Selecciona un cargo</option>
-
-              ${cargoOptions}
-
-            </select>
-          </div>
-
-          <div class="sunarp-form-field">
-            <label for="directoryFormCondicionCargo">
-              Condición del cargo
-            </label>
-            <input
-              type="text"
-              class="sunarp-input"
-              id="directoryFormCondicionCargo"
-              maxlength="150"
-              value="${escapeHtml(record?.condicion_cargo || '')}">
-          </div>
-
-          <div class="sunarp-form-field">
-            <label for="directoryFormAnexo">
-              Anexo
-            </label>
-
-            <input
-              type="number"
-              class="sunarp-input"
-              id="directoryFormAnexo"
-              min="1"
-              max="99999"
-              step="1"
-              value="${escapeHtml(record?.anexo ?? '')}">
-          </div>
-
-          <div class="sunarp-form-field sunarp-form-field--full">
-            <label for="directoryFormObservaciones">Observaciones</label>
-            <textarea
-              id="directoryFormObservaciones"
-              class="sunarp-input"
-              maxlength="1000"
-              rows="3">${escapeHtml(record?.observaciones || '')}</textarea>
-          </div>
-
-          <div class="sunarp-form-field sunarp-form-field--full">
-            <label for="directoryFormSede">
-              Sede
-            </label>
-
-            <select
-              id="directoryFormSede"
-              class="sunarp-select"
-              >
-
-              <option value="">Selecciona una sede</option>
-
-              ${sedeOptions}
-
-            </select>
-          </div>
-
-
-
-          <div class="sunarp-form-field sunarp-form-field--full" id="directoryFormHierarchyField">
-            <div id="directoryFormHierarchy"></div>
-          </div>
-
-          <div class="sunarp-form-field sunarp-form-field--full" id="directoryFormRelationField">
-            <label for="directoryFormLocal">Relación con local *</label>
-            <select id="directoryFormLocal" class="sunarp-select" required disabled>
-              <option value="">Selecciona una dependencia</option>
-            </select>
-          </div>
-
-          <div class="sunarp-form-field sunarp-form-field--full" id="directoryFormDirectLocalField" style="display:none">
-            <label for="directoryFormDirectLocal">Local directamente asignado *</label>
-            <select id="directoryFormDirectLocal" class="sunarp-select">
-              <option value="">Selecciona un local</option>
-              ${directLocalOptions}
-            </select>
-          </div>
-
-                      </div>
-          </div>
-          <div class="sunarp-form-field sunarp-form-field--full">
-            <button type="button" class="sunarp-btn sunarp-btn-outline" id="directoryAddAssignment">Agregar asignación</button>
-          </div>
-
-<div class="sunarp-form-field sunarp-form-field--full">
-            <div class="directory-form-actions">
-
-              <button
-                type="button"
-                class="sunarp-btn sunarp-btn-outline"
-                id="directoryFormCancel">
-                Cancelar
-              </button>
-
-              <button
-                type="submit"
-                class="sunarp-btn sunarp-btn-primary"
-                id="directoryFormSave">
-                ${isEditing ? 'Guardar cambios' : 'Registrar servidor'}
-              </button>
-
-            </div>
-          </div>
-
-        </form>
-      `,
-
-      selectedSede,
-      selectedPath,
-      selectedRelationId: record ? key(record.estructura_local_id) : '',
-      selectedLocalId: record ? key(record.local_id) : '',
-      selectedMode
-    };
-  }
-
-
-  /* =====================================================
-     9. FORMULARIO: ALTA Y EDICIÓN
-     ===================================================== */
-
-
-  async function openDirectoryForm(record) {
-
-    const isEditing = Boolean(record);
-    let previousCatalogs = state.catalogs;
-    let formRecord = record;
-    try {
-      const formDataResponse = await callServer('getDirectoryFormData', isEditing ? 'INFORMACION_PERSONAL_EDITAR' : 'INFORMACION_PERSONAL_CREAR');
-      if (!formDataResponse || !formDataResponse.catalogs) {
-        throw new Error('No se pudieron cargar los catálogos del formulario.');
-      }
-      state.catalogs = Object.assign({}, previousCatalogs || {}, formDataResponse.catalogs);
-      state.formScopes = formDataResponse.scopes || [];
-    } catch (error) {
-      notify('error', error.message || 'No se pudieron cargar los datos del formulario.');
-      return;
-    }
-
-    if (isEditing) {
-      try {
-        const detail = await callServer('getDirectoryPersonById', record.persona_id);
-        if (!detail) throw new Error('No se encontró la ficha de la persona.');
-        const assignment = (detail.assignments || []).find(item =>
-          key(item.asignacion_id) === key(record.asignacion_id || record.id)
-        );
-        if (!assignment) throw new Error('No se encontró la asignación que deseas editar dentro de tu ámbito.');
-        const allAssignments = (detail.assignments || []).slice();
-        const orderedAssignments = [assignment].concat(allAssignments.filter(item =>
-          key(item.asignacion_id) !== key(assignment.asignacion_id)
-        ));
-        formRecord = Object.assign({}, detail, assignment, {
-          id: assignment.asignacion_id,
-          assignments: orderedAssignments
-        }, detail.personalData || {});
-      } catch (error) {
-        notify('error', error.message || 'No se pudo recuperar la ficha de la persona.');
-        return;
-      }
-    }
-
-    const formData = buildDirectoryForm(formRecord);
-
-    // Convertir la cadena HTML del formulario en un fragmento DOM.
-    const template = document.createElement('template');
-
-    template.innerHTML = formData.html.trim();
-
-    // SUNARP UI recibe un elemento DOM mediante la propiedad content.
-    SUNARPUI.openModal({
-      title: isEditing ? 'Editar servidor' : 'Registrar servidor',
-
-      content: template.content,
-      size: 'lg'
-    });
-
-    // Inicializar las asignaciones dentro del mismo formulario.
-    const form = document.getElementById('directoryForm');
-    const assignmentsContainer = document.getElementById('directoryAssignmentsContainer');
-    const firstAssignmentRow = document.getElementById('directoryAssignmentRow');
-    const cancelButton = document.getElementById('directoryFormCancel');
-    const scopes = state.formScopes || [];
-    const siteScopes = scopes.filter(scope => scope.type === 'SEDE' && scope.referenceId);
-    const totalScope = scopes.some(scope => scope.type === 'TOTAL');
-    const canChooseSite = totalScope || siteScopes.length > 1;
+    const canChooseSite = totalScope || allowedSiteIds.size > 1;
 
     function getRowElement(id, suffix) {
       return document.getElementById(id + suffix);
@@ -1831,110 +1617,161 @@ const DirectoryPage = (() => {
       placeholder.value = '';
       placeholder.textContent = 'Selecciona un local';
       select.appendChild(placeholder);
-      const localScopes = scopes.filter(scope => scope.type === 'LOCAL' && scope.referenceId);
-      const structureScopes = scopes.filter(scope => scope.type === 'ESTRUCTURA_ORG' && scope.referenceId);
-      const broadScope = scopes.some(scope => scope.type === 'TOTAL' || scope.type === 'SEDE');
-      const allowedLocalIds = new Set(localScopes.map(scope => key(scope.referenceId)));
-      const allowedStructureIds = new Set(structureScopes.map(scope => key(scope.referenceId)));
-      state.catalogs.locales
-        .filter(local => !sedeId || key(local.sede_id) === key(sedeId))
-        .filter(local => broadScope ||
-          (localScopes.length
-            ? allowedLocalIds.has(key(local.id))
-            : structureScopes.length
-              ? state.catalogs.estructuraLocal.some(rel =>
-                  allowedStructureIds.has(key(rel.estructura_id)) &&
-                  key(rel.local_id) === key(local.id))
-              : false))
-        .slice().sort(sortByName).forEach(local => {
-          const option = document.createElement('option');
-          option.value = key(local.id);
-          option.textContent = local.name;
-          select.appendChild(option);
-        });
-      select.value = Array.from(select.options).some(option => option.value === current) ? current : '';
+
+      const plan = _directoryGetAccessFilterPlan_({ scopes }, sedeId);
+      const permittedLocalIds = new Set(plan.localScopeIds || []);
+      let locals = [];
+      if (plan.localMode === 'selectable') {
+        locals = key(sedeId)
+          ? (state.catalogs.locales || []).filter(local => key(local.sede_id) === key(sedeId))
+          : [];
+      } else if (plan.localMode === 'selectable-scoped' || plan.localMode === 'fixed') {
+        locals = (state.catalogs.locales || []).filter(local =>
+          permittedLocalIds.has(key(local.id)) &&
+          (!key(sedeId) || key(local.sede_id) === key(sedeId))
+        );
+      }
+
+      locals.filter(isActive).slice().sort(sortByName).forEach(local => {
+        const option = document.createElement('option');
+        option.value = key(local.id);
+        option.textContent = local.name;
+        select.appendChild(option);
+      });
+
+      const fixedLocalId = plan.localMode === 'fixed' ? key(plan.localScopeIds[0]) : '';
+      const desired = current || fixedLocalId;
+      select.value = Array.from(select.options).some(option => option.value === desired)
+        ? desired : '';
     }
 
     function syncAssignmentMode(suffix) {
-      const broadScope = scopes.some(scope => scope.type === 'TOTAL' || scope.type === 'SEDE');
-      const structureScopes = scopes.filter(scope => scope.type === 'ESTRUCTURA_ORG');
-      const localScopes = scopes.filter(scope => scope.type === 'LOCAL');
-      const useStructure = broadScope || structureScopes.length > 0;
-      const useDirectLocal = broadScope || localScopes.length > 0;
+      const siteSelect = getRowElement('directoryFormSede', suffix);
+      const localSelect = getRowElement('directoryFormDirectLocal', suffix);
+      const sedeId = siteSelect ? key(siteSelect.value) : key(formData.selectedSede);
+      const plan = _directoryGetAccessFilterPlan_({ scopes }, sedeId);
+      const localSelectable = plan.localMode === 'selectable' ||
+        plan.localMode === 'selectable-scoped';
+      const fixedLocalId = plan.localMode === 'fixed' ? key(plan.localScopeIds[0]) : '';
+
+      const siteField = getRowElement('directoryFormSiteField', suffix);
+      const localField = getRowElement('directoryFormDirectLocalField', suffix);
       const hierarchyField = getRowElement('directoryFormHierarchyField', suffix);
       const relationField = getRowElement('directoryFormRelationField', suffix);
-      const directLocalField = getRowElement('directoryFormDirectLocalField', suffix);
-      const relationSelect = getRowElement('directoryFormLocal', suffix);
-      const directLocalSelect = getRowElement('directoryFormDirectLocal', suffix);
-      if (hierarchyField) hierarchyField.style.display = useStructure ? '' : 'none';
-      if (relationField) relationField.style.display = useStructure ? '' : 'none';
-      if (directLocalField) directLocalField.style.display = useDirectLocal ? '' : 'none';
-      if (relationSelect) relationSelect.required = false;
-      if (directLocalSelect) directLocalSelect.required = false;
+
+      if (siteField) siteField.hidden = !canChooseSite;
+      if (siteSelect) siteSelect.required = canChooseSite;
+      if (localField) {
+        localField.hidden = !localSelectable;
+        localField.style.display = localSelectable ? '' : 'none';
+      }
+      if (localSelect) {
+        localSelect.required = localSelectable;
+        if (fixedLocalId) localSelect.value = fixedLocalId;
+      }
+      if (hierarchyField) hierarchyField.hidden = plan.hierarchyMode === 'none';
+      if (relationField && !relationField.querySelector('select')?.options.length) {
+        relationField.hidden = true;
+      }
     }
 
     function initializeAssignmentRow(row, index, assignment) {
       const suffix = index ? '_' + index : '';
       row.dataset.index = String(index);
       row.id = index ? 'directoryAssignmentRow_' + index : 'directoryAssignmentRow';
-      const assignmentId = getRowElement('directoryFormAssignmentId', suffix);
-      const cargo = getRowElement('directoryFormCargo', suffix);
-      const condition = getRowElement('directoryFormCondicionCargo', suffix);
-      const annex = getRowElement('directoryFormAnexo', suffix);
-      const observations = getRowElement('directoryFormObservaciones', suffix);
-      const siteSelect = getRowElement('directoryFormSede', suffix);
-      const relationSelect = getRowElement('directoryFormLocal', suffix);
-      const directLocalSelect = getRowElement('directoryFormDirectLocal', suffix);
+
+      const get = prefix => row.querySelector('[id^="' + prefix + '"]');
+      const assignmentId = get('directoryFormAssignmentId');
+      const cargo = get('directoryFormCargo');
+      const condition = get('directoryFormCondicionCargo');
+      const annex = get('directoryFormAnexo');
+      const observations = get('directoryFormObservaciones');
+      const siteSelect = get('directoryFormSede');
+      const localSelect = get('directoryFormDirectLocal');
+      const relationSelect = get('directoryFormLocal');
+
+      const relation = assignment
+        ? (state.catalogs.estructuraLocal || []).find(item =>
+            key(item.id) === key(assignment.estructura_local_id))
+        : null;
+      const structure = assignment && assignment.estructura_id
+        ? (state.catalogs.estructuraOrg || []).find(item =>
+            key(item.id) === key(assignment.estructura_id))
+        : null;
+      const localId = assignment
+        ? key(assignment.local_id || (relation && relation.local_id))
+        : key(formData.selectedLocalId);
+      const local = localId
+        ? (state.catalogs.locales || []).find(item => key(item.id) === localId)
+        : null;
+      const selectedSite = assignment
+        ? key(assignment.sede_id || (structure && structure.sede_id) || (local && local.sede_id))
+        : key(formData.selectedSede);
+
       if (assignmentId) assignmentId.value = assignment ? key(assignment.asignacion_id) : '';
       if (cargo) cargo.value = assignment ? key(assignment.cargo_id) : '';
       if (condition) condition.value = assignment ? (assignment.condicion_cargo || '') : '';
       if (annex) annex.value = assignment && assignment.anexo !== undefined ? assignment.anexo : '';
       if (observations) observations.value = assignment ? (assignment.observaciones || '') : '';
-      const selectedSite = assignment
-        ? key(assignment.sede_id)
-        : (formData.selectedSede || '');
-      const siteField = siteSelect && siteSelect.closest('.sunarp-form-field');
-      if (siteField) siteField.hidden = !canChooseSite;
-      if (siteSelect) {
-        siteSelect.required = canChooseSite;
-        siteSelect.value = selectedSite;
-      }
-      const singleStructureScope = scopes.length === 1 && scopes[0].type === 'ESTRUCTURA_ORG';
-      const selectedPath = assignment && assignment.estructura_id
+      if (siteSelect) siteSelect.value = selectedSite;
+
+      refreshDirectLocalOptions(selectedSite, localId, suffix);
+      syncAssignmentMode(suffix);
+
+      let selectedPath = assignment && assignment.estructura_id
         ? getFormStructurePath(assignment.estructura_id)
-        : (singleStructureScope ? [key(scopes[0].referenceId)] : []);
+        : (structureScopes.length === 1 ? [key(structureScopes[0].referenceId)] : []);
+
       renderFormHierarchy(
         selectedSite,
         selectedPath,
         assignment ? key(assignment.estructura_local_id) : '',
-        suffix
+        suffix,
+        localId
       );
-      refreshDirectLocalOptions(
-        selectedSite,
-        assignment ? key(assignment.local_id) : '',
-        suffix
-      );
-      syncAssignmentMode(suffix);
-      if (siteSelect) siteSelect.addEventListener('change', () => {
-        renderFormHierarchy(siteSelect.value, [], '', suffix);
-        refreshDirectLocalOptions(siteSelect.value, '', suffix);
-      });
-      if (relationSelect) relationSelect.addEventListener('change', () => {
-        const relation = state.catalogs.estructuraLocal.find(x => key(x.id) === key(relationSelect.value));
-        if (relation && directLocalSelect &&
-            directLocalSelect.closest('.sunarp-form-field').style.display !== 'none') {
-          directLocalSelect.value = key(relation.local_id);
-        }
-      });
-      if (!assignment && index > 0) {
-        const removeButton = document.createElement('button');
-        removeButton.type = 'button';
-        removeButton.className = 'sunarp-btn sunarp-btn-outline';
-        removeButton.textContent = 'Quitar asignación';
-        removeButton.addEventListener('click', () => row.remove());
-        row.appendChild(removeButton);
+
+      if (siteSelect) {
+        siteSelect.addEventListener('change', () => {
+          refreshDirectLocalOptions(siteSelect.value, '', suffix);
+          syncAssignmentMode(suffix);
+          selectedPath = [];
+          renderFormHierarchy(
+            siteSelect.value,
+            selectedPath,
+            '',
+            suffix,
+            localSelect ? localSelect.value : ''
+          );
+        });
+      }
+
+      if (localSelect) {
+        localSelect.addEventListener('change', () => {
+          selectedPath = [];
+          renderFormHierarchy(
+            siteSelect ? siteSelect.value : selectedSite,
+            selectedPath,
+            '',
+            suffix,
+            localSelect.value
+          );
+        });
+      }
+
+      if (relationSelect) {
+        relationSelect.addEventListener('change', () => {
+          const selectedRelation = (state.catalogs.estructuraLocal || []).find(item =>
+            key(item.id) === key(relationSelect.value)
+          );
+          if (selectedRelation && localSelect &&
+              !getRowElement('directoryFormDirectLocalField', suffix)?.hidden) {
+            localSelect.value = key(selectedRelation.local_id);
+          }
+        });
       }
     }
+
+
 
     if (!form || !assignmentsContainer || !firstAssignmentRow || !cancelButton) {
       SUNARPUI.closeModal();
@@ -1992,50 +1829,110 @@ const DirectoryPage = (() => {
 
     // El alta exige consultar el DNI antes de habilitar el guardado.
     const documentSearchButton = document.getElementById('directoryDocumentSearch');
+    const documentClearButton = document.getElementById('directoryDocumentClear');
     const documentVerified = document.getElementById('directoryDocumentVerified');
     const documentSearchResult = document.getElementById('directoryDocumentSearchResult');
     const documentTypeInput = document.getElementById('directoryFormTipoDocumento');
     const documentNumberInput = document.getElementById('directoryFormNumeroDocumento');
+    const personalFields = document.getElementById('directoryPersonalFields');
+    const assignmentsFieldset = document.getElementById('directoryAssignmentsFieldset');
+    const addAssignmentButton = document.getElementById('directoryAddAssignment');
     const saveButton = document.getElementById('directoryFormSave');
+
+    const setDocumentAlert = (type, title, message, details) => {
+      if (!documentSearchResult) return;
+      SUNARPUI.showAlert({
+        containerId: 'directoryDocumentSearchResult',
+        type,
+        title,
+        message,
+        details,
+        dismissible: false,
+        replace: true
+      });
+    };
+
     const setDocumentVerified = verified => {
       if (documentVerified) documentVerified.value = verified ? 'true' : 'false';
       if (saveButton && !isEditing) saveButton.disabled = !verified;
+      if (personalFields && !isEditing) personalFields.disabled = !verified;
+      if (assignmentsFieldset && !isEditing) assignmentsFieldset.disabled = !verified;
+      if (addAssignmentButton && !isEditing) addAssignmentButton.disabled = !verified;
     };
+
     if (!isEditing) {
       setDocumentVerified(false);
       const invalidateDocumentSearch = () => {
         setDocumentVerified(false);
-        if (documentSearchResult) documentSearchResult.textContent = '';
+        if (documentSearchResult) documentSearchResult.replaceChildren();
       };
+
       documentTypeInput.addEventListener('change', invalidateDocumentSearch);
       documentNumberInput.addEventListener('input', invalidateDocumentSearch);
+
+      documentClearButton.addEventListener('click', () => {
+        documentTypeInput.value = '';
+        documentNumberInput.value = '';
+        invalidateDocumentSearch();
+        documentTypeInput.focus();
+      });
+
       documentSearchButton.addEventListener('click', async () => {
-        if (!documentTypeInput.value || !documentNumberInput.value.trim()) {
-          notify('warning', 'Selecciona el tipo e ingresa el número de documento.');
+        if (!documentTypeInput.value) {
+          documentTypeInput.reportValidity();
           return;
         }
+        if (!documentNumberInput.value.trim()) {
+          documentNumberInput.reportValidity();
+          return;
+        }
+
+        invalidateDocumentSearch();
         documentSearchButton.disabled = true;
+        documentClearButton.disabled = true;
         documentSearchButton.textContent = 'Buscando...';
+        documentTypeInput.disabled = true;
+        documentNumberInput.disabled = true;
+
         try {
           const result = await callServer('searchDirectoryPersonByDocument', {
             tipo_documento: documentTypeInput.value,
             numero_documento: documentNumberInput.value.trim()
           });
-          if (result && result.found) {
+
+          if (result && result.found === true) {
             setDocumentVerified(false);
-            documentSearchResult.textContent = 'Este documento ya está registrado para ' +
-              [result.person.nombres, result.person.apellidos].filter(Boolean).join(' ') +
-              '. No se creará una persona duplicada.';
+            const fullName = [
+              result.person && result.person.nombres,
+              result.person && result.person.apellidos
+            ].filter(Boolean).join(' ');
+            setDocumentAlert(
+              'warning',
+              'Documento ya registrado',
+              'Esta persona ya existe en Información de personal. No se creará un registro duplicado.',
+              fullName ? [fullName] : []
+            );
           } else {
             setDocumentVerified(true);
-            documentSearchResult.textContent = 'Documento no registrado. Puedes continuar con el alta.';
+            setDocumentAlert(
+              'success',
+              'Documento disponible',
+              'No se encontró una persona con ese tipo y número de documento. Puedes continuar con el registro.'
+            );
           }
         } catch (error) {
           setDocumentVerified(false);
-          documentSearchResult.textContent = error.message || 'No se pudo comprobar el documento.';
+          setDocumentAlert(
+            'error',
+            'No se pudo comprobar el documento',
+            error.message || 'Ocurrió un error al consultar el directorio institucional.'
+          );
         } finally {
+          documentTypeInput.disabled = false;
+          documentNumberInput.disabled = false;
           documentSearchButton.disabled = false;
-          documentSearchButton.textContent = 'Buscar DNI';
+          documentClearButton.disabled = false;
+          documentSearchButton.textContent = 'Buscar persona';
         }
       });
     }
@@ -2062,7 +1959,7 @@ const DirectoryPage = (() => {
     const documentType = document.getElementById('directoryFormTipoDocumento')?.value || '';
     const documentNumber = document.getElementById('directoryFormNumeroDocumento')?.value.trim() || '';
     if (!personaId && document.getElementById('directoryDocumentVerified')?.value !== 'true') {
-      notify('warning', 'Primero debes buscar el DNI y comprobar que no esté registrado.');
+      notify('warning', 'Primero debes comprobar que el documento no esté registrado.');
       return;
     }
 

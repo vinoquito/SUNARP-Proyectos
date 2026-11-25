@@ -24,6 +24,26 @@ const scriptStart = frontendSource.split('<script>')[1];
 assert.ok(scriptStart, 'DirectoryScripts.html debe contener el bloque JavaScript principal');
 const frontendScript = scriptStart.split('</script>')[0];
 
+test('el formulario de servidor prioriza la validación y separa datos y asignaciones', () => {
+  const validation = frontendSource.indexOf('Antes de registrar, busca el documento');
+  const personal = frontendSource.indexOf('Datos personales');
+  const assignments = frontendSource.indexOf('Asignaciones');
+  assert.ok(validation >= 0 && personal > validation && assignments > personal);
+  assert.ok(frontendSource.includes('Buscar persona'));
+  assert.ok(frontendSource.includes('SUNARPUI.showAlert({'));
+  assert.ok(frontendSource.includes('directoryPersonalFields'));
+  assert.ok(frontendSource.includes('directoryAssignmentsFieldset'));
+  assert.doesNotMatch(frontendSource, /Buscar DNI|Relación con local|Local directamente asignado/);
+});
+
+test('los selectores de asignación siguen el plan de ámbitos y el Local seleccionado', () => {
+  assert.match(frontendSource, /_directoryGetAccessFilterPlan_\\(\\{ scopes \\}, sedeId\\)/);
+  assert.match(frontendSource, /function getFormHierarchyNodes\\(parentId, sedeId, localId\\)/);
+  assert.match(frontendSource, /key\\(relation\\.local_id\\) === effectiveLocalId/);
+  assert.match(frontendSource, /allowedSiteIds\\.size > 1/);
+  assert.match(frontendSource, /function renderFormHierarchy\\(sedeId, selectedPath, selectedRelationId, suffix = '', selectedLocalId = ''\\)/);
+});
+
 const sandbox = vm.createContext({});
 vm.runInContext(
   serviceSource + String.fromCharCode(10) + 'this.directoryTestApi = {' +

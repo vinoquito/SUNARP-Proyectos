@@ -1,5 +1,62 @@
 <section data-app-view="informacion-personal" hidden>
 
+  <style>
+  .directory-form { display: grid; gap: 22px; }
+  .directory-form-section {
+    display: grid; gap: 14px; padding-bottom: 20px;
+    border-bottom: 1px solid var(--ui-border);
+  }
+  .directory-form-section:last-of-type { border-bottom: 0; padding-bottom: 0; }
+  .directory-form-section-heading { display: grid; gap: 4px; }
+  .directory-form-section-heading h3 {
+    margin: 0; color: var(--ui-ink); font-size: 15px; font-weight: 700;
+  }
+  .directory-form-section-heading p {
+    margin: 0; color: var(--ui-muted); font-size: 12px; line-height: 1.5;
+  }
+  .directory-form-section-heading--actions {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  .directory-form-validation {
+    padding: 16px; border: 1px solid var(--ui-border);
+    border-radius: 10px; background: var(--ui-background);
+  }
+  .directory-form-grid {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px;
+  }
+  .directory-form-field-full { grid-column: 1 / -1; }
+  .directory-form-inline-actions, .directory-form-actions {
+    display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px;
+  }
+  .directory-form-inline-actions { justify-content: flex-start; }
+  .directory-form-fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+  .directory-form-fieldset:disabled { opacity: .58; }
+  .directory-assignment-list { display: grid; gap: 14px; }
+  .directory-assignment-row {
+    display: grid; gap: 14px; min-width: 0; padding: 16px;
+    border: 1px solid var(--ui-border); border-radius: 10px; background: var(--ui-background);
+  }
+  .directory-assignment-heading strong, .directory-assignment-location h4 {
+    color: var(--ui-ink); font-size: 13px; font-weight: 700;
+  }
+  .directory-assignment-location {
+    display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--ui-border);
+  }
+  .directory-assignment-location h4 { margin: 0; }
+  .directory-form-hierarchy {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px;
+  }
+  .directory-form-hierarchy:empty { display: none; }
+  .directory-form-hierarchy-level label { display: grid; gap: 6px; }
+  .directory-assignment-row-actions { display: flex; justify-content: flex-end; }
+  .directory-form-actions { padding-top: 4px; }
+  .directory-form-alert:empty { display: none; }
+  @media (max-width: 640px) {
+    .directory-form-grid, .directory-form-hierarchy { grid-template-columns: minmax(0, 1fr); }
+    .directory-form-section-heading--actions { align-items: flex-start; flex-direction: column; }
+  }
+</style>
+
   <div class="directory-page">
 
     <!-- Filtros -->
