@@ -1871,10 +1871,6 @@ const DirectoryPage = (() => {
       if (directLocalField) directLocalField.style.display = useDirectLocal ? '' : 'none';
       if (relationSelect) relationSelect.required = false;
       if (directLocalSelect) directLocalSelect.required = false;
-      if (relationSelect && relationSelect.value && useDirectLocal && directLocalSelect && !directLocalSelect.value) {
-        const relation = state.catalogs.estructuraLocal.find(x => key(x.id) === key(relationSelect.value));
-        if (relation) directLocalSelect.value = key(relation.local_id);
-      }
     }
 
     function initializeAssignmentRow(row, index, assignment) {
