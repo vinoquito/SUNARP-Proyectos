@@ -1847,7 +1847,7 @@ const DirectoryPage = (() => {
     let previousCatalogs = state.catalogs;
     let formRecord = record;
     try {
-      const formDataResponse = await callServer('getDirectoryFormData');
+      const formDataResponse = await callServer('getDirectoryFormData', isEditing ? 'INFORMACION_PERSONAL_EDITAR' : 'INFORMACION_PERSONAL_CREAR');
       if (!formDataResponse || !formDataResponse.catalogs) {
         throw new Error('No se pudieron cargar los catálogos del formulario.');
       }

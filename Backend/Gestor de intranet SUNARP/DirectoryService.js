@@ -1651,8 +1651,11 @@ function _directoryGetAuthorizedSedeIds_(authorization, sedes) {
  * Catálogos y ámbitos efectivos para crear/editar servidores.
  * Se consultan al abrir el formulario, no al entrar a la pantalla.
  */
-function getDirectoryFormData() {
-  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_CREAR');
+function getDirectoryFormData(permissionCode) {
+  const requestedPermission = _directoryText_(permissionCode).toUpperCase();
+  const allowedPermissions = ['INFORMACION_PERSONAL_CREAR', 'INFORMACION_PERSONAL_EDITAR'];
+  if (!allowedPermissions.includes(requestedPermission)) throw new Error('Operación de formulario no válida.');
+  const authorization = _directoryAuthorizationContext_(requestedPermission);
   const context = _directoryLoadContext_({
     includePersonalData: false,
     includePeople: false,
@@ -2876,7 +2879,7 @@ function _saveDirectoryPerson_(payload) {
   const event = {
     accion: isUpdate ? 'EDITAR_PERSONA_DIRECTORIO' : 'CREAR_PERSONA_DIRECTORIO',
     modulo: 'INFORMACION_PERSONAL',
-    tipo_entidad: 'PERSONA',
+    tipo_entidad: 'SERVIDOR',
     registro_id: record.persona_id,
     registro_nombre: [record.nombres, record.apellidos].filter(Boolean).join(' '),
     detalle: isUpdate ? 'Actualización de identidad de una persona.' : 'Registro de una persona.',
@@ -3084,7 +3087,7 @@ function _saveDirectoryPersonalData_(payload, allowUnassigned) {
   const event = {
     accion: existing ? 'EDITAR_DATOS_PERSONALES_DIRECTORIO' : 'CREAR_DATOS_PERSONALES_DIRECTORIO',
     modulo: 'INFORMACION_PERSONAL',
-    tipo_entidad: 'DATOS_PERSONALES',
+    tipo_entidad: 'SERVIDOR',
     registro_id: personaId,
     registro_nombre: [person.nombres, person.apellidos].filter(Boolean).join(' '),
     detalle: 'Registro de datos personales y validación única del documento de identidad.',
@@ -3462,8 +3465,8 @@ function saveDirectoryAssignment(payload) {
   const event = {
     accion: isUpdate ? 'EDITAR_ASIGNACION_DIRECTORIO' : 'CREAR_ASIGNACION_DIRECTORIO',
     modulo: 'INFORMACION_PERSONAL',
-    tipo_entidad: 'ASIGNACION',
-    registro_id: record.asignacion_id,
+    tipo_entidad: 'SERVIDOR',
+    registro_id: record.persona_id,
     registro_nombre: [person.nombres, person.apellidos].filter(Boolean).join(' '),
     detalle: isUpdate ? 'Actualización de una asignación.' : 'Alta de una asignación.',
     datos_antes: existing || null
@@ -3533,8 +3536,8 @@ function setDirectoryAssignmentActive(asignacionId, active) {
   return _accessRunAudited_(authorization.auth, {
     accion: active ? 'ACTIVAR_ASIGNACION_DIRECTORIO' : 'DESACTIVAR_ASIGNACION_DIRECTORIO',
     modulo: 'INFORMACION_PERSONAL',
-    tipo_entidad: 'ASIGNACION',
-    registro_id: id,
+    tipo_entidad: 'SERVIDOR',
+    registro_id: existing.persona_id,
     registro_nombre: [person.nombres, person.apellidos].filter(Boolean).join(' '),
     detalle: 'Cambio de estado de una asignación.',
     datos_antes: existing
@@ -3626,55 +3629,109 @@ function deleteDirectoryPerson(personaId) {
   const linkedResult = SUNARPCore.findRecordsByFields(
     _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones),
     { persona_id: id },
-    {
-      searchField: 'persona_id',
-      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.asignaciones
-    }
+    { searchField: 'persona_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.asignaciones }
   );
   const linkedAssignments = linkedResult.records || [];
-
-  _directoryAssertPersonMutationScope_(
-    authorization,
-    person,
-    linkedAssignments,
-    context
-  );
-
-  if (linkedAssignments.length) {
-    throw new Error(
-      'No se puede eliminar la persona porque tiene ' +
-      linkedAssignments.length +
-      ' asignación(es) vinculada(s). Elimina o reasigna primero esas asignaciones.'
-    );
-  }
-
+  _directoryAssertPersonMutationScope_(authorization, person, linkedAssignments, context);
   const personalData = _directoryFindPersonalDataById_(id);
-  if (personalData) {
+
+  // La auditoría común conserva la trazabilidad de operaciones realizadas
+  // sobre el servidor y sobre cualquiera de sus asignaciones.
+  const auditSource = _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.audit);
+  const relatedIds = [id].concat(linkedAssignments.map(item => _directoryText_(item.asignacion_id))).filter(Boolean);
+  const auditRows = [];
+  relatedIds.forEach(relatedId => {
+    const found = SUNARPCore.searchRecordsByFields(
+      auditSource, relatedId, ['registro_id'], { matchCase: false }
+    );
+    (found.records || []).forEach(row => {
+      if (_directoryText_(row.registro_id) === relatedId) auditRows.push(row);
+    });
+  });
+  const ownCrudActions = new Set([
+    'CREAR_PERSONA_DIRECTORIO',
+    'EDITAR_PERSONA_DIRECTORIO',
+    'CREAR_DATOS_PERSONALES_DIRECTORIO',
+    'EDITAR_DATOS_PERSONALES_DIRECTORIO',
+    'CREAR_ASIGNACION_DIRECTORIO',
+    'EDITAR_ASIGNACION_DIRECTORIO',
+    'ACTIVAR_ASIGNACION_DIRECTORIO',
+    'DESACTIVAR_ASIGNACION_DIRECTORIO',
+    'ELIMINAR_ASIGNACION_DIRECTORIO',
+    'ELIMINAR_PERSONA_DIRECTORIO',
+    'ELIMINAR_SERVIDOR_DIRECTORIO'
+  ]);
+  const operationalEvents = auditRows.filter(row =>
+    _directoryText_(row.modulo).toUpperCase() !== 'INFORMACION_PERSONAL' ||
+    !ownCrudActions.has(_directoryText_(row.accion).toUpperCase())
+  );
+  if (operationalEvents.length) {
     throw new Error(
-      'No se puede eliminar la persona porque tiene una ficha de datos personales vinculada.'
+      'No se puede eliminar el servidor porque tiene ' + operationalEvents.length +
+      ' acción(es) registradas en el entorno. Se debe conservar su trazabilidad.'
     );
   }
 
   return _accessRunAudited_(authorization.auth, {
-    accion: 'ELIMINAR_PERSONA_DIRECTORIO',
+    accion: 'ELIMINAR_SERVIDOR_DIRECTORIO',
     modulo: 'INFORMACION_PERSONAL',
-    tipo_entidad: 'PERSONA',
+    tipo_entidad: 'SERVIDOR',
     registro_id: id,
     registro_nombre: [person.nombres, person.apellidos].filter(Boolean).join(' '),
-    detalle: 'Eliminación física de una persona sin asignaciones ni ficha personal vinculada.',
-    datos_antes: person
+    detalle: 'Eliminación del servidor y sus registros relacionados al no existir acciones operativas vinculadas.',
+    datos_antes: { person, personalData, assignments: linkedAssignments }
   }, () => {
-    const result = SUNARPCore.deleteRecord(
-      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
-      'persona_id',
-      id
-    );
+    const deletedAssignments = [];
+    let deletedPersonalData = false;
+    let deletedPerson = false;
+    try {
+      linkedAssignments.forEach(assignment => {
+        SUNARPCore.deleteRecord(
+          _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones),
+          'asignacion_id',
+          assignment.asignacion_id
+        );
+        deletedAssignments.push(assignment);
+      });
+      if (personalData) {
+        SUNARPCore.deleteRecord(
+          _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
+          'servidor_id',
+          id
+        );
+        deletedPersonalData = true;
+      }
+      SUNARPCore.deleteRecord(
+        _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+        'persona_id',
+        id
+      );
+      deletedPerson = true;
+    } catch (error) {
+      const rollbackErrors = [];
+      if (deletedPerson) {
+        try { SUNARPCore.insertRecord(_directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas), person, { idField: 'persona_id' }); }
+        catch (rollbackError) { rollbackErrors.push('persona: ' + rollbackError.message); }
+      }
+      if (deletedPersonalData && personalData) {
+        try { SUNARPCore.insertRecord(_directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales), personalData, { idField: 'servidor_id' }); }
+        catch (rollbackError) { rollbackErrors.push('datos personales: ' + rollbackError.message); }
+      }
+      deletedAssignments.reverse().forEach(assignment => {
+        try { SUNARPCore.insertRecord(_directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones), assignment, { idField: 'asignacion_id' }); }
+        catch (rollbackError) { rollbackErrors.push('asignación ' + assignment.asignacion_id + ': ' + rollbackError.message); }
+      });
+      if (rollbackErrors.length) {
+        throw new Error(error.message + ' La reversión quedó incompleta: ' + rollbackErrors.join(' | '));
+      }
+      throw error;
+    }
     return {
-      value: Object.assign({}, result, {
+      value: {
         success: true,
-        message: 'La persona se eliminó correctamente.',
+        message: 'El servidor y sus registros relacionados se eliminaron correctamente.',
         persona_id: id
-      }),
+      },
       auditAfter: null
     };
   });
