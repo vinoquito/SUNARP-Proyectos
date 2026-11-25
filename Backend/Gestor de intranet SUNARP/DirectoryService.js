@@ -3335,7 +3335,7 @@ function saveDirectoryEntry(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('Debes proporcionar los datos del servidor.');
   }
-  const assignments = Array.isArray(payload.assignments) ? payload.assignments : [];
+  const assignments = Array.isArray(payload.assignments) ? payload.assignments : [payload];
   const removedAssignmentIds = Array.isArray(payload.removed_assignment_ids)
     ? payload.removed_assignment_ids.map(_directoryText_).filter(Boolean)
     : [];
@@ -3358,7 +3358,16 @@ function saveDirectoryEntry(payload) {
     throw new Error('Una asignación no puede modificarse y eliminarse en la misma operación.');
   }
 
-  const primaryAssignment = assignments[0];
+  if (personaId && !assignments.some(item => _directoryText_(item.asignacion_id))) {
+    throw new Error('Para editar un servidor debes conservar al menos una asignación existente en el formulario.');
+  }
+  const primaryIndex = personaId
+    ? assignments.findIndex(item => _directoryText_(item.asignacion_id))
+    : 0;
+  const orderedAssignments = primaryIndex > 0
+    ? [assignments[primaryIndex]].concat(assignments.filter((_item, index) => index !== primaryIndex))
+    : assignments;
+  const primaryAssignment = orderedAssignments[0];
   const primaryPayload = Object.assign({}, payload, primaryAssignment);
   delete primaryPayload.assignments;
   delete primaryPayload.removed_assignment_ids;
@@ -3373,8 +3382,8 @@ function saveDirectoryEntry(payload) {
 
   const savedAssignments = [];
   if (primaryResult && primaryResult.assignment) savedAssignments.push(primaryResult.assignment);
-  for (let index = 1; index < assignments.length; index++) {
-    const assignment = Object.assign({}, assignments[index], {
+  for (let index = 1; index < orderedAssignments.length; index++) {
+    const assignment = Object.assign({}, orderedAssignments[index], {
       persona_id: resolvedPersonaId
     });
     const result = saveDirectoryAssignment(assignment);
