@@ -2,7 +2,8 @@
 
 **Fecha de corte:** 25 de noviembre de 2026  
 **Rama:** `feat/directorio-personas-datos-asignaciones`  
-**Último commit conocido:** `16c261699e81e542dd1cf8a2bf0b7976aea74656`  
+**Último commit funcional antes de esta documentación:** `16c261699e81e542dd1cf8a2bf0b7976aea74656`  
+**Commit de esta documentación:** `438e0ec858814cac30e4de9de952d59a2e2826cc`  
 **Repositorio:** `vinoquito/SUNARP-Proyectos`
 
 Este documento conserva la línea base, los cambios realizados, las mediciones observadas y los asuntos pendientes de rendimiento. Su objetivo es permitir continuar el trabajo en otro chat sin repetir el análisis funcional ni volver a solicitar las tablas y pruebas ya compartidas.
