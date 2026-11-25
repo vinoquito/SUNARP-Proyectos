@@ -540,7 +540,7 @@ test('el historial de servidor reúne los eventos de persona, ficha personal y a
   });
 
   assert.equal(history.total, 3);
-  assert.deepEqual(history.items.map(item => item.evento_id), ['EVT_001', 'EVT_002', 'EVT_003']);
+  assert.deepEqual(history.items.map(item => item.evento_id), ['EVT_003', 'EVT_002', 'EVT_001']);
   assert.ok(queries.some(item => item.source === 'asignaciones'));
   assert.ok(queries.some(item => item.filters.registro_id === 'ASG_009'));
 });
