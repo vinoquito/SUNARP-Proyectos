@@ -1813,12 +1813,41 @@ function getDirectoryFormData(action) {
     };
   });
 
-  const rootStructureIds = structureScopes.length && !hasSiteScope
-    ? structureScopes.map(scope => scope.referenceId).filter(id => selectableStructureIds.has(id))
-    : estructuraOrg.filter(node =>
-        selectableStructureIds.has(node.id) &&
-        !selectableStructureIds.has(node.parent_id)
-      ).map(node => node.id);
+  const compareStructureOrder = (leftId, rightId) => {
+    const left = structureMap.get(_directoryKey_(leftId)) || {};
+    const right = structureMap.get(_directoryKey_(rightId)) || {};
+    const leftRaw = left.order;
+    const rightRaw = right.order;
+    const leftOrder = leftRaw === null || leftRaw === undefined || _directoryText_(leftRaw) === ''
+      ? Number.MAX_SAFE_INTEGER : Number(leftRaw);
+    const rightOrder = rightRaw === null || rightRaw === undefined || _directoryText_(rightRaw) === ''
+      ? Number.MAX_SAFE_INTEGER : Number(rightRaw);
+    const normalizedLeft = Number.isFinite(leftOrder) ? leftOrder : Number.MAX_SAFE_INTEGER;
+    const normalizedRight = Number.isFinite(rightOrder) ? rightOrder : Number.MAX_SAFE_INTEGER;
+    return normalizedLeft - normalizedRight ||
+      _directoryText_(left.name).localeCompare(_directoryText_(right.name), 'es', { sensitivity: 'base' }) ||
+      _directoryKey_(leftId).localeCompare(_directoryKey_(rightId), 'es', { numeric: true, sensitivity: 'base' });
+  };
+
+  let rootStructureIds;
+  if (structureScopes.length && !hasSiteScope) {
+    const roots = structureScopes.map(scope => ({
+      referenceId: scope.referenceId,
+      includeDescendants: scope.includeDescendants
+    })).filter(scope => selectableStructureIds.has(scope.referenceId));
+    const visibleRoots = roots.filter(candidate => !roots.some(other =>
+      other.referenceId !== candidate.referenceId &&
+      other.includeDescendants &&
+      isDescendantOf(candidate.referenceId, other.referenceId)
+    ));
+    visibleRoots.sort((a, b) => compareStructureOrder(a.referenceId, b.referenceId));
+    rootStructureIds = visibleRoots.map(item => item.referenceId);
+  } else {
+    rootStructureIds = estructuraOrg.filter(node =>
+      selectableStructureIds.has(node.id) &&
+      !selectableStructureIds.has(node.parent_id)
+    ).map(node => node.id).sort(compareStructureOrder);
+  }
 
   const cargos = (context.cargos || []).filter(_directoryIsActive_).map(item => ({
     id: _directoryKey_(item.id), name: _directoryText_(item.name), active: true
