@@ -3284,18 +3284,7 @@ function _saveDirectoryEntrySingle_(payload) {
   }
 
   if (!isNewPerson && isNewAssignment) {
-    // Una asignación adicional nunca crea ni modifica identidad o ficha personal.
-    const assignment = saveDirectoryAssignment({
-      persona_id: personaId,
-      cargo_id: payload.cargo_id,
-      condicion_cargo: payload.condicion_cargo,
-      anexo: payload.anexo,
-      estructura_local_id: payload.estructura_local_id,
-      local_id: payload.local_id,
-      observaciones: payload.observaciones,
-      active: true
-    });
-    return Object.assign({}, assignment, { message: 'La asignación se registró correctamente.' });
+    throw new Error('Las asignaciones adicionales deben enviarse juntas desde el formulario del servidor.');
   }
 
   const personPayload = {
@@ -3740,8 +3729,8 @@ function deleteDirectoryAssignment(asignacionId) {
   return _accessRunAudited_(authorization.auth, {
     accion: 'ELIMINAR_ASIGNACION_DIRECTORIO',
     modulo: 'INFORMACION_PERSONAL',
-    tipo_entidad: 'ASIGNACION',
-    registro_id: id,
+    tipo_entidad: 'SERVIDOR',
+    registro_id: existing.persona_id,
     registro_nombre: [person.nombres, person.apellidos].filter(Boolean).join(' '),
     detalle: 'Eliminación física de una asignación. La persona se conserva.',
     datos_antes: existing

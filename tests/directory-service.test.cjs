@@ -1028,30 +1028,14 @@ test('si falla la primera asignación, el alta coordinada compensa persona y fic
   ]);
 });
 
-test('una asignación adicional no crea ni modifica persona o ficha personal', () => {
+test('el guardado no admite un flujo separado para registrar asignaciones adicionales', () => {
   const context = createDirectorySandbox();
-  let personWrites = 0;
-  let personalWrites = 0;
-  let assignmentPayload;
-  context._saveDirectoryPerson_ = () => { personWrites++; };
-  context.saveDirectoryPersonalData = () => { personalWrites++; };
-  context.saveDirectoryAssignment = payload => {
-    assignmentPayload = payload;
-    return { assignment: { asignacion_id: 'ASG_009' } };
-  };
-
-  const result = context.saveDirectoryEntry({
+  assert.throws(() => context.saveDirectoryEntry({
     persona_id: 'PER_009',
     cargo_id: 'CAR_001',
     estructura_local_id: 'REL_001'
-  });
-
-  assert.equal(personWrites, 0);
-  assert.equal(personalWrites, 0);
-  assert.equal(assignmentPayload.persona_id, 'PER_009');
-  assert.equal(result.assignment.asignacion_id, 'ASG_009');
+  }), /deben enviarse juntas desde el formulario del servidor/);
 });
-
 
 
 test('la edición coordinada recupera la asignación anterior por ID sin cargar toda la tabla', () => {
