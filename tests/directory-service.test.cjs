@@ -1227,6 +1227,52 @@ test('el formulario permite registrar y actualizar observaciones de cada asignac
   assert.ok(frontendSource.includes("assignments"));
 });
 
+test('el formulario usa búsqueda documental, cascadas por ámbito y asignaciones múltiples en la misma operación', () => {
+  assert.ok(frontendSource.includes("callServer('getDirectoryFormData'"));
+  assert.ok(frontendSource.includes("callServer('searchDirectoryPersonByDocument'"));
+  assert.ok(frontendSource.includes('directoryAssignmentsContainer'));
+  assert.ok(frontendSource.includes('directoryAddAssignment'));
+  assert.ok(frontendSource.includes('directoryFormTipoDocumento'));
+  assert.ok(frontendSource.includes('openDirectoryForm(null)'));
+  assert.ok(!frontendSource.includes("label: 'Nueva asignación'"));
+  assert.ok(!frontendSource.includes('Adscripción de la asignación'));
+});
+
+test('saveDirectoryEntry coordina todas las asignaciones dentro del formulario de persona', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  let firstPayload = null;
+  const extraAssignments = [];
+  vmContext._saveDirectoryEntrySingle_ = payload => {
+    firstPayload = payload;
+    return {
+      success: true,
+      person: { persona_id: 'PER_701' },
+      assignment: { assignment: { asignacion_id: 'ASG_701', persona_id: 'PER_701' } }
+    };
+  };
+  vmContext.saveDirectoryAssignment = payload => {
+    extraAssignments.push(payload);
+    return { assignment: { asignacion_id: 'ASG_702', persona_id: payload.persona_id } };
+  };
+  const result = vmContext.saveDirectoryEntry({
+    nombres: 'Ana',
+    apellidos: 'Pérez',
+    assignments: [
+      { cargo_id: 'CAR_1', estructura_local_id: 'REL_1', local_id: '' },
+      { cargo_id: 'CAR_2', estructura_local_id: '', local_id: 'LOC_2' }
+    ]
+  });
+  assert.equal(firstPayload.assignments, undefined);
+  assert.equal(firstPayload.cargo_id, 'CAR_1');
+  assert.equal(extraAssignments.length, 1);
+  assert.equal(extraAssignments[0].persona_id, 'PER_701');
+  assert.equal(extraAssignments[0].cargo_id, 'CAR_2');
+  assert.equal(result.assignments.length, 2);
+  assert.equal(result.assignments[1].asignacion_id, 'ASG_702');
+});
+
+
 
 function assignmentContext() {
   return {
