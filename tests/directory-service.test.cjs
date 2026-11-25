@@ -1238,6 +1238,8 @@ test('la edición coordinada recupera la asignación anterior por ID sin cargar 
   context._directoryAssertPersonMutationScope_ = () => true;
   context.SUNARPCore.findRecordsByFields = (source, filters) => {
     if (source === 'asignaciones') return { records: [previousAssignment], total: 1 };
+    if (source === 'personas') return { records: [person], total: 1 };
+    if (source === 'servidores datos personales') return { records: [personalData], total: 1 };
     return { records: [], total: 0 };
   };
   context._directoryAssertDocumentAvailable_ = () => ({
@@ -1277,10 +1279,15 @@ test('la edición rechaza una asignación que pertenece a otra persona antes de 
   });
   context._directoryFindPersonById_ = () => ({ persona_id: 'PER_001', nombres: 'Ana', apellidos: 'Pérez' });
   context._directoryAssertPersonMutationScope_ = () => true;
-  context.SUNARPCore.findRecordsByFields = (source, filters) =>
-    source === 'asignaciones'
-      ? { records: [{ asignacion_id: 'ASG_002', persona_id: 'PER_002', local_id: 'LOC_2' }], total: 1 }
-      : { records: [], total: 0 };
+  context.SUNARPCore.findRecordsByFields = (source, filters) => {
+    if (source === 'asignaciones') {
+      return { records: [{ asignacion_id: 'ASG_002', persona_id: 'PER_002', local_id: 'LOC_2' }], total: 1 };
+    }
+    if (source === 'personas') {
+      return { records: [{ persona_id: 'PER_001', nombres: 'Ana', apellidos: 'Pérez' }], total: 1 };
+    }
+    return { records: [], total: 0 };
+  };
   context._directoryAssertDocumentAvailable_ = () => ({
     tipo_documento: 'DNI',
     numero_documento: '12345678'
