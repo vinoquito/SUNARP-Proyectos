@@ -520,6 +520,19 @@ test('el historial de servidor reúne los eventos de persona, ficha personal y a
     ]
   };
   const queries = [];
+  const deletedAssignmentEvent = {
+    evento_id: 'EVT_005',
+    fecha_hora: new Date('2026-11-20T13:00:00Z'),
+    tipo_entidad: 'ASIGNACION',
+    registro_id: 'ASG_DELETED_009',
+    modulo: 'INFORMACION_PERSONAL',
+    datos_antes: '',
+    datos_despues: JSON.stringify({
+      asignacion_id: 'ASG_DELETED_009',
+      persona_id: 'PER_009',
+      cargo_id: 'CAR_002'
+    })
+  };
   sandbox.SUNARPCore.findRecordsByFields = (source, filters) => {
     queries.push({ source: source && source.sheetName, filters });
     if (source && source.sheetName === 'asignaciones') {
@@ -531,6 +544,10 @@ test('el historial de servidor reúne los eventos de persona, ficha personal y a
     const records = eventsByRecord[filters.registro_id] || [];
     return { records, total: records.length };
   };
+  sandbox.SUNARPCore.searchRecordsByFields = (source, query, fields) => {
+    queries.push({ source: source && source.sheetName, snapshotSearch: query, fields });
+    return { records: [deletedAssignmentEvent], total: 1 };
+  };
 
   const history = sandbox.getAccessEntityHistory({
     tipo_entidad: 'SERVIDOR',
@@ -539,8 +556,8 @@ test('el historial de servidor reúne los eventos de persona, ficha personal y a
     pageSize: 10
   });
 
-  assert.equal(history.total, 3);
-  assert.deepEqual(Array.from(history.items, item => item.evento_id), ['EVT_003', 'EVT_002', 'EVT_001']);
+  assert.equal(history.total, 4);
+  assert.deepEqual(Array.from(history.items, item => item.evento_id), ['EVT_005', 'EVT_003', 'EVT_002', 'EVT_001']);
   assert.ok(queries.some(item => item.source === 'asignaciones'));
   assert.ok(queries.some(item => item.filters.registro_id === 'ASG_009'));
 });
