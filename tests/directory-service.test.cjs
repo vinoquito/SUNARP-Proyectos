@@ -2787,6 +2787,7 @@ test('deleteDirectoryPerson elimina el servidor y sus tres tablas relacionadas c
       }
       throw new Error('Fuente inesperada: ' + source);
     },
+    searchRecordsByFields: () => ({ records: [], total: 0 }),
     deleteRecord: (source, field, id) => {
       deleted.push([source, field, id]);
       return { success: true };
