@@ -622,3 +622,26 @@ La medición de Zona IX del 25 de noviembre que registró 1.852 asignaciones, do
 ### 15.7. Validación funcional
 
 La aceptación debe verificar conjuntamente el backend, records, catalogs.locales, catalogs.estructuraOrg, filterContract, el índice cliente, las opciones renderizadas y la tabla. Como mínimo: Lima, Callao, Huacho/Cañete/Huaral/Barranca, locales sin estructura, asignaciones local_id solamente, estructuras con varias relaciones físicas, estructura con ubicación directa distinta de la raíz, ámbitos TOTAL/SEDE/LOCAL/ESTRUCTURA_ORG, orden no correlativo y rechazos de orden ausente/duplicado cuando la columna esté habilitada.
+
+
+---
+
+## 16. Punto de entrada de los selectores según el ámbito de acceso
+
+La cadena de filtros no debe obligar al usuario a elegir niveles que son ancestros de su permiso. Los selectores empiezan en el primer nivel descendiente que corresponde al ámbito concedido.
+
+| Ámbito concedido | Selector Sede | Selector Local | Inicio de la cascada orgánica |
+|---|---|---|---|
+| TOTAL | Visible; elección explícita | Visible después de elegir Sede | Raíces orgánicas del Local elegido |
+| SEDE | Oculto cuando la sede está determinada | Visible | Raíces orgánicas del Local elegido |
+| LOCAL, una referencia | Oculto cuando la sede está determinada | Oculto; Local fijado por el permiso | Raíces orgánicas de ese Local |
+| LOCAL, varias referencias de la misma sede | Oculto cuando la sede está determinada | Visible solo con los locales autorizados que tengan registros | Raíces orgánicas del Local elegido |
+| ESTRUCTURA_ORG | Oculto cuando la sede está determinada | Oculto | Hijos directos de la estructura autorizada, si incluye descendientes |
+
+Una autorización ESTRUCTURA_ORG sobre Oficina de Comunicaciones, por ejemplo, no debe mostrar Sede ni Local para llegar a esa oficina. Si el ámbito permite descendientes, el primer selector orgánico presenta únicamente sus hijos directos. Las siguientes selecciones avanzan un nivel cada vez. Si el ámbito no permite descendientes, no se ofrece una cascada de unidades hijas.
+
+Para TOTAL y SEDE, Local sigue siendo un filtro de exploración porque esos ámbitos cubren todos los locales de la sede seleccionada. Para LOCAL, una referencia fija no se presenta como una pregunta al usuario; con varias referencias, el selector se limita a esas referencias y nunca al catálogo completo. Para ESTRUCTURA_ORG, no se exige una ubicación física para navegar la estructura concedida.
+
+La tabla continúa mostrando todos los registros ya autorizados cuando no se ha seleccionado un filtro opcional. La cascada solo reduce ese conjunto. La respuesta del servidor y la autorización central siguen siendo la autoridad: ocultar o mostrar un selector no concede permisos.
+
+La implementación resuelve esta política mediante un plan de entrada derivado de filterContract.scopes, referenceId e includeDescendants. El plan distingue modo de selección Local y modo de navegación jerárquica; el modo de ámbito ESTRUCTURA_ORG calcula sus nodos navegables desde las rutas orgánicas autorizadas y no requiere localFilter.value.

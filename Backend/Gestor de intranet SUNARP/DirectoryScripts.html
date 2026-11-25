@@ -273,7 +273,77 @@
    * asignaciones ya autorizadas. Añade ancestros reales de parent_id para
    * conservar las rutas, sin heredarles la ubicación física del descendiente.
    */
-  function _directoryBuildLocalHierarchyFilterSets_(records, structures, localId, siteId) {
+  /**
+ * Determina desde qué nivel de la jerarquía debe comenzar la exploración.
+ * Los filtros ancestros al ámbito concedido no se muestran como selectores.
+ */
+function _directoryGetAccessFilterPlan_(filterContract, siteId) {
+  const keyOf = value => String(value === null || value === undefined ? '' : value).trim();
+  const scopes = filterContract && Array.isArray(filterContract.scopes)
+    ? filterContract.scopes
+    : [];
+  const site = keyOf(siteId);
+  const hasBroadSiteScope = scopes.some(scope =>
+    scope && (
+      scope.type === 'TOTAL' ||
+      (scope.type === 'SEDE' && keyOf(scope.referenceId) === site)
+    )
+  );
+  const localScopeIds = Array.from(new Set(scopes
+    .filter(scope => scope && scope.type === 'LOCAL')
+    .map(scope => keyOf(scope.referenceId))
+    .filter(Boolean)));
+  const structureScopes = scopes.filter(scope =>
+    scope && scope.type === 'ESTRUCTURA_ORG' && keyOf(scope.referenceId)
+  );
+
+  if (hasBroadSiteScope) {
+    return {
+      entryScope: 'SITE',
+      localMode: 'selectable',
+      hierarchyMode: 'local',
+      localScopeIds,
+      structureScopes
+    };
+  }
+  if (structureScopes.length) {
+    return {
+      entryScope: 'ESTRUCTURA_ORG',
+      localMode: 'hidden',
+      hierarchyMode: 'structure-scope',
+      localScopeIds,
+      structureScopes
+    };
+  }
+  if (localScopeIds.length === 1) {
+    return {
+      entryScope: 'LOCAL',
+      localMode: 'fixed',
+      hierarchyMode: 'local',
+      localScopeIds,
+      structureScopes
+    };
+  }
+  if (localScopeIds.length > 1) {
+    return {
+      entryScope: 'LOCAL',
+      localMode: 'selectable-scoped',
+      hierarchyMode: 'local',
+      localScopeIds,
+      structureScopes
+    };
+  }
+  return {
+    entryScope: 'NONE',
+    localMode: 'hidden',
+    hierarchyMode: 'none',
+    localScopeIds: [],
+    structureScopes
+  };
+}
+
+
+function _directoryBuildLocalHierarchyFilterSets_(records, structures, localId, siteId) {
     const keyOf = value => String(value === null || value === undefined ? '' : value).trim();
     const selectedLocalId = keyOf(localId);
     const selectedSiteId = keyOf(siteId);
@@ -608,8 +678,10 @@ const DirectoryPage = (() => {
   }
 
   /**
-   * Las opciones físicas se intersectan con asignaciones autorizadas reales.
-   * El catálogo aporta nombre, parent_id y order, pero no amplía permisos.
+   * Muestra Local solo cuando es un nivel descendiente del ámbito concedido.
+   * Los ámbitos ESTRUCTURA_ORG comienzan directamente en la estructura
+   * autorizada; un ámbito LOCAL fija el local o limita el selector a sus
+   * referencias explícitas.
    */
   function populateLocalFilter() {
     const select = getElements().localFilter;
@@ -618,9 +690,21 @@ const DirectoryPage = (() => {
     const siteId = key(elements.sedeFilter && elements.sedeFilter.value);
     const hasLoadedSite = Boolean(siteId && siteId === state.activeSedeId);
     const wrapper = select.closest('.sunarp-filter');
+    const filterContract = state.catalogs && state.catalogs.filterContract || {};
+    const plan = _directoryGetAccessFilterPlan_(filterContract, siteId);
 
-    if (!hasLoadedSite) {
-      updateFilterOptions(select, 'Locales de la información autorizada', []);
+    if (!hasLoadedSite || plan.localMode === 'hidden' || plan.localMode === 'fixed') {
+      const scopedLocalId = plan.localMode === 'fixed' ? plan.localScopeIds[0] : '';
+      const fixedLocal = scopedLocalId
+        ? (state.catalogs.locales || []).find(local => key(local.id) === scopedLocalId)
+        : null;
+      updateFilterOptions(
+        select,
+        scopedLocalId ? 'Local determinado por el ámbito autorizado' : 'Locales de la información autorizada',
+        fixedLocal ? [fixedLocal] : []
+      );
+      if (scopedLocalId && fixedLocal) select.value = scopedLocalId;
+      else select.value = '';
       select.disabled = true;
       if (wrapper) wrapper.hidden = true;
       return;
@@ -629,29 +713,27 @@ const DirectoryPage = (() => {
     const usedLocalIds = new Set(getRecordsForFilters(
       new Set(['local', 'cargo', 'hierarchy'])
     ).map(record => key(record.filter_local_id || record.local_id)).filter(Boolean));
+    const permittedLocalIds = plan.localMode === 'selectable-scoped'
+      ? new Set(plan.localScopeIds)
+      : null;
     const locals = (state.catalogs.locales || []).filter(local =>
-      isActive(local) && key(local.sede_id) === siteId && usedLocalIds.has(key(local.id))
+      isActive(local) &&
+      key(local.sede_id) === siteId &&
+      usedLocalIds.has(key(local.id)) &&
+      (!permittedLocalIds || permittedLocalIds.has(key(local.id)))
     );
-    const filterContract = state.catalogs.filterContract || {};
-    const scopes = Array.isArray(filterContract.scopes) ? filterContract.scopes : [];
-    const hasBroadScope = scopes.some(scope =>
-      scope.type === 'TOTAL' ||
-      (scope.type === 'SEDE' && key(scope.referenceId) === siteId)
-    );
-    const fixedLocalIds = filterContract.fixed && Array.isArray(filterContract.fixed.localIds)
-      ? filterContract.fixed.localIds.map(key).filter(Boolean)
-      : [];
-    const fixedSingleLocal = !hasBroadScope && fixedLocalIds.length === 1 &&
-      locals.some(local => key(local.id) === fixedLocalIds[0]);
 
-    updateFilterOptions(
-      select,
-      fixedSingleLocal ? 'Local determinado por el ámbito autorizado' : 'Seleccione un local',
-      locals
-    );
-    if (fixedSingleLocal) select.value = fixedLocalIds[0];
-    select.disabled = locals.length === 0 || fixedSingleLocal;
-    if (wrapper) wrapper.hidden = false;
+    updateFilterOptions(select, 'Seleccione un local', locals);
+    // Para varios ámbitos LOCAL, si solo uno tiene registros, no se obliga
+    // a elegir un selector que no ofrece una alternativa real.
+    if (plan.localMode === 'selectable-scoped' && locals.length === 1) {
+      select.value = key(locals[0].id);
+      select.disabled = true;
+      if (wrapper) wrapper.hidden = true;
+    } else {
+      select.disabled = locals.length === 0;
+      if (wrapper) wrapper.hidden = locals.length === 0;
+    }
   }
 
 
@@ -746,10 +828,8 @@ const DirectoryPage = (() => {
     const contract = state.catalogs && state.catalogs.filterContract;
     const scopes = contract && Array.isArray(contract.scopes) ? contract.scopes : [];
     const activeSiteId = key(state.activeSedeId);
-    const broadScope = scopes.some(scope =>
-      scope.type === 'TOTAL' || scope.type === 'LOCAL' ||
-      (scope.type === 'SEDE' && key(scope.referenceId) === activeSiteId)
-    );
+    const accessPlan = _directoryGetAccessFilterPlan_(contract, activeSiteId);
+    const broadScope = accessPlan.hierarchyMode === 'local';
 
     if (selectedParentId) {
       if (!selectableIds.has(selectedParentId)) return [];
@@ -910,15 +990,38 @@ const DirectoryPage = (() => {
     const siteId = key(elements.sedeFilter && elements.sedeFilter.value);
     const localId = key(elements.localFilter && elements.localFilter.value);
     const hasLoadedSite = Boolean(siteId && siteId === state.activeSedeId);
-    if (!hasLoadedSite || !localId) {
+    const filterContract = state.catalogs && state.catalogs.filterContract || {};
+    const accessPlan = _directoryGetAccessFilterPlan_(filterContract, siteId);
+    if (!hasLoadedSite || accessPlan.hierarchyMode === 'none') {
       state.hierarchyPath = [];
       state.hierarchySelectableIds = new Set();
       container.hidden = true;
       return;
     }
-    state.hierarchySelectableIds = _directoryBuildLocalHierarchyFilterSets_(
-      state.records, state.catalogs.estructuraOrg || [], localId, siteId
-    );
+
+    if (accessPlan.hierarchyMode === 'structure-scope') {
+      // El permiso ya identifica una estructura orgánica concreta. No se
+      // exige ni se inventa un Local ancestro: la cascada comienza en los
+      // hijos descendientes del nodo concedido.
+      state.hierarchySelectableIds = _directoryBuildHierarchyFilterSets_(
+        state.records,
+        state.catalogs.estructuraOrg || [],
+        filterContract,
+        siteId
+      );
+    } else {
+      // Para TOTAL/SEDE o LOCAL, Local sí es el nivel físico desde el que
+      // corresponde abrir las ramas orgánicas.
+      if (!localId) {
+        state.hierarchyPath = [];
+        state.hierarchySelectableIds = new Set();
+        container.hidden = true;
+        return;
+      }
+      state.hierarchySelectableIds = _directoryBuildLocalHierarchyFilterSets_(
+        state.records, state.catalogs.estructuraOrg || [], localId, siteId
+      );
+    }
     const selectableIds = getHierarchyFilterSets().selectableIds;
     if (!selectableIds.size) {
       state.hierarchyPath = [];

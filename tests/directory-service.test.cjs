@@ -131,6 +131,14 @@ vm.runInContext(
   hierarchyIndexSandbox,
   { filename: 'DirectoryLocalHierarchy.js' }
 );
+const accessFilterPlanSource = extractFrontendFunction('_directoryGetAccessFilterPlan_');
+assert.ok(accessFilterPlanSource, 'El frontend debe resolver el nivel inicial según el ámbito concedido');
+vm.runInContext(
+  accessFilterPlanSource + '\nthis.getAccessFilterPlan = _directoryGetAccessFilterPlan_;',
+  hierarchyIndexSandbox,
+  { filename: 'DirectoryAccessFilterPlan.js' }
+);
+
 
 const hierarchyHelperMatch = frontendScript.match(/function _directoryBuildHierarchyFilterSets_\([\s\S]*?\n  \}/);
 assert.ok(hierarchyHelperMatch, 'El frontend debe calcular las rutas de estructuras con asignaciones autorizadas');
@@ -221,6 +229,95 @@ test('locales.order rechaza valores explícitos inválidos, duplicados y parent_
     { id: 'A', sede_id: 'SEDE_A', parent_id: 'B', order: 1 },
     { id: 'B', sede_id: 'SEDE_A', parent_id: 'A', order: 2 }
   ]), /ciclo en locales.parent_id/);
+});
+
+
+test('los selectores comienzan en el nivel del ámbito y no muestran sus ancestros', () => {
+  const plan = hierarchyIndexSandbox.getAccessFilterPlan;
+  const structureScope = plan({
+    scopes: [{ type: 'ESTRUCTURA_ORG', referenceId: 'SC_COMUNICACIONES', includeDescendants: true }]
+  }, 'SEDE_CENTRAL');
+  assert.equal(structureScope.entryScope, 'ESTRUCTURA_ORG');
+  assert.equal(structureScope.localMode, 'hidden');
+  assert.equal(structureScope.hierarchyMode, 'structure-scope');
+
+  const broadSiteScope = plan({
+    scopes: [{ type: 'SEDE', referenceId: 'SEDE_CENTRAL', includeDescendants: false }]
+  }, 'SEDE_CENTRAL');
+  assert.equal(broadSiteScope.localMode, 'selectable');
+  assert.equal(broadSiteScope.hierarchyMode, 'local');
+
+  const totalScope = plan({
+    scopes: [{ type: 'TOTAL', referenceId: '', includeDescendants: false }]
+  }, 'SEDE_CENTRAL');
+  assert.equal(totalScope.localMode, 'selectable');
+
+  const oneLocalScope = plan({
+    scopes: [{ type: 'LOCAL', referenceId: 'SC_PARDO', includeDescendants: false }]
+  }, 'SEDE_CENTRAL');
+  assert.equal(oneLocalScope.localMode, 'fixed');
+  assert.deepEqual(Array.from(oneLocalScope.localScopeIds), ['SC_PARDO']);
+
+  const multipleLocalScopes = plan({
+    scopes: [
+      { type: 'LOCAL', referenceId: 'SC_PARDO', includeDescendants: false },
+      { type: 'LOCAL', referenceId: 'SC_PRIMAVERA', includeDescendants: false }
+    ]
+  }, 'SEDE_CENTRAL');
+  assert.equal(multipleLocalScopes.localMode, 'selectable-scoped');
+  assert.deepEqual(Array.from(multipleLocalScopes.localScopeIds), ['SC_PARDO', 'SC_PRIMAVERA']);
+});
+
+test('un ámbito ESTRUCTURA_ORG inicia en los hijos del nodo concedido sin exigir Local', () => {
+  const structures = [
+    { id: 'SC_COMUNICACIONES', name: 'Oficina de Comunicaciones', sede_id: 'SEDE_CENTRAL', parent_id: '', order: 4 },
+    { id: 'SC_IMAGEN_INSTITUCIONAL', name: 'Imagen Institucional', sede_id: 'SEDE_CENTRAL', parent_id: 'SC_COMUNICACIONES', order: 2 },
+    { id: 'SC_PRENSA', name: 'Prensa', sede_id: 'SEDE_CENTRAL', parent_id: 'SC_IMAGEN_INSTITUCIONAL', order: 1 }
+  ];
+  const records = [
+    { asignacion_id: 'COM_001', estructura_id: 'SC_PRENSA', filter_sede_id: 'SEDE_CENTRAL', filter_local_id: 'SC_PARDO' }
+  ];
+  const contract = {
+    scopes: [{ type: 'ESTRUCTURA_ORG', referenceId: 'SC_COMUNICACIONES', includeDescendants: true }]
+  };
+  const selectable = hierarchySandbox.buildHierarchyFilterSets(
+    records, structures, contract, 'SEDE_CENTRAL'
+  );
+  assert.deepEqual([...selectable].sort(), [
+    'SC_COMUNICACIONES', 'SC_IMAGEN_INSTITUCIONAL', 'SC_PRENSA'
+  ]);
+  const index = hierarchyIndexSandbox.buildIndex(records, structures);
+  const roots = hierarchySandbox.getHierarchyScopeRoots(
+    contract.scopes, index, selectable, 'SEDE_CENTRAL'
+  );
+  assert.equal(roots.length, 1);
+  assert.equal(roots[0].referenceId, 'SC_COMUNICACIONES');
+  assert.deepEqual(
+    Array.from(hierarchySandbox.getSelectableChildren('SC_COMUNICACIONES', index, selectable), node => node.id),
+    ['SC_IMAGEN_INSTITUCIONAL']
+  );
+  assert.deepEqual(
+    Array.from(hierarchySandbox.getSelectableChildren('SC_IMAGEN_INSTITUCIONAL', index, selectable), node => node.id),
+    ['SC_PRENSA']
+  );
+
+  const exactContract = {
+    scopes: [{ type: 'ESTRUCTURA_ORG', referenceId: 'SC_COMUNICACIONES', includeDescendants: false }]
+  };
+  const exactRecords = [
+    { asignacion_id: 'COM_002', estructura_id: 'SC_COMUNICACIONES', filter_sede_id: 'SEDE_CENTRAL', filter_local_id: 'SC_PARDO' }
+  ];
+  const exactSelectable = hierarchySandbox.buildHierarchyFilterSets(
+    exactRecords, structures, exactContract, 'SEDE_CENTRAL'
+  );
+  const exactRoots = hierarchySandbox.getHierarchyScopeRoots(
+    exactContract.scopes,
+    hierarchyIndexSandbox.buildIndex(exactRecords, structures),
+    exactSelectable,
+    'SEDE_CENTRAL'
+  );
+  assert.equal(exactRoots.length, 1);
+  assert.equal(exactRoots[0].includeDescendants, false);
 });
 
 test('Local limita las estructuras visibles sin heredar la ubicación de los padres', () => {

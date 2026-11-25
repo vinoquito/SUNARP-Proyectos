@@ -2302,7 +2302,11 @@ test('Información de personal muestra Local después de Sede y antes de la estr
   assert.match(directoryViewSource, /id="directoryCargoFilter"/);
   assert.match(directoryUiSource, /localFilter: document\.getElementById\(/);
   assert.match(directoryUiSource, /function populateLocalFilter\(/);
+  assert.match(directoryUiSource, /function _directoryGetAccessFilterPlan_/);
   assert.match(directoryUiSource, /function _directoryBuildLocalHierarchyFilterSets_/);
+  assert.match(directoryUiSource, /accessPlan\.localMode === 'hidden'/);
+  assert.match(directoryUiSource, /accessPlan\.hierarchyMode === 'structure-scope'/);
+  assert.match(directoryUiSource, /_directoryBuildHierarchyFilterSets_\(/);
   assert.match(directoryUiSource, /state\.hierarchySelectableIds = _directoryBuildLocalHierarchyFilterSets_/);
   assert.match(directoryUiSource, /recordLocalId = key\(record\.filter_local_id \|\| record\.local_id\)/);
   assert.match(directoryUiSource, /localFilter\.addEventListener\('change'/);
