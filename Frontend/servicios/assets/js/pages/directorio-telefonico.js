@@ -303,9 +303,7 @@ const app = createBaseApp({
 
                         String(i.page || '').trim() === PAGE_NAME &&
 
-                        String(i.state || '')
-                            .trim()
-                            .toLowerCase() === 'activo' &&
+                        (i.active === true || String(i.active || '').trim().toLowerCase() === 'true') &&
 
                         String(i.id ?? '').trim() !== ''
 
