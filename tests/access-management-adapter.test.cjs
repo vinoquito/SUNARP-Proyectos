@@ -2514,7 +2514,7 @@ test('la jerarquía del Directorio muestra los hijos directos con sus nombres re
   const implementation = directoryUiSource.slice(start, end);
   assert.ok(implementation.includes('option.textContent = key(node.name)'));
   assert.ok(directoryUiSource.includes('hierarchyIndex.childrenByParent.get(parentKey)'));
-  assert.ok(directoryUiSource.includes('Array.from(index.structureById.values())'));
+  assert.ok(directoryUiSource.includes('Array.from(hierarchyIndex.structureById.values())'));
   assert.ok(directoryUiSource.includes('scope.includeDescendants === true'));
   assert.equal(implementation.includes('contextualIds'), false);
   assert.equal(implementation.includes('(contexto)'), false);
@@ -2569,17 +2569,17 @@ test('los filtros acumulan Sede, Local, estructura y Cargo sobre la instantánea
   assert.ok(hierarchy.includes('state.hierarchySelectableIds'));
 
   const scopeRootsStart = directoryUiSource.indexOf('function _directoryGetHierarchyScopeRoots_');
-  const nodesStart = directoryUiSource.indexOf('function getHierarchyNodes(parentId)');
+  const nodesStart = directoryUiSource.indexOf('function getHierarchyNodesForContext(');
   const hierarchyScopeRoots = directoryUiSource.slice(scopeRootsStart, nodesStart);
   assert.ok(hierarchyScopeRoots.includes("scope.type !== 'ESTRUCTURA_ORG'"));
   assert.ok(hierarchyScopeRoots.includes('scope.includeDescendants'));
   assert.ok(hierarchyScopeRoots.includes('_directoryMatchesHierarchySubtree_'));
 
-  const nodesEnd = directoryUiSource.indexOf('function getHierarchyLabel(', nodesStart);
+  const nodesEnd = directoryUiSource.indexOf('function getHierarchyNodes(parentId)', nodesStart);
   const hierarchyNodes = directoryUiSource.slice(nodesStart, nodesEnd);
   assert.ok(hierarchyNodes.includes('_directoryGetHierarchyScopeRoots_'));
   assert.ok(hierarchyNodes.includes('_directoryGetSelectableHierarchyChildren_'));
-  assert.ok(directoryUiSource.includes("accessPlan.hierarchyMode === 'local'"));
+  assert.ok(hierarchyNodes.includes("plan.hierarchyMode !== 'local'"));
   assert.equal(hierarchyNodes.includes('collectChildren'), false);
 
   const renderStart = directoryUiSource.indexOf('function renderHierarchyFilters()');
