@@ -1543,12 +1543,12 @@ const DirectoryPage = (() => {
       '<input type="text" class="sunarp-input" id="directoryFormApellidos" maxlength="150" required value="' + escapeHtml(record && record.apellidos || '') + '"></div>',
       '<div class="sunarp-form-field sunarp-form-field--full"><label for="directoryFormCorreoInstitucional">Correo institucional</label>',
       '<input type="email" class="sunarp-input" id="directoryFormCorreoInstitucional" maxlength="150" placeholder="usuario@sunarp.gob.pe" value="' + escapeHtml(record && record.correo_institucional || '') + '"></div>',
-      '<div class="sunarp-form-field"><label for="directoryFormTipoDocumento">Tipo de documento *</label>',
-      '<select class="sunarp-select" id="directoryFormTipoDocumento" required><option value="">Selecciona un tipo de documento</option>' + documentOptions + '</select></div>',
-      '<div class="sunarp-form-field"><label for="directoryFormNumeroDocumento">Número de documento *</label>',
-      '<input type="text" class="sunarp-input" id="directoryFormNumeroDocumento" maxlength="30" autocomplete="off" required value="' + escapeHtml(personalData.numero_documento || '') + '"></div>',
+      '<div class="sunarp-form-field"><label for="directoryFormTipoDocumento">Tipo de documento' + ((!isEditing || personalData.tipo_documento || personalData.numero_documento) ? ' *' : '') + '</label>',
+      '<select class="sunarp-select" id="directoryFormTipoDocumento"' + ((!isEditing || personalData.tipo_documento || personalData.numero_documento) ? ' required' : '') + '><option value="">Selecciona un tipo de documento</option>' + documentOptions + '</select></div>',
+      '<div class="sunarp-form-field"><label for="directoryFormNumeroDocumento">Número de documento' + ((!isEditing || personalData.tipo_documento || personalData.numero_documento) ? ' *' : '') + '</label>',
+      '<input type="text" class="sunarp-input" id="directoryFormNumeroDocumento" maxlength="30" autocomplete="off"' + ((!isEditing || personalData.tipo_documento || personalData.numero_documento) ? ' required' : '') + ' value="' + escapeHtml(personalData.numero_documento || '') + '"></div>',
       '<div class="sunarp-form-field sunarp-form-field--full"><button type="button" id="directoryFormSearchDocument" class="sunarp-btn sunarp-btn-outline">Buscar DNI / documento</button>',
-      '<small id="directoryFormDocumentStatus" aria-live="polite">Debes validar el documento antes de guardar.</small></div>',
+      '<small id="directoryFormDocumentStatus" aria-live="polite">' + (isEditing && !personalData.tipo_documento && !personalData.numero_documento ? 'Este registro histórico no tiene ficha de documento. Puedes editarlo sin crear una ficha; si agregas un documento o fechas, deberás validarlo.' : 'Debes validar el documento antes de guardar.') + '</small></div>',
       '<div class="sunarp-form-field"><label for="directoryFormFechaNacimiento">Fecha de nacimiento</label><input type="date" class="sunarp-input" id="directoryFormFechaNacimiento" value="' + escapeHtml(personalData.fecha_nacimiento || '') + '"></div>',
       '<div class="sunarp-form-field"><label for="directoryFormFechaInicio">Fecha de inicio de servicios</label><input type="date" class="sunarp-input" id="directoryFormFechaInicio" value="' + escapeHtml(personalData.fecha_inicio_servicios || '') + '"></div>',
       '<div class="sunarp-form-field"><label for="directoryFormFechaCese">Fecha de cese</label><input type="date" class="sunarp-input" id="directoryFormFechaCese" value="' + escapeHtml(personalData.fecha_cese || '') + '"></div>',
@@ -1620,9 +1620,12 @@ const DirectoryPage = (() => {
     const scope = formData.scope || {};
     const assignmentRows = [];
     const removedAssignmentIds = new Set();
+    const requiresExistingDocumentValidation = !isEditing ||
+      Boolean(personalData.tipo_documento || personalData.numero_documento);
     let documentValidated = false;
     let documentAvailable = false;
     let documentSearchRequest = 0;
+    saveButton.disabled = requiresExistingDocumentValidation;
 
     const createField = (labelText, control, fullWidth) => {
       const wrapper = document.createElement('div');
@@ -1691,6 +1694,17 @@ const DirectoryPage = (() => {
       return path;
     }
 
+    function isDocumentValidationRequired() {
+      return requiresExistingDocumentValidation ||
+        Boolean(
+          key(documentTypeSelect.value) ||
+          key(documentNumberInput.value) ||
+          document.getElementById('directoryFormFechaNacimiento').value ||
+          document.getElementById('directoryFormFechaInicio').value ||
+          document.getElementById('directoryFormFechaCese').value
+        );
+    }
+
     function setDocumentValidation(available, message) {
       documentValidated = true;
       documentAvailable = available === true;
@@ -1702,9 +1716,12 @@ const DirectoryPage = (() => {
     function invalidateDocumentValidation() {
       documentValidated = false;
       documentAvailable = false;
-      saveButton.disabled = true;
-      documentStatus.textContent = 'El documento cambió. Debes buscarlo nuevamente antes de guardar.';
-      documentStatus.dataset.state = 'pending';
+      const required = isDocumentValidationRequired();
+      saveButton.disabled = required;
+      documentStatus.textContent = required
+        ? 'El documento cambió. Debes buscarlo nuevamente antes de guardar.'
+        : 'No hay ficha de documento en este registro histórico; puedes continuar sin agregarla.';
+      documentStatus.dataset.state = required ? 'pending' : 'optional';
     }
 
     async function searchDocument() {
@@ -1742,6 +1759,11 @@ const DirectoryPage = (() => {
 
     documentTypeSelect.addEventListener('change', invalidateDocumentValidation);
     documentNumberInput.addEventListener('input', invalidateDocumentValidation);
+    [
+      'directoryFormFechaNacimiento',
+      'directoryFormFechaInicio',
+      'directoryFormFechaCese'
+    ].forEach(id => document.getElementById(id).addEventListener('change', invalidateDocumentValidation));
     searchDocumentButton.addEventListener('click', searchDocument);
 
     function getStructureNodesForRow(siteId, localId) {
@@ -2101,6 +2123,7 @@ const DirectoryPage = (() => {
       detail,
       assignmentRows,
       removedAssignmentIds,
+      isDocumentValidationRequired,
       isDocumentValidated: () => documentValidated && documentAvailable
     };
     formElement.addEventListener('submit', saveForm);
@@ -2116,7 +2139,8 @@ const DirectoryPage = (() => {
     const form = event.currentTarget;
     if (!form.reportValidity()) return;
     const formState = form.__directorySubmitState;
-    if (!formState || !formState.isDocumentValidated()) {
+    if (!formState ||
+        (formState.isDocumentValidationRequired() && !formState.isDocumentValidated())) {
       notify('warning', 'Primero debes buscar y validar el documento de identidad.');
       return;
     }
