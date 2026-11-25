@@ -3192,6 +3192,23 @@ function getAccessUserConfiguration(personaId) {
  * vez por combinación de filtros estructurales y generación de las fuentes.
  * Las búsquedas y páginas posteriores reutilizan el índice ya enriquecido.
  */
+function _accessFindDirectoryRecordsByIds_(sheetName, ids, requiredHeaders, projectionFields) {
+  const references = Array.from(new Set((ids || []).map(_accessText_).filter(Boolean)));
+  if (!references.length) return [];
+  const result = SUNARPCore.findRecordsByFields(
+    _accessDirectorySource_(sheetName),
+    { id: references },
+    {
+      searchField: 'id',
+      matchCase: false,
+      requiredHeaders,
+      projectionFields: projectionFields || requiredHeaders
+    }
+  );
+  return result.records || [];
+}
+
+
 function _accessBuildUserListingIndex_() {
   if (typeof SUNARPCore.getOrBuildCachedValue !== 'function') {
     throw new Error('El listado de usuarios requiere getOrBuildCachedValue.');
@@ -3214,12 +3231,7 @@ function _accessBuildUserListingIndex_() {
     { key: 'users', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.users), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.users },
     { key: 'userRoles', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.userRoles), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.userRoles },
     { key: 'modules', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.modules), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.modules },
-    { key: 'roles', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.roles), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.roles },
-    { key: 'assignments', source: _accessDirectorySource_('asignaciones'), requiredHeaders: ['asignacion_id', 'persona_id', 'estructura_local_id', 'local_id', 'active'] },
-    { key: 'structureLocal', source: _accessDirectorySource_('estructura_local'), requiredHeaders: ['id', 'estructura_id', 'local_id'] },
-    { key: 'structureOrg', source: _accessDirectorySource_('estructura_org'), requiredHeaders: ['id', 'sede_id'] },
-    { key: 'locals', source: _accessDirectorySource_('locales'), requiredHeaders: ['id', 'sede_id'] },
-    { key: 'sites', source: _accessSecuritySource_('Sedes'), requiredHeaders: ['id', 'name'] }
+    { key: 'roles', source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.roles), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.roles }
   ];
   const indexStartedAt = Date.now();
   const cached = SUNARPCore.getOrBuildCachedValue(
@@ -3228,6 +3240,20 @@ function _accessBuildUserListingIndex_() {
     () => {
       const readStartedAt = Date.now();
       const data = SUNARPCore.listRecordsFromSourcesCached(requests, 60);
+      const userIds = Array.from(new Set((data.users || [])
+        .map(item => _accessText_(item.persona_id)).filter(Boolean)));
+      data.assignments = userIds.length
+        ? (SUNARPCore.findRecordsByFields(
+            _accessDirectorySource_('asignaciones'),
+            { persona_id: userIds },
+            {
+              searchField: 'persona_id',
+              matchCase: false,
+              requiredHeaders: ['asignacion_id', 'persona_id', 'estructura_local_id', 'local_id', 'active'],
+              projectionFields: ['asignacion_id', 'persona_id', 'estructura_local_id', 'local_id', 'active']
+            }
+          ).records || [])
+        : [];
       const sourceReadMs = Date.now() - readStartedAt;
       const buildStartedAt = Date.now();
 
@@ -3237,18 +3263,31 @@ function _accessBuildUserListingIndex_() {
       const roles = new Map((data.roles || []).filter(_accessCatalogIsActive_).map(item => [
         _accessText_(item.rol_id), item
       ]));
-      const structureLocalById = new Map((data.structureLocal || []).map(item => [
-        _accessText_(item.id), item
-      ]));
-      const structureById = new Map((data.structureOrg || []).filter(_accessCatalogIsActive_).map(item => [
-        _accessText_(item.id), item
-      ]));
-      const localById = new Map((data.locals || []).filter(_accessCatalogIsActive_).map(item => [
-        _accessText_(item.id), item
-      ]));
-      const siteNameById = new Map((data.sites || []).filter(_accessCatalogIsActive_).map(item => [
+
+      const relationIds = data.assignments.map(item => _accessText_(item.estructura_local_id)).filter(Boolean);
+      const orgLookupStartedAt = Date.now();
+      const structureLocals = _accessFindDirectoryRecordsByIds_(
+        'estructura_local', relationIds, ['id', 'estructura_id', 'local_id']
+      );
+      const relationById = new Map(structureLocals.map(item => [_accessText_(item.id), item]));
+      const structureIds = structureLocals.map(item => _accessText_(item.estructura_id)).filter(Boolean);
+      const localIds = data.assignments.map(item => _accessText_(item.local_id))
+        .concat(structureLocals.map(item => _accessText_(item.local_id))).filter(Boolean);
+      const structures = _accessFindDirectoryRecordsByIds_(
+        'estructura_org', structureIds, ['id', 'sede_id']
+      ).filter(_accessCatalogIsActive_);
+      const locals = _accessFindDirectoryRecordsByIds_(
+        'locales', localIds, ['id', 'sede_id']
+      ).filter(_accessCatalogIsActive_);
+      const structureById = new Map(structures.map(item => [_accessText_(item.id), item]));
+      const localById = new Map(locals.map(item => [_accessText_(item.id), item]));
+      const siteIds = structures.map(item => _accessText_(item.sede_id))
+        .concat(locals.map(item => _accessText_(item.sede_id))).filter(Boolean);
+      const sites = _accessFindOrgCatalogByIds_('SEDE', siteIds);
+      const siteNameById = new Map(sites.map(item => [
         _accessText_(item.id), _accessText_(item.name)
       ]));
+      const orgLookupMs = Date.now() - orgLookupStartedAt;
 
       const integrity = {
         activeAssignments: 0,
@@ -3277,7 +3316,7 @@ function _accessBuildUserListingIndex_() {
           return;
         }
 
-        const relation = relationId ? structureLocalById.get(relationId) : null;
+        const relation = relationId ? relationById.get(relationId) : null;
         if (relationId && !relation) {
           addInvalidAssignment(assignment, 'unresolved-structure-local');
           return;
@@ -3329,13 +3368,13 @@ function _accessBuildUserListingIndex_() {
 
       const rows = (data.users || []).map(user => {
         const personaId = _accessText_(user.persona_id);
-        const siteIds = Array.from(siteIdsByPerson.get(personaId) || []).sort();
-        if (siteIds.length > 1) integrity.multiSiteAssignments++;
+        const personSiteIds = Array.from(siteIdsByPerson.get(personaId) || []).sort();
+        if (personSiteIds.length > 1) integrity.multiSiteAssignments++;
         return {
           persona_id: personaId,
-          sede_ids: siteIds,
+          sede_ids: personSiteIds,
           all_sedes: false,
-          sede_nombre: siteIds.map(id => siteNameById.get(id) || id).join(' · '),
+          sede_nombre: personSiteIds.map(id => siteNameById.get(id) || id).join(' · '),
           active: _accessIsActive_(user.active),
           roles: rolesByPerson.get(personaId) || []
         };
@@ -3348,12 +3387,13 @@ function _accessBuildUserListingIndex_() {
         invalidAssignments: integrity.invalidAssignments,
         multiSiteAssignments: integrity.multiSiteAssignments,
         sourceReadMs,
+        orgLookupMs,
         indexBuildMs
       }));
       if (integrity.invalidAssignments || integrity.multiSiteAssignments) {
         console.warn('[AccessManagement] User assignment index anomalies:', JSON.stringify(integrity));
       }
-      return { rows, integrity, sourceReadMs, orgLookupMs: 0, indexBuildMs };
+      return { rows, integrity, sourceReadMs, orgLookupMs, indexBuildMs };
     },
     60
   );
@@ -3365,7 +3405,8 @@ function _accessBuildUserListingIndex_() {
     cacheStored: cached.cacheStored === true,
     sourceGenerationMs: Number(cached.sourceGenerationMs) || 0,
     sourceReadMs: Number(cached.value.sourceReadMs) || 0,
-    assignmentIndexBuildMs: Number(cached.value.indexBuildMs) || 0,
+    orgLookupMs: Number(cached.value.orgLookupMs) || 0,
+    indexBuildMs: Number(cached.value.indexBuildMs) || 0,
     users: cached.value.rows.length,
     durationMs: Date.now() - indexStartedAt
   }));
