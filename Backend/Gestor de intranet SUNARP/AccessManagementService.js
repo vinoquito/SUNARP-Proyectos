@@ -3949,6 +3949,33 @@ function _accessBuildEntityHistoryIndex_(source, entityType, recordId, relatedTy
   );
   consumeEvents(directMatches.records);
 
+  if (entityType === 'SERVIDOR') {
+    // El historial del servidor reúne la identidad, la ficha personal y las
+    // asignaciones asociadas. Las asignaciones tienen sus propios IDs.
+    const assignmentMatches = SUNARPCore.findRecordsByFields(
+      _accessDirectorySource_('asignaciones'),
+      { persona_id: recordId },
+      {
+        searchField: 'persona_id',
+        requiredHeaders: ['asignacion_id', 'persona_id'],
+        projectionFields: ['asignacion_id', 'persona_id']
+      }
+    );
+    (assignmentMatches.records || []).forEach(assignment => {
+      const assignmentId = _accessText_(assignment.asignacion_id);
+      if (!assignmentId) return;
+      const assignmentEvents = SUNARPCore.findRecordsByFields(
+        source,
+        { registro_id: assignmentId },
+        {
+          searchField: 'registro_id',
+          requiredHeaders: ACCESS_MANAGEMENT_FIELDS.audit
+        }
+      );
+      consumeEvents(assignmentEvents.records);
+    });
+  }
+
   if (entityType === 'PERMISO') {
     const relatedMatches = SUNARPCore.searchRecordsByFields(
       source,
@@ -3989,7 +4016,7 @@ function getAccessEntityHistory(payload) {
     USUARIO: ['USUARIO', 'USUARIO_ROL', 'AMBITO_ACCESO'],
     ROL: ['ROL', 'ROL_PERMISO'],
     PERMISO: ['PERMISO', 'ROL_PERMISO'],
-    SERVIDOR: ['SERVIDOR']
+    SERVIDOR: ['SERVIDOR', 'PERSONA', 'DATOS_PERSONALES', 'ASIGNACION']
   };
   if (!relatedTypes[entityType]) {
     throw new Error('No está habilitada la consulta de historial para ' + entityType + '.');
