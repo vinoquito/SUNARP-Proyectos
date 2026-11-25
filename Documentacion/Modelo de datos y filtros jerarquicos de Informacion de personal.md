@@ -4,8 +4,7 @@
 
 **Fecha de referencia de los datos compartidos:** 24 de noviembre de 2026  
 **Rama examinada:** `feat/directorio-personas-datos-asignaciones`  
-**HEAD actual de la rama:** `861f5092d0081dc18b4a5fe5e46278a4d85e9fc4` (actualización documental).  
-**HEAD del código implementado:** `5c253513480273090e6d5dc9980997009357cad8`.  
+**HEAD del código implementado y probado:** `5c253513480273090e6d5dc9980997009357cad8`.  
 **Estado de CI de la implementación:** 274/274 pruebas aprobadas, 0 fallidas en GitHub Actions (push #1487 y PR #1488, HEAD `5c253513480273090e6d5dc9980997009357cad8`).  
 **Estado de despliegue:** la aprobación de CI no acredita que el comportamiento esté publicado ni validado en la implementación de pruebas de Apps Script.
 
