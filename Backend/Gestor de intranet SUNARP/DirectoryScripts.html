@@ -435,6 +435,33 @@ const DirectoryPage = (() => {
 
 
   /**
+   * Aplica una selección orgánica respetando el alcance de la raíz del
+   * ámbito. Una referencia sin descendientes filtra solo su propia unidad,
+   * aunque exista otra autorización independiente sobre un nodo hijo.
+   */
+  function _directoryMatchesHierarchySelection_(recordStructureId, hierarchyPath, scopes, hierarchyIndex) {
+    if (!Array.isArray(hierarchyPath) || !hierarchyPath.length) return true;
+    const keyOf = value => String(value === null || value === undefined ? '' : value).trim();
+    const rootId = keyOf(hierarchyPath[0]);
+    const selectedId = keyOf(hierarchyPath[hierarchyPath.length - 1]);
+    if (!rootId || !selectedId) return true;
+
+    const rootScopes = (Array.isArray(scopes) ? scopes : []).filter(scope =>
+      scope && scope.type === 'ESTRUCTURA_ORG' &&
+      keyOf(scope.referenceId) === rootId
+    );
+    const rootIsExactOnly = rootScopes.length > 0 &&
+      !rootScopes.some(scope => scope.includeDescendants === true);
+
+    if (hierarchyPath.length === 1 && rootIsExactOnly) {
+      return keyOf(recordStructureId) === rootId;
+    }
+    return _directoryMatchesHierarchySubtree_(
+      recordStructureId, selectedId, hierarchyIndex
+    );
+  }
+
+  /**
    * Aplica los filtros seleccionados.
    *
    * excludedFilters permite excluir uno de los filtros
@@ -446,15 +473,22 @@ const DirectoryPage = (() => {
     const elements = getElements();
     const siteId = elements.sedeFilter ? key(elements.sedeFilter.value) : '';
     const cargoId = elements.cargoFilter ? key(elements.cargoFilter.value) : '';
-    const selectedStructureId = !excluded.has('hierarchy') && state.hierarchyPath.length
-      ? key(state.hierarchyPath[state.hierarchyPath.length - 1])
-      : '';
+    const selectedHierarchyPath = !excluded.has('hierarchy')
+      ? state.hierarchyPath
+      : [];
+    const contract = state.catalogs && state.catalogs.filterContract;
+    const hierarchyScopes = contract && Array.isArray(contract.scopes)
+      ? contract.scopes
+      : [];
     return state.records.filter(record => {
       const recordSiteId = key(record.filter_sede_id || record.sede_id);
       if (!excluded.has('sede') && siteId && recordSiteId !== siteId) return false;
       if (!excluded.has('cargo') && cargoId && key(record.cargo_id) !== cargoId) return false;
-      if (selectedStructureId && !_directoryMatchesHierarchySubtree_(
-        record.estructura_id, selectedStructureId, state.hierarchyIndex
+      if (selectedHierarchyPath.length && !_directoryMatchesHierarchySelection_(
+        record.estructura_id,
+        selectedHierarchyPath,
+        hierarchyScopes,
+        state.hierarchyIndex
       )) return false;
       return true;
     });
