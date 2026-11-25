@@ -69,7 +69,7 @@ test('cargo y condición del cargo son selectores SUNARP alimentados por catálo
   assert.match(frontendSource, /makeSelect\(cargos\.map/);
   assert.match(frontendSource, /makeSelect\(conditions\.map/);
   assert.match(frontendSource, /directoryEditorCondition/);
-  assert.match(serviceSource, /conditionCargo: 'condicion_cargo'/);
+  assert.match(serviceSource, /condicionCargo: 'condicion_cargo'/);
   assert.match(serviceSource, /requiredHeaders: DIRECTORY_REQUIRED_HEADERS\.condicionCargo/);
   assert.match(serviceSource, /conditionCatalog\.conditionCargo/);
 });
@@ -739,14 +739,15 @@ test('la interfaz limita la cascada a hijos directos reales y no presenta contex
   assert.equal(frontendScript.includes('option.disabled'), false);
   assert.ok(frontendScript.includes('option.textContent = key(node.name)'));
   assert.ok(frontendScript.includes('hierarchyIndex.childrenByParent.get(parentKey)'));
-  assert.ok(frontendScript.includes('Array.from(index.structureById.values())'));
+  assert.ok(frontendScript.includes('Array.from(hierarchyIndex.structureById.values())'));
   assert.ok(frontendScript.includes('scope.includeDescendants === true'));
   assert.ok(frontendScript.includes('state.hierarchySelectableIds = _directoryBuildHierarchyFilterSets_'));
   assert.ok(frontendScript.includes('_directoryGetSelectableHierarchyChildren_('));
 
-  const getHierarchyStart = frontendScript.indexOf('function getHierarchyNodes(parentId)');
-  const getHierarchyEnd = frontendScript.indexOf('function getHierarchyLabel(', getHierarchyStart);
+  const getHierarchyStart = frontendScript.indexOf('function getHierarchyNodesForContext(');
+  const getHierarchyEnd = frontendScript.indexOf('function getHierarchyNodes(parentId)', getHierarchyStart);
   const getHierarchySource = frontendScript.slice(getHierarchyStart, getHierarchyEnd);
+  assert.ok(getHierarchySource.includes('_directoryGetHierarchyScopeRoots_'));
   assert.ok(getHierarchySource.includes('_directoryGetSelectableHierarchyChildren_'));
   assert.equal(getHierarchySource.includes('collectChildren'), false);
   assert.equal(frontendScript.includes('selectableIds.add(keyOf(node.id)'), false);
@@ -1267,22 +1268,25 @@ test('el guardado directo de ficha personal aplica la unicidad documental normal
 });
 
 
-test('el formulario permite registrar y actualizar observaciones de cada asignación', () => {
-  assert.ok(frontendSource.includes('directoryFormObservaciones'));
-  assert.ok(frontendSource.includes("observaciones: get('directoryFormObservaciones')?.value.trim() || ''"));
-  assert.ok(frontendSource.includes("querySelectorAll('#directoryAssignmentsContainer .directory-assignment-row')"));
-  assert.ok(frontendSource.includes("assignments"));
+test('el editor guarda observaciones y condición dentro del borrador de la asignación', () => {
+  assert.ok(frontendSource.includes("observations.id='directoryEditorObservations'"));
+  assert.ok(frontendSource.includes("observaciones:key(observations.value)"));
+  assert.ok(frontendSource.includes("condicion_cargo:key(condition.value)"));
+  assert.ok(frontendSource.includes('directoryAssignmentsTableHost'));
 });
 
-test('el formulario usa búsqueda documental, cascadas por ámbito y asignaciones múltiples en la misma operación', () => {
+test('el formulario usa búsqueda documental y administra asignaciones en una tabla única', () => {
   assert.ok(frontendSource.includes("callServer('getDirectoryFormData'"));
   assert.ok(frontendSource.includes("callServer('searchDirectoryPersonByDocument'"));
-  assert.ok(frontendSource.includes('directoryAssignmentsContainer'));
+  assert.ok(frontendSource.includes('directoryAssignmentEditorHost'));
+  assert.ok(frontendSource.includes('directoryAssignmentsTableHost'));
   assert.ok(frontendSource.includes('directoryAddAssignment'));
   assert.ok(frontendSource.includes('directoryFormTipoDocumento'));
   assert.ok(frontendSource.includes('openDirectoryForm(null)'));
-  assert.ok(!frontendSource.includes("label: 'Nueva asignación'"));
-  assert.ok(!frontendSource.includes('Adscripción de la asignación'));
+  assert.ok(frontendSource.includes('removedAssignmentIds:Array.from(removedIds)'));
+  assert.ok(frontendSource.includes('Conserva al menos una asignación registrada'));
+  assert.ok(frontendSource.includes('Primero agrega o cancela la asignación que estás editando'));
+  assert.doesNotMatch(frontendSource,/firstAssignmentRow\\.cloneNode\\(true\\)/);
 });
 
 test('saveDirectoryEntry coordina todas las asignaciones dentro del formulario de persona', () => {
@@ -2929,7 +2933,7 @@ test('el ingreso no carga personas, asignaciones ni datos personales; la sede se
   assert.match(siteData, /records,/);
   assert.match(serviceSource, /filter_local_id: local \? _directoryKey_\(local\.id\) : _directoryKey_\(assignment\.local_id\)/);
   assert.match(serviceSource, /function getDirectoryPersonById\([\s\S]*?findRecordsByFields\([\s\S]*?servidor_id/s);
-  assert.match(frontendScript, /callServer\('getDirectoryPersonById', record\.persona_id\)/);
+  assert.match(frontendScript, /callServer\('getDirectoryPersonById',\s*record\.persona_id\)/);
 });
 
 test('la autorización y el enriquecimiento reutilizan la adscripción resuelta una sola vez', () => {
