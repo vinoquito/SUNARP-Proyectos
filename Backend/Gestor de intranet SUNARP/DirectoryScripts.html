@@ -1854,11 +1854,20 @@ const DirectoryPage = (() => {
       const isSingleStructureScope = scope.hierarchyMode === 'structure-scope' && structureScopes.length === 1;
       if (isSingleStructureScope) {
         const onlyScope = structureScopes[0];
+        const rootId = key(onlyScope.referenceId);
         if (!onlyScope.includeDescendants) {
-          controls.fixedStructureId = key(onlyScope.referenceId);
+          controls.fixedStructureId = rootId;
           controls.path = [];
         } else {
-          controls.path = controls.path.filter(id => id !== key(onlyScope.referenceId));
+          const rootIndex = controls.path.indexOf(rootId);
+          if (key(location.structureId) === rootId) {
+            controls.fixedStructureId = rootId;
+            controls.path = [];
+          } else {
+            controls.path = rootIndex >= 0
+              ? controls.path.slice(rootIndex + 1)
+              : [];
+          }
         }
       }
 
@@ -1932,6 +1941,16 @@ const DirectoryPage = (() => {
         controls.fixedStructureId = '';
         controls.hierarchy.hidden = false;
         const roots = getRootNodes(nodes);
+        // En la edición, el detalle devuelve la ruta orgánica completa. El
+        // formulario debe empezar en la raíz seleccionable del ámbito, no
+        // reconstruir los niveles superiores ocultos por autorización.
+        const rootIds = new Set(roots.map(node => key(node.id)));
+        const selectedRootIndex = controls.path.findIndex(id => rootIds.has(key(id)));
+        if (selectedRootIndex >= 0) {
+          controls.path = controls.path.slice(selectedRootIndex);
+        } else if (controls.path.length && !controls.fixedStructureId) {
+          controls.path = [];
+        }
         function appendLevel(parentId, level, levelNodes) {
           const options = parentId
             ? nodes.filter(node => key(node.parent_id) === key(parentId))
