@@ -1934,12 +1934,40 @@ function searchDirectoryDocument(payload) {
     throw new Error('Debes indicar el tipo y número de documento.');
   }
   const operation = _directoryText_(payload.action).toLowerCase() === 'edit' ? 'edit' : 'create';
-  _directoryAuthorizationContext_(
+  const authorization = _directoryAuthorizationContext_(
     operation === 'edit' ? 'INFORMACION_PERSONAL_EDITAR' : 'INFORMACION_PERSONAL_CREAR'
   );
   const documentType = _directoryAssertDocumentTypeAllowed_(payload.tipo_documento);
   const documentNumber = _directoryNormalizeDocument_(payload.numero_documento, 'Número de documento');
   const currentPersonaId = _directoryText_(payload.persona_id);
+
+  if (operation === 'edit') {
+    if (!currentPersonaId) {
+      throw new Error('Debes indicar el servidor que estás editando.');
+    }
+    const person = _directoryFindPersonById_(currentPersonaId);
+    if (!person) throw new Error('No se encontró el servidor que estás editando.');
+    const linkedResult = SUNARPCore.findRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones),
+      { persona_id: currentPersonaId },
+      {
+        searchField: 'persona_id',
+        requiredHeaders: DIRECTORY_REQUIRED_HEADERS.asignaciones
+      }
+    );
+    const linkedAssignments = linkedResult.records || [];
+    if (Number(linkedResult.total) > linkedAssignments.length) {
+      throw new Error('No se pudieron recuperar las asignaciones necesarias para validar el ámbito del servidor.');
+    }
+    const context = _directoryLoadContext_({
+      includePersonalData: false,
+      includePeople: false,
+      includeAssignments: false,
+      includeDocumentTypes: false,
+      validateSnapshot: false
+    });
+    _directoryAssertPersonMutationScope_(authorization, person, linkedAssignments, context);
+  }
   const result = SUNARPCore.findRecordsByFields(
     _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
     { numero_documento: documentNumber },
