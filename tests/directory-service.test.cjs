@@ -8,6 +8,7 @@ const crypto = require('node:crypto');
 const root = path.resolve(__dirname, '..');
 const servicePath = path.join(root, 'Backend/Gestor de intranet SUNARP/DirectoryService.js');
 const frontendPath = path.join(root, 'Backend/Gestor de intranet SUNARP/DirectoryScripts.html');
+const viewPath = path.join(root, 'Backend/Gestor de intranet SUNARP/ViewDirectorios.html');
 const coreTestsPath = path.join(root, 'Backend/SUNARP Core/DataCoreTests.js');
 const coreRepositoryPath = path.join(root, 'Backend/SUNARP Core/DataRepository.js');
 const uiDataTablePath = path.join(root, 'Backend/SUNARP UI/UIDataTableScripts.html');
@@ -16,6 +17,7 @@ const serviceSource = fs.readFileSync(servicePath, 'utf8');
 const accessServicePath = path.join(root, 'Backend/Gestor de intranet SUNARP/AccessManagementService.js');
 const accessServiceSource = fs.readFileSync(accessServicePath, 'utf8');
 const frontendSource = fs.readFileSync(frontendPath, 'utf8');
+const viewSource = fs.readFileSync(viewPath, 'utf8');
 const coreTestsSource = fs.readFileSync(coreTestsPath, 'utf8');
 const coreRepositorySource = fs.readFileSync(coreRepositoryPath, 'utf8');
 const uiDataTableSource = fs.readFileSync(uiDataTablePath, 'utf8');
@@ -39,32 +41,50 @@ test('el guardado compuesto retira únicamente las asignaciones de la persona in
   assert.match(serviceSource, /SUNARPCore\.insertRecord\([\s\S]*?_directoryGetAssignmentSchema_\(\)/);
 });
 
-test('el formulario organiza validación, datos personales y asignaciones', () => {
-  const panel = frontendSource.indexOf('directoryDocumentSearchPanel');
-  const validation = frontendSource.indexOf('Validar identidad');
-  const personal = frontendSource.indexOf('Datos personales');
-  const assignments = frontendSource.indexOf('Asignaciones');
-  assert.ok(panel >= 0 && validation > panel && personal > validation && assignments > personal);
-  assert.ok(frontendSource.includes('directoryDocumentClear'));
-  assert.ok(frontendSource.includes("searchButton.textContent = 'Buscar persona'"));
-  assert.ok(frontendSource.includes('SUNARPUI.showAlert({'));
-  assert.ok(frontendSource.includes('directoryPersonalFields'));
-  assert.ok(frontendSource.includes('directoryAssignmentsFieldset'));
+test('el formulario apila tipo y número de documento y organiza los datos personales por ancho', () => {
+  assert.match(frontendSource, /directory-form-document-fields/);
+  assert.match(frontendSource, /directoryFormTipoDocumento/);
+  assert.match(frontendSource, /directoryFormNumeroDocumento/);
+  assert.match(frontendSource, /directoryFormNombres/);
+  assert.match(frontendSource, /directoryFormApellidos/);
+  assert.match(frontendSource, /directory-form-dates-grid/);
+  assert.match(viewSource, /\.directory-form-document-fields[\s\S]*?grid-template-columns:minmax\(0,1fr\)/);
+  assert.match(viewSource, /\.directory-form-dates-grid[\s\S]*?grid-template-columns:repeat\(3,minmax\(0,1fr\)/);
+  assert.match(frontendSource, /SUNARPUI\.showAlert\(/);
+  assert.match(frontendSource, /Buscar persona/);
   assert.doesNotMatch(frontendSource, /Buscar DNI|Relación con local|Local directamente asignado/);
 });
 
-test('una única estructura autorizada en la sede seleccionada fija la raíz aunque existan ámbitos en otras sedes', () => {
-  assert.match(frontendSource, /const siteStructureScopes = plan\.structureScopes\.filter\(scope =>/);
-  assert.match(frontendSource, /key\(root\.sede_id\) === key\(sedeId\)/);
-  assert.match(frontendSource, /if \(siteStructureScopes\.length === 1\)/);
+test('las asignaciones se administran desde una tabla editable y un editor único', () => {
+  assert.match(frontendSource, /directoryAssignmentEditorHost/);
+  assert.match(frontendSource, /directoryAssignmentsTableHost/);
+  assert.match(frontendSource, /directory-assignment-table/);
+  assert.match(frontendSource, /openAssignmentEditor\(index\)/);
+  assert.match(frontendSource, /removedAssignmentIds:Array\.from\(removedIds\)/);
+  assert.doesNotMatch(frontendSource, /firstAssignmentRow\.cloneNode\(true\)/);
+  assert.doesNotMatch(frontendSource, /directoryAssignmentRow/);
 });
 
-test('los selectores de asignación siguen el plan de ámbitos y el Local seleccionado', () => {
-  assert.match(frontendSource, /_directoryGetAccessFilterPlan_\(\{ scopes \}, sedeId\)/);
-  assert.match(frontendSource, /function getFormHierarchyNodes\(parentId, sedeId, localId\)/);
-  assert.match(frontendSource, /key\(relation\.local_id\) === effectiveLocalId/);
-  assert.match(frontendSource, /allowedSiteIds\.size > 1/);
-  assert.match(frontendSource, /function renderFormHierarchy\(sedeId, selectedPath, selectedRelationId, suffix = '', selectedLocalId = ''\)/);
+test('cargo y condición del cargo son selectores SUNARP alimentados por catálogos activos', () => {
+  assert.match(frontendSource, /makeSelect\(cargos\.map/);
+  assert.match(frontendSource, /makeSelect\(conditions\.map/);
+  assert.match(frontendSource, /directoryEditorCondition/);
+  assert.match(serviceSource, /conditionCargo: 'condicion_cargo'/);
+  assert.match(serviceSource, /requiredHeaders: DIRECTORY_REQUIRED_HEADERS\.condicionCargo/);
+  assert.match(serviceSource, /conditionCatalog\.conditionCargo/);
+});
+
+test('la cascada de asignaciones reutiliza el mismo resolver jerárquico que usa el listado', () => {
+  assert.match(frontendSource, /function getHierarchyNodesForContext\(parentId, siteId, hierarchyIndex, selectableIds, filterContract\)/);
+  assert.match(frontendSource, /return getHierarchyNodesForContext\(/);
+  assert.match(frontendSource, /nodes:parent=>getHierarchyNodesForContext\(parent,siteId,index,selectableIds,contract\)/);
+  assert.match(frontendSource, /_directoryBuildHierarchyFilterSets_\(/);
+  assert.match(frontendSource, /_directoryBuildLocalHierarchyFilterSets_\(/);
+  assert.match(frontendSource, /_directoryBuildHierarchyClientIndex_\(/);
+  assert.match(frontendSource, /_directoryGetHierarchyScopeRoots_\(/);
+  assert.match(frontendSource, /_directoryGetSelectableHierarchyChildren_\(/);
+  assert.doesNotMatch(frontendSource, /function getFormHierarchyNodes\(/);
+  assert.doesNotMatch(frontendSource, /function renderFormHierarchy\(/);
 });
 
 const sandbox = vm.createContext({});
