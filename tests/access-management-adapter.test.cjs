@@ -978,7 +978,7 @@ test('la consulta de usuarios reutiliza la vista materializada, pagina en servid
   assert.ok(helper.includes("_accessDirectorySource_('locales')"));
   assert.doesNotMatch(helper, /ACCESS_MANAGEMENT_CONFIG\.sheets\.scopes/);
   assert.ok(helper.includes("_accessFindOrgCatalogByIds_('SEDE'"));
-  assert.match(helper, /sede_nombre: siteIds\.map/);
+  assert.match(helper, /sede_nombre: personSiteIds\.map/);
   assert.ok(implementation.includes('SUNARPCore.queryRecords'));
   assert.ok(implementation.includes('filters: { persona_id: pageCandidateIds }'));
   assert.ok(implementation.includes('offset'));
