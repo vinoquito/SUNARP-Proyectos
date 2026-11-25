@@ -715,6 +715,19 @@ test('getAccessUsers determina la sede por asignaciones activas y no por ámbito
   data.locales = [{
     id: 'LOC_PER_122', sede_id: 'SEDE_CENTRAL'
   }];
+  data.asignaciones.push({
+    asignacion_id: 'ASG_PER_122', persona_id: 'PER_122',
+    estructura_local_id: 'REL_PER_122', local_id: 'LOC_PER_122', active: true
+  });
+  data.estructura_local = [{
+    id: 'REL_PER_122', estructura_id: 'EST_COMUNICACIONES', local_id: 'LOC_PER_122'
+  }];
+  data.estructura_org = [{
+    id: 'EST_COMUNICACIONES', sede_id: 'SEDE_CENTRAL'
+  }];
+  data.locales = [{
+    id: 'LOC_PER_122', sede_id: 'SEDE_CENTRAL'
+  }];
 
   const sandbox = createAdapterSandbox(data);
   sandbox._accessRequirePermission_ = () => ({
