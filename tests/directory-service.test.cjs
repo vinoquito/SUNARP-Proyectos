@@ -205,13 +205,13 @@ test('locales sin order o con órdenes parcialmente vacíos siguen visibles y co
   assert.equal(noHeader.missingOrderCount, 2);
 });
 
-test('locales.order rechaza valores ausentes, duplicados y parent_id incoherentes', () => {
+test('locales.order rechaza valores explícitos inválidos, duplicados y parent_id incoherentes', () => {
   assert.throws(() => api.sortLocalCatalog([
     { id: 'LOCAL_A', sede_id: 'SEDE_A', parent_id: '', order: 1 },
     { id: 'LOCAL_B', sede_id: 'SEDE_A', parent_id: '', order: 1 }
   ]), /repiten order=1/);
   assert.throws(() => api.sortLocalCatalog([
-    { id: 'LOCAL_A', sede_id: 'SEDE_A', parent_id: '', order: '' }
+    { id: 'LOCAL_A', sede_id: 'SEDE_A', parent_id: '', order: 'NO_ES_NUMERO' }
   ]), /order entero positivo/);
   assert.throws(() => api.sortLocalCatalog([
     { id: 'PARENT', sede_id: 'SEDE_A', parent_id: '', order: 1 },
