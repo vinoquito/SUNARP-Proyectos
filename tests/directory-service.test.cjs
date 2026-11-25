@@ -1201,6 +1201,43 @@ test('el formulario completo actualiza todas las asignaciones y elimina las reti
 
 
 
+test('la edición no permite retirar asignaciones que pertenecen a otra persona', () => {
+  const context = createDirectorySandbox();
+  let primaryWrites = 0;
+  context._directoryFindPersonById_ = () => ({
+    persona_id: 'PER_060', nombres: 'Ana', apellidos: 'Pérez'
+  });
+  context._directoryFindPersonalDataById_ = () => null;
+  context._directoryLoadContext_ = () => ({
+    personas: [{ persona_id: 'PER_060', nombres: 'Ana', apellidos: 'Pérez' }],
+    datosPersonales: [],
+    asignaciones: [
+      { asignacion_id: 'ASG_060', persona_id: 'PER_060', local_id: 'LOC_1' }
+    ],
+    estructuraLocal: [], estructuraOrg: [], locales: []
+  });
+  context._directoryAssertPersonMutationScope_ = () => true;
+  context._saveDirectoryEntryPrimary_ = () => { primaryWrites++; };
+  context.SUNARPCore.findRecordsByFields = (source, filters) => {
+    if (source === 'asignaciones') {
+      return {
+        records: [{ asignacion_id: 'ASG_060', persona_id: 'PER_060', local_id: 'LOC_1' }],
+        total: 1
+      };
+    }
+    return { records: [], total: 0 };
+  };
+
+  assert.throws(() => context.saveDirectoryEntry({
+    persona_id: 'PER_060',
+    assignments: [
+      { asignacion_id: 'ASG_060', cargo_id: 'CAR_001', local_id: 'LOC_1' }
+    ],
+    removed_assignment_ids: ['ASG_099']
+  }), /no pertenecen a este servidor/i);
+  assert.equal(primaryWrites, 0);
+});
+
 test('la edición coordinada recupera la asignación anterior por ID sin cargar toda la tabla', () => {
   const context = createDirectorySandbox();
   const person = {
@@ -1591,12 +1628,10 @@ test('el formulario usa la misma visibilidad de ámbito que los filtros de la ta
   assert.equal(multipleLocals.scope.localMode, 'selectable-scoped');
   assert.deepEqual(Array.from(multipleLocals.catalogs.locales, item => item.id), ['LOCAL_A1', 'LOCAL_A2']);
 
-  const multipleSites = buildFormDataForScopes([
+  assert.throws(() => buildFormDataForScopes([
     { tipo_ambito_id: 'SEDE', referencia_id: 'SEDE_B', incluir_descendientes: false },
     { tipo_ambito_id: 'SEDE', referencia_id: 'SEDE_A', incluir_descendientes: false }
-  ]);
-  assert.equal(multipleSites.scope.siteMode, 'selectable');
-  assert.deepEqual(Array.from(multipleSites.catalogs.sedes, item => item.id), ['SEDE_A', 'SEDE_B']);
+  ]), /no puede abarcar varias sedes/i);
 });
 
 test('las raíces orgánicas múltiples del formulario respetan estructura_org.order y eliminan raíces redundantes', () => {
