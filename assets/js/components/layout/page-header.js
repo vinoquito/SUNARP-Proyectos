@@ -18,7 +18,7 @@ const PageHeaderGob = {
         }
     },
 
-    template: \`
+    template: `
 
         <component
             :is="getComponent()"
@@ -36,5 +36,5 @@ const PageHeaderGob = {
             </template>
 
         </component>
-    \`
+    `
 };
