@@ -1,69 +1,49 @@
-const PageHeaderDefault = {
+const PageHeaderBanner = {
 
     props: {
-
         page: {
             type: Object,
             default: () => ({})
         }
     },
 
-    template: `
+    template: \`
 
     <div class="w-full" style="background-color: var(--gob-bg-page);">
 
-        <section class="max-w-7xl mx-auto px-16 py-8 content-stack flex flex-col">
+        <section class="max-w-7xl mx-auto px-16 py-8 content-stack">
 
-            <!-- Imagen: arriba en escritorio, abajo en móvil -->
-            <div
-                v-if="page.image"
-                class="order-2 md:order-1">
+            <div class="grid gap-8 md:grid-cols-3">
 
-                <img
-                    :src="page.image"
-                    :alt="page.alt"
-                    class="hero-image-gob">
+                <div class="md:col-span-2 page-content">
 
-            </div>
+                    <img
+                        v-if="page.image"
+                        :src="page.image"
+                        :alt="page.alt || ''"
+                        class="hero-image-gob page-header-banner-image">
 
-            <!-- Texto: abajo en escritorio, arriba en móvil -->
-            <div class="order-1 md:order-2">
+                    <a href="https://www.gob.pe/sunarp" class="page-entity">
+                        Superintendencia Nacional de los Registros Públicos
+                    </a>
 
-                <div class="grid gap-8 md:grid-cols-3">
+                    <h1 class="page-title">
+                        {{ page.title }}
+                    </h1>
 
-                    <div class="md:col-span-2 page-content">
-
-                        <a
-                            href="https://www.gob.pe/sunarp"
-                            class="page-entity">
-
-                            Superintendencia Nacional de los Registros Públicos
-
-                        </a>
-
-                        <h1 class="page-title">
-
-                            {{ page.title }}
-
-                        </h1>
-
-                        <p
-                            v-if="page.description"
-                            class="page-description">
-
-                            {{ page.description }}
-
-                        </p>
-
-                    </div>
-
-                    <div>
-
-                        <!-- acciones futuras -->
-
-                    </div>
+                    <p v-if="page.description" class="page-description">
+                        {{ page.description }}
+                    </p>
 
                 </div>
+
+                <aside
+                    v-if="$slots.aside"
+                    class="md:col-span-1">
+
+                    <slot name="aside"></slot>
+
+                </aside>
 
             </div>
 
@@ -71,5 +51,5 @@ const PageHeaderDefault = {
 
     </div>
 
-    `
+    \`
 };
