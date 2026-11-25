@@ -229,7 +229,7 @@ test('el ámbito TOTAL exige elegir sede y no carga registros agregados al entra
   assert.ok(load.includes('populateSedeFilter();'));
   assert.ok(load.includes('if (!state.hasTotalScope && state.authorizedSedes.length === 1)'));
   assert.doesNotMatch(load, /getDirectoryAuthorizedData|autoLoadedAllSites|__ALL__/);
-  assert.match(siteFilter, /const placeholder = isTotalSelection\\s*\\?\\s*'Seleccione una opción'/);
+  assert.match(siteFilter, /const placeholder = isTotalSelection\s*\?\s*'Seleccione una opción'/);
   assert.match(siteFilter, /if \(isTotalSelection\) select\.value = ''/);
   assert.match(siteFilter, /wrapper\.hidden = fixedSingleSede/);
   assert.match(siteChange, /loadSelectedSede\(key\(elements\.sedeFilter\.value\)\)/);
@@ -290,7 +290,7 @@ test('los ámbitos de varias áreas muestran raíces propias y eliminan referenc
   const index = hierarchyIndexSandbox.buildIndex(records, structures);
   const roots = hierarchySandbox.getHierarchyScopeRoots(scopes, index, selectable, 'SEDE_A');
   assert.deepEqual(
-    roots.map(item => item.referenceId),
+    Array.from(roots, item => item.referenceId),
     ['ROOT_A', 'ROOT_B'],
     'La referencia descendiente cubierta por ROOT_A no duplica la rama'
   );
@@ -314,7 +314,7 @@ test('los ámbitos de varias áreas muestran raíces propias y eliminan referenc
     'SEDE_A'
   );
   const fixedRoots = hierarchySandbox.getHierarchyScopeRoots(fixedScopes, index, fixedSelectable, 'SEDE_A');
-  assert.deepEqual(fixedRoots.map(item => item.referenceId), ['ROOT_A', 'ROOT_B']);
+  assert.deepEqual(Array.from(fixedRoots, item => item.referenceId), ['ROOT_A', 'ROOT_B']);
   assert.deepEqual([...fixedSelectable].sort(), ['ROOT_A', 'ROOT_B']);
 });
 
