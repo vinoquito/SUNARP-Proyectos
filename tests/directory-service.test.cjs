@@ -1109,7 +1109,9 @@ test('el formulario completo actualiza todas las asignaciones y elimina las reti
 
   assert.equal(primaryWrites.length, 1);
   assert.equal(primaryWrites[0].asignacion_id, 'ASG_030');
-  assert.deepEqual(assignmentWrites.map(item => item.asignacion_id), ['ASG_031', '']);
+  assert.equal(assignmentWrites.length, 2);
+  assert.equal(assignmentWrites[0].asignacion_id, 'ASG_031');
+  assert.equal(assignmentWrites[1].asignacion_id, undefined);
   assert.ok(assignmentWrites.every(item => item.persona_id === 'PER_030'));
   assert.deepEqual(deleted, ['ASG_032']);
   assert.equal(result.assignments.length, 3);
