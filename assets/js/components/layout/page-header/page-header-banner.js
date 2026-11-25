@@ -7,7 +7,7 @@ const PageHeaderBanner = {
         }
     },
 
-    template: \`
+    template: `
 
     <div class="w-full" style="background-color: var(--gob-bg-page);">
 
@@ -51,5 +51,5 @@ const PageHeaderBanner = {
 
     </div>
 
-    \`
+    `
 };
