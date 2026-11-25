@@ -1859,7 +1859,7 @@ function getDirectorySiteData(sedeId) {
       typeof SUNARPCore.getOrBuildCachedValue === 'function' &&
       _directoryKey_(authorization.auth && authorization.auth.personaId)) {
     const authorizationFingerprint = _directoryAuthorizationCacheFingerprint_(authorization);
-    const cacheKey = 'directory-site-snapshot:v4:' +
+    const cacheKey = 'directory-site-snapshot:v5:' +
       _directoryKey_(authorization.auth.personaId) + ':' +
       selectedSedeId + ':' + authorizationFingerprint;
     const cacheLookupStartedAt = Date.now();
