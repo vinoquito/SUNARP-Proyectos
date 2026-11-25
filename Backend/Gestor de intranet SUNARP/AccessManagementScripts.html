@@ -8,6 +8,7 @@
     loaded: false,
     loading: false,
     data: null,
+    documentTypesPromise: null,
     activeTab: '',
     tabs: null,
     table: null,
@@ -32,6 +33,28 @@
 
   const queryAll = (selector, root = document) =>
     Array.from(root.querySelectorAll(selector));
+
+
+  function ensureDocumentTypesLoaded() {
+    if (state.data && state.data.documentTypesLoaded === true) {
+      return Promise.resolve({ documentTypes: state.data.documentTypes || [] });
+    }
+    if (state.documentTypesPromise) return state.documentTypesPromise;
+
+    state.documentTypesPromise = rpc('getAccessManagementTabData', 'documentTypes')
+      .then(result => {
+        const documentTypes = (result && result.documentTypes || [])
+          .filter(item => item && item.id && item.name);
+        state.data.documentTypes = documentTypes;
+        state.data.documentTypesLoaded = true;
+        return { documentTypes };
+      })
+      .catch(error => {
+        state.documentTypesPromise = null;
+        throw error;
+      });
+    return state.documentTypesPromise;
+  }
 
 
   function beginAccessPanelLoading(message) {
@@ -2185,10 +2208,8 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     // No bloquear la apertura del formulario por una lectura del catálogo.
     // Los controles se habilitan cuando termina la consulta en segundo plano.
     if (!editing && needsDocumentTypes) {
-      rpc('getAccessManagementTabData', 'documentTypes').then(result => {
-        const loadedTypes = (result.documentTypes || []).filter(item => item && item.id && item.name);
-        state.data.documentTypes = loadedTypes;
-        state.data.documentTypesLoaded = true;
+      ensureDocumentTypesLoaded().then(result => {
+        const loadedTypes = result.documentTypes || [];
         if (!documentTypeControl || !documentTypeControl.isConnected) return;
 
         documentTypeControl.replaceChildren();
@@ -3466,10 +3487,16 @@ window.SUNARPAccessHistory = Object.freeze({
 
     try {
       state.data = await rpc('getAccessManagementData');
+      state.documentTypesPromise = null;
 
       state.loaded = true;
-
       renderPage();
+
+      // Precarga no bloqueante: al abrir «Nueva cuenta», el catálogo ya estará
+      // disponible o el formulario compartirá esta misma solicitud en curso.
+      ensureDocumentTypesLoaded().catch(error => {
+        console.warn('[AccessManagement] Document types preload failed:', error && error.message || error);
+      });
 
       if (showNotification) {
         SUNARPUI.notify(
