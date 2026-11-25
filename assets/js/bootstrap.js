@@ -14,7 +14,6 @@ document.write(`
     <!-- LAYOUT -->
     <script src="assets/js/components/layout/loader.js"><\/script>
     <script src="assets/js/components/layout/navbar/navbar-default.js"><\/script>
-    <script src="assets/js/components/layout/page-header/page-header-default.js"><\/script>
     <script src="assets/js/components/layout/page-header/page-header-split.js"><\/script>
     <script src="assets/js/components/layout/page-header/page-header-banner.js"><\/script>
     <script src="assets/js/components/layout/footer/footer-default.js"><\/script>
