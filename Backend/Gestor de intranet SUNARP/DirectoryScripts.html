@@ -1735,13 +1735,13 @@ const DirectoryPage = (() => {
 
           <div class="sunarp-form-field sunarp-form-field--full">
             <label for="directoryFormSede">
-              Sede *
+              Sede
             </label>
 
             <select
               id="directoryFormSede"
               class="sunarp-select"
-              required>
+              >
 
               <option value="">Selecciona una sede</option>
 
@@ -1891,30 +1891,29 @@ const DirectoryPage = (() => {
     }
 
     function syncAssignmentMode() {
-      const mode = modeSelect.value;
-      const useStructure = mode === 'structure' || mode === 'both';
-      const useDirectLocal = mode === 'local' || mode === 'both';
+      const scopes = state.formScopes || [];
+      const broadScope = scopes.some(scope => scope.type === 'TOTAL' || scope.type === 'SEDE');
+      const structureScopes = scopes.filter(scope => scope.type === 'ESTRUCTURA_ORG');
+      const localScopes = scopes.filter(scope => scope.type === 'LOCAL');
+      const useStructure = broadScope || structureScopes.length > 0;
+      const useDirectLocal = broadScope || localScopes.length > 0;
       document.getElementById('directoryFormHierarchyField').style.display = useStructure ? '' : 'none';
       document.getElementById('directoryFormRelationField').style.display = useStructure ? '' : 'none';
       document.getElementById('directoryFormDirectLocalField').style.display = useDirectLocal ? '' : 'none';
-      relationSelect.required = useStructure;
-      directLocalSelect.required = useDirectLocal;
-      // Ocultar conserva la selección anterior: el usuario puede cambiar
-      // de modalidad y volver sin perder la estructura ya elegida.
-      if (!useDirectLocal) directLocalSelect.value = '';
-      if (mode === 'both' && relationSelect.value) {
+      relationSelect.required = false;
+      directLocalSelect.required = false;
+      if (relationSelect.value && useDirectLocal) {
         const relation = state.catalogs.estructuraLocal.find(x => key(x.id) === key(relationSelect.value));
-        if (relation) directLocalSelect.value = key(relation.local_id);
+        if (relation && !directLocalSelect.value) directLocalSelect.value = key(relation.local_id);
       }
     }
 
     relationSelect.addEventListener('change', () => {
-      if (modeSelect.value === 'both') {
-        const relation = state.catalogs.estructuraLocal.find(x => key(x.id) === key(relationSelect.value));
-        directLocalSelect.value = relation ? key(relation.local_id) : '';
+      const relation = state.catalogs.estructuraLocal.find(x => key(x.id) === key(relationSelect.value));
+      if (relation && directLocalSelect.closest('.sunarp-form-field').style.display !== 'none') {
+        directLocalSelect.value = key(relation.local_id);
       }
     });
-
 
 
     const cancelButton = document.getElementById(
