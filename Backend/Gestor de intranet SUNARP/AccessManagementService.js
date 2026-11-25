@@ -3910,6 +3910,23 @@ function _accessAuditContainsPermission_(event, permissionId) {
  * La caché por generación permite que la paginación posterior no repita
  * búsquedas ni vuelva a descargar esos eventos.
  */
+function _accessAuditSnapshotReferencesPerson_(event, personaId) {
+  const expectedId = _accessText_(personaId);
+  if (!event || !expectedId) return false;
+  return ['datos_antes', 'datos_despues'].some(field => {
+    const raw = _accessText_(event[field]);
+    if (!raw) return false;
+    try {
+      const snapshot = JSON.parse(raw);
+      return Boolean(snapshot && !Array.isArray(snapshot) &&
+        _accessText_(snapshot.persona_id) === expectedId);
+    } catch (_error) {
+      return false;
+    }
+  });
+}
+
+
 function _accessBuildEntityHistoryIndex_(source, entityType, recordId, relatedTypes) {
   const events = [];
   const seenEventIds = new Set();
@@ -3977,6 +3994,25 @@ function _accessBuildEntityHistoryIndex_(source, entityType, recordId, relatedTy
         }
       );
       consumeEvents(assignmentEvents.records);
+    });
+
+    // Recuperar también eventos de asignaciones ya eliminadas: el snapshot
+    // de auditoría conserva persona_id aunque la fila física ya no exista.
+    const historicalAssignmentMatches = SUNARPCore.searchRecordsByFields(
+      source,
+      recordId,
+      ['datos_antes', 'datos_despues'],
+      { matchCase: true, accentInsensitive: false }
+    );
+    (historicalAssignmentMatches.records || []).forEach(event => {
+      if (
+        _accessUpper_(event.tipo_entidad) === 'ASIGNACION' &&
+        ['DIRECTORIOS', 'INFORMACION_PERSONAL'].includes(_accessUpper_(event.modulo)) &&
+        _accessAuditSnapshotReferencesPerson_(event, recordId)
+      ) {
+        relatedRecordIds.add(_accessText_(event.registro_id));
+        consumeEvents([event]);
+      }
     });
   }
 
