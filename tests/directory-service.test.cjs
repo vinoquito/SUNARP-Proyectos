@@ -180,14 +180,29 @@ test('el catálogo de locales ordena por order entre hermanos y respeta parent_i
   );
 });
 
-test('la ausencia de locales.order es transitoria y no sustituye el orden por alfabeto', () => {
-  const result = api.sortLocalCatalog([
-    { id: 'ZR_IX_LIMA', sede_id: 'ZR_IX', parent_id: '' },
-    { id: 'ZR_IX_CALLAO', sede_id: 'ZR_IX', parent_id: '' }
+test('locales sin order o con órdenes parcialmente vacíos siguen visibles y conservan orden recibido', () => {
+  const allBlank = api.sortLocalCatalog([
+    { id: 'SC_PRIMAVERA', sede_id: 'SEDE_CENTRAL', parent_id: '', order: '' },
+    { id: 'SC_PARDO', sede_id: 'SEDE_CENTRAL', parent_id: '', order: '' }
   ]);
-  assert.equal(result.orderConfigured, false);
-  assert.equal(result.missingOrderCount, 2);
-  assert.deepEqual(Array.from(result.records, item => item.id), ['ZR_IX_LIMA', 'ZR_IX_CALLAO']);
+  assert.equal(allBlank.orderConfigured, false);
+  assert.equal(allBlank.missingOrderCount, 2);
+  assert.deepEqual(Array.from(allBlank.records, item => item.id), ['SC_PRIMAVERA', 'SC_PARDO']);
+
+  const partial = api.sortLocalCatalog([
+    { id: 'ZR_IX_LIMA', sede_id: 'ZR_IX', parent_id: '', order: '' },
+    { id: 'ZR_IX_CALLAO', sede_id: 'ZR_IX', parent_id: '', order: 20 }
+  ]);
+  assert.equal(partial.orderConfigured, false);
+  assert.equal(partial.missingOrderCount, 1);
+  assert.deepEqual(Array.from(partial.records, item => item.id), ['ZR_IX_LIMA', 'ZR_IX_CALLAO']);
+
+  const noHeader = api.sortLocalCatalog([
+    { id: 'LOC_A', sede_id: 'SEDE_A', parent_id: '' },
+    { id: 'LOC_B', sede_id: 'SEDE_A', parent_id: '' }
+  ]);
+  assert.equal(noHeader.orderConfigured, false);
+  assert.equal(noHeader.missingOrderCount, 2);
 });
 
 test('locales.order rechaza valores ausentes, duplicados y parent_id incoherentes', () => {

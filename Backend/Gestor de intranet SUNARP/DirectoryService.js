@@ -451,11 +451,20 @@ function _directorySortLocalCatalog_(locales) {
     }
   });
 
-  const orderConfigured = items.some(local =>
-    Object.prototype.hasOwnProperty.call(local || {}, 'order')
-  );
+  // El encabezado order puede existir en la hoja aunque nadie haya
+  // cargado todavía sus valores. La falta total o parcial de órdenes nunca
+  // debe bloquear la consulta ni ocultar locales: se conserva el orden
+  // recibido hasta que TODOS los locales tengan un valor.
+  const configuredOrderCount = items.filter(local =>
+    _directoryText_(local && local.order) !== ''
+  ).length;
+  const orderConfigured = items.length > 0 && configuredOrderCount === items.length;
   if (!orderConfigured) {
-    return { records: items, orderConfigured: false, missingOrderCount: items.length };
+    return {
+      records: items,
+      orderConfigured: false,
+      missingOrderCount: items.length - configuredOrderCount
+    };
   }
 
   const siblingOrders = new Map();

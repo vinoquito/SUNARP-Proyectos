@@ -601,7 +601,7 @@ Se incorpora compatibilidad para consumir locales.order con estas reglas:
 - parent_id debe apuntar a un local existente de la misma sede y no puede formar ciclos.
 - No hay desempate alfabético para ocultar órdenes duplicados o ausentes.
 
-**Transición:** mientras la hoja no tenga el encabezado order, el código conserva temporalmente el orden recibido para no bloquear la aplicación, emite un diagnóstico de que la migración está pendiente y no interpreta ese orden de filas como una regla permanente. En cuanto el encabezado exista, todos los locales deben tener un entero positivo; valores ausentes o duplicados detienen la validación.
+**Transición:** mientras no todos los locales tengan un valor order no vacío, el código conserva el orden recibido para no bloquear la aplicación, emite un diagnóstico de que la migración está pendiente y no interpreta ese orden de filas como una regla permanente. Esto incluye que el encabezado exista pero sus celdas sigan vacías, o que solo algunos locales tengan valor. Solo cuando todos los locales tengan un valor se activa el orden explícito; entonces cada valor debe ser un entero positivo y los duplicados entre hermanos detienen la validación.
 
 La futura modificación de Sheets consiste en añadir una columna order al final de locales, después de active, y asignar un valor a los 190 locales. La precedencia Lima antes que Callao debe quedar expresada allí con valores distintos. Los valores institucionales concretos deben ser proporcionados o aprobados por el responsable de los datos; no se deducen de la posición actual de las filas. No se modifican estructura_local, estructura_org.order ni asignaciones.order.
 
