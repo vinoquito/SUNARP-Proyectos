@@ -1531,11 +1531,7 @@ const DirectoryPage = (() => {
 
     return {
       html: `
-        <form id="directoryForm" class="sunarp-form-grid">
-
-          <input type="hidden" id="directoryFormId" value="${escapeHtml(assignmentOnly ? '' : (record?.id || ''))}">
-          <input type="hidden" id="directoryFormMode" value="${assignmentOnly ? 'assignment' : 'person'}">
-          <input type="hidden" id="directoryFormPersonaId" value="${escapeHtml(record?.persona_id || '')}">
+        <form id="directoryForm" class="sunarp-form-grid"><input type="hidden" id="directoryFormPersonaId" value="${escapeHtml(record?.persona_id || '')}">
 
           ${!isEditing ? `
           <div class="sunarp-form-field sunarp-form-field--full" id="directoryDocumentSearchPanel">
@@ -1570,7 +1566,7 @@ const DirectoryPage = (() => {
               id="directoryFormApellidos"
               maxlength="150"
               value="${escapeHtml(record?.apellidos || '')}"
-              ${assignmentOnly ? 'readonly' : 'required'}>
+              required>
           </div>
 
           
@@ -1760,7 +1756,6 @@ const DirectoryPage = (() => {
 
   async function openDirectoryForm(record) {
 
-    const assignmentOnly = false;
     const isEditing = Boolean(record);
     let previousCatalogs = state.catalogs;
     let formRecord = record;
