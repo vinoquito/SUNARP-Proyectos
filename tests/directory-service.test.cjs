@@ -1579,13 +1579,26 @@ test('la búsqueda previa de DNI detecta duplicados y permite conservar el docum
   let permission = '';
   vmContext._directoryAuthorizationContext_ = value => {
     permission = value;
-    return { auth: {} };
+    return { auth: {}, structures: [], locals: [] };
   };
   vmContext._directoryAssertDocumentTypeAllowed_ = value =>
     String(value).replace(/\s+/g, '').toUpperCase();
   vmContext._directorySource_ = value => value;
+  vmContext._directoryFindPersonById_ = personaId => ({ persona_id: personaId });
+  vmContext._directoryLoadContext_ = () => ({
+    asignaciones: [], estructuraLocal: [], estructuraOrg: [], locales: []
+  });
+  vmContext._directoryAssertPersonMutationScope_ = () => true;
   vmContext.SUNARPCore = {
     findRecordsByFields: (source, filters, options) => {
+      if (source === 'asignaciones') {
+        return {
+          records: filters.persona_id === 'PER_051'
+            ? [{ asignacion_id: 'ASG_051', persona_id: 'PER_051', local_id: 'LOC_1' }]
+            : [],
+          total: filters.persona_id === 'PER_051' ? 1 : 0
+        };
+      }
       assert.equal(source, 'servidores datos personales');
       assert.equal(options.ignoreWhitespace, true);
       assert.deepEqual(JSON.parse(JSON.stringify(filters)), { numero_documento: '12345678' });
