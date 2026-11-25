@@ -3781,6 +3781,7 @@ function _saveDirectoryEntryPrimary_(payload) {
   try {
     const person = _saveDirectoryPerson_(personPayload);
     createdPersonId = person.person.persona_id;
+    personalCreated = true;
     const personalData = _saveDirectoryPersonalData_({
       servidor_id: createdPersonId,
       tipo_documento: normalizedNewDocument.tipo_documento,
@@ -3789,7 +3790,7 @@ function _saveDirectoryEntryPrimary_(payload) {
       fecha_inicio_servicios: payload.fecha_inicio_servicios,
       fecha_cese: payload.fecha_cese
     }, true);
-    personalCreated = true;
+    assignmentCreated = true;
     const assignment = saveDirectoryAssignment({
       persona_id: createdPersonId,
       cargo_id: payload.cargo_id,
@@ -3800,7 +3801,6 @@ function _saveDirectoryEntryPrimary_(payload) {
       observaciones: payload.observaciones
     });
     createdAssignmentId = assignment.assignment.asignacion_id;
-    assignmentCreated = true;
     return {
       success: true,
       message: 'La persona, sus datos personales y su primera asignación se registraron correctamente.',
@@ -3811,13 +3811,39 @@ function _saveDirectoryEntryPrimary_(payload) {
   } catch (error) {
     const rollbackErrors = [];
     try {
-      if (assignmentCreated && createdAssignmentId) {
-        SUNARPCore.deleteRecord(_directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones), 'asignacion_id', createdAssignmentId);
+      if (assignmentCreated && createdPersonId) {
+        const assignmentSource = _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones);
+        const createdAssignments = SUNARPCore.findRecordsByFields(
+          assignmentSource,
+          { persona_id: createdPersonId },
+          {
+            searchField: 'persona_id',
+            requiredHeaders: DIRECTORY_REQUIRED_HEADERS.asignaciones
+          }
+        );
+        const records = createdAssignments.records || [];
+        if (Number(createdAssignments.total) > records.length) {
+          throw new Error('La consulta de compensación no devolvió todas las asignaciones creadas.');
+        }
+        records.forEach(item => {
+          SUNARPCore.deleteRecord(
+            assignmentSource,
+            'asignacion_id',
+            _directoryKey_(item.asignacion_id)
+          );
+        });
       }
     } catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
     try {
       if (personalCreated && createdPersonId) {
-        SUNARPCore.deleteRecord(_directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales), 'servidor_id', createdPersonId);
+        const existingPersonalData = _directoryFindPersonalDataById_(createdPersonId);
+        if (existingPersonalData) {
+          SUNARPCore.deleteRecord(
+            _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
+            'servidor_id',
+            createdPersonId
+          );
+        }
       }
     } catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
     try {
