@@ -819,54 +819,40 @@ const DirectoryPage = (() => {
     return visibleRoots;
   }
 
-  function getHierarchyNodes(parentId) {
-    const selectableIds = getHierarchyFilterSets().selectableIds;
-    const index = state.hierarchyIndex;
-    if (!index || !selectableIds.size) return [];
-
+  function getHierarchyNodesForContext(parentId, siteId, hierarchyIndex, selectableIds, filterContract) {
+    if (!hierarchyIndex || !selectableIds || !selectableIds.size) return [];
     const selectedParentId = key(parentId);
-    const contract = state.catalogs && state.catalogs.filterContract;
-    const scopes = contract && Array.isArray(contract.scopes) ? contract.scopes : [];
-    const activeSiteId = key(state.activeSedeId);
-    const accessPlan = _directoryGetAccessFilterPlan_(contract, activeSiteId);
-    const broadScope = accessPlan.hierarchyMode === 'local';
-
+    const activeSiteId = key(siteId);
+    const scopes = filterContract && Array.isArray(filterContract.scopes) ? filterContract.scopes : [];
+    const plan = _directoryGetAccessFilterPlan_(filterContract, activeSiteId);
     if (selectedParentId) {
       if (!selectableIds.has(selectedParentId)) return [];
-      return _directoryGetSelectableHierarchyChildren_(
-        selectedParentId, index, selectableIds
-      );
+      return _directoryGetSelectableHierarchyChildren_(selectedParentId, hierarchyIndex, selectableIds);
     }
-
-    if (!broadScope) {
-      const scopeRoots = _directoryGetHierarchyScopeRoots_(
-        scopes, index, selectableIds, activeSiteId
-      );
-      if (scopeRoots.length === 1) {
-        const root = scopeRoots[0];
-        return root.includeDescendants
-          ? _directoryGetSelectableHierarchyChildren_(root.referenceId, index, selectableIds)
-          : [];
-      }
-      return scopeRoots.map(item => item.node);
+    if (plan.hierarchyMode !== 'local') {
+      const roots = _directoryGetHierarchyScopeRoots_(scopes, hierarchyIndex, selectableIds, activeSiteId);
+      if (roots.length === 1) return roots[0].includeDescendants
+        ? _directoryGetSelectableHierarchyChildren_(roots[0].referenceId, hierarchyIndex, selectableIds)
+        : [];
+      return roots.map(item => item.node);
     }
-
-    const roots = Array.from(index.structureById.values()).filter(node => {
+    const roots = Array.from(hierarchyIndex.structureById.values()).filter(node => {
       const parentId = key(node && node.parent_id);
       if (!parentId) return true;
-      const parent = index.structureById.get(parentId);
+      const parent = hierarchyIndex.structureById.get(parentId);
       return !parent || key(parent.sede_id) !== key(node.sede_id);
     });
-    roots.sort((a, b) => {
-      const orderA = Number(a.order);
-      const orderB = Number(b.order);
-      const normalizedA = Number.isFinite(orderA) ? orderA : Number.MAX_SAFE_INTEGER;
-      const normalizedB = Number.isFinite(orderB) ? orderB : Number.MAX_SAFE_INTEGER;
-      return normalizedA - normalizedB ||
-        key(a.name).localeCompare(key(b.name), 'es', { sensitivity: 'base' }) ||
-        key(a.id).localeCompare(key(b.id));
+    roots.sort((a,b) => {
+      const ao=Number(a.order),bo=Number(b.order);
+      return (Number.isFinite(ao)?ao:Number.MAX_SAFE_INTEGER) -
+        (Number.isFinite(bo)?bo:Number.MAX_SAFE_INTEGER) ||
+        key(a.name).localeCompare(key(b.name),'es',{sensitivity:'base'}) || key(a.id).localeCompare(key(b.id));
     });
     return roots.filter(node => selectableIds.has(key(node && node.id)));
+  }
+  function getHierarchyNodes(parentId) {
+    return getHierarchyNodesForContext(parentId,state.activeSedeId,state.hierarchyIndex,
+      state.hierarchySelectableIds || new Set(),state.catalogs && state.catalogs.filterContract);
   }
 
   function getHierarchyLabel(nodes, level) {
@@ -1586,300 +1572,45 @@ const DirectoryPage = (() => {
      ===================================================== */
 
   function buildDirectoryForm(record) {
-
-    const isEditing = Boolean(record);
-
-    const scopes = state.formScopes || [];
-    const siteScopes = scopes.filter(scope => scope.type === 'SEDE' && scope.referenceId);
-    const structureScopes = scopes.filter(scope => scope.type === 'ESTRUCTURA_ORG' && scope.referenceId);
-    const localScopes = scopes.filter(scope => scope.type === 'LOCAL' && scope.referenceId);
-    const totalScope = scopes.some(scope => scope.type === 'TOTAL');
-    const structureMapForScope = new Map((state.catalogs.estructuraOrg || []).map(node => [key(node.id), node]));
-    const localMapForScope = new Map((state.catalogs.locales || []).map(node => [key(node.id), node]));
-    const allowedSiteIds = new Set(siteScopes.map(scope => key(scope.referenceId)));
-    structureScopes.forEach(scope => {
-      const node = structureMapForScope.get(key(scope.referenceId));
-      if (node && node.sede_id) allowedSiteIds.add(key(node.sede_id));
-    });
-    localScopes.forEach(scope => {
-      const node = localMapForScope.get(key(scope.referenceId));
-      if (node && node.sede_id) allowedSiteIds.add(key(node.sede_id));
-    });
-    const fixedSiteId = !totalScope && allowedSiteIds.size === 1 ? Array.from(allowedSiteIds)[0] : '';
-    const selectedSede = record ? key(record.sede_id) : fixedSiteId;
-    const selectedPath = record
-      ? getFormStructurePath(record.estructura_id)
-      : (structureScopes.length === 1 ? [key(structureScopes[0].referenceId)] : []);
-    const canChooseSite = totalScope || allowedSiteIds.size > 1;
-    const cargoOptions = state.catalogs.cargos
-      .filter(cargo =>
-        cargo.active !== false &&
-        cargo.active !== 0 &&
-        String(cargo.active).toLowerCase() !== 'false'
-      )
-      .slice()
-      .sort(sortByName)
-      .map(cargo => `
-        <option
-          value="${escapeHtml(cargo.id)}"
-          ${record && key(record.cargo_id) === key(cargo.id) ? 'selected' : ''}>
-          ${escapeHtml(cargo.name)}
-        </option>
-      `)
-      .join('');
-
-    const sedeOptions = state.catalogs.sedes
-      .filter(sede =>
-        (totalScope || allowedSiteIds.has(key(sede.id))) &&
-        sede.active !== false &&
-        sede.active !== 0
-      )
-      .slice()
-      .sort(sortByName)
-      .map(sede => `
-        <option
-          value="${escapeHtml(sede.id)}"
-          ${selectedSede === key(sede.id) ? 'selected' : ''}>
-          ${escapeHtml(sede.name)}
-        </option>
-      `)
-      .join('');
-
-    const selectedMode = record && key(record.local_id) && key(record.estructura_local_id)
-      ? 'both'
-      : record && key(record.local_id)
-        ? 'local'
-        : 'structure';
-
-    const directLocalOptions = state.catalogs.locales
-      .filter(local => (totalScope || siteScopes.length || structureScopes.length
-          ? (totalScope || allowedSiteIds.has(key(local.sede_id)))
-          : (localScopes.length ? localScopes.some(scope => key(scope.referenceId) === key(local.id)) : false))
-        && local.active !== false && local.active !== 0 &&
-        String(local.active).toLowerCase() !== 'false')
-      .slice().sort(sortByName)
-      .map(local => `<option value="${escapeHtml(local.id)}" ${record && key(record.local_id) === key(local.id) ? 'selected' : ''}>${escapeHtml(local.name)}</option>`)
-      .join('');
-
-    return {
-      html: `
-        <form id="directoryForm" class="sunarp-form-grid"><input type="hidden" id="directoryFormPersonaId" value="${escapeHtml(record?.persona_id || '')}">
-
-          ${!isEditing ? `
-          <div class="sunarp-form-field sunarp-form-field--full" id="directoryDocumentSearchPanel">
-            <p>Antes de registrar, busca el documento para comprobar que la persona no exista.</p>
-            <button type="button" class="sunarp-btn sunarp-btn-outline" id="directoryDocumentSearch">Buscar persona</button>
-            <div id="directoryDocumentSearchResult" aria-live="polite"></div>
-            <input type="hidden" id="directoryDocumentVerified" value="false">
-          </div>
-          ` : ''}
-          <div class="sunarp-form-field">
-            <label for="directoryFormNombres">
-              Nombres *
-            </label>
-
-            <input
-              type="text"
-              class="sunarp-input"
-              id="directoryFormNombres"
-              maxlength="100"
-              value="${escapeHtml(record?.nombres || '')}"
-              required>
-          </div>
-
-          <div class="sunarp-form-field">
-            <label for="directoryFormApellidos">
-              Apellidos *
-            </label>
-
-            <input
-              type="text"
-              class="sunarp-input"
-              id="directoryFormApellidos"
-              maxlength="150"
-              value="${escapeHtml(record?.apellidos || '')}"
-              required>
-          </div>
-
-          
-          <div class="sunarp-form-field sunarp-form-field--full">
-            <label for="directoryFormCorreoInstitucional">Correo institucional</label>
-            <input
-              type="email"
-              class="sunarp-input"
-              id="directoryFormCorreoInstitucional"
-              maxlength="150"
-              placeholder="usuario@sunarp.gob.pe"
-              value="${escapeHtml(record?.correo_institucional || '')}">
-            <small>Se utiliza para vincular la identidad con la cuenta institucional de acceso.</small>
-          </div>
-
-          <div class="sunarp-form-field">
-            <label for="directoryFormTipoDocumento">Tipo de documento *</label>
-            <select class="sunarp-select" id="directoryFormTipoDocumento" required>
-              <option value="">Selecciona un tipo de documento</option>
-              ${(state.catalogs.documentTypes || []).map(item => `
-                <option value="${escapeHtml(item.id)}" ${key(record?.tipo_documento) === key(item.id) ? 'selected' : ''}>${escapeHtml(item.name)}</option>
-              `).join('')}
-            </select>
-          </div>
-
-          <div class="sunarp-form-field">
-            <label for="directoryFormNumeroDocumento">Número de documento *</label>
-            <input type="text" class="sunarp-input" id="directoryFormNumeroDocumento"
-              maxlength="30" value="${escapeHtml(record?.numero_documento || '')}" required>
-          </div>
-
-          <div class="sunarp-form-field">
-            <label for="directoryFormFechaNacimiento">Fecha de nacimiento</label>
-            <input type="date" class="sunarp-input" id="directoryFormFechaNacimiento"
-              value="${escapeHtml(record?.fecha_nacimiento || '')}">
-          </div>
-
-          <div class="sunarp-form-field">
-            <label for="directoryFormFechaInicio">Fecha de inicio de servicios</label>
-            <input type="date" class="sunarp-input" id="directoryFormFechaInicio"
-              value="${escapeHtml(record?.fecha_inicio_servicios || '')}">
-          </div>
-
-          <div class="sunarp-form-field">
-            <label for="directoryFormFechaCese">Fecha de cese</label>
-            <input type="date" class="sunarp-input" id="directoryFormFechaCese"
-              value="${escapeHtml(record?.fecha_cese || '')}">
-          </div>
-
-
-                    <div id="directoryAssignmentsContainer">
-            <div class="directory-assignment-row" id="directoryAssignmentRow" data-index="0">
-              <input type="hidden" id="directoryFormAssignmentId" value="${escapeHtml(record?.asignacion_id || record?.id || '')}">
-<div class="sunarp-form-field">
-            <label for="directoryFormCargo">
-              Cargo *
-            </label>
-
-            <select
-              id="directoryFormCargo"
-              class="sunarp-select"
-              required>
-
-              <option value="">Selecciona un cargo</option>
-
-              ${cargoOptions}
-
-            </select>
-          </div>
-
-          <div class="sunarp-form-field">
-            <label for="directoryFormCondicionCargo">
-              Condición del cargo
-            </label>
-            <input
-              type="text"
-              class="sunarp-input"
-              id="directoryFormCondicionCargo"
-              maxlength="150"
-              value="${escapeHtml(record?.condicion_cargo || '')}">
-          </div>
-
-          <div class="sunarp-form-field">
-            <label for="directoryFormAnexo">
-              Anexo
-            </label>
-
-            <input
-              type="number"
-              class="sunarp-input"
-              id="directoryFormAnexo"
-              min="1"
-              max="99999"
-              step="1"
-              value="${escapeHtml(record?.anexo ?? '')}">
-          </div>
-
-          <div class="sunarp-form-field sunarp-form-field--full">
-            <label for="directoryFormObservaciones">Observaciones</label>
-            <textarea
-              id="directoryFormObservaciones"
-              class="sunarp-input"
-              maxlength="1000"
-              rows="3">${escapeHtml(record?.observaciones || '')}</textarea>
-          </div>
-
-          <div class="sunarp-form-field sunarp-form-field--full">
-            <label for="directoryFormSede">
-              Sede
-            </label>
-
-            <select
-              id="directoryFormSede"
-              class="sunarp-select"
-              >
-
-              <option value="">Selecciona una sede</option>
-
-              ${sedeOptions}
-
-            </select>
-          </div>
-
-
-
-          <div class="sunarp-form-field sunarp-form-field--full" id="directoryFormHierarchyField">
-            <div id="directoryFormHierarchy"></div>
-          </div>
-
-          <div class="sunarp-form-field sunarp-form-field--full" id="directoryFormRelationField">
-            <label for="directoryFormLocal">Ubicación dentro del local *</label>
-            <select id="directoryFormLocal" class="sunarp-select" required disabled>
-              <option value="">Selecciona una dependencia</option>
-            </select>
-          </div>
-
-          <div class="sunarp-form-field sunarp-form-field--full" id="directoryFormDirectLocalField" style="display:none">
-            <label for="directoryFormDirectLocal">Local *</label>
-            <select id="directoryFormDirectLocal" class="sunarp-select">
-              <option value="">Selecciona un local</option>
-              ${directLocalOptions}
-            </select>
-          </div>
-
-                      </div>
-          </div>
-          <div class="sunarp-form-field sunarp-form-field--full">
-            <button type="button" class="sunarp-btn sunarp-btn-outline" id="directoryAddAssignment">Agregar asignación</button>
-          </div>
-
-<div class="sunarp-form-field sunarp-form-field--full">
-            <div class="directory-form-actions">
-
-              <button
-                type="button"
-                class="sunarp-btn sunarp-btn-outline"
-                id="directoryFormCancel">
-                Cancelar
-              </button>
-
-              <button
-                type="submit"
-                class="sunarp-btn sunarp-btn-primary"
-                id="directoryFormSave">
-                ${isEditing ? 'Guardar cambios' : 'Registrar servidor'}
-              </button>
-
-            </div>
-          </div>
-
-        </form>
-      `,
-
-      selectedSede,
-      selectedPath,
-      selectedRelationId: record ? key(record.estructura_local_id) : '',
-      selectedLocalId: record ? key(record.local_id) : '',
-      selectedMode
-    };
+    const editing=Boolean(record),scopes=state.formScopes||[];
+    const siteScopes=scopes.filter(s=>s.type==='SEDE'&&s.referenceId);
+    const structureScopes=scopes.filter(s=>s.type==='ESTRUCTURA_ORG'&&s.referenceId);
+    const localScopes=scopes.filter(s=>s.type==='LOCAL'&&s.referenceId);
+    const total=scopes.some(s=>s.type==='TOTAL');
+    const structureMap=new Map((state.catalogs.estructuraOrg||[]).map(x=>[key(x.id),x]));
+    const localMap=new Map((state.catalogs.locales||[]).map(x=>[key(x.id),x]));
+    const allowed=new Set(siteScopes.map(s=>key(s.referenceId)));
+    structureScopes.forEach(s=>{const n=structureMap.get(key(s.referenceId));if(n&&n.sede_id)allowed.add(key(n.sede_id));});
+    localScopes.forEach(s=>{const n=localMap.get(key(s.referenceId));if(n&&n.sede_id)allowed.add(key(n.sede_id));});
+    const fixed=!total&&allowed.size===1?Array.from(allowed)[0]:'';
+    const selected=record?key(record.sede_id||fixed):fixed;
+    const docTypes=(state.catalogs.documentTypes||[]).filter(isActive).map(x=>
+      '<option value="'+escapeHtml(x.id)+'"'+(key(record&&record.tipo_documento)===key(x.id)?' selected':'')+'>'+escapeHtml(x.name)+'</option>'
+    ).join('');
+    const html=[
+      '<form id="directoryForm" class="directory-form"><input type="hidden" id="directoryFormPersonaId" value="'+escapeHtml(record&&record.persona_id||'')+'">',
+      !editing?[
+        '<section class="directory-form-section directory-form-validation"><div class="directory-form-section-heading"><h3>1. Validar identidad</h3><p>Comprueba el documento antes de registrar a la persona.</p></div>',
+        '<div class="directory-form-document-fields"><div class="sunarp-form-field directory-form-field-full"><label for="directoryFormTipoDocumento">Tipo de documento *</label><select id="directoryFormTipoDocumento" class="sunarp-select" required><option value="">Selecciona un tipo de documento</option>'+docTypes+'</select></div>',
+        '<div class="sunarp-form-field directory-form-field-full"><label for="directoryFormNumeroDocumento">Número de documento *</label><input id="directoryFormNumeroDocumento" type="text" class="sunarp-input" maxlength="30" autocomplete="off" required></div></div>',
+        '<div class="directory-form-document-actions"><button type="button" class="sunarp-btn sunarp-btn-primary" id="directoryDocumentSearch">Buscar persona</button><button type="button" class="sunarp-btn sunarp-btn-outline" id="directoryDocumentClear">Limpiar</button></div>',
+        '<div id="directoryDocumentSearchResult" aria-live="polite"></div><input type="hidden" id="directoryDocumentVerified" value="false"></section>'
+      ].join(''):'',
+      '<section class="directory-form-section"><div class="directory-form-section-heading"><h3>'+(editing?'1.':'2.')+' Datos personales</h3><p>Información de identificación y datos personales del servidor.</p></div>',
+      '<fieldset id="directoryPersonalFields" class="directory-form-fieldset"'+(!editing?' disabled':'')+'>',
+      editing?'<div class="directory-form-document-fields directory-form-edit-document"><div class="sunarp-form-field directory-form-field-full"><label for="directoryFormTipoDocumento">Tipo de documento *</label><select id="directoryFormTipoDocumento" class="sunarp-select" required><option value="">Selecciona un tipo de documento</option>'+docTypes+'</select></div><div class="sunarp-form-field directory-form-field-full"><label for="directoryFormNumeroDocumento">Número de documento *</label><input id="directoryFormNumeroDocumento" type="text" class="sunarp-input" maxlength="30" value="'+escapeHtml(record&&record.numero_documento||'')+'" required></div></div>':'',
+      '<div class="sunarp-form-field directory-form-field-full"><label for="directoryFormNombres">Nombres *</label><input id="directoryFormNombres" type="text" class="sunarp-input" maxlength="100" value="'+escapeHtml(record&&record.nombres||'')+'" required></div>',
+      '<div class="sunarp-form-field directory-form-field-full"><label for="directoryFormApellidos">Apellidos *</label><input id="directoryFormApellidos" type="text" class="sunarp-input" maxlength="150" value="'+escapeHtml(record&&record.apellidos||'')+'" required></div>',
+      '<div class="sunarp-form-field directory-form-field-full"><label for="directoryFormCorreoInstitucional">Correo institucional</label><input id="directoryFormCorreoInstitucional" type="email" class="sunarp-input" maxlength="150" placeholder="usuario@sunarp.gob.pe" value="'+escapeHtml(record&&record.correo_institucional||'')+'"><small>Se utiliza para vincular la identidad con la cuenta institucional de acceso.</small></div>',
+      '<div class="directory-form-dates-grid"><div class="sunarp-form-field"><label for="directoryFormFechaNacimiento">Fecha de nacimiento</label><input id="directoryFormFechaNacimiento" type="date" class="sunarp-input" value="'+escapeHtml(record&&record.fecha_nacimiento||'')+'"></div>',
+      '<div class="sunarp-form-field"><label for="directoryFormFechaInicio">Fecha de inicio de servicios</label><input id="directoryFormFechaInicio" type="date" class="sunarp-input" value="'+escapeHtml(record&&record.fecha_inicio_servicios||'')+'"></div>',
+      '<div class="sunarp-form-field"><label for="directoryFormFechaCese">Fecha de cese</label><input id="directoryFormFechaCese" type="date" class="sunarp-input" value="'+escapeHtml(record&&record.fecha_cese||'')+'"></div></div></fieldset></section>',
+      '<section class="directory-form-section directory-form-assignments"><div class="directory-form-section-heading directory-form-section-heading--actions"><div><h3>'+(editing?'2.':'3.')+' Asignaciones</h3><p>Agrega las adscripciones del servidor y administra cada una desde la tabla.</p></div><button type="button" class="sunarp-btn sunarp-btn-outline" id="directoryAddAssignment">Agregar asignación</button></div>',
+      '<fieldset id="directoryAssignmentsFieldset" class="directory-form-fieldset"'+(!editing?' disabled':'')+'><div id="directoryAssignmentEditorHost"></div><div id="directoryAssignmentsTableHost" class="directory-assignment-table-host" aria-live="polite"></div></fieldset></section>',
+      '<div class="directory-form-actions"><button type="button" class="sunarp-btn sunarp-btn-outline" id="directoryFormCancel">Cancelar</button><button type="submit" class="sunarp-btn sunarp-btn-primary" id="directoryFormSave"'+(!editing?' disabled':'')+'>'+(editing?'Guardar cambios':'Registrar servidor')+'</button></div></form>'
+    ].join('');
+    return {html,selectedSiteId:selected};
   }
-
 
   /* =====================================================
      9. FORMULARIO: ALTA Y EDICIÓN
