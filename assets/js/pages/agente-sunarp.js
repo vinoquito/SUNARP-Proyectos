@@ -130,9 +130,6 @@ registerGlobalComponents(app);
 
 app.component('navbar-default', NavbarDefault);
 
-app.component('page-header-split', PageHeaderSplit);
-app.component('page-header-banner', PageHeaderBanner);
-
 app.component('footer-default', FooterDefault);
 
 /*
