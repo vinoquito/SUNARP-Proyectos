@@ -1866,7 +1866,8 @@ function getDirectoryFormData(action) {
         id: _directoryKey_(item.id),
         estructura_id: _directoryKey_(item.estructura_id),
         local_id: _directoryKey_(item.local_id),
-        referencia: _directoryText_(item.referencia)
+        referencia: _directoryText_(item.referencia),
+        local_name: _directoryText_((localMap.get(_directoryKey_(item.local_id)) || {}).name)
       })),
       cargos,
       tiposDocumento: documentTypes
