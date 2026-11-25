@@ -3819,7 +3819,7 @@ function deleteDirectoryPerson(personaId) {
   if (operationalEvents.length) {
     throw new Error(
       'No se puede eliminar el servidor porque tiene ' + operationalEvents.length +
-      ' acción(es) registradas en el entorno. Se debe conservar su trazabilidad.'
+      ' acciones registradas en el entorno. Se debe conservar su trazabilidad.'
     );
   }
 
