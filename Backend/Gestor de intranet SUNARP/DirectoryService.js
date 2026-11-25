@@ -3422,6 +3422,17 @@ function saveDirectoryEntry(payload) {
       personalData: _directoryFindPersonalDataById_(personaId),
       assignments: linkedAssignments.map(item => Object.assign({}, item))
     };
+    const previousAssignmentIds = new Set(linkedAssignments.map(item =>
+      _directoryKey_(item.asignacion_id)
+    ).filter(Boolean));
+    const invalidRemovedIds = removedAssignmentIds.filter(id =>
+      !previousAssignmentIds.has(id)
+    );
+    if (invalidRemovedIds.length) {
+      throw new Error('No se pueden quitar asignaciones que no pertenecen a este servidor: ' + invalidRemovedIds.join(', '));
+    }
+  } else if (removedAssignmentIds.length) {
+    throw new Error('No puedes quitar asignaciones al crear un servidor.');
   }
 
   const primaryIndex = personaId
