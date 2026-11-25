@@ -1374,169 +1374,78 @@ const DirectoryPage = (() => {
   }
 
 
-  function renderFormLocalOptions(
-    structureId,
-    selectedRelationId
-  ) {
-
-    const select = document.getElementById(
-      'directoryFormLocal'
-    );
-
+  function renderFormLocalOptions(structureId, selectedRelationId, suffix = '') {
+    const select = document.getElementById('directoryFormLocal' + suffix);
     if (!select) return;
-
-    select.innerHTML = '';
-
+    select.replaceChildren();
     const placeholder = document.createElement('option');
-
     placeholder.value = '';
-    placeholder.textContent = structureId
-      ? 'Selecciona un local'
-      : 'Selecciona una dependencia';
-
+    placeholder.textContent = structureId ? 'Selecciona un local' : 'Selecciona una dependencia';
     select.appendChild(placeholder);
-
     const relations = state.catalogs.estructuraLocal
       .filter(relation =>
         key(relation.estructura_id) === key(structureId) &&
-        relation.active !== false &&
-        relation.active !== 0 &&
+        relation.active !== false && relation.active !== 0 &&
         String(relation.active).toLowerCase() !== 'false'
       );
-
     relations.forEach(relation => {
-
       const option = document.createElement('option');
-
       option.value = key(relation.id);
-
-      option.textContent = [
-        relation.local_name,
-        relation.referencia
-      ].filter(Boolean).join(' — ');
-
+      option.textContent = [relation.local_name, relation.referencia].filter(Boolean).join(' — ');
       select.appendChild(option);
-
     });
-
-    select.value = relations.some(relation =>
-      key(relation.id) === key(selectedRelationId)
-    )
-      ? key(selectedRelationId)
-      : '';
-
+    select.value = relations.some(relation => key(relation.id) === key(selectedRelationId))
+      ? key(selectedRelationId) : '';
     select.disabled = relations.length === 0;
-
   }
 
-
-  function renderFormHierarchy(
-    sedeId,
-    selectedPath,
-    selectedRelationId
-  ) {
-
-    const container = document.getElementById(
-      'directoryFormHierarchy'
-    );
-
+  function renderFormHierarchy(sedeId, selectedPath, selectedRelationId, suffix = '') {
+    const container = document.getElementById('directoryFormHierarchy' + suffix);
     if (!container) return;
-
-    container.innerHTML = '';
-
+    container.replaceChildren();
     let selectedStructureId = '';
 
     function appendLevel(parentId, level) {
-
-      const nodes = getFormHierarchyNodes(
-        parentId,
-        sedeId
-      );
-
+      const nodes = getFormHierarchyNodes(parentId, sedeId);
       if (!nodes.length) return;
-
       const wrapper = document.createElement('div');
       wrapper.className = 'sunarp-form-field sunarp-form-field--full';
-
       const label = document.createElement('label');
       label.textContent = getHierarchyLabel(nodes, level);
-
       const select = document.createElement('select');
       select.className = 'sunarp-select';
-
       const placeholder = document.createElement('option');
       placeholder.value = '';
       placeholder.textContent = 'Selecciona una opción';
-
       select.appendChild(placeholder);
-
       nodes.forEach(node => {
-
         const option = document.createElement('option');
-
         option.value = key(node.id);
         option.textContent = node.name;
-
         select.appendChild(option);
-
       });
-
       const previous = selectedPath[level] || '';
-
-      const exists = nodes.some(node =>
-        key(node.id) === previous
-      );
-
+      const exists = nodes.some(node => key(node.id) === previous);
       const selectedValue = exists ? previous : '';
-
-      if (!exists) {
-        selectedPath.splice(level);
-      }
-
+      if (!exists) selectedPath.splice(level);
       select.value = selectedValue;
-
       select.addEventListener('change', () => {
-
         selectedPath.splice(level);
-
-        if (select.value) {
-          selectedPath.push(select.value);
-        }
-
-        renderFormHierarchy(
-          sedeId,
-          selectedPath,
-          ''
-        );
-
+        if (select.value) selectedPath.push(select.value);
+        renderFormHierarchy(sedeId, selectedPath, '', suffix);
       });
-
       label.appendChild(select);
       wrapper.appendChild(label);
       container.appendChild(wrapper);
-
       if (selectedValue) {
         selectedStructureId = selectedValue;
         appendLevel(selectedValue, level + 1);
       }
-
     }
 
     appendLevel('', 0);
-
-    // El local se relaciona con el último elemento
-    // seleccionado de la jerarquía.
-    if (selectedPath.length) {
-      selectedStructureId = selectedPath[
-        selectedPath.length - 1
-      ];
-    }
-
-    renderFormLocalOptions(
-      selectedStructureId,
-      selectedRelationId
-    );
-
+    if (selectedPath.length) selectedStructureId = selectedPath[selectedPath.length - 1];
+    renderFormLocalOptions(selectedStructureId, selectedRelationId, suffix);
   }
 
 
@@ -1875,8 +1784,13 @@ const DirectoryPage = (() => {
           key(item.asignacion_id) === key(record.asignacion_id || record.id)
         );
         if (!assignment) throw new Error('No se encontró la asignación que deseas editar dentro de tu ámbito.');
+        const allAssignments = (detail.assignments || []).slice();
+        const orderedAssignments = [assignment].concat(allAssignments.filter(item =>
+          key(item.asignacion_id) !== key(assignment.asignacion_id)
+        ));
         formRecord = Object.assign({}, detail, assignment, {
-          id: assignment.asignacion_id
+          id: assignment.asignacion_id,
+          assignments: orderedAssignments
         }, detail.personalData || {});
       } catch (error) {
         notify('error', error.message || 'No se pudo recuperar la ficha de la persona.');
@@ -1893,33 +1807,35 @@ const DirectoryPage = (() => {
 
     // SUNARP UI recibe un elemento DOM mediante la propiedad content.
     SUNARPUI.openModal({
-      title: assignmentOnly
-        ? 'Nueva asignación'
-        : (isEditing ? 'Editar servidor' : 'Registrar servidor'),
+      title: isEditing ? 'Editar servidor' : 'Registrar servidor',
 
       content: template.content,
       size: 'lg'
     });
 
-    // Obtener los elementos una vez insertado el contenido en el modal.
+    // Inicializar las asignaciones dentro del mismo formulario.
     const form = document.getElementById('directoryForm');
+    const assignmentsContainer = document.getElementById('directoryAssignmentsContainer');
+    const firstAssignmentRow = document.getElementById('directoryAssignmentRow');
+    const cancelButton = document.getElementById('directoryFormCancel');
+    const scopes = state.formScopes || [];
+    const siteScopes = scopes.filter(scope => scope.type === 'SEDE' && scope.referenceId);
+    const totalScope = scopes.length === 1 && scopes[0].type === 'TOTAL';
+    const canChooseSite = totalScope || siteScopes.length > 1;
 
-    const sedeSelect = document.getElementById(
-      'directoryFormSede'
-    );
+    function getRowElement(id, suffix) {
+      return document.getElementById(id + suffix);
+    }
 
-
-    const relationSelect = document.getElementById('directoryFormLocal');
-    const directLocalSelect = document.getElementById('directoryFormDirectLocal');
-
-    function refreshDirectLocalOptions(sedeId, selectedId) {
-      const current = selectedId !== undefined ? key(selectedId) : key(directLocalSelect.value);
-      directLocalSelect.replaceChildren();
+    function refreshDirectLocalOptions(sedeId, selectedId, suffix) {
+      const select = getRowElement('directoryFormDirectLocal', suffix);
+      if (!select) return;
+      const current = selectedId !== undefined ? key(selectedId) : key(select.value);
+      select.replaceChildren();
       const placeholder = document.createElement('option');
       placeholder.value = '';
       placeholder.textContent = 'Selecciona un local';
-      directLocalSelect.appendChild(placeholder);
-      const scopes = state.formScopes || [];
+      select.appendChild(placeholder);
       const localScopes = scopes.filter(scope => scope.type === 'LOCAL' && scope.referenceId);
       const structureScopes = scopes.filter(scope => scope.type === 'ESTRUCTURA_ORG' && scope.referenceId);
       const broadScope = scopes.some(scope => scope.type === 'TOTAL' || scope.type === 'SEDE');
@@ -1927,88 +1843,149 @@ const DirectoryPage = (() => {
       const allowedStructureIds = new Set(structureScopes.map(scope => key(scope.referenceId)));
       state.catalogs.locales
         .filter(local => !sedeId || key(local.sede_id) === key(sedeId))
-        .filter(local => broadScope || (localScopes.length ? allowedLocalIds.has(key(local.id)) : structureScopes.length ? state.catalogs.estructuraLocal.some(rel => allowedStructureIds.has(key(rel.estructura_id)) && key(rel.local_id) === key(local.id)) : false))
+        .filter(local => broadScope ||
+          (localScopes.length
+            ? allowedLocalIds.has(key(local.id))
+            : structureScopes.length
+              ? state.catalogs.estructuraLocal.some(rel =>
+                  allowedStructureIds.has(key(rel.estructura_id)) &&
+                  key(rel.local_id) === key(local.id))
+              : false))
         .slice().sort(sortByName).forEach(local => {
           const option = document.createElement('option');
           option.value = key(local.id);
           option.textContent = local.name;
-          directLocalSelect.appendChild(option);
+          select.appendChild(option);
         });
-      directLocalSelect.value = Array.from(directLocalSelect.options).some(option => option.value === current)
-        ? current : '';
+      select.value = Array.from(select.options).some(option => option.value === current) ? current : '';
     }
 
-    function syncAssignmentMode() {
-      const scopes = state.formScopes || [];
+    function syncAssignmentMode(suffix) {
       const broadScope = scopes.some(scope => scope.type === 'TOTAL' || scope.type === 'SEDE');
       const structureScopes = scopes.filter(scope => scope.type === 'ESTRUCTURA_ORG');
       const localScopes = scopes.filter(scope => scope.type === 'LOCAL');
       const useStructure = broadScope || structureScopes.length > 0;
       const useDirectLocal = broadScope || localScopes.length > 0;
-      document.getElementById('directoryFormHierarchyField').style.display = useStructure ? '' : 'none';
-      document.getElementById('directoryFormRelationField').style.display = useStructure ? '' : 'none';
-      document.getElementById('directoryFormDirectLocalField').style.display = useDirectLocal ? '' : 'none';
-      relationSelect.required = false;
-      directLocalSelect.required = false;
-      if (relationSelect.value && useDirectLocal) {
+      const hierarchyField = getRowElement('directoryFormHierarchyField', suffix);
+      const relationField = getRowElement('directoryFormRelationField', suffix);
+      const directLocalField = getRowElement('directoryFormDirectLocalField', suffix);
+      const relationSelect = getRowElement('directoryFormLocal', suffix);
+      const directLocalSelect = getRowElement('directoryFormDirectLocal', suffix);
+      if (hierarchyField) hierarchyField.style.display = useStructure ? '' : 'none';
+      if (relationField) relationField.style.display = useStructure ? '' : 'none';
+      if (directLocalField) directLocalField.style.display = useDirectLocal ? '' : 'none';
+      if (relationSelect) relationSelect.required = false;
+      if (directLocalSelect) directLocalSelect.required = false;
+      if (relationSelect && relationSelect.value && useDirectLocal && directLocalSelect && !directLocalSelect.value) {
         const relation = state.catalogs.estructuraLocal.find(x => key(x.id) === key(relationSelect.value));
-        if (relation && !directLocalSelect.value) directLocalSelect.value = key(relation.local_id);
+        if (relation) directLocalSelect.value = key(relation.local_id);
       }
     }
 
-    relationSelect.addEventListener('change', () => {
-      const relation = state.catalogs.estructuraLocal.find(x => key(x.id) === key(relationSelect.value));
-      if (relation && directLocalSelect.closest('.sunarp-form-field').style.display !== 'none') {
-        directLocalSelect.value = key(relation.local_id);
+    function initializeAssignmentRow(row, index, assignment) {
+      const suffix = index ? '_' + index : '';
+      row.dataset.index = String(index);
+      row.id = index ? 'directoryAssignmentRow_' + index : 'directoryAssignmentRow';
+      const assignmentId = getRowElement('directoryFormAssignmentId', suffix);
+      const cargo = getRowElement('directoryFormCargo', suffix);
+      const condition = getRowElement('directoryFormCondicionCargo', suffix);
+      const annex = getRowElement('directoryFormAnexo', suffix);
+      const observations = getRowElement('directoryFormObservaciones', suffix);
+      const siteSelect = getRowElement('directoryFormSede', suffix);
+      const relationSelect = getRowElement('directoryFormLocal', suffix);
+      const directLocalSelect = getRowElement('directoryFormDirectLocal', suffix);
+      if (assignmentId) assignmentId.value = assignment ? key(assignment.asignacion_id) : '';
+      if (cargo) cargo.value = assignment ? key(assignment.cargo_id) : '';
+      if (condition) condition.value = assignment ? (assignment.condicion_cargo || '') : '';
+      if (annex) annex.value = assignment && assignment.anexo !== undefined ? assignment.anexo : '';
+      if (observations) observations.value = assignment ? (assignment.observaciones || '') : '';
+      const selectedSite = assignment
+        ? key(assignment.sede_id)
+        : (formData.selectedSede || '');
+      const siteField = siteSelect && siteSelect.closest('.sunarp-form-field');
+      if (siteField) siteField.hidden = !canChooseSite;
+      if (siteSelect) {
+        siteSelect.required = canChooseSite;
+        siteSelect.value = selectedSite;
       }
-    });
-
-
-    const cancelButton = document.getElementById(
-      'directoryFormCancel'
-    );
-
-    // Comprobar que el formulario se haya insertado correctamente.
-    if (!form || !cancelButton) {
-
-      SUNARPUI.closeModal();
-
-      notify(
-        'error',
-        'No se pudo inicializar el formulario del directorio.'
+      const selectedPath = assignment && assignment.estructura_id
+        ? getFormStructurePath(assignment.estructura_id)
+        : (index === 0 ? (formData.selectedPath || []).slice() : []);
+      renderFormHierarchy(
+        selectedSite,
+        selectedPath,
+        assignment ? key(assignment.estructura_local_id) : '',
+        suffix
       );
+      refreshDirectLocalOptions(
+        selectedSite,
+        assignment ? key(assignment.local_id) : '',
+        suffix
+      );
+      syncAssignmentMode(suffix);
+      if (siteSelect) siteSelect.addEventListener('change', () => {
+        renderFormHierarchy(siteSelect.value, [], '', suffix);
+        refreshDirectLocalOptions(siteSelect.value, '', suffix);
+      });
+      if (relationSelect) relationSelect.addEventListener('change', () => {
+        const relation = state.catalogs.estructuraLocal.find(x => key(x.id) === key(relationSelect.value));
+        if (relation && directLocalSelect &&
+            directLocalSelect.closest('.sunarp-form-field').style.display !== 'none') {
+          directLocalSelect.value = key(relation.local_id);
+        }
+      });
+    }
 
+    if (!form || !assignmentsContainer || !firstAssignmentRow || !cancelButton) {
+      SUNARPUI.closeModal();
+      notify('error', 'No se pudo inicializar el formulario del directorio.');
       return;
     }
 
-    // Construir los selectores jerárquicos y el local físico.
-    const scopes = state.formScopes || [];
-    const siteScopes = scopes.filter(scope => scope.type === 'SEDE' && scope.referenceId);
-    const totalScope = scopes.length === 1 && scopes[0].type === 'TOTAL';
-    const fixedSiteId = !totalScope && siteScopes.length === 1 ? key(siteScopes[0].referenceId) : '';
-    const selectedSite = formData.selectedSede || fixedSiteId;
-    const siteField = sedeSelect && sedeSelect.closest('.sunarp-form-field');
-    if (siteField) siteField.hidden = !canChooseSite;
-    if (sedeSelect) sedeSelect.required = canChooseSite;
-    if (sedeSelect && selectedSite) sedeSelect.value = selectedSite;
-    renderFormHierarchy(selectedSite, formData.selectedPath, formData.selectedRelationId);
-    refreshDirectLocalOptions(selectedSite, formData.selectedLocalId);
-    syncAssignmentMode();
+    let assignmentsForForm = isEditing && Array.isArray(formRecord.assignments)
+      ? formRecord.assignments.slice()
+      : [null];
+    if (!assignmentsForForm.length) assignmentsForForm = [null];
+    assignmentsForForm.forEach((assignment, index) => {
+      let row = firstAssignmentRow;
+      if (index > 0) {
+        row = firstAssignmentRow.cloneNode(true);
+        row.querySelectorAll('[id]').forEach(element => {
+          element.id = element.id + '_' + index;
+        });
+        row.querySelectorAll('[for]').forEach(element => {
+          element.htmlFor = element.htmlFor + '_' + index;
+        });
+        row.querySelectorAll('[data-row-remove]').forEach(element => element.remove());
+        assignmentsContainer.appendChild(row);
+      }
+      initializeAssignmentRow(row, index, assignment);
+    });
 
-    // Cambiar de sede reinicia la selección jerárquica.
-    if (sedeSelect) sedeSelect.addEventListener('change', () => {
-
-      renderFormHierarchy(
-        sedeSelect.value,
-        [],
-        ''
-      );
-      refreshDirectLocalOptions(sedeSelect.value, '');
-
+    const addAssignmentButton = document.getElementById('directoryAddAssignment');
+    if (addAssignmentButton) addAssignmentButton.addEventListener('click', () => {
+      const index = assignmentsContainer.querySelectorAll('.directory-assignment-row').length;
+      const row = firstAssignmentRow.cloneNode(true);
+      row.querySelectorAll('[id]').forEach(element => {
+        element.id = element.id + '_' + index;
+      });
+      row.querySelectorAll('[for]').forEach(element => {
+        element.htmlFor = element.htmlFor + '_' + index;
+      });
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'sunarp-btn sunarp-btn-outline';
+      remove.textContent = 'Quitar asignación';
+      remove.addEventListener('click', () => row.remove());
+      const actions = row.querySelector('.directory-assignment-row-actions');
+      if (actions) actions.appendChild(remove);
+      assignmentsContainer.appendChild(row);
+      initializeAssignmentRow(row, index, null);
     });
 
     // Cerrar el formulario.
     cancelButton.addEventListener('click', () => {
+      state.catalogs = previousCatalogs;
       SUNARPUI.closeModal();
     });
 
