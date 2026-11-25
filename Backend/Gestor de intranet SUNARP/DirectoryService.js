@@ -1646,6 +1646,302 @@ function _directoryGetAuthorizedSedeIds_(authorization, sedes) {
   return new Set(Array.from(allowedSedeIds).filter(id => availableSedeIds.has(id)));
 }
 
+
+/**
+ * Catálogos y contrato de ámbitos para crear o editar un servidor.
+ * No depende de la sede seleccionada en los filtros de la tabla.
+ */
+function getDirectoryFormData(action) {
+  const operation = _directoryText_(action).toLowerCase() === 'edit' ? 'edit' : 'create';
+  const authorization = _directoryAuthorizationContext_(
+    operation === 'edit' ? 'INFORMACION_PERSONAL_EDITAR' : 'INFORMACION_PERSONAL_CREAR'
+  );
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeAssignments: false,
+    includeDocumentTypes: true,
+    validateSnapshot: false
+  });
+  const moduleAccess = (authorization.auth.moduleAccess || []).find(item =>
+    _directoryKey_(item.modulo_id) === authorization.moduleId
+  );
+  const scopes = (moduleAccess && moduleAccess.scopes || []).map(scope => ({
+    type: _directoryText_(scope.tipo_ambito_id).toUpperCase(),
+    referenceId: _directoryKey_(scope.referencia_id),
+    includeDescendants: _directoryNormalizeBoolean_(
+      scope.incluir_descendientes === undefined ? false : scope.incluir_descendientes
+    )
+  })).filter(scope => ['TOTAL', 'SEDE', 'LOCAL', 'ESTRUCTURA_ORG'].includes(scope.type));
+
+  const isTotal = scopes.length === 1 &&
+    scopes[0].type === 'TOTAL' && !scopes[0].referenceId;
+  const hasSiteScope = isTotal || scopes.some(scope => scope.type === 'SEDE');
+  const structureScopes = scopes.filter(scope =>
+    scope.type === 'ESTRUCTURA_ORG' && scope.referenceId
+  );
+  const localScopes = scopes.filter(scope => scope.type === 'LOCAL' && scope.referenceId);
+  const allSedes = (context.sedes || []).filter(_directoryIsActive_);
+  const authorizedSedeIds = _directoryGetAuthorizedSedeIds_(authorization, allSedes);
+  const sedes = allSedes.filter(item =>
+    authorizedSedeIds.has(_directoryKey_(item.id))
+  ).map(item => ({
+    id: _directoryKey_(item.id),
+    name: _directoryText_(item.name),
+    active: true
+  })).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+
+  if (!isTotal && sedes.length > 1) {
+    throw new Error('El ámbito de Información de personal no puede abarcar varias sedes para esta operación.');
+  }
+  if (!sedes.length) {
+    throw new Error('No se encontró una sede válida dentro de tus ámbitos autorizados para registrar información de personal.');
+  }
+
+  const fixedSedeId = isTotal ? '' : _directoryKey_(sedes[0].id);
+  const structureMap = _directoryCreateMap_(context.estructuraOrg || []);
+  const localMap = _directoryCreateMap_(context.locales || []);
+  const activeStructures = (context.estructuraOrg || []).filter(_directoryIsActive_);
+  const activeLocals = (context.locales || []).filter(_directoryIsActive_);
+  const activeRelations = (context.estructuraLocal || []).filter(_directoryIsActive_);
+
+  const isDescendantOf = (structureId, rootId) => {
+    const visited = new Set();
+    let current = structureMap.get(_directoryKey_(structureId));
+    const expectedRoot = _directoryKey_(rootId);
+    while (current) {
+      const currentId = _directoryKey_(current.id);
+      if (!currentId || visited.has(currentId)) return false;
+      if (currentId === expectedRoot) return true;
+      visited.add(currentId);
+      const parentId = _directoryKey_(current.parent_id);
+      current = parentId ? structureMap.get(parentId) || null : null;
+    }
+    return false;
+  };
+
+  let localMode = 'hidden';
+  if (hasSiteScope) localMode = 'selectable';
+  else if (!structureScopes.length && localScopes.length > 1) localMode = 'selectable-scoped';
+  else if (!structureScopes.length && localScopes.length === 1) localMode = 'fixed';
+  const scopedLocalIds = new Set(
+    localScopes.map(scope => scope.referenceId).filter(Boolean)
+  );
+
+  const locals = activeLocals.filter(local => {
+    const localId = _directoryKey_(local.id);
+    const siteId = _directoryKey_(local.sede_id);
+    if (!authorizedSedeIds.has(siteId)) return false;
+    if (hasSiteScope) {
+      return _accessRecordIsAllowed_(authorization.auth, 'MOD_INFO_PERSONAL', {
+        sede_id: siteId, local_id: localId
+      }, authorization.structures, authorization.locals);
+    }
+    if (structureScopes.length) return false;
+    return scopedLocalIds.has(localId) && _accessRecordIsAllowed_(
+      authorization.auth, 'MOD_INFO_PERSONAL',
+      { sede_id: siteId, local_id: localId },
+      authorization.structures, authorization.locals
+    );
+  });
+
+  const permittedRelations = activeRelations.filter(relation => {
+    const structure = structureMap.get(_directoryKey_(relation.estructura_id));
+    const local = localMap.get(_directoryKey_(relation.local_id));
+    if (!structure || !local) return false;
+    const siteId = _directoryKey_(structure.sede_id);
+    if (siteId !== _directoryKey_(local.sede_id) || !authorizedSedeIds.has(siteId)) return false;
+    if (fixedSedeId && siteId !== fixedSedeId) return false;
+    return _accessRecordIsAllowed_(authorization.auth, 'MOD_INFO_PERSONAL', {
+      estructura_id: _directoryKey_(structure.id),
+      sede_id: siteId,
+      local_id: _directoryKey_(local.id)
+    }, authorization.structures, authorization.locals);
+  });
+
+  const selectableStructureIds = new Set();
+  if (hasSiteScope) {
+    activeStructures.forEach(node => {
+      if (authorizedSedeIds.has(_directoryKey_(node.sede_id))) {
+        selectableStructureIds.add(_directoryKey_(node.id));
+      }
+    });
+  } else if (structureScopes.length) {
+    structureScopes.forEach(scope => {
+      const root = structureMap.get(scope.referenceId);
+      if (!root || !authorizedSedeIds.has(_directoryKey_(root.sede_id))) return;
+      selectableStructureIds.add(scope.referenceId);
+      if (scope.includeDescendants) {
+        activeStructures.forEach(node => {
+          if (isDescendantOf(node.id, scope.referenceId)) {
+            selectableStructureIds.add(_directoryKey_(node.id));
+          }
+        });
+      }
+    });
+  } else {
+    permittedRelations.forEach(relation =>
+      selectableStructureIds.add(_directoryKey_(relation.estructura_id))
+    );
+  }
+
+  const displayStructureIds = new Set(selectableStructureIds);
+  selectableStructureIds.forEach(id => {
+    let current = structureMap.get(id);
+    const visited = new Set();
+    while (current) {
+      const parentId = _directoryKey_(current.parent_id);
+      if (!parentId || visited.has(parentId)) break;
+      visited.add(parentId);
+      const parent = structureMap.get(parentId);
+      if (!parent || _directoryKey_(parent.sede_id) !== _directoryKey_(current.sede_id)) break;
+      displayStructureIds.add(parentId);
+      current = parent;
+    }
+  });
+  const structureTypeMap = _directoryCreateMap_(context.tiposEstructura || []);
+  const estructuraOrg = activeStructures.filter(node =>
+    displayStructureIds.has(_directoryKey_(node.id))
+  ).map(node => {
+    const type = structureTypeMap.get(_directoryKey_(node.tipo_estructura_id));
+    return {
+      id: _directoryKey_(node.id),
+      name: _directoryText_(node.name),
+      parent_id: _directoryKey_(node.parent_id),
+      sede_id: _directoryKey_(node.sede_id),
+      tipo_estructura_id: _directoryKey_(node.tipo_estructura_id),
+      tipo_estructura_name: type ? _directoryText_(type.name) : '',
+      order: node.order
+    };
+  });
+
+  const rootStructureIds = structureScopes.length && !hasSiteScope
+    ? structureScopes.map(scope => scope.referenceId).filter(id => selectableStructureIds.has(id))
+    : estructuraOrg.filter(node =>
+        selectableStructureIds.has(node.id) &&
+        !selectableStructureIds.has(node.parent_id)
+      ).map(node => node.id);
+
+  const cargos = (context.cargos || []).filter(_directoryIsActive_).map(item => ({
+    id: _directoryKey_(item.id), name: _directoryText_(item.name), active: true
+  })).filter(item => item.id && item.name).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+
+  const documentTypes = (context.documentTypes || []).filter(_directoryIsActive_).map(item => ({
+    id: _directoryKey_(item.id), name: _directoryText_(item.name)
+  })).filter(item => item.id && item.name).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+
+  const relationLocalIds = new Set(permittedRelations.map(item => _directoryKey_(item.local_id)));
+  const filteredLocals = locals.filter(local =>
+    hasSiteScope || localMode === 'selectable-scoped' || localMode === 'fixed'
+      ? !permittedRelations.length || relationLocalIds.has(_directoryKey_(local.id)) ||
+        _accessRecordIsAllowed_(authorization.auth, 'MOD_INFO_PERSONAL', {
+          sede_id: _directoryKey_(local.sede_id), local_id: _directoryKey_(local.id)
+        }, authorization.structures, authorization.locals)
+      : false
+  ).map(item => ({
+    id: _directoryKey_(item.id),
+    name: _directoryText_(item.name),
+    sede_id: _directoryKey_(item.sede_id)
+  })).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+
+  return {
+    operation,
+    scope: {
+      total: isTotal,
+      siteMode: isTotal ? 'selectable' : 'fixed',
+      fixedSedeId,
+      localMode,
+      fixedLocalId: localMode === 'fixed' && filteredLocals.length === 1 ? filteredLocals[0].id : '',
+      hierarchyMode: structureScopes.length && !hasSiteScope ? 'structure-scope' : 'local',
+      structureScopes,
+      rootStructureIds,
+      selectableStructureIds: Array.from(selectableStructureIds),
+      permittedRelationIds: permittedRelations.map(item => _directoryKey_(item.id))
+    },
+    catalogs: {
+      sedes,
+      locales: filteredLocals,
+      estructuraOrg,
+      estructuraLocal: permittedRelations.map(item => ({
+        id: _directoryKey_(item.id),
+        estructura_id: _directoryKey_(item.estructura_id),
+        local_id: _directoryKey_(item.local_id),
+        referencia: _directoryText_(item.referencia)
+      })),
+      cargos,
+      tiposDocumento: documentTypes
+    }
+  };
+}
+
+
+function _directoryAssertDocumentTypeAllowed_(documentType) {
+  const normalized = _directoryNormalizeDocument_(documentType, 'Tipo de documento');
+  const result = SUNARPCore.listRecordsFromSourcesCached([{
+    key: 'documentTypes',
+    source: _directoryResolveDocumentTypesSource_(),
+    requiredHeaders: DIRECTORY_REQUIRED_HEADERS.documentTypes
+  }], DIRECTORY_CATALOG_CACHE_TTL);
+  const matches = (result.documentTypes || []).filter(item =>
+    _directoryKey_(item.id).replace(/\s+/g, '').toUpperCase() === normalized &&
+    _directoryIsActive_(item)
+  );
+  if (matches.length !== 1) {
+    throw new Error('Selecciona un tipo de documento vigente del catálogo institucional.');
+  }
+  return normalized;
+}
+
+
+/**
+ * Comprueba un DNI/documento antes de habilitar el formulario.
+ * En creación, cualquier coincidencia existente bloquea el alta.
+ * En edición, se admite el documento que ya pertenece a la misma persona.
+ */
+function searchDirectoryDocument(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('Debes indicar el tipo y número de documento.');
+  }
+  const operation = _directoryText_(payload.action).toLowerCase() === 'edit' ? 'edit' : 'create';
+  _directoryAuthorizationContext_(
+    operation === 'edit' ? 'INFORMACION_PERSONAL_EDITAR' : 'INFORMACION_PERSONAL_CREAR'
+  );
+  const documentType = _directoryAssertDocumentTypeAllowed_(payload.tipo_documento);
+  const documentNumber = _directoryNormalizeDocument_(payload.numero_documento, 'Número de documento');
+  const currentPersonaId = _directoryText_(payload.persona_id);
+  const result = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
+    { numero_documento: documentNumber },
+    {
+      searchField: 'numero_documento',
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.datosPersonales,
+      matchCase: false,
+      ignoreWhitespace: true,
+      projectionFields: ['servidor_id', 'tipo_documento', 'numero_documento']
+    }
+  );
+  const matches = (result.records || []).filter(item =>
+    _directoryKey_(item.tipo_documento).replace(/\s+/g, '').toUpperCase() === documentType &&
+    _directoryKey_(item.numero_documento).replace(/\s+/g, '').toUpperCase() === documentNumber
+  );
+  if (matches.length > 1) {
+    throw new Error('El documento aparece asociado a más de una persona. Debe corregirse la duplicidad antes de continuar.');
+  }
+  const existing = matches[0] || null;
+  const belongsToCurrent = Boolean(existing && currentPersonaId &&
+    _directoryKey_(existing.servidor_id) === currentPersonaId);
+  const available = !existing || belongsToCurrent;
+  return {
+    checked: true,
+    available,
+    duplicate: Boolean(existing && !belongsToCurrent),
+    currentRecord: belongsToCurrent,
+    message: available
+      ? 'Documento validado. Puedes continuar con el formulario.'
+      : 'El documento ya está registrado en Información de personal. No se puede crear otra persona con el mismo documento.'
+  };
+}
+
 function getDirectoryInitialData() {
   const startedAt = Date.now();
   const authorizationStartedAt = Date.now();
@@ -2891,7 +3187,7 @@ function _directoryCreatePersonalDataMap_(records) {
 }
 
 function _directoryAssertDocumentAvailable_(type, number, records, excludedPersonaId) {
-  const normalizedType = _directoryNormalizeDocument_(type, 'Tipo de documento');
+  const normalizedType = _directoryAssertDocumentTypeAllowed_(type);
   const normalizedNumber = _directoryNormalizeDocument_(number, 'Número de documento');
   const matches = Array.isArray(records)
     ? { records: records }
