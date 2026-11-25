@@ -4,8 +4,8 @@
 
 **Fecha de referencia de los datos compartidos:** 24 de noviembre de 2026  
 **Rama examinada:** `feat/directorio-personas-datos-asignaciones`  
-**HEAD examinado:** `ae07efe63c12451d2241b2b1a00ee10626f6f38f`. La comparación con `8522c7654ecb7ca1ba20745f03ef5fe9a5ea768f` muestra tres commits posteriores que únicamente añadieron este documento; los archivos de código examinados no cambiaron.  
-**Estado de CI del código examinado:** 272/272 pruebas aprobadas en GitHub Actions en `8522c7654ecb7ca1ba20745f03ef5fe9a5ea768f` (push #1464 y PR #1465). Los tres commits posteriores solo incorporaron documentación.  
+**HEAD examinado:** `5c253513480273090e6d5dc9980997009357cad8`.  
+**Estado de CI de la implementación:** 274/274 pruebas aprobadas, 0 fallidas en GitHub Actions (push #1487 y PR #1488, HEAD `5c253513480273090e6d5dc9980997009357cad8`).  
 **Estado de despliegue:** la aprobación de CI no acredita que el comportamiento esté publicado ni validado en la implementación de pruebas de Apps Script.
 
 ---
@@ -365,9 +365,9 @@ Un ámbito LOCAL permite consultar las asignaciones que correspondan al local au
 
 ---
 
-## 11. Divergencias comprobadas en el código vigente
+## 11. Divergencias comprobadas antes de la corrección
 
-La revisión del código en el HEAD **ae07efe63c12451d2241b2b1a00ee10626f6f38f** confirma que la ruta actual no cumple todavía los escenarios anteriores.
+La revisión del código previo en el HEAD **ae07efe63c12451d2241b2b1a00ee10626f6f38f** confirmó las siguientes divergencias. La sección 14 registra cómo se corrigieron.
 
 ### 11.1. El ámbito TOTAL carga todas las sedes al entrar
 
@@ -413,7 +413,7 @@ La corrección debe aprovechar esas piezas; no requiere modificar las hojas, ren
 
 ---
 
-## 12. Solución técnica propuesta
+## 12. Solución técnica implementada
 
 La solución se concentra en el flujo de carga inicial y en la selección de nodos de la interfaz. La autorización del backend se conserva como autoridad y cada carga de sede sigue validándose en el servidor.
 
@@ -498,4 +498,62 @@ La pantalla se comporta según el ámbito de autorización, no según una ruta u
 
 La autorización del backend es invariable. Los filtros solo permiten explorar el conjunto ya autorizado. El arreglo no debe modificar las hojas ni alterar relaciones normalizadas.
 
-**Estado de implementación:** esta sección documenta la especificación y la solución propuesta. Todavía no modifica DirectoryScripts.html ni DirectoryService.js; la implementación debe realizarse contra los criterios de prueba anteriores, en una intervención separada y limitada a Información de personal.
+**Estado de implementación:** los cambios de interfaz y filtros ya están aplicados en **DirectoryScripts.html**. No fue necesario modificar **DirectoryService.js**: la validación de autorización por sede y la respuesta limitada a la sede seleccionada ya existían y se conservaron. La implementación está en la rama indicada en el encabezado.
+
+---
+
+## 14. Implementación realizada y validación
+
+### 14.1. Cambios aplicados en DirectoryScripts.html
+
+La implementación quedó limitada al frontend de Información de personal:
+
+- **TOTAL:** se eliminó la carga agregada al entrar. El selector de sede permanece visible, inicia en «Seleccione una opción» y no selecciona automáticamente, incluso si solo existe una sede autorizada. La tabla permanece vacía hasta elegir una sede.
+- **Cambio o limpieza de sede:** seleccionar una sede llama a getDirectorySiteData(sedeId). Volver al valor vacío cancela la solicitud pendiente, limpia registros, índice, ruta jerárquica, filtros dependientes y tabla. Ya no convierte el valor vacío en una carga global.
+- **Ámbito fijo con una sede:** conserva la carga automática y oculta el selector de sede.
+- **Cargo:** el filtro se oculta solamente cuando no hay cargos. Con una sola opción permanece visible y deshabilitado.
+- **Jerarquía de estructura:** los nodos seleccionables se construyen desde las asignaciones autorizadas y las rutas reales de estructura_org.parent_id. Una referencia ESTRUCTURA_ORG única se trata como raíz implícita; sus hijos directos son el primer nivel si tiene descendientes autorizados. Varias referencias visibles se ofrecen como raíces de elección, evitando duplicar una rama que ya esté cubierta por una referencia ancestro con permiso de descendientes.
+- **Ámbitos independientes:** si una referencia no incluye descendientes, seleccionar esa raíz filtra solo sus registros exactos y no incorpora los registros de un nodo hijo autorizado por otra referencia independiente.
+- **Sin estructura orgánica:** las asignaciones locales sin estructura_id no generan opciones artificiales.
+
+### 14.2. Backend y límites de la intervención
+
+No se modificó DirectoryService.js, las hojas ni el modelo de datos. Se reutiliza el flujo que ya existía:
+
+1. getDirectoryInitialData() entrega las sedes permitidas y el resumen del ámbito sin cargar asignaciones.
+2. getDirectorySiteData(sedeId) valida nuevamente el ámbito y la sede concreta.
+3. _directoryBuildSiteData_() devuelve únicamente los registros autorizados para esa sede.
+4. El cliente construye filtros sobre esa respuesta; no decide permisos ni amplía el conjunto devuelto por el servidor.
+
+Tampoco se modificó la carga de otras pantallas, Administración de accesos, SUNARP Core, la configuración de clasp ni los despliegues.
+
+### 14.3. Pruebas ejecutadas
+
+Se actualizaron las pruebas que codificaban la antigua carga agregada y se añadieron casos para:
+
+- TOTAL sin carga inicial y elección explícita de sede;
+- cascada TOTAL restringida a la sede seleccionada;
+- raíz de ámbito ESTRUCTURA_ORG implícita;
+- selección entre varias referencias orgánicas en una sede;
+- deduplicación de referencias hijas cubiertas por una raíz ancestro con permiso de descendientes;
+- unidad terminal sin selectores orgánicos;
+- cargo único visible y deshabilitado;
+- aislamiento de una referencia sin descendientes frente a otra referencia independiente sobre un nodo hijo.
+
+**Resultado CI:** 274 pruebas aprobadas de 274, 0 fallidas, en push #1487 y PR #1488 para el HEAD 5c253513480273090e6d5dc9980997009357cad8.
+
+Estas pruebas validan las funciones de jerarquía, las reglas de estado esperadas y las regresiones del repositorio. No equivalen a una prueba visual en la implementación real de Apps Script.
+
+### 14.4. Verificación pendiente en la implementación de pruebas
+
+Antes de publicar, comprobar en la implementación de pruebas de Apps Script:
+
+1. Administrador TOTAL: entrar, comprobar tabla vacía y selector «Seleccione una opción». Hacerlo tanto con varias sedes como con una sola.
+2. Elegir Sede Central y confirmar que la tabla contiene solo sus registros autorizados y que el selector continúa visible.
+3. Recorrer Gerencia General → hijos directos → Unidad Funcional de Gestión Documental → Trámite Documentario y Archivo Central, verificando cada nivel sin saltos.
+4. Usuario con ámbito SEDE y una única sede: confirmar carga automática de toda la tabla permitida y selector de sede oculto.
+5. Usuario con una única área terminal: confirmar tabla permitida, ausencia de selectores orgánicos y filtro de cargos visible, incluso con un único cargo.
+6. Usuario con varias referencias ESTRUCTURA_ORG en la misma sede: verificar que puede distinguir sus raíces y recorrer cada rama sin mezclar autorizaciones.
+7. Repetir la comprobación con una raíz sin permiso de descendientes y una referencia independiente sobre un área hija.
+
+**Despliegue:** no se ha ejecutado clasp push ni se ha publicado una versión de Apps Script desde este trabajo. La implementación está en GitHub, pendiente de que se sincronice y se pruebe en la implementación de prueba habitual.
