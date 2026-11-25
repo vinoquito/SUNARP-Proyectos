@@ -2534,23 +2534,23 @@ test('la configuración conjunta reutiliza el contexto de autorización sin repe
   const start = accessSource.indexOf('function saveAccessUserConfiguration(payload)');
   const end = accessSource.indexOf('function _accessLoadSecurityRecords_(', start);
   const implementation = accessSource.slice(start, end);
-  assert.equal((implementation.match(/_accessRequirePermission_\\(/g) || []).length, 1);
-  assert.match(implementation, /_accessHasPermission_\\(auth, 'ROLES_ADMINISTRAR'/);
+  assert.equal((implementation.match(/_accessRequirePermission_\(/g) || []).length, 1);
+  assert.match(implementation, /_accessHasPermission_\(auth, 'ROLES_ADMINISTRAR'/);
 });
 
 test('la actualización de una pestaña no invalida las cachés de Usuarios y Auditoría ajenas', () => {
   const start = accessUiSource.indexOf('async function refreshCurrentTabData(showNotification)');
   const end = accessUiSource.indexOf('async function refreshData(', start);
   const implementation = accessUiSource.slice(start, end);
-  assert.match(implementation, /if \\(tab === 'users'\\) invalidateAccessUserPageCache\\(\\)/);
-  assert.match(implementation, /if \\(tab === 'audit'\\) invalidateAccessAuditPageCache\\(\\)/);
-  assert.doesNotMatch(implementation, /state\\.userPageCache = \\{\\}/);
-  assert.doesNotMatch(implementation, /state\\.auditPageCache = \\{\\}/);
-  assert.match(accessUiSource, /await onSave\\(\\);\\s*\\/\\/ Las operaciones administrativas registran un evento de auditoría\\.\\s*invalidateAccessAuditPageCache\\(\\)/);
+  assert.match(implementation, /if \(tab === 'users'\) invalidateAccessUserPageCache\(\)/);
+  assert.match(implementation, /if \(tab === 'audit'\) invalidateAccessAuditPageCache\(\)/);
+  assert.doesNotMatch(implementation, /state\.userPageCache = \{\}/);
+  assert.doesNotMatch(implementation, /state\.auditPageCache = \{\}/);
+  assert.match(accessUiSource, /await onSave\(\);\s*\/\/ Las operaciones administrativas registran un evento de auditoría\.\s*invalidateAccessAuditPageCache\(\)/);
 });
 
 test('el listado de usuarios registra por separado generaciones, búsqueda y métricas internas de Core', () => {
-  assert.match(accessSource, /sourceGenerationMs: Number\\(cached\\.sourceGenerationMs\\) \\|\\| 0/);
+  assert.match(accessSource, /sourceGenerationMs: Number\(cached\.sourceGenerationMs\) \|\| 0/);
   assert.match(accessSource, /peopleSearchResultCount/);
   assert.match(accessSource, /candidateFilterMs, peopleSearchMs, peopleSearchResultCount/);
   for (const field of ['authorizedSnapshotCacheHit', 'candidateCacheHit', 'candidateLoadMs',
