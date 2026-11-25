@@ -2304,7 +2304,7 @@ test('Información de personal muestra Local después de Sede y antes de la estr
   assert.match(directoryUiSource, /function populateLocalFilter\(/);
   assert.match(directoryUiSource, /function _directoryGetAccessFilterPlan_/);
   assert.match(directoryUiSource, /function _directoryBuildLocalHierarchyFilterSets_/);
-  assert.match(directoryUiSource, /accessPlan\.localMode === 'hidden'/);
+  assert.match(directoryUiSource, /plan\.localMode === 'hidden'/);
   assert.match(directoryUiSource, /accessPlan\.hierarchyMode === 'structure-scope'/);
   assert.match(directoryUiSource, /_directoryBuildHierarchyFilterSets_\(/);
   assert.match(directoryUiSource, /state\.hierarchySelectableIds = _directoryBuildLocalHierarchyFilterSets_/);
@@ -2508,13 +2508,15 @@ test('los filtros acumulan Sede, Local, estructura y Cargo sobre la instantánea
   const hierarchyNodes = directoryUiSource.slice(nodesStart, nodesEnd);
   assert.ok(hierarchyNodes.includes('_directoryGetHierarchyScopeRoots_'));
   assert.ok(hierarchyNodes.includes('_directoryGetSelectableHierarchyChildren_'));
-  assert.ok(hierarchyNodes.includes("scope.type === 'LOCAL'"));
+  assert.ok(directoryUiSource.includes("accessPlan.hierarchyMode === 'local'"));
   assert.equal(hierarchyNodes.includes('collectChildren'), false);
 
   const renderStart = directoryUiSource.indexOf('function renderHierarchyFilters()');
   const renderEnd = directoryUiSource.indexOf('function hasAvailableFilterSelection(filter)', renderStart);
   const renderHierarchy = directoryUiSource.slice(renderStart, renderEnd);
   assert.ok(renderHierarchy.includes('_directoryBuildLocalHierarchyFilterSets_'));
+  assert.ok(renderHierarchy.includes('_directoryBuildHierarchyFilterSets_'));
+  assert.ok(renderHierarchy.includes("accessPlan.hierarchyMode === 'structure-scope'"));
   assert.doesNotMatch(renderHierarchy, /selectableIds\.size <= 1/);
 
   const cargoStart = directoryUiSource.indexOf('function populateCargoFilter()');
