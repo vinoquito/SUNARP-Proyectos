@@ -160,17 +160,45 @@ function _coreQueryAuthorizationFingerprint_(authorization, validated, catalogVe
   });
 }
 
-function _coreQueryGetCatalogVersion_(authorization) {
-  if (authorization.catalogVersion) return String(authorization.catalogVersion);
+function _coreQueryGetCatalogVersion_(authorization, diagnostics) {
+  diagnostics = diagnostics && typeof diagnostics === 'object' ? diagnostics : {};
+  diagnostics.sourceCount = 0;
+  diagnostics.missingSource = '';
+  diagnostics.reason = '';
+
+  if (authorization.catalogVersion) {
+    diagnostics.mode = 'explicit';
+    return String(authorization.catalogVersion);
+  }
+
   const sources = authorization.catalogSources;
-  if (!Array.isArray(sources) || !sources.length ||
-      typeof _coreGetSourceGeneration_ !== 'function') return null;
+  if (!Array.isArray(sources) || !sources.length) {
+    diagnostics.mode = 'unavailable';
+    diagnostics.reason = 'catalog-sources-not-provided';
+    return null;
+  }
+  diagnostics.sourceCount = sources.length;
+  if (typeof _coreGetSourceGeneration_ !== 'function') {
+    diagnostics.mode = 'unavailable';
+    diagnostics.reason = 'source-generation-function-unavailable';
+    return null;
+  }
+
   const generations = [];
   for (let i = 0; i < sources.length; i++) {
     const generation = _coreGetSourceGeneration_(sources[i]);
-    if (!generation) return null;
+    if (!generation) {
+      const source = sources[i] || {};
+      diagnostics.mode = 'sources';
+      diagnostics.missingSource = String(
+        source.label || source.sheetName || ('catalog[' + i + ']')
+      );
+      diagnostics.reason = 'source-generation-unavailable';
+      return null;
+    }
     generations.push(generation);
   }
+  diagnostics.mode = 'sources';
   return _coreQueryDigest_(generations);
 }
 
@@ -448,7 +476,10 @@ function queryRecords(source, options) {
     schemaVersion: String(options.schemaVersion || '1')
   };
   const scopeRelations = _coreQueryNormalizeScopeRelations_(authorization);
-  const catalogVersion = _coreQueryGetCatalogVersion_(authorization);
+  const catalogDiagnostics = {};
+  const catalogVersion = _coreQueryGetCatalogVersion_(
+    authorization, catalogDiagnostics
+  );
   const authFingerprint = _coreQueryAuthorizationFingerprint_(
     authorization, validated, catalogVersion, scopeRelations
   );
@@ -472,9 +503,22 @@ function queryRecords(source, options) {
   const generation = typeof _coreGetSourceGeneration_ === 'function'
     ? _coreGetSourceGeneration_(source)
     : null;
-  // Para ámbitos no globales, el consumidor debe suministrar una versión
-  // verificable de los catálogos para no reutilizar permisos con jerarquía obsoleta.
+  const querySession = options.querySession &&
+    typeof options.querySession === 'object' &&
+    !Array.isArray(options.querySession)
+    ? options.querySession
+    : null;
+  // Para ámbitos no globales, la caché persistente exige generaciones de todos
+  // los catálogos. La sesión de una carga paginada puede reutilizar la huella
+  // completa de esta misma ejecución sin compartir datos entre solicitudes.
   const catalogCacheSafe = validated.totalOnly || Boolean(catalogVersion);
+  const snapshotCacheDisabledReason = !generation
+    ? 'source-generation-unavailable'
+    : cacheSeconds < 1
+      ? 'cache-disabled'
+      : !catalogCacheSafe
+        ? 'catalog-generation-unavailable'
+        : '';
   const cacheKey = generation && cacheSeconds > 0 && catalogCacheSafe
     ? _coreQueryCacheKey_(source, generation, authFingerprint, descriptor)
     : null;
@@ -492,7 +536,7 @@ function queryRecords(source, options) {
 
   // El permiso se comprueba antes de cualquier lectura de caché. Los resultados
   // finales quedan aislados por identidad, permiso, ámbito y versión de catálogo.
-  if (cacheKey) {
+  if (cacheKey && !querySession) {
     const cached = getCachedValue(cacheKey);
     if (cached && cached.version === 2 && Array.isArray(cached.records)) {
       const cacheResult = Object.assign({}, cached, {
@@ -523,16 +567,56 @@ function queryRecords(source, options) {
         source, generation, authFingerprint, authorizedSnapshotDescriptor
       )
     : null;
+  const querySessionKey = querySession && generation
+    ? 'query-session-snapshot:v1:' + _coreQueryDigest_({
+        source: _coreBuildSourceCacheKey_(source, 'query-session-snapshot'),
+        generation,
+        authorizationFingerprint: authFingerprint,
+        query: authorizedSnapshotDescriptor
+      })
+    : null;
   const authorizedSnapshot = authorizedSnapshotKey
     ? getCachedValue(authorizedSnapshotKey)
     : null;
-  if (authorizedSnapshot && authorizedSnapshot.version === 1 &&
-      Array.isArray(authorizedSnapshot.records) &&
-      authorizedSnapshot.distinctValues && authorizedSnapshot.distinctCounts) {
+  const sessionSnapshot = querySessionKey &&
+    Object.prototype.hasOwnProperty.call(querySession, querySessionKey)
+    ? querySession[querySessionKey]
+    : null;
+  const snapshotIsComplete = snapshot => {
+    const snapshotTotal = Number(snapshot && snapshot.total);
+    return Boolean(
+      snapshot &&
+      snapshot.version === 1 &&
+      Array.isArray(snapshot.records) &&
+      Number.isFinite(snapshotTotal) &&
+      snapshotTotal >= 0 &&
+      snapshot.records.length >= snapshotTotal &&
+      snapshot.distinctValues &&
+      snapshot.distinctCounts
+    );
+  };
+  const persistentSnapshotUsable = snapshotIsComplete(authorizedSnapshot);
+  const sessionSnapshotUsable = !persistentSnapshotUsable &&
+    snapshotIsComplete(sessionSnapshot);
+  const reusableSnapshot = persistentSnapshotUsable
+    ? authorizedSnapshot
+    : sessionSnapshotUsable
+      ? sessionSnapshot
+      : null;
+  if (persistentSnapshotUsable && querySession && querySessionKey) {
+    try {
+      querySession[querySessionKey] = authorizedSnapshot;
+    } catch (error) {
+      console.warn('[SUNARP Core] No se pudo conservar la instantánea persistente en sesión:', error.message);
+    }
+  }
+  if (reusableSnapshot) {
+    const snapshotHitFromCache = persistentSnapshotUsable;
+    const snapshotHitFromSession = !snapshotHitFromCache;
     const snapshotContext = typeof _coreOpenSource_ === 'function'
       ? _coreOpenSource_(source)
       : null;
-    const selectedSnapshotPage = authorizedSnapshot.records.slice(offset, offset + limit);
+    const selectedSnapshotPage = reusableSnapshot.records.slice(offset, offset + limit);
     const snapshotPage = _coreQueryHydratePage_(
       source, selectedSnapshotPage, snapshotContext
     );
@@ -542,19 +626,23 @@ function queryRecords(source, options) {
     const snapshotResult = {
       version: 2,
       records: snapshotPage,
-      total: authorizedSnapshot.total,
+      total: reusableSnapshot.total,
       offset,
       limit,
-      distinctValues: authorizedSnapshot.distinctValues,
-      distinctCounts: authorizedSnapshot.distinctCounts,
-      hasMore: offset + snapshotPage.length < authorizedSnapshot.total,
+      distinctValues: reusableSnapshot.distinctValues,
+      distinctCounts: reusableSnapshot.distinctCounts,
+      hasMore: offset + snapshotPage.length < reusableSnapshot.total,
       cacheHit: false,
-      authorizedSnapshotCacheHit: true,
+      authorizedSnapshotCacheHit: snapshotHitFromCache,
+      authorizedSnapshotSessionHit: snapshotHitFromSession,
+      authorizedSnapshotCacheEligible: Boolean(authorizedSnapshotKey),
+      authorizedSnapshotCacheDisabledReason: snapshotCacheDisabledReason,
+      catalogGenerationMissingSource: catalogDiagnostics.missingSource || '',
       candidateCacheHit: true,
-      candidateCount: authorizedSnapshot.candidateCount,
-      authorizedCount: authorizedSnapshot.authorizedCount,
-      retainedForPage: authorizedSnapshot.records.length,
-      projectedFieldCount: authorizedSnapshot.projectedFieldCount,
+      candidateCount: reusableSnapshot.candidateCount,
+      authorizedCount: reusableSnapshot.authorizedCount,
+      retainedForPage: reusableSnapshot.records.length,
+      projectedFieldCount: reusableSnapshot.projectedFieldCount,
       hydratedRowCount: snapshotPage.length,
       durationMs: Date.now() - queryStartedAt
     };
@@ -565,7 +653,11 @@ function queryRecords(source, options) {
     }
     console.log('[SUNARP Core] Instantánea autorizada reutilizada:', {
       sheet: (source && (source.sheetName || source.label)) || 'fuente',
-      authorizedSnapshotCacheHit: true,
+      authorizedSnapshotCacheHit: snapshotHitFromCache,
+      authorizedSnapshotSessionHit: snapshotHitFromSession,
+      authorizedSnapshotCacheEligible: Boolean(authorizedSnapshotKey),
+      authorizedSnapshotCacheDisabledReason: snapshotCacheDisabledReason,
+      catalogGenerationMissingSource: catalogDiagnostics.missingSource || '',
       candidateCount: snapshotResult.candidateCount,
       authorizedCount: snapshotResult.authorizedCount,
       hydratedRowCount: snapshotResult.hydratedRowCount,
@@ -822,6 +914,16 @@ function queryRecords(source, options) {
     authorizedCount,
     projectedFieldCount
   };
+  // Esta caché vive únicamente dentro de la ejecución que comparte el objeto
+  // querySession. No cruza solicitudes y su clave incluye identidad, permiso,
+  // ámbitos, relaciones y generación de la fuente.
+  if (querySession && querySessionKey) {
+    try {
+      querySession[querySessionKey] = snapshotValue;
+    } catch (error) {
+      console.warn('[SUNARP Core] No se pudo conservar la instantánea de sesión:', error.message);
+    }
+  }
   if (authorizedSnapshotKey) {
     try {
       const storedSnapshot = putCachedValue(
@@ -832,6 +934,9 @@ function queryRecords(source, options) {
           reason: storedSnapshot && storedSnapshot.reason || 'unknown',
           candidateCount: candidateRows.length,
           authorizedCount,
+          cacheEligible: Boolean(authorizedSnapshotKey),
+          cacheDisabledReason: snapshotCacheDisabledReason,
+          catalogGenerationMissingSource: catalogDiagnostics.missingSource || '',
           sizeBytes: storedSnapshot && storedSnapshot.sizeBytes,
           compressedBytes: storedSnapshot && storedSnapshot.compressedBytes,
           chunkCount: storedSnapshot && storedSnapshot.chunkCount
@@ -847,6 +952,10 @@ function queryRecords(source, options) {
     hasMore: offset + page.length < total,
     cacheHit: false,
     authorizedSnapshotCacheHit: false,
+    authorizedSnapshotSessionHit: false,
+    authorizedSnapshotCacheEligible: Boolean(authorizedSnapshotKey),
+    authorizedSnapshotCacheDisabledReason: snapshotCacheDisabledReason,
+    catalogGenerationMissingSource: catalogDiagnostics.missingSource || '',
     candidateCacheHit,
     candidateCount: candidateRows.length,
     authorizedCount,
@@ -866,6 +975,10 @@ function queryRecords(source, options) {
     sheet: (source && (source.sheetName || source.label)) || 'fuente',
     candidateCacheHit,
     authorizedSnapshotCacheHit: result.authorizedSnapshotCacheHit,
+    authorizedSnapshotSessionHit: result.authorizedSnapshotSessionHit,
+    authorizedSnapshotCacheEligible: result.authorizedSnapshotCacheEligible,
+    authorizedSnapshotCacheDisabledReason: result.authorizedSnapshotCacheDisabledReason,
+    catalogGenerationMissingSource: result.catalogGenerationMissingSource,
     candidateCount: result.candidateCount,
     authorizedCount,
     retainedForPage: result.retainedForPage,

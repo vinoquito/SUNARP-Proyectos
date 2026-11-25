@@ -1822,12 +1822,16 @@ function _directoryBuildSiteData_(
   const assignmentQueryDescriptor = _directoryBuildAssignmentQuery_(
     context, authorization, assignmentQueryOptions
   );
+  // Las páginas internas comparten solo la instantánea autorizada de esta
+  // ejecución; Core vuelve a validar autorización y huella en cada página.
+  assignmentQueryDescriptor.queryOptions.querySession = Object.create(null);
   const queryDescriptorElapsed = Date.now() - queryDescriptorStartedAt;
 
   const queryStartedAt = Date.now();
   let coreQueryElapsed = 0;
   let candidateCacheHits = 0;
   let authorizedSnapshotCacheHits = 0;
+  let authorizedSnapshotSessionHits = 0;
   const pageSize = 1000;
   const records = [];
   let offset = 0;
@@ -1855,6 +1859,7 @@ function _directoryBuildSiteData_(
     coreQueryElapsed += Number(page.durationMs) || 0;
     if (page.candidateCacheHit) candidateCacheHits++;
     if (page.authorizedSnapshotCacheHit) authorizedSnapshotCacheHits++;
+    if (page.authorizedSnapshotSessionHit) authorizedSnapshotSessionHits++;
     if (expectedTotal === null) expectedTotal = Number(page.total) || 0;
     const pageRecords = page.records || [];
     records.push.apply(records, pageRecords);
@@ -2080,7 +2085,8 @@ function _directoryBuildSiteData_(
       assignments: records.length,
       expectedAssignments: expectedTotal || 0,
       candidateCacheHits,
-      authorizedSnapshotCacheHits
+      authorizedSnapshotCacheHits,
+      authorizedSnapshotSessionHits
     }
   };
   console.log('[DirectoryService] Site data ms:', JSON.stringify({
@@ -2102,6 +2108,7 @@ function _directoryBuildSiteData_(
     candidatePages: pageCount,
     candidateCacheHits,
     authorizedSnapshotCacheHits,
+    authorizedSnapshotSessionHits,
     records: records.length,
     totalAssignments: expectedTotal || 0,
     siteCatalogsRestricted: true,

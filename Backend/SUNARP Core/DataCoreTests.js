@@ -369,6 +369,59 @@ function runCoreSelfTests_() {
       'La caché final distingue relaciones de autorización diferentes y reutiliza solo los candidatos.'
     );
 
+    // Una carga de directorio puede necesitar varias páginas dentro de una
+    // misma ejecución. La sesión evita repetir la evaluación de autorización
+    // aun cuando la caché persistente esté deshabilitada o no disponible.
+    const querySession = Object.create(null);
+    const querySessionBase = {
+      idField: 'id',
+      filters: { active: true },
+      sortBy: 'id',
+      limit: 1,
+      authorization: {
+        context: queryAuthorizationContext,
+        moduleId: 'MOD_TEST',
+        permissionCode: 'TEST_READ'
+      },
+      cacheSeconds: 0,
+      candidateCacheSeconds: 0,
+      querySession
+    };
+    const querySessionFirstPage = queryRecords(source, Object.assign(
+      {}, querySessionBase, { offset: 0 }
+    ));
+    const querySessionSecondPage = queryRecords(source, Object.assign(
+      {}, querySessionBase, { offset: 1 }
+    ));
+    assert(
+      querySessionFirstPage.total === 2 &&
+      querySessionFirstPage.records[0].id === 'TST_001' &&
+      querySessionSecondPage.total === 2 &&
+      querySessionSecondPage.records[0].id === 'TST_002' &&
+      querySessionSecondPage.authorizedSnapshotSessionHit === true &&
+      querySessionSecondPage.authorizedSnapshotCacheHit === false,
+      'Las páginas de una misma carga reutilizan la instantánea autorizada de sesión sin caché persistente.'
+    );
+
+    const otherSessionUserContext = Object.assign(
+      {}, queryAuthorizationContext, { personaId: 'TST_OTHER_USER' }
+    );
+    const querySessionOtherUserPage = queryRecords(source, Object.assign(
+      {}, querySessionBase, {
+        offset: 1,
+        authorization: {
+          context: otherSessionUserContext,
+          moduleId: 'MOD_TEST',
+          permissionCode: 'TEST_READ'
+        }
+      }
+    ));
+    assert(
+      querySessionOtherUserPage.records[0].id === 'TST_002' &&
+      querySessionOtherUserPage.authorizedSnapshotSessionHit !== true,
+      'La instantánea de sesión no se reutiliza entre identidades distintas.'
+    );
+
     const deniedQueryContext = {
       authenticated: true,
       personaId: 'TST_DENIED',
