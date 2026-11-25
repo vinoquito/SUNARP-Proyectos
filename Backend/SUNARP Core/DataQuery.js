@@ -160,7 +160,7 @@ function _coreQueryAuthorizationFingerprint_(authorization, validated, catalogVe
   });
 }
 
-function _coreQueryGetCatalogVersion_(authorization, diagnostics) {
+function _coreQueryGetCatalogVersion_(authorization, diagnostics, sourceGenerations) {
   diagnostics = diagnostics && typeof diagnostics === 'object' ? diagnostics : {};
   diagnostics.sourceCount = 0;
   diagnostics.missingSource = '';
@@ -178,16 +178,26 @@ function _coreQueryGetCatalogVersion_(authorization, diagnostics) {
     return null;
   }
   diagnostics.sourceCount = sources.length;
-  if (typeof _coreGetSourceGeneration_ !== 'function') {
-    diagnostics.mode = 'unavailable';
-    diagnostics.reason = 'source-generation-function-unavailable';
-    return null;
+
+  let generations;
+  if (Array.isArray(sourceGenerations)) {
+    if (sourceGenerations.length !== sources.length) {
+      diagnostics.mode = 'unavailable';
+      diagnostics.reason = 'catalog-generation-count-mismatch';
+      return null;
+    }
+    generations = sourceGenerations;
+  } else {
+    if (typeof _coreGetSourceGeneration_ !== 'function') {
+      diagnostics.mode = 'unavailable';
+      diagnostics.reason = 'source-generation-function-unavailable';
+      return null;
+    }
+    generations = sources.map(source => _coreGetSourceGeneration_(source));
   }
 
-  const generations = [];
-  for (let i = 0; i < sources.length; i++) {
-    const generation = _coreGetSourceGeneration_(sources[i]);
-    if (!generation) {
+  for (let i = 0; i < generations.length; i++) {
+    if (!generations[i]) {
       const source = sources[i] || {};
       diagnostics.mode = 'sources';
       diagnostics.missingSource = String(
@@ -196,7 +206,6 @@ function _coreQueryGetCatalogVersion_(authorization, diagnostics) {
       diagnostics.reason = 'source-generation-unavailable';
       return null;
     }
-    generations.push(generation);
   }
   diagnostics.mode = 'sources';
   return _coreQueryDigest_(generations);
@@ -477,8 +486,23 @@ function queryRecords(source, options) {
   };
   const scopeRelations = _coreQueryNormalizeScopeRelations_(authorization);
   const catalogDiagnostics = {};
+  const catalogSourcesForGeneration = !authorization.catalogVersion &&
+    Array.isArray(authorization.catalogSources)
+    ? authorization.catalogSources
+    : [];
+  const generationSources = [source].concat(catalogSourcesForGeneration);
+  const sourceGenerationStartedAt = Date.now();
+  const sourceGenerations = typeof _coreGetSourceGenerations_ === 'function'
+    ? _coreGetSourceGenerations_(generationSources)
+    : typeof _coreGetSourceGeneration_ === 'function'
+      ? generationSources.map(sourceRef => _coreGetSourceGeneration_(sourceRef))
+      : generationSources.map(() => null);
+  let sourceGenerationMs = Date.now() - sourceGenerationStartedAt;
+  const generation = sourceGenerations[0] || null;
   const catalogVersion = _coreQueryGetCatalogVersion_(
-    authorization, catalogDiagnostics
+    authorization,
+    catalogDiagnostics,
+    catalogSourcesForGeneration.length ? sourceGenerations.slice(1) : null
   );
   const authFingerprint = _coreQueryAuthorizationFingerprint_(
     authorization, validated, catalogVersion, scopeRelations
@@ -500,9 +524,6 @@ function queryRecords(source, options) {
     throw new Error('SUNARP Core: candidateCacheSeconds debe ser un entero entre 0 y 21600.');
   }
   const candidateCacheSeconds = Math.min(requestedCandidateCacheSeconds, 60);
-  const generation = typeof _coreGetSourceGeneration_ === 'function'
-    ? _coreGetSourceGeneration_(source)
-    : null;
   const querySession = options.querySession &&
     typeof options.querySession === 'object' &&
     !Array.isArray(options.querySession)
@@ -541,6 +562,7 @@ function queryRecords(source, options) {
     if (cached && cached.version === 2 && Array.isArray(cached.records)) {
       const cacheResult = Object.assign({}, cached, {
         cacheHit: true,
+        sourceGenerationMs,
         durationMs: Date.now() - queryStartedAt
       });
       console.log('[SUNARP Core] Consulta autorizada: resultado en caché', {
@@ -620,8 +642,13 @@ function queryRecords(source, options) {
     const snapshotPage = _coreQueryHydratePage_(
       source, selectedSnapshotPage, snapshotContext
     );
-    if (generation && _coreGetSourceGeneration_(source) !== generation) {
-      throw new Error('SUNARP Core: la fuente cambió durante la consulta; vuelve a solicitar la página.');
+    if (generation) {
+      const verificationStartedAt = Date.now();
+      const currentGeneration = _coreGetSourceGeneration_(source);
+      sourceGenerationMs += Date.now() - verificationStartedAt;
+      if (currentGeneration !== generation) {
+        throw new Error('SUNARP Core: la fuente cambió durante la consulta; vuelve a solicitar la página.');
+      }
     }
     const snapshotResult = {
       version: 2,
@@ -638,6 +665,7 @@ function queryRecords(source, options) {
       authorizedSnapshotCacheEligible: Boolean(authorizedSnapshotKey),
       authorizedSnapshotCacheDisabledReason: snapshotCacheDisabledReason,
       catalogGenerationMissingSource: catalogDiagnostics.missingSource || '',
+      sourceGenerationMs,
       candidateCacheHit: true,
       candidateCount: reusableSnapshot.candidateCount,
       authorizedCount: reusableSnapshot.authorizedCount,
@@ -658,6 +686,7 @@ function queryRecords(source, options) {
       authorizedSnapshotCacheEligible: Boolean(authorizedSnapshotKey),
       authorizedSnapshotCacheDisabledReason: snapshotCacheDisabledReason,
       catalogGenerationMissingSource: catalogDiagnostics.missingSource || '',
+      sourceGenerationMs,
       candidateCount: snapshotResult.candidateCount,
       authorizedCount: snapshotResult.authorizedCount,
       hydratedRowCount: snapshotResult.hydratedRowCount,
@@ -901,8 +930,13 @@ function queryRecords(source, options) {
   }
   const selectedPage = pageSource.slice(offset, offset + limit);
   const page = _coreQueryHydratePage_(source, selectedPage, candidateContext);
-  if (generation && _coreGetSourceGeneration_(source) !== generation) {
-    throw new Error('SUNARP Core: la fuente cambió durante la consulta; vuelve a solicitar la página.');
+  if (generation) {
+    const verificationStartedAt = Date.now();
+    const currentGeneration = _coreGetSourceGeneration_(source);
+    sourceGenerationMs += Date.now() - verificationStartedAt;
+    if (currentGeneration !== generation) {
+      throw new Error('SUNARP Core: la fuente cambió durante la consulta; vuelve a solicitar la página.');
+    }
   }
   const snapshotValue = {
     version: 1,
@@ -956,6 +990,7 @@ function queryRecords(source, options) {
     authorizedSnapshotCacheEligible: Boolean(authorizedSnapshotKey),
     authorizedSnapshotCacheDisabledReason: snapshotCacheDisabledReason,
     catalogGenerationMissingSource: catalogDiagnostics.missingSource || '',
+    sourceGenerationMs,
     candidateCacheHit,
     candidateCount: candidateRows.length,
     authorizedCount,
@@ -979,6 +1014,7 @@ function queryRecords(source, options) {
     authorizedSnapshotCacheEligible: result.authorizedSnapshotCacheEligible,
     authorizedSnapshotCacheDisabledReason: result.authorizedSnapshotCacheDisabledReason,
     catalogGenerationMissingSource: result.catalogGenerationMissingSource,
+    sourceGenerationMs,
     candidateCount: result.candidateCount,
     authorizedCount,
     retainedForPage: result.retainedForPage,

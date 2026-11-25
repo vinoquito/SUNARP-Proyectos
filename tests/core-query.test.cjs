@@ -252,6 +252,48 @@ test('queryRecords aplica la autorización sobre la relación de ubicación decl
   assert.equal(result.records[0].assignment_id, 'A');
 });
 
+test('queryRecords agrupa la generación de la asignación y de sus catálogos en una sola lectura', () => {
+  const sandbox = createSandbox();
+  const scoped = sandbox.authorization('P1', ['DIRECTORY_READ'], [
+    { tipo_ambito_id: 'SEDE', referencia_id: 'S1' }
+  ]);
+  scoped.catalogVersion = null;
+  scoped.catalogSources = [
+    { spreadsheetId: 'MASTER', sheetName: 'estructura_org' },
+    { spreadsheetId: 'DIRECTORY', sheetName: 'estructura_local' }
+  ];
+
+  const batches = [];
+  let singleGenerationReads = 0;
+  sandbox.context._coreGetSourceGenerations_ = sources => {
+    batches.push(sources.slice());
+    return sources.map(() => 'BATCH-GEN');
+  };
+  sandbox.context._coreGetSourceGeneration_ = () => {
+    singleGenerationReads++;
+    return 'BATCH-GEN';
+  };
+
+  const sourceRef = { spreadsheetId: 'S', sheetName: 'Assignments' };
+  const result = sandbox.context.queryRecords(sourceRef, {
+    idField: 'assignment_id',
+    filters: { status: 'ACTIVE' },
+    authorization: scoped,
+    cacheSeconds: 0,
+    candidateCacheSeconds: 0
+  });
+
+  assert.equal(result.total, 2);
+  assert.equal(batches.length, 1);
+  assert.equal(batches[0].length, 3);
+  assert.equal(batches[0][0].sheetName, 'Assignments');
+  assert.equal(batches[0][1].sheetName, 'estructura_org');
+  assert.equal(batches[0][2].sheetName, 'estructura_local');
+  assert.equal(singleGenerationReads, 1, 'Se conserva una única verificación final de que la fuente no cambió durante la consulta.');
+  assert.ok(result.sourceGenerationMs >= 0);
+});
+
+
 test('queryRecords obtiene la versión de catálogos desde generaciones de sus fuentes', () => {
   const sandbox = createSandbox();
   const scoped = sandbox.authorization('P1', ['DIRECTORY_READ'], [
