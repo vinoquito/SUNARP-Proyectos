@@ -260,7 +260,7 @@ Esta inspección debe permitir identificar si el fallo aparece en la resolución
 - Una prueba de interfaz o integración recorre los selectores reales: Sede Central → Gerencia General → Unidad Funcional de Gestión Documental → hijos directos.
 - Se comprueba que el resultado de la tabla corresponde al subárbol elegido y conserva las restricciones de autorización.
 
-La prueba de Archivo Central debe contrastarse con la hoja completa de `asignaciones`: el extracto de 45 filas compartido no contiene una asignación visible a `EL_SC_ARCHIVO_CENTRAL`.
+Se verifica el recorrido jerárquico de Archivo Central según su `parent_id` y los registros autorizados que devuelve el servicio.
 
 ---
 
