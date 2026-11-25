@@ -1367,7 +1367,7 @@ const DirectoryPage = (() => {
     const documentClear=document.getElementById('directoryDocumentClear'),documentAlert=document.getElementById('directoryDocumentSearchResult');
 
     if(!form||!personalFieldset||!assignmentsFieldset||!addButton||!editorHost||!tableHost||!cancelButton||!saveButton||
-       (!editing&&(!documentType||!documentNumber))) {
+       (!editing&&(!documentType||!documentNumber||!documentVerified||!documentSearch||!documentClear||!documentAlert))) {
       SUNARPUI.closeModal();state.catalogs=previousCatalogs;state.formScopes=previousScopes;
       notify('error','No se pudo inicializar el formulario de Información de personal.');return;
     }
