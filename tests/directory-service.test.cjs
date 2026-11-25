@@ -127,12 +127,16 @@ vm.runInContext(
 const hierarchyHelperMatch = frontendScript.match(/function _directoryBuildHierarchyFilterSets_\([\s\S]*?\n  \}/);
 assert.ok(hierarchyHelperMatch, 'El frontend debe calcular las rutas de estructuras con asignaciones autorizadas');
 const hierarchyChildrenSource = extractFrontendFunction('_directoryGetSelectableHierarchyChildren_');
+const hierarchyScopeRootsSource = extractFrontendFunction('_directoryGetHierarchyScopeRoots_');
 assert.ok(hierarchyChildrenSource, 'El frontend debe resolver únicamente hijos jerárquicos directos');
+assert.ok(hierarchyScopeRootsSource, 'El frontend debe resolver las raíces orgánicas de cada ámbito');
 const hierarchySandbox = vm.createContext({});
 vm.runInContext(
   hierarchyHelperMatch[0] + '\n' + hierarchyChildrenSource +
+    '\n' + hierarchySubtreeSource + '\n' + hierarchyScopeRootsSource +
     '\nthis.buildHierarchyFilterSets = _directoryBuildHierarchyFilterSets_;' +
-    '\nthis.getSelectableChildren = _directoryGetSelectableHierarchyChildren_;',
+    '\nthis.getSelectableChildren = _directoryGetSelectableHierarchyChildren_;' +
+    '\nthis.getHierarchyScopeRoots = _directoryGetHierarchyScopeRoots_;',
   hierarchySandbox,
   { filename: 'DirectoryHierarchyFilters.js' }
 );
@@ -193,13 +197,13 @@ test('la cascada se activa solo con herencia del ámbito y omite el nodo raíz y
     { scopes: [{ type: 'ESTRUCTURA_ORG', referenceId: 'ZR_I', includeDescendants: true }] },
     'SEDE_A'
   );
-  assert.deepEqual([...inherited].sort(), ['AREA_A', 'AREA_B']);
+  assert.deepEqual([...inherited].sort(), ['AREA_A', 'AREA_B', 'ZR_I']);
   const fixedUnit = hierarchySandbox.buildHierarchyFilterSets(
     records, structures,
     { scopes: [{ type: 'ESTRUCTURA_ORG', referenceId: 'AREA_A', includeDescendants: false }] },
     'SEDE_A'
   );
-  assert.deepEqual([...fixedUnit], []);
+  assert.deepEqual([...fixedUnit], ['AREA_A'], 'La unidad terminal queda identificada como raíz implícita, pero no genera un selector orgánico');
   const wholeSite = hierarchySandbox.buildHierarchyFilterSets(
     records, structures,
     { scopes: [{ type: 'SEDE', referenceId: 'SEDE_A', includeDescendants: false }] },
@@ -210,35 +214,46 @@ test('la cascada se activa solo con herencia del ámbito y omite el nodo raíz y
 
 
 
-test('el selector Sede para TOTAL permanece oculto hasta que termina la carga agregada', () => {
+test('el ámbito TOTAL exige elegir sede y no carga registros agregados al entrar', () => {
   const loadStart = frontendSource.indexOf('async function load(force = false)');
-  const loadEnd = frontendSource.indexOf('/* =====================================================', loadStart);
+  const loadEnd = frontendSource.indexOf('/* =====================================================\n     15. NAVEGACIÓN', loadStart);
   const load = frontendSource.slice(loadStart, loadEnd);
-  const hide = load.indexOf('if (state.hasTotalScope && state.authorizedSedes.length > 1)');
-  const request = load.indexOf("callServer('getDirectoryAuthorizedData')");
-  const show = load.indexOf('populateSedeFilter();', request);
-  assert.ok(hide >= 0 && request > hide && show > request);
-  assert.ok(load.slice(hide, request).includes('sedeWrapper.hidden = true'));
-  assert.ok(load.slice(request, show).includes('state.records = allSitesResult.records'));
-  assert.ok(load.slice(request, show).includes("state.activeSedeId = '__ALL__'"));
+  const siteFilterStart = frontendSource.indexOf('function populateSedeFilter()');
+  const siteFilterEnd = frontendSource.indexOf('function populateCargoFilter()', siteFilterStart);
+  const siteFilter = frontendSource.slice(siteFilterStart, siteFilterEnd);
+  const siteChangeStart = frontendSource.indexOf('function bindEvents()');
+  const siteChangeEnd = frontendSource.indexOf('function clearDirectoryTable(', siteChangeStart);
+  const siteChange = frontendSource.slice(siteChangeStart, siteChangeEnd);
+
+  assert.ok(load.includes('state.hasTotalScope = Boolean(result.scopeSummary && result.scopeSummary.total === true)'));
+  assert.ok(load.includes('populateSedeFilter();'));
+  assert.ok(load.includes('if (!state.hasTotalScope && state.authorizedSedes.length === 1)'));
+  assert.doesNotMatch(load, /getDirectoryAuthorizedData|autoLoadedAllSites|__ALL__/);
+  assert.match(siteFilter, /isTotalSelection \?\s*'Seleccione una opción'/);
+  assert.match(siteFilter, /if \(isTotalSelection\) select\.value = ''/);
+  assert.match(siteFilter, /wrapper\.hidden = fixedSingleSede/);
+  assert.match(siteChange, /loadSelectedSede\(key\(elements\.sedeFilter\.value\)\)/);
+  assert.match(frontendSource, /clearDirectoryTable\('Selecciona una sede para consultar la información de personal\.'/);
 });
 
-test('el ámbito TOTAL genera las opciones jerárquicas de todas las sedes sin seleccionar una', () => {
+test('el ámbito TOTAL construye la jerarquía solo de la sede elegida', () => {
   const structures = [
     { id: 'A_UNIT', name: 'Unidad A', parent_id: '', sede_id: 'SEDE_A' },
+    { id: 'A_CHILD', name: 'Hijo A', parent_id: 'A_UNIT', sede_id: 'SEDE_A' },
     { id: 'B_UNIT', name: 'Unidad B', parent_id: '', sede_id: 'SEDE_B' }
   ];
   const records = [
-    { estructura_id: 'A_UNIT', filter_sede_id: 'SEDE_A' },
+    { estructura_id: 'A_CHILD', filter_sede_id: 'SEDE_A' },
     { estructura_id: 'B_UNIT', filter_sede_id: 'SEDE_B' }
   ];
-  const total = hierarchySandbox.buildHierarchyFilterSets(
+  const totalForSiteA = hierarchySandbox.buildHierarchyFilterSets(
     records,
     structures,
     { scopes: [{ type: 'TOTAL', referenceId: '', includeDescendants: false }] },
-    ''
+    'SEDE_A'
   );
-  assert.deepEqual([...total].sort(), ['A_UNIT', 'B_UNIT']);
+  assert.deepEqual([...totalForSiteA].sort(), ['A_CHILD', 'A_UNIT']);
+  assert.equal(totalForSiteA.has('B_UNIT'), false, 'La cascada de una sede no incluye raíces de otra sede');
   const noTotal = hierarchySandbox.buildHierarchyFilterSets(
     records,
     structures,
@@ -246,6 +261,61 @@ test('el ámbito TOTAL genera las opciones jerárquicas de todas las sedes sin s
     ''
   );
   assert.deepEqual([...noTotal], []);
+});
+
+test('los ámbitos de varias áreas muestran raíces propias y eliminan referencias cubiertas por una raíz ancestro', () => {
+  const structures = [
+    { id: 'ROOT_A', name: 'Área A', parent_id: '', sede_id: 'SEDE_A', order: 1 },
+    { id: 'A_CHILD', name: 'Dependencia A', parent_id: 'ROOT_A', sede_id: 'SEDE_A', order: 1 },
+    { id: 'ROOT_B', name: 'Área B', parent_id: '', sede_id: 'SEDE_A', order: 2 },
+    { id: 'B_CHILD', name: 'Dependencia B', parent_id: 'ROOT_B', sede_id: 'SEDE_A', order: 1 },
+    { id: 'ROOT_COVERED', name: 'Área cubierta', parent_id: 'A_CHILD', sede_id: 'SEDE_A', order: 2 }
+  ];
+  const records = [
+    { estructura_id: 'A_CHILD', filter_sede_id: 'SEDE_A' },
+    { estructura_id: 'B_CHILD', filter_sede_id: 'SEDE_A' },
+    { estructura_id: 'ROOT_COVERED', filter_sede_id: 'SEDE_A' }
+  ];
+  const scopes = [
+    { type: 'ESTRUCTURA_ORG', referenceId: 'ROOT_A', includeDescendants: true },
+    { type: 'ESTRUCTURA_ORG', referenceId: 'ROOT_B', includeDescendants: false },
+    { type: 'ESTRUCTURA_ORG', referenceId: 'ROOT_COVERED', includeDescendants: true }
+  ];
+  const selectable = hierarchySandbox.buildHierarchyFilterSets(
+    records, structures, { scopes }, 'SEDE_A'
+  );
+  assert.deepEqual([...selectable].sort(), [
+    'A_CHILD', 'B_CHILD', 'ROOT_A', 'ROOT_B', 'ROOT_COVERED'
+  ]);
+  const index = hierarchyIndexSandbox.buildIndex(records, structures);
+  const roots = hierarchySandbox.getHierarchyScopeRoots(scopes, index, selectable, 'SEDE_A');
+  assert.deepEqual(
+    roots.map(item => item.referenceId),
+    ['ROOT_A', 'ROOT_B'],
+    'La referencia descendiente cubierta por ROOT_A no duplica la rama'
+  );
+  assert.deepEqual(
+    Array.from(hierarchySandbox.getSelectableChildren('ROOT_A', index, selectable), node => node.id),
+    ['A_CHILD'],
+    'Al entrar por ROOT_A solo se muestra su hijo directo'
+  );
+
+  const fixedScopes = [
+    { type: 'ESTRUCTURA_ORG', referenceId: 'ROOT_A', includeDescendants: false },
+    { type: 'ESTRUCTURA_ORG', referenceId: 'ROOT_B', includeDescendants: false }
+  ];
+  const fixedSelectable = hierarchySandbox.buildHierarchyFilterSets(
+    [
+      { estructura_id: 'ROOT_A', filter_sede_id: 'SEDE_A' },
+      { estructura_id: 'ROOT_B', filter_sede_id: 'SEDE_A' }
+    ],
+    structures,
+    { scopes: fixedScopes },
+    'SEDE_A'
+  );
+  const fixedRoots = hierarchySandbox.getHierarchyScopeRoots(fixedScopes, index, fixedSelectable, 'SEDE_A');
+  assert.deepEqual(fixedRoots.map(item => item.referenceId), ['ROOT_A', 'ROOT_B']);
+  assert.deepEqual([...fixedSelectable].sort(), ['ROOT_A', 'ROOT_B']);
 });
 
 test('el índice cliente conserva rutas reales sin convertir ancestros en opciones seleccionables', () => {
@@ -2337,14 +2407,15 @@ test('el contrato de filtros reconoce TOTAL sin convertirlo en una selección re
 test('Información de personal carga automáticamente la única sede autorizada sin filtrar por Local', () => {
   assert.match(frontendSource, /state\.authorizedSedes\.length === 1/);
   assert.match(frontendSource, /result\.scopeSummary && result\.scopeSummary\.total/);
-  assert.match(frontendSource, /callServer\('getDirectoryAuthorizedData'\)/);
-  assert.match(frontendSource, /state\.activeSedeId = '__ALL__'/);
-  assert.match(frontendSource, /autoLoadedAllSites = true/);
-  assert.match(frontendSource, /Todas las sedes autorizadas/);
+  assert.doesNotMatch(frontendSource, /callServer\('getDirectoryAuthorizedData'\)/);
+  assert.doesNotMatch(frontendSource, /state\.activeSedeId = '__ALL__'/);
+  assert.doesNotMatch(frontendSource, /autoLoadedAllSites = true/);
+  assert.match(frontendSource, /Seleccione una opción/);
   assert.match(frontendSource, /autoLoadedSoleSede = true/);
   assert.match(frontendSource, /await loadSelectedSede\(soleSedeId\)/);
-  assert.match(frontendSource, /wrapper\.hidden = sedes\.length <= 1/);
+  assert.match(frontendSource, /wrapper\.hidden = fixedSingleSede/);
   assert.match(frontendSource, /state\.hierarchySelectableIds = _directoryBuildHierarchyFilterSets_/);
+  assert.match(frontendSource, /if \(wrapper\) wrapper\.hidden = cargos\.length === 0/);
   assert.doesNotMatch(frontendSource, /localFilter\.addEventListener/);
   assert.doesNotMatch(frontendSource, /recordsByLocal\.size > 0/);
 });
@@ -2374,10 +2445,10 @@ test('Información de personal carga por sede una vez y usa filtros, búsqueda y
   assert.doesNotMatch(frontendSource, /listDirectoryAssignments/);
   assert.doesNotMatch(frontendSource, /mode:\s*'server'/);
   assert.doesNotMatch(frontendSource, /loadData:/);
-  assert.match(frontendSource, /function populateSedeFilter\([\s\S]*?wrapper\.hidden = sedes\.length <= 1/);
+  assert.match(frontendSource, /function populateSedeFilter\([\s\S]*?wrapper\.hidden = fixedSingleSede/);
   assert.match(frontendSource, /state\.authorizedSedes\.length === 1/);
   assert.match(frontendSource, /await loadSelectedSede\(soleSedeId\)/);
-  assert.match(frontendSource, /scope\.includeDescendants === true/);
+  assert.match(frontendSource, /const includeDescendants = scope\.includeDescendants === true/);
   assert.match(frontendSource, /state\.hierarchySelectableIds/);
   assert.doesNotMatch(frontendSource, /selectableByLocal\.forEach/);
   assert.doesNotMatch(frontendSource, /!siteId \|\| siteId !== state\.activeSedeId \|\| !localId/);
