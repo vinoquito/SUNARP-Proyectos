@@ -65,7 +65,90 @@ function _coreGetOwnSourceGeneration_(source) {
  * Una modificación del maestro cambia la generación efectiva de sus réplicas
  * y de los resultados derivados, sin modificar ni sustituir esas réplicas.
  */
-function _coreGetSourceGeneration_(source, ancestry) {
+/**
+ * Recupera en lote las generaciones propias de una colección de fuentes y
+ * todas sus dependencias. CacheService.getAll reduce los viajes individuales
+ * al consultar contextos de autorización y snapshots que dependen de muchas
+ * hojas. Las generaciones ausentes o corruptas siguen el camino seguro de
+ * _coreGetOwnSourceGeneration_, que crea una generación nueva.
+ */
+function _coreGetSourceGenerations_(sources) {
+  const sourceList = Array.isArray(sources) ? sources : [];
+  const configsByKey = new Map();
+
+  const collect = source => {
+    try {
+      const config = _coreNormalizeSourceConfig_(source);
+      const key = _coreBuildSourceCacheKey_(config, 'generation');
+      if (configsByKey.has(key)) return;
+      configsByKey.set(key, config);
+      (config.dependencies || []).forEach(collect);
+    } catch (error) {
+      // El resolvedor individual devolverá null para una fuente inválida.
+    }
+  };
+
+  sourceList.forEach(collect);
+  const configs = Array.from(configsByKey.values());
+  const rawByCacheKey = {};
+  const cache = _coreGetCache_();
+  const fullKeys = configs.map(config => _coreBuildCacheKey_(
+    _coreBuildSourceCacheKey_(config, 'generation')
+  ));
+
+  // CacheService.getAll admite lotes limitados; dividir evita fallar cuando
+  // un consumidor agrega más catálogos o dependencias en el futuro.
+  for (let offset = 0; offset < fullKeys.length; offset += 100) {
+    const batch = fullKeys.slice(offset, offset + 100);
+    try {
+      Object.assign(rawByCacheKey, cache.getAll(batch) || {});
+    } catch (error) {
+      // Compatibilidad defensiva con implementaciones de caché sin getAll.
+      batch.forEach(fullKey => {
+        try {
+          const value = cache.get(fullKey);
+          if (value !== null && value !== undefined) rawByCacheKey[fullKey] = value;
+        } catch (readError) {
+          // La lectura individual se intentará de nuevo en el resolvedor.
+        }
+      });
+    }
+  }
+
+  const generationValues = new Map();
+  configs.forEach(config => {
+    const logicalKey = _coreBuildSourceCacheKey_(config, 'generation');
+    const fullKey = _coreBuildCacheKey_(logicalKey);
+    const raw = rawByCacheKey[fullKey];
+    let generation = null;
+
+    if (typeof raw === 'string') {
+      try {
+        const envelope = JSON.parse(raw);
+        if (envelope && envelope.format === _CORE_CACHE_FORMAT_ &&
+            Object.prototype.hasOwnProperty.call(envelope, 'value') &&
+            typeof envelope.value === 'string' && envelope.value) {
+          generation = envelope.value;
+        }
+      } catch (error) {
+        // La entrada corrupta se limpia en _coreGetOwnSourceGeneration_.
+      }
+    }
+    generationValues.set(logicalKey, generation);
+  });
+
+  return sourceList.map(source =>
+    _coreGetSourceGeneration_(source, [], generationValues)
+  );
+}
+
+
+/**
+ * Generación efectiva de una fuente y de todas sus dependencias declaradas.
+ * Una modificación del maestro cambia la generación efectiva de sus réplicas
+ * y de los resultados derivados, sin modificar ni sustituir esas réplicas.
+ */
+function _coreGetSourceGeneration_(source, ancestry, generationValues) {
   try {
     const config = _coreNormalizeSourceConfig_(source);
     const key = _coreBuildSourceCacheKey_(config, 'generation');
@@ -75,7 +158,13 @@ function _coreGetSourceGeneration_(source, ancestry) {
       return null;
     }
 
-    const ownGeneration = _coreGetOwnSourceGeneration_(config);
+    const hasBatchedGeneration = generationValues instanceof Map &&
+      generationValues.has(key) &&
+      typeof generationValues.get(key) === 'string' &&
+      Boolean(generationValues.get(key));
+    const ownGeneration = hasBatchedGeneration
+      ? generationValues.get(key)
+      : _coreGetOwnSourceGeneration_(config);
     if (!ownGeneration) return null;
 
     const dependencies = config.dependencies || [];
@@ -84,7 +173,9 @@ function _coreGetSourceGeneration_(source, ancestry) {
     const nextAncestry = visited.concat(key);
     const dependencyGenerations = [];
     for (let i = 0; i < dependencies.length; i++) {
-      const generation = _coreGetSourceGeneration_(dependencies[i], nextAncestry);
+      const generation = _coreGetSourceGeneration_(
+        dependencies[i], nextAncestry, generationValues
+      );
       if (!generation) return null;
       dependencyGenerations.push(generation);
     }
@@ -750,16 +841,24 @@ function getOrBuildCachedValue(key, sources, builder, expirationSeconds) {
   }
 
   const sourceConfigs = sources.map(source => _coreNormalizeSourceConfig_(source));
-  const readGenerations = () => sourceConfigs.map((config, index) => {
-    const generation = _coreGetSourceGeneration_(sources[index]);
-    if (!generation) return null;
-    return {
-      spreadsheetId: config.spreadsheetId,
-      sheetName: config.sheetName,
-      headerRow: config.headerRow,
-      generation
-    };
-  });
+  let sourceGenerationMs = 0;
+  const readGenerations = () => {
+    const generationStartedAt = Date.now();
+    const generations = typeof _coreGetSourceGenerations_ === 'function'
+      ? _coreGetSourceGenerations_(sources)
+      : sources.map(source => _coreGetSourceGeneration_(source));
+    sourceGenerationMs += Date.now() - generationStartedAt;
+    return sourceConfigs.map((config, index) => {
+      const generation = generations[index];
+      if (!generation) return null;
+      return {
+        spreadsheetId: config.spreadsheetId,
+        sheetName: config.sheetName,
+        headerRow: config.headerRow,
+        generation
+      };
+    });
+  };
 
   const before = readGenerations();
   const cacheable = before.every(Boolean);
@@ -771,7 +870,12 @@ function getOrBuildCachedValue(key, sources, builder, expirationSeconds) {
     const cached = getCachedValue(cacheKey);
     if (cached && cached.version === 1 &&
         Object.prototype.hasOwnProperty.call(cached, 'value')) {
-      return { value: cached.value, cacheHit: true, cacheStored: true };
+      return {
+        value: cached.value,
+        cacheHit: true,
+        cacheStored: true,
+        sourceGenerationMs
+      };
     }
   }
 
@@ -784,7 +888,8 @@ function getOrBuildCachedValue(key, sources, builder, expirationSeconds) {
       value,
       cacheHit: false,
       cacheStored: false,
-      cacheReason: 'source-generation-unavailable'
+      cacheReason: 'source-generation-unavailable',
+      sourceGenerationMs
     };
   }
 
@@ -801,7 +906,8 @@ function getOrBuildCachedValue(key, sources, builder, expirationSeconds) {
       value,
       cacheHit: false,
       cacheStored: Boolean(stored && stored.success === true),
-      cacheReason: stored && stored.success === true ? '' : stored && stored.reason || 'cache-unavailable'
+      cacheReason: stored && stored.success === true ? '' : stored && stored.reason || 'cache-unavailable',
+      sourceGenerationMs
     };
   } catch (error) {
     console.warn('[SUNARP Core] No se pudo conservar el valor derivado en caché:', error.message);
@@ -809,7 +915,8 @@ function getOrBuildCachedValue(key, sources, builder, expirationSeconds) {
       value,
       cacheHit: false,
       cacheStored: false,
-      cacheReason: 'cache-write-failed'
+      cacheReason: 'cache-write-failed',
+      sourceGenerationMs
     };
   }
 }

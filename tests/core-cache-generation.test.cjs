@@ -10,15 +10,22 @@ const source = fs.readFileSync(path.join(root, 'Backend/SUNARP Core/DataCache.js
 
 function createCacheSandbox() {
   const values = new Map();
+  const counters = { getCalls: 0, getAllCalls: 0 };
   let uuid = 0;
   const cache = {
-    get: key => values.has(key) ? values.get(key) : null,
+    get: key => {
+      counters.getCalls++;
+      return values.has(key) ? values.get(key) : null;
+    },
     put: (key, value) => { values.set(key, value); },
     putAll: entries => Object.keys(entries).forEach(key => values.set(key, entries[key])),
-    getAll: keys => keys.reduce((result, key) => {
-      if (values.has(key)) result[key] = values.get(key);
-      return result;
-    }, {}),
+    getAll: keys => {
+      counters.getAllCalls++;
+      return keys.reduce((result, key) => {
+        if (values.has(key)) result[key] = values.get(key);
+        return result;
+      }, {});
+    },
     remove: key => values.delete(key),
     removeAll: keys => keys.forEach(key => values.delete(key))
   };
@@ -41,7 +48,7 @@ function createCacheSandbox() {
     })
   });
   vm.runInContext(source, sandbox, { filename: 'DataCache.js' });
-  return { sandbox, values };
+  return { sandbox, values, counters };
 }
 
 test('la generación de una fuente permanece estable hasta que se invalida', () => {
@@ -349,6 +356,61 @@ test('runSourceWriteBatch continúa invalidando fuentes cuando falla una invalid
 });
 
 
+test('getOrBuildCachedValue agrupa las lecturas de generaciones en CacheService.getAll', () => {
+  const { sandbox, counters } = createCacheSandbox();
+  const sources = [
+    { spreadsheetId: 'SECURITY', sheetName: 'Usuarios' },
+    { spreadsheetId: 'SECURITY', sheetName: 'UsuarioRol' },
+    { spreadsheetId: 'SECURITY', sheetName: 'AmbitosAcceso' }
+  ];
+  let builds = 0;
+  const builder = () => ({ generation: ++builds });
+
+  const first = sandbox.getOrBuildCachedValue('access-auth-context:test', sources, builder, 300);
+  assert.equal(first.cacheHit, false);
+  assert.equal(first.cacheStored, true);
+
+  counters.getCalls = 0;
+  counters.getAllCalls = 0;
+  const second = sandbox.getOrBuildCachedValue('access-auth-context:test', sources, builder, 300);
+
+  assert.equal(second.cacheHit, true);
+  assert.equal(second.value.generation, 1);
+  assert.equal(builds, 1);
+  assert.equal(counters.getAllCalls, 1, 'Las generaciones de las tres fuentes se recuperan en un solo lote.');
+  assert.equal(counters.getCalls, 1, 'La única lectura individual restante corresponde al valor derivado.');
+  assert.ok(second.sourceGenerationMs >= 0);
+});
+
+
+test('la generación agrupada conserva dependencias y detecta la invalidación de un catálogo maestro', () => {
+  const { sandbox } = createCacheSandbox();
+  const master = { spreadsheetId: 'MASTER', sheetName: 'estructura_org' };
+  const replica = {
+    spreadsheetId: 'DIRECTORY',
+    sheetName: 'estructura_org',
+    dependencies: [master]
+  };
+  const security = { spreadsheetId: 'SECURITY', sheetName: 'EstructuraOrg' };
+  let builds = 0;
+  const sources = [replica, security];
+  const builder = () => ({ build: ++builds });
+
+  const first = sandbox.getOrBuildCachedValue('directory-auth-snapshot:test', sources, builder, 300);
+  const second = sandbox.getOrBuildCachedValue('directory-auth-snapshot:test', sources, builder, 300);
+  assert.equal(first.cacheHit, false);
+  assert.equal(second.cacheHit, true);
+  assert.equal(builds, 1);
+
+  const invalidation = sandbox._coreInvalidateSourceCache_(master);
+  assert.equal(invalidation.success, true);
+  const third = sandbox.getOrBuildCachedValue('directory-auth-snapshot:test', sources, builder, 300);
+  assert.equal(third.cacheHit, false);
+  assert.equal(third.value.build, 2);
+  assert.equal(builds, 2);
+});
+
+
 test('getOrBuildCachedValue reutiliza valores derivados y cambia la clave al invalidar cualquier fuente', () => {
   const { sandbox } = createCacheSandbox();
   const users = { spreadsheetId: 'SECURITY', sheetName: 'Usuarios' };
@@ -387,7 +449,7 @@ test('getOrBuildCachedValue rechaza publicar un resultado si una fuente cambia d
 
 test('getOrBuildCachedValue ejecuta el builder sin caché cuando no puede obtener generaciones', () => {
   const { sandbox } = createCacheSandbox();
-  sandbox._coreGetSourceGeneration_ = () => null;
+  sandbox._coreGetSourceGenerations_ = sources => sources.map(() => null);
   let builds = 0;
   const result = sandbox.getOrBuildCachedValue(
     'access-users:uncacheable',

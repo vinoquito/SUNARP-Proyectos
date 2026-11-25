@@ -823,6 +823,7 @@ function _accessGetAuthContext_() {
         cacheHit: Boolean(cached && cached.cacheHit),
         cacheStored: Boolean(cached && cached.cacheStored),
         sourceCount: sources.length,
+        sourceGenerationMs: Number(cached && cached.sourceGenerationMs) || 0,
         currentUserLookupMs,
         cacheLookupMs,
         totalMs: Date.now() - startedAt

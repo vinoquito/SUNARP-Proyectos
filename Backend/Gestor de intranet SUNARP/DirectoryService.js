@@ -602,6 +602,7 @@ function _directoryLoadContext_(options) {
   const cacheTtl = Math.min(DIRECTORY_DATA_CACHE_TTL, DIRECTORY_CATALOG_CACHE_TTL);
   let context;
   let cacheHit = false;
+  let sourceGenerationElapsed = 0;
 
   if (typeof SUNARPCore.getOrBuildCachedValue === 'function') {
     const cached = SUNARPCore.getOrBuildCachedValue(
@@ -612,6 +613,7 @@ function _directoryLoadContext_(options) {
     );
     context = cached && cached.value;
     cacheHit = Boolean(cached && cached.cacheHit);
+    sourceGenerationElapsed = Number(cached && cached.sourceGenerationMs) || 0;
   }
 
   if (!context) {
@@ -641,6 +643,7 @@ function _directoryLoadContext_(options) {
     durationMs: Date.now() - started,
     cacheHit,
     sourceCount: sources.length,
+    sourceGenerationMs: sourceGenerationElapsed,
     variant,
     documentTypesLoaded: options.includeDocumentTypes !== false
   }));
@@ -1654,6 +1657,7 @@ function getDirectorySiteData(sedeId) {
   let siteSnapshotCacheHit = false;
   let siteSnapshotCacheStored = false;
   let snapshotCacheLookupElapsed = 0;
+  let snapshotSourceGenerationElapsed = 0;
   if (typeof SUNARPCore !== 'undefined' &&
       typeof SUNARPCore.getOrBuildCachedValue === 'function' &&
       _directoryKey_(authorization.auth && authorization.auth.personaId)) {
@@ -1674,10 +1678,12 @@ function getDirectorySiteData(sedeId) {
     snapshotCacheLookupElapsed = Date.now() - cacheLookupStartedAt;
     siteSnapshotCacheHit = Boolean(cached && cached.cacheHit);
     siteSnapshotCacheStored = Boolean(cached && cached.cacheStored);
+    snapshotSourceGenerationElapsed = Number(cached && cached.sourceGenerationMs) || 0;
     console.log('[DirectoryService] Site snapshot cache:', JSON.stringify({
       cacheHit: siteSnapshotCacheHit,
       cacheStored: siteSnapshotCacheStored,
       cacheReason: cached && cached.cacheReason || '',
+      sourceGenerationMs: snapshotSourceGenerationElapsed,
       selectedSedeId,
       durationMs: snapshotCacheLookupElapsed
     }));
@@ -1701,6 +1707,7 @@ function getDirectorySiteData(sedeId) {
     stages: Object.assign({}, previousDiagnostics.stages || {}, {
       authorizationMs: authorizationElapsed,
       siteValidationMs: siteValidationElapsed,
+      snapshotSourceGenerationMs: snapshotSourceGenerationElapsed,
       snapshotCacheLookupMs: snapshotCacheLookupElapsed
     }),
     cache: Object.assign({}, previousDiagnostics.cache || {}, {
@@ -1713,6 +1720,7 @@ function getDirectorySiteData(sedeId) {
     serverMs: requestServerMs,
     siteSnapshotCacheHit,
     siteValidationMs: siteValidationElapsed,
+    snapshotSourceGenerationMs: snapshotSourceGenerationElapsed,
     snapshotCacheLookupMs: snapshotCacheLookupElapsed
   }));
   return Object.assign({}, result, { diagnostics });
