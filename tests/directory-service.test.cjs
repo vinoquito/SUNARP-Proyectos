@@ -1168,7 +1168,8 @@ test('el formulario completo actualiza todas las asignaciones y elimina las reti
   };
   const originalAssignments = [
     { asignacion_id: 'ASG_030', persona_id: 'PER_030', cargo_id: 'CAR_001', local_id: 'LOC_001', active: true },
-    { asignacion_id: 'ASG_031', persona_id: 'PER_030', cargo_id: 'CAR_002', local_id: 'LOC_002', active: true }
+    { asignacion_id: 'ASG_031', persona_id: 'PER_030', cargo_id: 'CAR_002', local_id: 'LOC_002', active: true },
+    { asignacion_id: 'ASG_032', persona_id: 'PER_030', cargo_id: 'CAR_003', local_id: 'LOC_003', active: true }
   ];
   const originalPerson = { persona_id: 'PER_030', nombres: 'Ana', apellidos: 'Pérez' };
   context._directoryFindPersonById_ = () => originalPerson;
