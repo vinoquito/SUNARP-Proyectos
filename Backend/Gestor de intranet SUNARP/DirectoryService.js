@@ -1115,6 +1115,13 @@ function _directoryBuildAssignmentQuery_(context, authorization, options) {
         allowedIds.has(_directoryKey_(relation.estructura_id))
       ).map(item => _directoryKey_(item.id)).filter(Boolean);
     } else if (type === 'LOCAL') {
+      // Un ámbito LOCAL autoriza las dos formas válidas de adscripción:
+      // asignaciones directas al local y asignaciones vinculadas mediante
+      // estructura_local. Core comprobará la localización efectiva usando
+      // el mapa scopeRecordLookups en ambos casos.
+      relationIds = consistentRelations.filter(relation =>
+        _directoryKey_(relation.local_id) === referenceId
+      ).map(item => _directoryKey_(item.id)).filter(Boolean);
       localIds = [referenceId];
     }
 

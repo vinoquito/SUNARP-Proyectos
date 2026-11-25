@@ -1194,7 +1194,7 @@ test('la consulta de ESTRUCTURA_ORG incluye descendientes pero no asignaciones d
   assert.deepEqual(groups[0], { estructura_local_id: ['REL_1', 'REL_CHILD'] });
 });
 
-test('la consulta de LOCAL solo incluye asignaciones directas sin estructura orgánica', () => {
+test('la consulta de LOCAL incluye asignaciones por relación y asignaciones directas al local', () => {
   sandbox.getIntranetDataSource = (sourceKey, sheetName, headerRow) => ({
     sourceKey, sheetName, headerRow, spreadsheetId: 'SPREADSHEET_' + sourceKey
   });
@@ -1205,7 +1205,15 @@ test('la consulta de LOCAL solo incluye asignaciones directas sin estructura org
   ]);
   const descriptor = api.buildAssignmentQuery(context, authorization, { active: 'all' });
   const groups = JSON.parse(JSON.stringify(descriptor.queryOptions.anyOf));
-  assert.deepEqual(groups, [{ local_id: ['LOC_1'], estructura_local_id: '' }]);
+  assert.deepEqual(groups, [
+    { estructura_local_id: ['REL_1'] },
+    { local_id: ['LOC_1'], estructura_local_id: '' }
+  ]);
+  assert.equal(
+    descriptor.queryOptions.authorization.scopeRecordLookups[0].values.REL_1.local_id,
+    'LOC_1',
+    'La autorización puede resolver el local efectivo aunque asignaciones.local_id esté vacío'
+  );
 });
 
 test('listDirectoryPeople consulta personas distintas y recupera solo las asignaciones de la página', () => {
