@@ -35,6 +35,9 @@ const ACCESS_MANAGEMENT_CONFIG = Object.freeze({
 
 const ACCESS_SCOPE_TYPE_IDS = Object.freeze(['TOTAL', 'SEDE', 'ESTRUCTURA_ORG', 'LOCAL']);
 
+// Los catálogos administrativos son estables; Core invalida su generación al escribir.
+const ACCESS_MANAGEMENT_CATALOG_CACHE_TTL_SECONDS = 3600;
+
 function _accessIdentifierToken_(value) {
   return _accessText_(value)
     .normalize('NFD')
@@ -2818,8 +2821,56 @@ function _accessLoadSecurityRecords_(sheetName, requiredHeaders) {
     key: 'records',
     source: _accessSecuritySource_(sheetName),
     requiredHeaders: requiredHeaders || []
-  }], 60);
+  }], ACCESS_MANAGEMENT_CATALOG_CACHE_TTL_SECONDS);
   return result.records || [];
+}
+
+/**
+ * Comparte catálogos entre pestañas sin cargar relaciones que la pestaña no usa.
+ * La clave derivada depende de las generaciones de las hojas: las escrituras
+ * realizadas mediante SUNARP Core invalidan la entrada inmediatamente.
+ */
+function _accessLoadCachedCatalogSet_(cacheKey, requests) {
+  const startedAt = Date.now();
+  const sources = requests.map(request => request.source);
+  const cached = SUNARPCore.getOrBuildCachedValue(
+    cacheKey,
+    sources,
+    () => SUNARPCore.listRecordsFromSourcesCached(
+      requests,
+      ACCESS_MANAGEMENT_CATALOG_CACHE_TTL_SECONDS
+    ),
+    ACCESS_MANAGEMENT_CATALOG_CACHE_TTL_SECONDS
+  );
+  if (!cached || !cached.value) {
+    throw new Error('SUNARP Core no devolvió los catálogos administrativos solicitados.');
+  }
+  console.log('[AccessManagement] Catalog set cache:', JSON.stringify({
+    key: cacheKey,
+    cacheHit: cached.cacheHit === true,
+    cacheStored: cached.cacheStored === true,
+    sourceCount: sources.length,
+    sourceGenerationMs: Number(cached.sourceGenerationMs) || 0,
+    durationMs: Date.now() - startedAt
+  }));
+  return cached.value;
+}
+
+function _accessLoadPermissionCatalogs_() {
+  const s = ACCESS_MANAGEMENT_CONFIG.sheets;
+  return _accessLoadCachedCatalogSet_('access-permission-catalogs:v1', [
+    { key: 'modules', source: _accessSecuritySource_(s.modules), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.modules },
+    { key: 'operations', source: _accessSecuritySource_(s.operations), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.operations },
+    { key: 'permissions', source: _accessSecuritySource_(s.permissions), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.permissions }
+  ]);
+}
+
+function _accessLoadRolePermissionCatalogs_() {
+  const s = ACCESS_MANAGEMENT_CONFIG.sheets;
+  return _accessLoadCachedCatalogSet_('access-role-permission-catalogs:v1', [
+    { key: 'roles', source: _accessSecuritySource_(s.roles), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.roles },
+    { key: 'rolePermissions', source: _accessSecuritySource_(s.rolePermissions), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.rolePermissions }
+  ]);
 }
 
 
@@ -2885,8 +2936,8 @@ function getAccessManagementData() {
     ? SUNARPCore.getOrBuildCachedValue(
         'access-management-bootstrap:v1',
         bootstrapSources,
-        () => SUNARPCore.listRecordsFromSourcesCached(bootstrapRequests, 60),
-        60
+        () => SUNARPCore.listRecordsFromSourcesCached(bootstrapRequests, ACCESS_MANAGEMENT_CATALOG_CACHE_TTL_SECONDS),
+        ACCESS_MANAGEMENT_CATALOG_CACHE_TTL_SECONDS
       )
     : { value: {}, cacheHit: true, cacheStored: false };
   const bootstrapCatalogs = bootstrapCache && bootstrapCache.value || {};
@@ -3011,11 +3062,7 @@ function _getAccessManagementTabData_(tabId) {
 
   if (tab === 'permissions') {
     const auth = _accessRequirePermission_('PERMISOS_ADMINISTRAR');
-    const catalogs = SUNARPCore.listRecordsFromSourcesCached([
-      { key: 'modules', source: _accessSecuritySource_(s.modules), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.modules },
-      { key: 'operations', source: _accessSecuritySource_(s.operations), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.operations },
-      { key: 'permissions', source: _accessSecuritySource_(s.permissions), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.permissions }
-    ], 60);
+    const catalogs = _accessLoadPermissionCatalogs_();
     const modules = catalogs.modules || [];
     const operations = catalogs.operations || [];
     const permissions = catalogs.permissions || [];
@@ -3040,18 +3087,13 @@ function _getAccessManagementTabData_(tabId) {
 
   if (tab === 'assignments') {
     const auth = _accessRequirePermission_('ROLES_ADMINISTRAR');
-    const catalogs = SUNARPCore.listRecordsFromSourcesCached([
-      { key: 'roles', source: _accessSecuritySource_(s.roles), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.roles },
-      { key: 'modules', source: _accessSecuritySource_(s.modules), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.modules },
-      { key: 'operations', source: _accessSecuritySource_(s.operations), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.operations },
-      { key: 'permissions', source: _accessSecuritySource_(s.permissions), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.permissions },
-      { key: 'rolePermissions', source: _accessSecuritySource_(s.rolePermissions), requiredHeaders: ACCESS_MANAGEMENT_FIELDS.rolePermissions }
-    ], 60);
-    const roles = catalogs.roles || [];
+    const catalogs = _accessLoadPermissionCatalogs_();
+    const roleCatalogs = _accessLoadRolePermissionCatalogs_();
+    const roles = roleCatalogs.roles || [];
     const modules = catalogs.modules || [];
     const operations = catalogs.operations || [];
     const permissions = catalogs.permissions || [];
-    const rolePermissions = catalogs.rolePermissions || [];
+    const rolePermissions = roleCatalogs.rolePermissions || [];
     return {
       roles: roles.map(item => ({
         rol_id: _accessText_(item.rol_id), nombre: _accessText_(item.nombre),
