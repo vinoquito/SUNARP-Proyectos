@@ -1693,35 +1693,59 @@ function getDirectoryFormData(permissionCode) {
 
 /** Busca el documento antes de permitir el alta y evita duplicar personas. */
 function searchDirectoryPersonByDocument(payload) {
-  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_CREAR');
-  if (!payload || typeof payload !== 'object') throw new Error('Debes indicar el tipo y número de documento.');
-  const type = _directoryNormalizeDocument_(payload.tipo_documento, 'Tipo de documento');
-  const number = _directoryNormalizeDocument_(payload.numero_documento, 'Número de documento');
-  const context = _directoryLoadContext_({
-    includePersonalData: true,
-    includePeople: true,
-    includeAssignments: false,
-    includeDocumentTypes: true,
-    validateSnapshot: false
-  });
-  const validType = (context.documentTypes || []).some(item =>
-    _directoryKey_(item.id).toUpperCase() === type && _directoryIsActive_(item)
+  _directoryAuthorizationContext_('INFORMACION_PERSONAL_CREAR');
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('Debes indicar el tipo y número de documento.');
+  }
+  const documentType = _directoryNormalizeDocument_(payload.tipo_documento, 'Tipo de documento');
+  const documentNumber = _directoryNormalizeDocument_(payload.numero_documento, 'Número de documento');
+
+  const catalogResult = SUNARPCore.listRecordsFromSourcesCached([{
+    key: 'documentTypes',
+    source: _directoryResolveDocumentTypesSource_(),
+    requiredHeaders: DIRECTORY_REQUIRED_HEADERS.documentTypes
+  }], DIRECTORY_CATALOG_CACHE_TTL);
+  const documentTypes = catalogResult.documentTypes || [];
+  const validType = documentTypes.some(item =>
+    _directoryNormalizeDocument_(item.id, 'Tipo de documento') === documentType &&
+    _directoryIsActive_(item)
   );
-  if (!validType) throw new Error('Selecciona un tipo de documento válido del catálogo.');
-  const matches = (context.datosPersonales || []).filter(item =>
-    _directoryText_(item.tipo_documento).replace(/\\s+/g, '').toUpperCase() === type &&
-    _directoryText_(item.numero_documento).replace(/\\s+/g, '').toUpperCase() === number
+  if (!validType) {
+    throw new Error('Selecciona un tipo de documento válido del catálogo tipo_documento_identidad.');
+  }
+
+  const lookup = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
+    { numero_documento: documentNumber },
+    {
+      searchField: 'numero_documento',
+      matchCase: false,
+      ignoreWhitespace: true,
+      requiredHeaders: ['servidor_id', 'tipo_documento', 'numero_documento'],
+      projectionFields: ['servidor_id', 'tipo_documento', 'numero_documento']
+    }
   );
-  if (matches.length > 1) throw new Error('El documento ya aparece asociado a más de una persona. Corrige la duplicidad antes de continuar.');
-  if (!matches.length) return { found: false, message: 'No existe un servidor registrado con ese documento.' };
-  const personId = _directoryKey_(matches[0].servidor_id);
-  const person = (context.personas || []).find(item => _directoryKey_(item.persona_id) === personId);
-  if (!person) throw new Error('El documento existe, pero no se pudo resolver la identidad vinculada.');
+  const matches = (lookup.records || []).filter(item =>
+    _directoryNormalizeDocument_(item.tipo_documento, 'Tipo de documento') === documentType &&
+    _directoryNormalizeDocument_(item.numero_documento, 'Número de documento') === documentNumber
+  );
+  if (!matches.length) {
+    return { found: false, message: 'No se encontró una persona con ese tipo y número de documento.' };
+  }
+  if (matches.length > 1) {
+    throw new Error('El documento aparece asociado a más de un registro. Debe corregirse la duplicidad antes de continuar.');
+  }
+
+  const personaId = _directoryText_(matches[0].servidor_id);
+  const person = _directoryFindPersonById_(personaId);
+  if (!person) {
+    throw new Error('El documento está registrado, pero no se pudo resolver la persona en el directorio.');
+  }
   return {
     found: true,
     message: 'El documento ya está registrado.',
     person: {
-      persona_id: personId,
+      persona_id: personaId,
       nombres: _directoryText_(person.nombres),
       apellidos: _directoryText_(person.apellidos)
     }
