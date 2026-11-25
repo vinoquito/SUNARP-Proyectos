@@ -1121,6 +1121,7 @@ test('si falla una asignación adicional, el alta compuesta elimina lo creado en
       }
       throw new Error('Fuente inesperada: ' + source);
     },
+    searchRecordsByFields: () => ({ records: [], total: 0 }),
     deleteRecord: (source, field, id) => {
       deleted.push([source, field, id]);
       return { success: true };
