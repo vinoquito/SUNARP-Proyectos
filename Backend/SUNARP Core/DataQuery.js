@@ -597,9 +597,11 @@ function queryRecords(source, options) {
         query: authorizedSnapshotDescriptor
       })
     : null;
+  const authorizedSnapshotLookupStartedAt = Date.now();
   const authorizedSnapshot = authorizedSnapshotKey
     ? getCachedValue(authorizedSnapshotKey)
     : null;
+  const authorizedSnapshotLookupMs = Date.now() - authorizedSnapshotLookupStartedAt;
   const sessionSnapshot = querySessionKey &&
     Object.prototype.hasOwnProperty.call(querySession, querySessionKey)
     ? querySession[querySessionKey]
@@ -639,9 +641,11 @@ function queryRecords(source, options) {
       ? _coreOpenSource_(source)
       : null;
     const selectedSnapshotPage = reusableSnapshot.records.slice(offset, offset + limit);
+    const snapshotHydrationStartedAt = Date.now();
     const snapshotPage = _coreQueryHydratePage_(
       source, selectedSnapshotPage, snapshotContext
     );
+    const pageHydrationMs = Date.now() - snapshotHydrationStartedAt;
     if (generation) {
       const verificationStartedAt = Date.now();
       const currentGeneration = _coreGetSourceGeneration_(source);
@@ -672,6 +676,13 @@ function queryRecords(source, options) {
       retainedForPage: reusableSnapshot.records.length,
       projectedFieldCount: reusableSnapshot.projectedFieldCount,
       hydratedRowCount: snapshotPage.length,
+      authorizedSnapshotLookupMs,
+      candidateCacheLookupMs: 0,
+      candidateLoadMs: 0,
+      candidateCacheStoreMs: 0,
+      candidateEvaluationMs: 0,
+      pageHydrationMs,
+      authorizedSnapshotStoreMs: 0,
       durationMs: Date.now() - queryStartedAt
     };
     if (cacheKey) {
@@ -690,6 +701,8 @@ function queryRecords(source, options) {
       candidateCount: snapshotResult.candidateCount,
       authorizedCount: snapshotResult.authorizedCount,
       hydratedRowCount: snapshotResult.hydratedRowCount,
+      authorizedSnapshotLookupMs,
+      pageHydrationMs,
       offset,
       limit,
       durationMs: snapshotResult.durationMs
@@ -704,9 +717,11 @@ function queryRecords(source, options) {
         source, generation, idField, descriptor.schemaVersion, groups
       )
     : null;
+  const candidateCacheLookupStartedAt = Date.now();
   const cachedCandidateEntry = candidateCacheKey
     ? getCachedValue(candidateCacheKey)
     : null;
+  const candidateCacheLookupMs = Date.now() - candidateCacheLookupStartedAt;
   const candidateCacheCompatible = Boolean(
     cachedCandidateEntry &&
     cachedCandidateEntry.version === 3 &&
@@ -729,7 +744,10 @@ function queryRecords(source, options) {
     ? cachedCandidateEntry.projectedFields.slice()
     : null;
 
+  let candidateLoadMs = 0;
+  let candidateCacheStoreMs = 0;
   if (!candidateCacheHit) {
+    const candidateLoadStartedAt = Date.now();
     if (typeof _coreOpenSource_ === 'function') {
       const loaded = _coreQueryLoadCandidateRows_(
         source, groups, requiredHeaders, projectionFields, idField, optionalScopeFields
@@ -759,7 +777,9 @@ function queryRecords(source, options) {
       candidateRows = Array.from(candidateMap.values());
       actualCandidateProjectedFields = candidateProjectionFields.slice();
     }
+    candidateLoadMs = Date.now() - candidateLoadStartedAt;
     if (candidateCacheKey) {
+      const candidateCacheStoreStartedAt = Date.now();
       try {
         const storedCandidates = putCachedValue(candidateCacheKey, {
           version: 3,
@@ -779,6 +799,7 @@ function queryRecords(source, options) {
       } catch (error) {
         console.warn('[SUNARP Core] No se pudo almacenar la caché de candidatos:', error.message);
       }
+      candidateCacheStoreMs = Date.now() - candidateCacheStoreStartedAt;
     }
   } else if (typeof _coreOpenSource_ === 'function') {
     candidateContext = _coreOpenSource_(source);
@@ -822,6 +843,7 @@ function queryRecords(source, options) {
           authorization.locals || []
         ));
 
+  const candidateEvaluationStartedAt = Date.now();
   candidateRows.forEach(candidate => {
     const record = _coreQueryRecordValue_(candidate);
     if (!groups.some(group => _coreQueryMatchesGroup_(record, group))) return;
@@ -905,6 +927,7 @@ function queryRecords(source, options) {
       );
     }
   });
+  const candidateEvaluationMs = Date.now() - candidateEvaluationStartedAt;
 
   const distinctValues = {};
   distinctFields.forEach(field => {
@@ -929,7 +952,9 @@ function queryRecords(source, options) {
     }
   }
   const selectedPage = pageSource.slice(offset, offset + limit);
+  const pageHydrationStartedAt = Date.now();
   const page = _coreQueryHydratePage_(source, selectedPage, candidateContext);
+  const pageHydrationMs = Date.now() - pageHydrationStartedAt;
   if (generation) {
     const verificationStartedAt = Date.now();
     const currentGeneration = _coreGetSourceGeneration_(source);
@@ -958,7 +983,9 @@ function queryRecords(source, options) {
       console.warn('[SUNARP Core] No se pudo conservar la instantánea de sesión:', error.message);
     }
   }
+  let authorizedSnapshotStoreMs = 0;
   if (authorizedSnapshotKey) {
+    const authorizedSnapshotStoreStartedAt = Date.now();
     try {
       const storedSnapshot = putCachedValue(
         authorizedSnapshotKey, snapshotValue, cacheSeconds
@@ -979,6 +1006,7 @@ function queryRecords(source, options) {
     } catch (error) {
       console.warn('[SUNARP Core] No se pudo almacenar la instantánea autorizada:', error.message);
     }
+    authorizedSnapshotStoreMs = Date.now() - authorizedSnapshotStoreStartedAt;
   }
   const result = {
     version: 2, records: page, total, offset, limit,
@@ -991,6 +1019,13 @@ function queryRecords(source, options) {
     authorizedSnapshotCacheDisabledReason: snapshotCacheDisabledReason,
     catalogGenerationMissingSource: catalogDiagnostics.missingSource || '',
     sourceGenerationMs,
+    authorizedSnapshotLookupMs,
+    candidateCacheLookupMs,
+    candidateLoadMs,
+    candidateCacheStoreMs,
+    candidateEvaluationMs,
+    pageHydrationMs,
+    authorizedSnapshotStoreMs,
     candidateCacheHit,
     candidateCount: candidateRows.length,
     authorizedCount,
@@ -1015,6 +1050,13 @@ function queryRecords(source, options) {
     authorizedSnapshotCacheDisabledReason: result.authorizedSnapshotCacheDisabledReason,
     catalogGenerationMissingSource: result.catalogGenerationMissingSource,
     sourceGenerationMs,
+    authorizedSnapshotLookupMs,
+    candidateCacheLookupMs,
+    candidateLoadMs,
+    candidateCacheStoreMs,
+    candidateEvaluationMs,
+    pageHydrationMs,
+    authorizedSnapshotStoreMs,
     candidateCount: result.candidateCount,
     authorizedCount,
     retainedForPage: result.retainedForPage,

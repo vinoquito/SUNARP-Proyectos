@@ -240,6 +240,32 @@ test('el ámbito TOTAL exige elegir sede y no carga registros agregados al entra
   assert.match(frontendSource, /clearDirectoryTable\('Selecciona una sede para consultar la información de personal\.'/);
 });
 
+test('las raíces de varios ámbitos orgánicos respetan estructura_org.order y no el orden de los permisos', () => {
+  const structures = [
+    { id: 'ORG_30', name: 'Órgano tercero', parent_id: '', sede_id: 'ZR_IX', order: 30 },
+    { id: 'ORG_10', name: 'Órgano primero', parent_id: '', sede_id: 'ZR_IX', order: 10 },
+    { id: 'ORG_20', name: 'Órgano segundo', parent_id: '', sede_id: 'ZR_IX', order: 20 }
+  ];
+  const records = structures.map(node => ({
+    estructura_id: node.id,
+    filter_sede_id: 'ZR_IX',
+    filter_local_id: 'LOCAL_IX'
+  }));
+  const index = hierarchyIndexSandbox.buildIndex(records, structures);
+  const selectableIds = new Set(structures.map(node => node.id));
+  const scopes = [
+    { type: 'ESTRUCTURA_ORG', referenceId: 'ORG_30', includeDescendants: false },
+    { type: 'ESTRUCTURA_ORG', referenceId: 'ORG_10', includeDescendants: false },
+    { type: 'ESTRUCTURA_ORG', referenceId: 'ORG_20', includeDescendants: false }
+  ];
+  const roots = hierarchySandbox.getHierarchyScopeRoots(scopes, index, selectableIds, 'ZR_IX');
+  assert.deepEqual(
+    Array.from(roots, item => item.referenceId),
+    ['ORG_10', 'ORG_20', 'ORG_30'],
+    'Los órganos se muestran según su orden de datos aunque los ámbitos lleguen en otro orden'
+  );
+});
+
 test('el ámbito TOTAL construye la jerarquía solo de la sede elegida', () => {
   const structures = [
     { id: 'A_UNIT', name: 'Unidad A', parent_id: '', sede_id: 'SEDE_A' },

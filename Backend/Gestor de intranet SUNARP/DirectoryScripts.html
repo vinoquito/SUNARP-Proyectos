@@ -623,7 +623,7 @@ const DirectoryPage = (() => {
     });
 
     const roots = Array.from(byId.values());
-    return roots.filter(candidate => !roots.some(other =>
+    const visibleRoots = roots.filter(candidate => !roots.some(other =>
       other.referenceId !== candidate.referenceId &&
       other.includeDescendants &&
       _directoryMatchesHierarchySubtree_(
@@ -632,6 +632,22 @@ const DirectoryPage = (() => {
         hierarchyIndex
       )
     ));
+    // El orden de los ámbitos no representa el orden institucional.
+    // Las raíces autorizadas se presentan según estructura_org.order.
+    visibleRoots.sort((a, b) => {
+      const rawOrderA = a.node.order;
+      const rawOrderB = b.node.order;
+      const orderA = rawOrderA === null || rawOrderA === undefined ||
+        String(rawOrderA).trim() === '' ? Number.MAX_SAFE_INTEGER : Number(rawOrderA);
+      const orderB = rawOrderB === null || rawOrderB === undefined ||
+        String(rawOrderB).trim() === '' ? Number.MAX_SAFE_INTEGER : Number(rawOrderB);
+      const normalizedA = Number.isFinite(orderA) ? orderA : Number.MAX_SAFE_INTEGER;
+      const normalizedB = Number.isFinite(orderB) ? orderB : Number.MAX_SAFE_INTEGER;
+      return normalizedA - normalizedB ||
+        keyOf(a.node.name).localeCompare(keyOf(b.node.name), 'es', { sensitivity: 'base' }) ||
+        keyOf(a.node.id).localeCompare(keyOf(b.node.id), 'es', { numeric: true, sensitivity: 'base' });
+    });
+    return visibleRoots;
   }
 
   function getHierarchyNodes(parentId) {
