@@ -1413,6 +1413,59 @@ test('el formulario de servidor usa el catálogo documental cargado por SUNARP C
 });
 
 
+test('la búsqueda previa de DNI detecta duplicados y permite conservar el documento propio en edición', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  const existing = {
+    servidor_id: 'PER_051',
+    tipo_documento: 'DNI',
+    numero_documento: '12 345 678'
+  };
+  let permission = '';
+  vmContext._directoryAuthorizationContext_ = value => {
+    permission = value;
+    return { auth: {} };
+  };
+  vmContext._directoryAssertDocumentTypeAllowed_ = value =>
+    String(value).replace(/\s+/g, '').toUpperCase();
+  vmContext._directorySource_ = value => value;
+  vmContext.SUNARPCore = {
+    findRecordsByFields: (source, filters, options) => {
+      assert.equal(source, 'servidores datos personales');
+      assert.equal(options.ignoreWhitespace, true);
+      assert.deepEqual(JSON.parse(JSON.stringify(filters)), { numero_documento: '12345678' });
+      return { records: [existing], total: 1 };
+    }
+  };
+
+  const duplicate = vmContext.searchDirectoryDocument({
+    action: 'create',
+    tipo_documento: 'DNI',
+    numero_documento: '12345678'
+  });
+  assert.equal(permission, 'INFORMACION_PERSONAL_CREAR');
+  assert.equal(duplicate.available, false);
+  assert.equal(duplicate.duplicate, true);
+
+  const ownDocument = vmContext.searchDirectoryDocument({
+    action: 'edit',
+    persona_id: 'PER_051',
+    tipo_documento: 'DNI',
+    numero_documento: '12345678'
+  });
+  assert.equal(permission, 'INFORMACION_PERSONAL_EDITAR');
+  assert.equal(ownDocument.available, true);
+  assert.equal(ownDocument.currentRecord, true);
+
+  const otherPerson = vmContext.searchDirectoryDocument({
+    action: 'edit',
+    persona_id: 'PER_052',
+    tipo_documento: 'DNI',
+    numero_documento: '12345678'
+  });
+  assert.equal(otherPerson.available, false);
+});
+
 function buildFormDataForScopes(scopes) {
   const vmContext = vm.createContext({});
   vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
