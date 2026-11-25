@@ -1396,7 +1396,7 @@ const DirectoryPage = (() => {
     }
     function setVerified(verified){
       if(documentVerified)documentVerified.value=verified?'true':'false';
-      if(!editing){personalFieldset.disabled=!verified;assignmentsFieldset.disabled=!verified;saveButton.disabled=!verified;}
+      if(!editing){personalFieldset.disabled=!verified;assignmentsFieldset.disabled=!verified;addButton.disabled=!verified||editorIsOpen;saveButton.disabled=!verified;}
     }
     if(!editing){
       setVerified(false);
@@ -1604,7 +1604,7 @@ const DirectoryPage = (() => {
       let selectedPath=current?structurePath(current):[];
       let selectedStructure='',selectedRelation=key(current&&current.estructura_local_id);
 
-      function closeEditor(){editorIsOpen=false;addButton.disabled=false;editorHost.replaceChildren();tableHost.classList.remove('directory-assignment-table--editing');renderTable();}
+      function closeEditor(){editorIsOpen=false;addButton.disabled=!editing&&documentVerified&&documentVerified.value!=='true';editorHost.replaceChildren();tableHost.classList.remove('directory-assignment-table--editing');renderTable();}
       function renderRelations(){
         relation.replaceChildren();const blank=document.createElement('option');blank.value='';blank.textContent='Selecciona una ubicación';relation.appendChild(blank);
         const localMap=new Map((snapshot&&snapshot.catalogs.locales||[]).map(x=>[key(x.id),x]));
@@ -1692,7 +1692,9 @@ const DirectoryPage = (() => {
     renderTable();
     cancelButton.addEventListener('click',()=>{restoreState();SUNARPUI.closeModal();});
     form.addEventListener('submit',async event=>{
-      event.preventDefault();if(!form.reportValidity())return;
+      event.preventDefault();
+      if(editorIsOpen){notify('warning','Primero agrega o cancela la asignación que estás editando.');return;}
+      if(!form.reportValidity())return;
       if(!editing&&(!documentVerified||documentVerified.value!=='true')){notify('warning','Primero debes comprobar que el documento no esté registrado.');return;}
       if(!draft.length){notify('warning','Registra al menos una asignación.');return;}
       const personaId=key(document.getElementById('directoryFormPersonaId').value);
