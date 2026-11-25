@@ -1533,7 +1533,7 @@ test('el formulario usa la misma visibilidad de ámbito que los filtros de la ta
 
   const multipleLocals = buildFormDataForScopes([
     { tipo_ambito_id: 'LOCAL', referencia_id: 'LOCAL_A1', incluir_descendientes: false },
-    { tipo_ambito_id: 'LOCAL', referencia_id: 'LOCAL_A2', incluir_descendants: false }
+    { tipo_ambito_id: 'LOCAL', referencia_id: 'LOCAL_A2', incluir_descendientes: false }
   ]);
   assert.equal(multipleLocals.scope.localMode, 'selectable-scoped');
   assert.deepEqual(Array.from(multipleLocals.catalogs.locales, item => item.id), ['LOCAL_A1', 'LOCAL_A2']);
