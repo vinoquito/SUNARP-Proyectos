@@ -1686,7 +1686,7 @@ function getDirectoryFormData(permissionCode) {
     scopes: (moduleAccess && moduleAccess.scopes || []).filter(_directoryIsActive_).map(scope => ({
       type: _directoryText_(scope.tipo_ambito_id).toUpperCase(),
       referenceId: _directoryKey_(scope.referencia_id),
-      includeDescendants: _directoryNormalizeBoolean_(scope.incluir_descendientes)
+      includeDescendants: _directoryNormalizeBoolean_(scope.incluir_descendientes === undefined ? false : scope.incluir_descendientes)
     }))
   };
 }

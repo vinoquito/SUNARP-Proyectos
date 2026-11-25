@@ -1971,9 +1971,10 @@ const DirectoryPage = (() => {
       initializeAssignmentRow(row, index, assignment);
     });
 
+    let nextAssignmentIndex = assignmentsForForm.length;
     const addAssignmentButton = document.getElementById('directoryAddAssignment');
     if (addAssignmentButton) addAssignmentButton.addEventListener('click', () => {
-      const index = assignmentsContainer.querySelectorAll('.directory-assignment-row').length;
+      const index = nextAssignmentIndex++;
       const row = firstAssignmentRow.cloneNode(true);
       row.querySelectorAll('[id]').forEach(element => {
         element.id = element.id + '_' + index;
