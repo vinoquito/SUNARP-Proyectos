@@ -1413,6 +1413,148 @@ test('el formulario de servidor usa el catálogo documental cargado por SUNARP C
 });
 
 
+function buildFormDataForScopes(scopes) {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  const catalog = {
+    sedes: [
+      { id: 'SEDE_A', name: 'Sede A' },
+      { id: 'SEDE_B', name: 'Sede B' }
+    ],
+    locales: [
+      { id: 'LOCAL_A1', name: 'Local A1', sede_id: 'SEDE_A' },
+      { id: 'LOCAL_A2', name: 'Local A2', sede_id: 'SEDE_A' },
+      { id: 'LOCAL_B1', name: 'Local B1', sede_id: 'SEDE_B' }
+    ],
+    estructuraOrg: [
+      { id: 'ROOT_A', name: 'Órgano A', parent_id: '', sede_id: 'SEDE_A', tipo_estructura_id: 'TE' , order: 50 },
+      { id: 'CHILD_A', name: 'Área A', parent_id: 'ROOT_A', sede_id: 'SEDE_A', tipo_estructura_id: 'TE', order: 1 },
+      { id: 'ROOT_A2', name: 'Órgano A2', parent_id: '', sede_id: 'SEDE_A', tipo_estructura_id: 'TE', order: 20 },
+      { id: 'ROOT_B', name: 'Órgano B', parent_id: '', sede_id: 'SEDE_B', tipo_estructura_id: 'TE', order: 10 }
+    ],
+    estructuraLocal: [
+      { id: 'REL_A1', estructura_id: 'ROOT_A', local_id: 'LOCAL_A1' },
+      { id: 'REL_A2', estructura_id: 'CHILD_A', local_id: 'LOCAL_A1' },
+      { id: 'REL_A3', estructura_id: 'ROOT_A2', local_id: 'LOCAL_A2' },
+      { id: 'REL_B1', estructura_id: 'ROOT_B', local_id: 'LOCAL_B1' }
+    ],
+    tiposEstructura: [{ id: 'TE', name: 'Órgano' }],
+    cargos: [{ id: 'CAR_1', name: 'Analista' }],
+    documentTypes: [{ id: 'DNI', name: 'DNI', active: true }]
+  };
+  const authorization = {
+    auth: {
+      moduleAccess: [{
+        modulo_id: 'MOD_INFO_PERSONAL',
+        scopes
+      }]
+    },
+    moduleId: 'MOD_INFO_PERSONAL',
+    structures: [],
+    locals: []
+  };
+  const structureById = new Map(catalog.estructuraOrg.map(node => [node.id, node]));
+  const isDescendant = (candidateId, rootId) => {
+    let current = structureById.get(candidateId);
+    const visited = new Set();
+    while (current) {
+      if (current.id === rootId) return true;
+      if (visited.has(current.id)) return false;
+      visited.add(current.id);
+      current = structureById.get(current.parent_id) || null;
+    }
+    return false;
+  };
+  vmContext._directoryAuthorizationContext_ = () => authorization;
+  vmContext._directoryLoadContext_ = () => catalog;
+  vmContext._directoryGetAuthorizedSedeIds_ = (_authorization, allSedes) => {
+    if (scopes.some(scope => scope.tipo_ambito_id === 'TOTAL')) {
+      return new Set(allSedes.map(item => item.id));
+    }
+    const ids = new Set();
+    scopes.forEach(scope => {
+      if (scope.tipo_ambito_id === 'SEDE') ids.add(scope.referencia_id);
+      if (scope.tipo_ambito_id === 'LOCAL') {
+        const local = catalog.locales.find(item => item.id === scope.referencia_id);
+        if (local) ids.add(local.sede_id);
+      }
+      if (scope.tipo_ambito_id === 'ESTRUCTURA_ORG') {
+        const node = structureById.get(scope.referencia_id);
+        if (node) ids.add(node.sede_id);
+      }
+    });
+    return ids;
+  };
+  vmContext._accessRecordIsAllowed_ = (_auth, _moduleId, record) => scopes.some(scope => {
+    if (scope.tipo_ambito_id === 'TOTAL') return true;
+    if (scope.tipo_ambito_id === 'SEDE') return scope.referencia_id === record.sede_id;
+    if (scope.tipo_ambito_id === 'LOCAL') return scope.referencia_id === record.local_id;
+    if (scope.tipo_ambito_id === 'ESTRUCTURA_ORG') {
+      const candidate = record.estructura_id || '';
+      return scope.incluir_descendientes
+        ? isDescendant(candidate, scope.referencia_id)
+        : candidate === scope.referencia_id;
+    }
+    return false;
+  });
+  return vmContext.getDirectoryFormData('create');
+}
+
+test('el formulario usa la misma visibilidad de ámbito que los filtros de la tabla', () => {
+  const total = buildFormDataForScopes([
+    { tipo_ambito_id: 'TOTAL', referencia_id: '', incluir_descendientes: false }
+  ]);
+  assert.equal(total.scope.siteMode, 'selectable');
+  assert.equal(total.scope.fixedSedeId, '');
+  assert.equal(total.scope.localMode, 'selectable');
+  assert.deepEqual(Array.from(total.catalogs.sedes, item => item.id), ['SEDE_A', 'SEDE_B']);
+
+  const oneSite = buildFormDataForScopes([
+    { tipo_ambito_id: 'SEDE', referencia_id: 'SEDE_A', incluir_descendientes: false }
+  ]);
+  assert.equal(oneSite.scope.siteMode, 'fixed');
+  assert.equal(oneSite.scope.fixedSedeId, 'SEDE_A');
+  assert.equal(oneSite.scope.localMode, 'selectable');
+  assert.deepEqual(Array.from(oneSite.catalogs.locales, item => item.id), ['LOCAL_A1', 'LOCAL_A2']);
+
+  const oneStructure = buildFormDataForScopes([
+    { tipo_ambito_id: 'ESTRUCTURA_ORG', referencia_id: 'CHILD_A', incluir_descendientes: false }
+  ]);
+  assert.equal(oneStructure.scope.siteMode, 'fixed');
+  assert.equal(oneStructure.scope.localMode, 'hidden');
+  assert.equal(oneStructure.scope.hierarchyMode, 'structure-scope');
+  assert.deepEqual(Array.from(oneStructure.scope.rootStructureIds), ['CHILD_A']);
+
+  const oneLocal = buildFormDataForScopes([
+    { tipo_ambito_id: 'LOCAL', referencia_id: 'LOCAL_A1', incluir_descendientes: false }
+  ]);
+  assert.equal(oneLocal.scope.localMode, 'fixed');
+  assert.equal(oneLocal.scope.fixedLocalId, 'LOCAL_A1');
+
+  const multipleLocals = buildFormDataForScopes([
+    { tipo_ambito_id: 'LOCAL', referencia_id: 'LOCAL_A1', incluir_descendientes: false },
+    { tipo_ambito_id: 'LOCAL', referencia_id: 'LOCAL_A2', incluir_descendants: false }
+  ]);
+  assert.equal(multipleLocals.scope.localMode, 'selectable-scoped');
+  assert.deepEqual(Array.from(multipleLocals.catalogs.locales, item => item.id), ['LOCAL_A1', 'LOCAL_A2']);
+
+  const multipleSites = buildFormDataForScopes([
+    { tipo_ambito_id: 'SEDE', referencia_id: 'SEDE_B', incluir_descendientes: false },
+    { tipo_ambito_id: 'SEDE', referencia_id: 'SEDE_A', incluir_descendientes: false }
+  ]);
+  assert.equal(multipleSites.scope.siteMode, 'selectable');
+  assert.deepEqual(Array.from(multipleSites.catalogs.sedes, item => item.id), ['SEDE_A', 'SEDE_B']);
+});
+
+test('las raíces orgánicas múltiples del formulario respetan estructura_org.order y eliminan raíces redundantes', () => {
+  const ordered = buildFormDataForScopes([
+    { tipo_ambito_id: 'ESTRUCTURA_ORG', referencia_id: 'ROOT_A', incluir_descendientes: true },
+    { tipo_ambito_id: 'ESTRUCTURA_ORG', referencia_id: 'CHILD_A', incluir_descendientes: false },
+    { tipo_ambito_id: 'ESTRUCTURA_ORG', referencia_id: 'ROOT_A2', incluir_descendientes: false }
+  ]);
+  assert.deepEqual(Array.from(ordered.scope.rootStructureIds), ['ROOT_A', 'ROOT_A2']);
+});
+
 function assignmentContext() {
   return {
     personas: [{ persona_id: 'PER_001', nombres: 'Ana', apellidos: 'Pérez' }],
