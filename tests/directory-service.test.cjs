@@ -23,6 +23,10 @@ const uiDataTableSource = fs.readFileSync(uiDataTablePath, 'utf8');
 const scriptStart = frontendSource.split('<script>')[1];
 assert.ok(scriptStart, 'DirectoryScripts.html debe contener el bloque JavaScript principal');
 const frontendScript = scriptStart.split('</script>')[0];
+assert.doesNotThrow(
+  () => new vm.Script(frontendScript, { filename: 'DirectoryScripts.html' }),
+  'DirectoryScripts.html debe contener JavaScript sintácticamente válido'
+);
 
 const sandbox = vm.createContext({});
 vm.runInContext(
@@ -820,6 +824,13 @@ test('el catálogo de tipos de documento se resuelve exclusivamente desde Global
   }]);
   assert.equal(source.sourceKey, 'MASTER_DATA');
   assert.equal(source.sheetName, 'tipo_documento_identidad');
+  sandbox.SUNARPCore.listRecordsFromSourcesCached = () => ({
+    documentTypes: [
+      { id: 'DNI', name: 'Documento Nacional de Identidad', active: true },
+      { id: 'CE', name: 'Carné de extranjería', active: true },
+      { id: 'PAS', name: 'Pasaporte', active: true }
+    ]
+  });
 });
 
 test('acepta fechas ISO válidas y campos de fecha vacíos', () => {
@@ -924,7 +935,14 @@ function createDirectorySandbox() {
   const context = vm.createContext({});
   vm.runInContext(serviceSource, context, { filename: 'DirectoryService.js' });
   context._directoryAssertAllowedFields_ = () => true;
-  context._directoryLoadContext_ = () => ({ datosPersonales: [] });
+  context._directoryLoadContext_ = () => ({
+    personas: [],
+    datosPersonales: [],
+    asignaciones: [],
+    estructuraLocal: [],
+    estructuraOrg: [],
+    locales: []
+  });
   context._directoryAuthorizationContext_ = permissionCode => ({
     auth: {},
     moduleId: 'MOD_INFO_PERSONAL',
@@ -932,6 +950,15 @@ function createDirectorySandbox() {
     structures: [],
     locals: []
   });
+  context._directoryFindPersonById_ = personaId =>
+    (context._directoryLoadContext_().personas || []).find(item =>
+      String(item.persona_id) === String(personaId)
+    ) || null;
+  context._directoryFindPersonalDataById_ = personaId =>
+    (context._directoryLoadContext_().datosPersonales || []).find(item =>
+      String(item.servidor_id) === String(personaId)
+    ) || null;
+  context._directoryAssertPersonMutationScope_ = () => true;
   context._directoryFindAuthorizedAssignmentById_ = (snapshot, _authorization, id) =>
     (snapshot.asignaciones || []).find(item =>
       String(item.asignacion_id) === String(id)
@@ -946,11 +973,13 @@ function createDirectorySandbox() {
     findRecordsByFields: (source, filters) => {
       const snapshot = context._directoryLoadContext_() || {};
       const field = Object.keys(filters)[0];
-      const rows = field === 'persona_id'
-        ? (snapshot.personas || [])
-        : field === 'servidor_id'
-          ? (snapshot.datosPersonales || [])
-          : [];
+      const rows = source === 'asignaciones'
+        ? (snapshot.asignaciones || [])
+        : source === 'personas'
+          ? (snapshot.personas || [])
+          : source === 'servidores datos personales'
+            ? (snapshot.datosPersonales || [])
+            : [];
       const records = rows.filter(item => String(item[field] || '') === String(filters[field] || ''));
       return { records, total: records.length };
     },
@@ -1005,8 +1034,11 @@ test('si falla la primera asignación, el alta coordinada compensa persona y fic
   const deleted = [];
   context._saveDirectoryPerson_ = () => ({ person: { persona_id: 'PER_002' } });
   context._saveDirectoryPersonalData_ = () => ({ personalData: { servidor_id: 'PER_002' } });
+  context._directoryFindPersonalDataById_ = () => ({ servidor_id: 'PER_002' });
   context.saveDirectoryAssignment = () => { throw new Error('fallo de asignación'); };
   context.SUNARPCore = {
+    findRecordsByFields: () => ({ records: [], total: 0 }),
+    searchRecordsByFields: () => ({ records: [], total: 0 }),
     deleteRecord: (source, field, id) => {
       deleted.push([source, field, id]);
       return { success: true };
@@ -1028,31 +1060,242 @@ test('si falla la primera asignación, el alta coordinada compensa persona y fic
   ]);
 });
 
-test('una asignación adicional no crea ni modifica persona o ficha personal', () => {
+test('la creación compensa una asignación parcialmente escrita antes de que falle su servicio', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  const createdPerson = { persona_id: 'PER_071', nombres: 'Mario', apellidos: 'Vega' };
+  const createdPersonalData = {
+    servidor_id: 'PER_071', tipo_documento: 'DNI', numero_documento: '87654321'
+  };
+  const partialAssignment = {
+    asignacion_id: 'ASG_PARTIAL_071',
+    persona_id: 'PER_071',
+    cargo_id: 'CAR_001',
+    local_id: 'LOC_1'
+  };
+  const deleted = [];
+
+  vmContext._directoryAssertAllowedFields_ = () => true;
+  vmContext._directorySource_ = sheet => sheet;
+  vmContext._directoryAssertDocumentAvailable_ = () => ({
+    tipo_documento: 'DNI', numero_documento: '87654321'
+  });
+  vmContext._saveDirectoryPerson_ = () => ({ person: createdPerson });
+  vmContext._saveDirectoryPersonalData_ = () => ({ personalData: createdPersonalData });
+  vmContext._directoryFindPersonalDataById_ = () => createdPersonalData;
+  vmContext.saveDirectoryAssignment = () => {
+    throw new Error('fallo después de escribir parcialmente la asignación');
+  };
+  vmContext.SUNARPCore = {
+    findRecordsByFields: (source, filters) => {
+      assert.equal(source, 'asignaciones');
+      assert.deepEqual(JSON.parse(JSON.stringify(filters)), { persona_id: 'PER_071' });
+      return { records: [partialAssignment], total: 1 };
+    },
+    deleteRecord: (source, field, id) => {
+      deleted.push([source, field, id]);
+      return { success: true };
+    }
+  };
+
+  assert.throws(() => vmContext._saveDirectoryEntryPrimary_({
+    nombres: 'Mario',
+    apellidos: 'Vega',
+    tipo_documento: 'DNI',
+    numero_documento: '87654321',
+    cargo_id: 'CAR_001',
+    local_id: 'LOC_1'
+  }), /fallo después de escribir parcialmente la asignación/);
+
+  assert.deepEqual(deleted, [
+    ['asignaciones', 'asignacion_id', 'ASG_PARTIAL_071'],
+    ['servidores datos personales', 'servidor_id', 'PER_071'],
+    ['personas', 'persona_id', 'PER_071']
+  ]);
+});
+
+test('el formulario completo guarda varias asignaciones en una sola operación coordinada', () => {
   const context = createDirectorySandbox();
-  let personWrites = 0;
-  let personalWrites = 0;
-  let assignmentPayload;
-  context._saveDirectoryPerson_ = () => { personWrites++; };
-  context.saveDirectoryPersonalData = () => { personalWrites++; };
+  const primaryWrites = [];
+  const assignmentWrites = [];
+  context._saveDirectoryEntryPrimary_ = payload => {
+    primaryWrites.push(payload);
+    return {
+      success: true,
+      person: { persona_id: 'PER_020' },
+      personalData: { servidor_id: 'PER_020' },
+      assignment: { asignacion_id: 'ASG_020', persona_id: 'PER_020' }
+    };
+  };
   context.saveDirectoryAssignment = payload => {
-    assignmentPayload = payload;
-    return { assignment: { asignacion_id: 'ASG_009' } };
+    assignmentWrites.push(payload);
+    return { assignment: { asignacion_id: payload.asignacion_id || 'ASG_021', persona_id: payload.persona_id } };
   };
 
   const result = context.saveDirectoryEntry({
-    persona_id: 'PER_009',
-    cargo_id: 'CAR_001',
-    estructura_local_id: 'REL_001'
+    nombres: 'Ana',
+    apellidos: 'Pérez',
+    tipo_documento: 'DNI',
+    numero_documento: '12345678',
+    assignments: [
+      { cargo_id: 'CAR_001', estructura_local_id: 'REL_001' },
+      { cargo_id: 'CAR_002', local_id: 'LOC_002' }
+    ]
   });
 
-  assert.equal(personWrites, 0);
-  assert.equal(personalWrites, 0);
-  assert.equal(assignmentPayload.persona_id, 'PER_009');
-  assert.equal(result.assignment.asignacion_id, 'ASG_009');
+  assert.equal(primaryWrites.length, 1);
+  assert.equal(primaryWrites[0].cargo_id, 'CAR_001');
+  assert.equal(primaryWrites[0].persona_id, '');
+  assert.equal(assignmentWrites.length, 1);
+  assert.equal(assignmentWrites[0].persona_id, 'PER_020');
+  assert.equal(assignmentWrites[0].cargo_id, 'CAR_002');
+  assert.equal(result.assignments.length, 2);
+  assert.equal(result.assignments[1].asignacion_id, 'ASG_021');
+});
+
+test('si falla una asignación adicional, el alta compuesta elimina lo creado en las tres tablas', () => {
+  const context = createDirectorySandbox();
+  const deleted = [];
+  context._saveDirectoryEntryPrimary_ = () => ({
+    success: true,
+    person: { persona_id: 'PER_041' },
+    personalData: { servidor_id: 'PER_041' },
+    assignment: { asignacion_id: 'ASG_041', persona_id: 'PER_041' }
+  });
+  context.saveDirectoryAssignment = () => { throw new Error('fallo de la segunda asignación'); };
+  context._directoryFindPersonalDataById_ = () => ({
+    servidor_id: 'PER_041', tipo_documento: 'DNI', numero_documento: '12345678'
+  });
+  context.SUNARPCore = {
+    findRecordsByFields: (source, filters) => {
+      if (source === 'asignaciones') {
+        assert.deepEqual(JSON.parse(JSON.stringify(filters)), { persona_id: 'PER_041' });
+        return {
+          records: [{ asignacion_id: 'ASG_041', persona_id: 'PER_041' }],
+          total: 1
+        };
+      }
+      throw new Error('Fuente inesperada: ' + source);
+    },
+    searchRecordsByFields: () => ({ records: [], total: 0 }),
+    deleteRecord: (source, field, id) => {
+      deleted.push([source, field, id]);
+      return { success: true };
+    }
+  };
+
+  assert.throws(() => context.saveDirectoryEntry({
+    nombres: 'María',
+    apellidos: 'Rojas',
+    tipo_documento: 'DNI',
+    numero_documento: '12345678',
+    assignments: [
+      { cargo_id: 'CAR_001', estructura_local_id: 'REL_001' },
+      { cargo_id: 'CAR_002', local_id: 'LOC_002' }
+    ]
+  }), /fallo de la segunda asignación/);
+
+  assert.deepEqual(deleted, [
+    ['asignaciones', 'asignacion_id', 'ASG_041'],
+    ['servidores datos personales', 'servidor_id', 'PER_041'],
+    ['personas', 'persona_id', 'PER_041']
+  ]);
+});
+
+test('el formulario completo actualiza todas las asignaciones y elimina las retiradas', () => {
+  const context = createDirectorySandbox();
+  const primaryWrites = [];
+  const assignmentWrites = [];
+  const deleted = [];
+  context._saveDirectoryEntryPrimary_ = payload => {
+    primaryWrites.push(payload);
+    return {
+      success: true,
+      person: { persona_id: 'PER_030' },
+      personalData: { servidor_id: 'PER_030' },
+      assignment: { asignacion_id: payload.asignacion_id, persona_id: 'PER_030' }
+    };
+  };
+  context.saveDirectoryAssignment = payload => {
+    assignmentWrites.push(payload);
+    return { assignment: { asignacion_id: payload.asignacion_id, persona_id: payload.persona_id } };
+  };
+  context.deleteDirectoryAssignment = id => {
+    deleted.push(id);
+    return { success: true };
+  };
+  const originalAssignments = [
+    { asignacion_id: 'ASG_030', persona_id: 'PER_030', cargo_id: 'CAR_001', local_id: 'LOC_001', active: true },
+    { asignacion_id: 'ASG_031', persona_id: 'PER_030', cargo_id: 'CAR_002', local_id: 'LOC_002', active: true },
+    { asignacion_id: 'ASG_032', persona_id: 'PER_030', cargo_id: 'CAR_003', local_id: 'LOC_003', active: true }
+  ];
+  const originalPerson = { persona_id: 'PER_030', nombres: 'Ana', apellidos: 'Pérez' };
+  context._directoryFindPersonById_ = () => originalPerson;
+  context._directoryFindPersonalDataById_ = () => null;
+  context._directoryAssertPersonMutationScope_ = () => true;
+  context._directoryLoadContext_ = () => ({
+    personas: [originalPerson], datosPersonales: [], asignaciones: originalAssignments,
+    estructuraLocal: [], estructuraOrg: [], locales: []
+  });
+
+  const result = context.saveDirectoryEntry({
+    persona_id: 'PER_030',
+    assignments: [
+      { asignacion_id: 'ASG_030', cargo_id: 'CAR_001', local_id: 'LOC_001' },
+      { asignacion_id: 'ASG_031', cargo_id: 'CAR_002', local_id: 'LOC_002' },
+      { cargo_id: 'CAR_032', local_id: 'LOC_003' }
+    ],
+    removed_assignment_ids: ['ASG_032']
+  });
+
+  assert.equal(primaryWrites.length, 1);
+  assert.equal(primaryWrites[0].asignacion_id, 'ASG_030');
+  assert.equal(assignmentWrites.length, 2);
+  assert.equal(assignmentWrites[0].asignacion_id, 'ASG_031');
+  assert.equal(assignmentWrites[1].asignacion_id, undefined);
+  assert.ok(assignmentWrites.every(item => item.persona_id === 'PER_030'));
+  assert.deepEqual(deleted, ['ASG_032']);
+  assert.equal(result.assignments.length, 3);
 });
 
 
+
+test('la edición no permite retirar asignaciones que pertenecen a otra persona', () => {
+  const context = createDirectorySandbox();
+  let primaryWrites = 0;
+  context._directoryFindPersonById_ = () => ({
+    persona_id: 'PER_060', nombres: 'Ana', apellidos: 'Pérez'
+  });
+  context._directoryFindPersonalDataById_ = () => null;
+  context._directoryLoadContext_ = () => ({
+    personas: [{ persona_id: 'PER_060', nombres: 'Ana', apellidos: 'Pérez' }],
+    datosPersonales: [],
+    asignaciones: [
+      { asignacion_id: 'ASG_060', persona_id: 'PER_060', local_id: 'LOC_1' }
+    ],
+    estructuraLocal: [], estructuraOrg: [], locales: []
+  });
+  context._directoryAssertPersonMutationScope_ = () => true;
+  context._saveDirectoryEntryPrimary_ = () => { primaryWrites++; };
+  context.SUNARPCore.findRecordsByFields = (source, filters) => {
+    if (source === 'asignaciones') {
+      return {
+        records: [{ asignacion_id: 'ASG_060', persona_id: 'PER_060', local_id: 'LOC_1' }],
+        total: 1
+      };
+    }
+    return { records: [], total: 0 };
+  };
+
+  assert.throws(() => context.saveDirectoryEntry({
+    persona_id: 'PER_060',
+    assignments: [
+      { asignacion_id: 'ASG_060', cargo_id: 'CAR_001', local_id: 'LOC_1' }
+    ],
+    removed_assignment_ids: ['ASG_099']
+  }), /no pertenecen a este servidor/i);
+  assert.equal(primaryWrites, 0);
+});
 
 test('la edición coordinada recupera la asignación anterior por ID sin cargar toda la tabla', () => {
   const context = createDirectorySandbox();
@@ -1086,6 +1329,15 @@ test('la edición coordinada recupera la asignación anterior por ID sin cargar 
     lookupId = id;
     return previousAssignment;
   };
+  context._directoryFindPersonById_ = () => person;
+  context._directoryFindPersonalDataById_ = () => personalData;
+  context._directoryAssertPersonMutationScope_ = () => true;
+  context.SUNARPCore.findRecordsByFields = (source, filters) => {
+    if (source === 'asignaciones') return { records: [previousAssignment], total: 1 };
+    if (source === 'personas') return { records: [person], total: 1 };
+    if (source === 'servidores datos personales') return { records: [personalData], total: 1 };
+    return { records: [], total: 0 };
+  };
   context._directoryAssertDocumentAvailable_ = () => ({
     tipo_documento: 'DNI',
     numero_documento: '12345678'
@@ -1113,14 +1365,81 @@ test('la edición coordinada recupera la asignación anterior por ID sin cargar 
   assert.equal(result.success, true);
 });
 
+test('la edición de un servidor histórico sin ficha documental conserva su ausencia si no se agrega documento', () => {
+  const context = createDirectorySandbox();
+  const person = {
+    persona_id: 'PER_013', nombres: 'Rosa', apellidos: 'López',
+    correo_institucional: 'rosa@sunarp.gob.pe'
+  };
+  const assignment = {
+    asignacion_id: 'ASG_013', persona_id: 'PER_013', cargo_id: 'CAR_001',
+    estructura_local_id: 'REL_1', local_id: '', active: true, order: 1
+  };
+  let documentLookups = 0;
+  let personalWrites = 0;
+  context._directoryLoadContext_ = () => ({
+    personas: [person], datosPersonales: [], asignaciones: [],
+    estructuraLocal: [], estructuraOrg: [], locales: []
+  });
+  context._directoryFindPersonById_ = () => person;
+  context._directoryFindPersonalDataById_ = () => null;
+  context._directoryFindAuthorizedAssignmentById_ = (_snapshot, _authorization, id) =>
+    id === 'ASG_013' ? assignment : null;
+  context._directoryAssertPersonMutationScope_ = () => true;
+  context._directoryAssertDocumentAvailable_ = () => {
+    documentLookups++;
+    return { tipo_documento: 'DNI', numero_documento: '12345678' };
+  };
+  context._saveDirectoryPerson_ = () => ({ person });
+  context.saveDirectoryPersonalData = () => {
+    personalWrites++;
+    return { personalData: { servidor_id: 'PER_013' } };
+  };
+  context.saveDirectoryAssignment = () => ({ assignment });
+  context.SUNARPCore.findRecordsByFields = (source, filters) => {
+    if (source === 'asignaciones') return { records: [assignment], total: 1 };
+    if (source === 'personas') return { records: [person], total: 1 };
+    if (source === 'servidores datos personales') return { records: [], total: 0 };
+    return { records: [], total: 0 };
+  };
+
+  const result = context.saveDirectoryEntry({
+    persona_id: 'PER_013',
+    asignacion_id: 'ASG_013',
+    nombres: 'Rosa',
+    apellidos: 'López',
+    correo_institucional: 'rosa@sunarp.gob.pe',
+    tipo_documento: '',
+    numero_documento: '',
+    cargo_id: 'CAR_001',
+    estructura_local_id: 'REL_1'
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.personalData, null);
+  assert.equal(documentLookups, 0);
+  assert.equal(personalWrites, 0);
+});
+
 test('la edición rechaza una asignación que pertenece a otra persona antes de escribir', () => {
   const context = createDirectorySandbox();
   let writes = 0;
   context._directoryLoadContext_ = () => ({
     personas: [{ persona_id: 'PER_001', nombres: 'Ana', apellidos: 'Pérez' }],
     datosPersonales: [],
-    asignaciones: [{ asignacion_id: 'ASG_002', persona_id: 'PER_002' }]
+    asignaciones: [{ asignacion_id: 'ASG_002', persona_id: 'PER_002', local_id: 'LOC_2' }]
   });
+  context._directoryFindPersonById_ = () => ({ persona_id: 'PER_001', nombres: 'Ana', apellidos: 'Pérez' });
+  context._directoryAssertPersonMutationScope_ = () => true;
+  context.SUNARPCore.findRecordsByFields = (source, filters) => {
+    if (source === 'asignaciones') {
+      return { records: [{ asignacion_id: 'ASG_002', persona_id: 'PER_002', local_id: 'LOC_2' }], total: 1 };
+    }
+    if (source === 'personas') {
+      return { records: [{ persona_id: 'PER_001', nombres: 'Ana', apellidos: 'Pérez' }], total: 1 };
+    }
+    return { records: [], total: 0 };
+  };
   context._directoryAssertDocumentAvailable_ = () => ({
     tipo_documento: 'DNI',
     numero_documento: '12345678'
@@ -1220,11 +1539,240 @@ test('el guardado directo de ficha personal aplica la unicidad documental normal
 });
 
 
-test('el formulario permite registrar y actualizar observaciones de cada asignación', () => {
-  assert.ok(frontendSource.includes('directoryFormObservaciones'));
-  assert.ok(frontendSource.includes("observaciones: document.getElementById('directoryFormObservaciones')"));
+test('el formulario permite registrar y actualizar observaciones dentro de cada asignación', () => {
+  assert.match(frontendSource, /controls\.observaciones = document\.createElement\('textarea'\)/);
+  assert.match(frontendSource, /observaciones: key\(controls\.observaciones\.value\)/);
+  assert.match(frontendSource, /directoryFormAssignments/);
 });
 
+test('Nuevo servidor y Editar usan ámbitos autorizados, DNI previo y asignaciones en el mismo formulario', () => {
+  assert.match(frontendSource, /callServer\('getDirectoryFormData'/);
+  assert.match(frontendSource, /callServer\('searchDirectoryDocument'/);
+  assert.match(frontendSource, /directoryFormTipoDocumento/);
+  assert.match(frontendSource, /directoryFormAddAssignment/);
+  assert.match(frontendSource, /onClick: \(\) => openDirectoryForm\(null\)/);
+  assert.doesNotMatch(frontendSource, /Adscripción de la asignación/);
+  assert.doesNotMatch(frontendSource, /label: 'Nueva asignación'/);
+  assert.doesNotMatch(frontendSource, /Selecciona una sede antes de registrar un servidor/);
+});
+
+test('el formulario de servidor usa el catálogo documental cargado por SUNARP Core', () => {
+  assert.match(serviceSource, /function getDirectoryFormData\(action\)/);
+  assert.match(serviceSource, /includeDocumentTypes:\s*true/);
+  assert.match(serviceSource, /tiposDocumento:\s*documentTypes/);
+  assert.match(serviceSource, /function _directoryAssertDocumentTypeAllowed_\(/);
+  assert.match(serviceSource, /listRecordsFromSourcesCached\(/);
+  assert.match(serviceSource, /if \(previousPersonalData && !hasDocument\)/);
+  assert.match(frontendSource, /requiresExistingDocumentValidation/);
+  assert.match(frontendSource, /Este registro histórico no tiene ficha de documento/);
+});
+
+
+test('la búsqueda previa de DNI detecta duplicados y permite conservar el documento propio en edición', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  const existing = {
+    servidor_id: 'PER_051',
+    tipo_documento: 'DNI',
+    numero_documento: '12 345 678'
+  };
+  let permission = '';
+  vmContext._directoryAuthorizationContext_ = value => {
+    permission = value;
+    return { auth: {}, structures: [], locals: [] };
+  };
+  vmContext._directoryAssertDocumentTypeAllowed_ = value =>
+    String(value).replace(/\s+/g, '').toUpperCase();
+  vmContext._directorySource_ = value => value;
+  vmContext._directoryFindPersonById_ = personaId => ({ persona_id: personaId });
+  vmContext._directoryLoadContext_ = () => ({
+    asignaciones: [], estructuraLocal: [], estructuraOrg: [], locales: []
+  });
+  vmContext._directoryAssertPersonMutationScope_ = () => true;
+  vmContext.SUNARPCore = {
+    findRecordsByFields: (source, filters, options) => {
+      if (source === 'asignaciones') {
+        return {
+          records: filters.persona_id === 'PER_051'
+            ? [{ asignacion_id: 'ASG_051', persona_id: 'PER_051', local_id: 'LOC_1' }]
+            : [],
+          total: filters.persona_id === 'PER_051' ? 1 : 0
+        };
+      }
+      assert.equal(source, 'servidores datos personales');
+      assert.equal(options.ignoreWhitespace, true);
+      assert.deepEqual(JSON.parse(JSON.stringify(filters)), { numero_documento: '12345678' });
+      return { records: [existing], total: 1 };
+    }
+  };
+
+  const duplicate = vmContext.searchDirectoryDocument({
+    action: 'create',
+    tipo_documento: 'DNI',
+    numero_documento: '12345678'
+  });
+  assert.equal(permission, 'INFORMACION_PERSONAL_CREAR');
+  assert.equal(duplicate.available, false);
+  assert.equal(duplicate.duplicate, true);
+
+  const ownDocument = vmContext.searchDirectoryDocument({
+    action: 'edit',
+    persona_id: 'PER_051',
+    tipo_documento: 'DNI',
+    numero_documento: '12345678'
+  });
+  assert.equal(permission, 'INFORMACION_PERSONAL_EDITAR');
+  assert.equal(ownDocument.available, true);
+  assert.equal(ownDocument.currentRecord, true);
+
+  const otherPerson = vmContext.searchDirectoryDocument({
+    action: 'edit',
+    persona_id: 'PER_052',
+    tipo_documento: 'DNI',
+    numero_documento: '12345678'
+  });
+  assert.equal(otherPerson.available, false);
+});
+
+function buildFormDataForScopes(scopes) {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  const catalog = {
+    sedes: [
+      { id: 'SEDE_A', name: 'Sede A' },
+      { id: 'SEDE_B', name: 'Sede B' }
+    ],
+    locales: [
+      { id: 'LOCAL_A1', name: 'Local A1', sede_id: 'SEDE_A' },
+      { id: 'LOCAL_A2', name: 'Local A2', sede_id: 'SEDE_A' },
+      { id: 'LOCAL_B1', name: 'Local B1', sede_id: 'SEDE_B' }
+    ],
+    estructuraOrg: [
+      { id: 'ROOT_A', name: 'Órgano A', parent_id: '', sede_id: 'SEDE_A', tipo_estructura_id: 'TE' , order: 50 },
+      { id: 'CHILD_A', name: 'Área A', parent_id: 'ROOT_A', sede_id: 'SEDE_A', tipo_estructura_id: 'TE', order: 1 },
+      { id: 'ROOT_A2', name: 'Órgano A2', parent_id: '', sede_id: 'SEDE_A', tipo_estructura_id: 'TE', order: 20 },
+      { id: 'ROOT_B', name: 'Órgano B', parent_id: '', sede_id: 'SEDE_B', tipo_estructura_id: 'TE', order: 10 }
+    ],
+    estructuraLocal: [
+      { id: 'REL_A1', estructura_id: 'ROOT_A', local_id: 'LOCAL_A1' },
+      { id: 'REL_A2', estructura_id: 'CHILD_A', local_id: 'LOCAL_A1' },
+      { id: 'REL_A3', estructura_id: 'ROOT_A2', local_id: 'LOCAL_A2' },
+      { id: 'REL_B1', estructura_id: 'ROOT_B', local_id: 'LOCAL_B1' }
+    ],
+    tiposEstructura: [{ id: 'TE', name: 'Órgano' }],
+    cargos: [{ id: 'CAR_1', name: 'Analista' }],
+    documentTypes: [{ id: 'DNI', name: 'DNI', active: true }]
+  };
+  const authorization = {
+    auth: {
+      moduleAccess: [{
+        modulo_id: 'MOD_INFO_PERSONAL',
+        scopes
+      }]
+    },
+    moduleId: 'MOD_INFO_PERSONAL',
+    structures: [],
+    locals: []
+  };
+  const structureById = new Map(catalog.estructuraOrg.map(node => [node.id, node]));
+  const isDescendant = (candidateId, rootId) => {
+    let current = structureById.get(candidateId);
+    const visited = new Set();
+    while (current) {
+      if (current.id === rootId) return true;
+      if (visited.has(current.id)) return false;
+      visited.add(current.id);
+      current = structureById.get(current.parent_id) || null;
+    }
+    return false;
+  };
+  vmContext._directoryAuthorizationContext_ = () => authorization;
+  vmContext._directoryLoadContext_ = () => catalog;
+  vmContext._directoryGetAuthorizedSedeIds_ = (_authorization, allSedes) => {
+    if (scopes.some(scope => scope.tipo_ambito_id === 'TOTAL')) {
+      return new Set(allSedes.map(item => item.id));
+    }
+    const ids = new Set();
+    scopes.forEach(scope => {
+      if (scope.tipo_ambito_id === 'SEDE') ids.add(scope.referencia_id);
+      if (scope.tipo_ambito_id === 'LOCAL') {
+        const local = catalog.locales.find(item => item.id === scope.referencia_id);
+        if (local) ids.add(local.sede_id);
+      }
+      if (scope.tipo_ambito_id === 'ESTRUCTURA_ORG') {
+        const node = structureById.get(scope.referencia_id);
+        if (node) ids.add(node.sede_id);
+      }
+    });
+    return ids;
+  };
+  vmContext._accessRecordIsAllowed_ = (_auth, _moduleId, record) => scopes.some(scope => {
+    if (scope.tipo_ambito_id === 'TOTAL') return true;
+    if (scope.tipo_ambito_id === 'SEDE') return scope.referencia_id === record.sede_id;
+    if (scope.tipo_ambito_id === 'LOCAL') return scope.referencia_id === record.local_id;
+    if (scope.tipo_ambito_id === 'ESTRUCTURA_ORG') {
+      const candidate = record.estructura_id || '';
+      return scope.incluir_descendientes
+        ? isDescendant(candidate, scope.referencia_id)
+        : candidate === scope.referencia_id;
+    }
+    return false;
+  });
+  return vmContext.getDirectoryFormData('create');
+}
+
+test('el formulario usa la misma visibilidad de ámbito que los filtros de la tabla', () => {
+  const total = buildFormDataForScopes([
+    { tipo_ambito_id: 'TOTAL', referencia_id: '', incluir_descendientes: false }
+  ]);
+  assert.equal(total.scope.siteMode, 'selectable');
+  assert.equal(total.scope.fixedSedeId, '');
+  assert.equal(total.scope.localMode, 'selectable');
+  assert.deepEqual(Array.from(total.catalogs.sedes, item => item.id), ['SEDE_A', 'SEDE_B']);
+
+  const oneSite = buildFormDataForScopes([
+    { tipo_ambito_id: 'SEDE', referencia_id: 'SEDE_A', incluir_descendientes: false }
+  ]);
+  assert.equal(oneSite.scope.siteMode, 'fixed');
+  assert.equal(oneSite.scope.fixedSedeId, 'SEDE_A');
+  assert.equal(oneSite.scope.localMode, 'selectable');
+  assert.deepEqual(Array.from(oneSite.catalogs.locales, item => item.id), ['LOCAL_A1', 'LOCAL_A2']);
+
+  const oneStructure = buildFormDataForScopes([
+    { tipo_ambito_id: 'ESTRUCTURA_ORG', referencia_id: 'CHILD_A', incluir_descendientes: false }
+  ]);
+  assert.equal(oneStructure.scope.siteMode, 'fixed');
+  assert.equal(oneStructure.scope.localMode, 'hidden');
+  assert.equal(oneStructure.scope.hierarchyMode, 'structure-scope');
+  assert.deepEqual(Array.from(oneStructure.scope.rootStructureIds), ['CHILD_A']);
+
+  const oneLocal = buildFormDataForScopes([
+    { tipo_ambito_id: 'LOCAL', referencia_id: 'LOCAL_A1', incluir_descendientes: false }
+  ]);
+  assert.equal(oneLocal.scope.localMode, 'fixed');
+  assert.equal(oneLocal.scope.fixedLocalId, 'LOCAL_A1');
+
+  const multipleLocals = buildFormDataForScopes([
+    { tipo_ambito_id: 'LOCAL', referencia_id: 'LOCAL_A1', incluir_descendientes: false },
+    { tipo_ambito_id: 'LOCAL', referencia_id: 'LOCAL_A2', incluir_descendientes: false }
+  ]);
+  assert.equal(multipleLocals.scope.localMode, 'selectable-scoped');
+  assert.deepEqual(Array.from(multipleLocals.catalogs.locales, item => item.id), ['LOCAL_A1', 'LOCAL_A2']);
+
+  assert.throws(() => buildFormDataForScopes([
+    { tipo_ambito_id: 'SEDE', referencia_id: 'SEDE_B', incluir_descendientes: false },
+    { tipo_ambito_id: 'SEDE', referencia_id: 'SEDE_A', incluir_descendientes: false }
+  ]), /no puede abarcar varias sedes/i);
+});
+
+test('las raíces orgánicas múltiples del formulario respetan estructura_org.order y eliminan raíces redundantes', () => {
+  const ordered = buildFormDataForScopes([
+    { tipo_ambito_id: 'ESTRUCTURA_ORG', referencia_id: 'ROOT_A', incluir_descendientes: true },
+    { tipo_ambito_id: 'ESTRUCTURA_ORG', referencia_id: 'CHILD_A', incluir_descendientes: false },
+    { tipo_ambito_id: 'ESTRUCTURA_ORG', referencia_id: 'ROOT_A2', incluir_descendientes: false }
+  ]);
+  assert.deepEqual(Array.from(ordered.scope.rootStructureIds), ['ROOT_A2', 'ROOT_A']);
+});
 
 function assignmentContext() {
   return {
@@ -2267,22 +2815,18 @@ test('las consultas puntuales de asignaciones comprueban permiso y ámbito en Co
 });
 
 
-test('deleteDirectoryPerson valida el ámbito con las asignaciones puntuales, no con el contexto vacío', () => {
+test('deleteDirectoryPerson elimina el servidor y sus tres tablas relacionadas cuando no existen acciones previas', () => {
   const vmContext = vm.createContext({});
   vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
-  const person = {
-    persona_id: 'PER_009',
-    nombres: 'Ana',
-    apellidos: 'Pérez'
-  };
-  const linkedAssignment = {
-    asignacion_id: 'ASG_009',
-    persona_id: 'PER_009',
-    estructura_local_id: 'REL_1',
-    local_id: '',
-    active: true
-  };
+  const person = { persona_id: 'PER_009', nombres: 'Ana', apellidos: 'Pérez' };
+  const personalData = { servidor_id: 'PER_009', tipo_documento: 'DNI', numero_documento: '12345678' };
+  const linkedAssignments = [
+    { asignacion_id: 'ASG_009', persona_id: 'PER_009', estructura_local_id: 'REL_1', local_id: '', active: true },
+    { asignacion_id: 'ASG_010', persona_id: 'PER_009', local_id: 'LOC_1', active: true }
+  ];
   let assignmentsChecked = null;
+  const deleted = [];
+  let auditEvent = null;
 
   vmContext._directoryAuthorizationContext_ = () => ({ auth: {}, structures: [], locals: [] });
   vmContext._directoryLoadContext_ = options => {
@@ -2290,26 +2834,130 @@ test('deleteDirectoryPerson valida el ámbito con las asignaciones puntuales, no
     return { asignaciones: [], estructuraLocal: [], estructuraOrg: [], locales: [] };
   };
   vmContext._directoryFindPersonById_ = () => person;
+  vmContext._directoryFindPersonalDataById_ = () => personalData;
   vmContext._directoryAssertPersonMutationScope_ = (_authorization, _person, assignments) => {
     assignmentsChecked = assignments;
   };
   vmContext._directorySource_ = name => name;
+  vmContext._accessSecuritySource_ = name => name;
+  vmContext.ACCESS_MANAGEMENT_CONFIG = { sheets: { audit: 'Auditoria' } };
+  vmContext._accessRunAudited_ = (_auth, event, callback) => {
+    auditEvent = event;
+    return callback().value;
+  };
   vmContext.SUNARPCore = {
     findRecordsByFields: (source, filters) => {
-      assert.equal(source, 'asignaciones');
-      assert.deepEqual(JSON.parse(JSON.stringify(filters)), { persona_id: 'PER_009' });
-      return { records: [linkedAssignment], total: 1 };
+      if (source === 'asignaciones') {
+        assert.deepEqual(JSON.parse(JSON.stringify(filters)), { persona_id: 'PER_009' });
+        return { records: linkedAssignments, total: linkedAssignments.length };
+      }
+      if (source === 'Auditoria') {
+        return { records: [], total: 0 };
+      }
+      throw new Error('Fuente inesperada: ' + source);
+    },
+    searchRecordsByFields: () => ({ records: [], total: 0 }),
+    deleteRecord: (source, field, id) => {
+      deleted.push([source, field, id]);
+      return { success: true };
     }
   };
 
-  assert.throws(
-    () => vmContext.deleteDirectoryPerson('PER_009'),
-    /tiene 1 asignación/
-  );
-  assert.equal(assignmentsChecked.length, 1);
-  assert.equal(assignmentsChecked[0].asignacion_id, 'ASG_009');
+  const result = vmContext.deleteDirectoryPerson('PER_009');
+  assert.equal(assignmentsChecked.length, 2);
+  assert.equal(result.success, true);
+  assert.deepEqual(deleted, [
+    ['asignaciones', 'asignacion_id', 'ASG_009'],
+    ['asignaciones', 'asignacion_id', 'ASG_010'],
+    ['servidores datos personales', 'servidor_id', 'PER_009'],
+    ['personas', 'persona_id', 'PER_009']
+  ]);
+  assert.equal(auditEvent.accion, 'ELIMINAR_SERVIDOR_DIRECTORIO');
 });
 
+test('deleteDirectoryPerson bloquea la eliminación si una asignación eliminada conserva auditoría vinculada al servidor', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  const person = { persona_id: 'PER_012', nombres: 'Eva', apellidos: 'Ruiz' };
+  const deleted = [];
+  vmContext._directoryAuthorizationContext_ = () => ({ auth: {}, structures: [], locals: [] });
+  vmContext._directoryLoadContext_ = () => ({ asignaciones: [], estructuraLocal: [], estructuraOrg: [], locales: [] });
+  vmContext._directoryFindPersonById_ = () => person;
+  vmContext._directoryFindPersonalDataById_ = () => null;
+  vmContext._directoryAssertPersonMutationScope_ = () => {};
+  vmContext._directorySource_ = name => name;
+  vmContext._accessSecuritySource_ = name => name;
+  vmContext.ACCESS_MANAGEMENT_CONFIG = { sheets: { audit: 'Auditoria' } };
+  vmContext._accessRunAudited_ = () => { throw new Error('No debe iniciar una eliminación auditada.'); };
+  vmContext.SUNARPCore = {
+    findRecordsByFields: source => source === 'asignaciones'
+      ? { records: [], total: 0 }
+      : { records: [], total: 0 },
+    searchRecordsByFields: (source, query, fields) => {
+      assert.equal(source, 'Auditoria');
+      assert.equal(query, 'PER_012');
+      assert.deepEqual(Array.from(fields), ['datos_antes', 'datos_despues']);
+      return {
+        records: [{
+          evento_id: 'EVT_OLD_ASSIGNMENT',
+          modulo: 'INFORMACION_PERSONAL',
+          tipo_entidad: 'ASIGNACION',
+          registro_id: 'ASG_DELETED_012',
+          datos_antes: '',
+          datos_despues: JSON.stringify({
+            asignacion_id: 'ASG_DELETED_012',
+            persona_id: 'PER_012',
+            cargo_id: 'CAR_001'
+          })
+        }],
+        total: 1
+      };
+    },
+    deleteRecord: (...args) => { deleted.push(args); return { success: true }; }
+  };
+
+  assert.throws(
+    () => vmContext.deleteDirectoryPerson('PER_012'),
+    /acción\(es\) registradas en la auditoría institucional/
+  );
+  assert.deepEqual(deleted, []);
+});
+
+test('deleteDirectoryPerson bloquea la eliminación cuando hay una acción previa de Información de personal', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  const person = { persona_id: 'PER_011', nombres: 'Luis', apellidos: 'Díaz' };
+  const assignment = { asignacion_id: 'ASG_011', persona_id: 'PER_011', local_id: 'LOC_1' };
+  const deleted = [];
+
+  vmContext._directoryAuthorizationContext_ = () => ({ auth: {}, structures: [], locals: [] });
+  vmContext._directoryLoadContext_ = () => ({ asignaciones: [], estructuraLocal: [], estructuraOrg: [], locales: [] });
+  vmContext._directoryFindPersonById_ = () => person;
+  vmContext._directoryFindPersonalDataById_ = () => null;
+  vmContext._directoryAssertPersonMutationScope_ = () => {};
+  vmContext._directorySource_ = name => name;
+  vmContext._accessSecuritySource_ = name => name;
+  vmContext.ACCESS_MANAGEMENT_CONFIG = { sheets: { audit: 'Auditoria' } };
+  vmContext._accessRunAudited_ = () => { throw new Error('No debe iniciar una eliminación auditada.'); };
+  vmContext.SUNARPCore = {
+    findRecordsByFields: source => source === 'asignaciones'
+      ? { records: [assignment], total: 1 }
+      : { records: [{
+          evento_id: 'EVT_001',
+          modulo: 'INFORMACION_PERSONAL',
+          registro_id: 'ASG_011',
+          accion: 'EDITAR_ASIGNACION_DIRECTORIO'
+        }], total: 1 },
+    searchRecordsByFields: () => ({ records: [], total: 0 }),
+    deleteRecord: (...args) => { deleted.push(args); return { success: true }; }
+  };
+
+  assert.throws(
+    () => vmContext.deleteDirectoryPerson('PER_011'),
+    /acción\(es\) registradas en la auditoría institucional/
+  );
+  assert.deepEqual(deleted, []);
+});
 test('la validación de contexto parcial conserva las relaciones sin exigir cargar todas las personas', () => {
   const context = assignmentContext();
   context.personas = [];

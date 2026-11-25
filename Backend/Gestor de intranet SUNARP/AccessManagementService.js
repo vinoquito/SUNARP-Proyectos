@@ -3910,9 +3910,27 @@ function _accessAuditContainsPermission_(event, permissionId) {
  * La caché por generación permite que la paginación posterior no repita
  * búsquedas ni vuelva a descargar esos eventos.
  */
+function _accessAuditSnapshotReferencesPerson_(event, personaId) {
+  const expectedId = _accessText_(personaId);
+  if (!event || !expectedId) return false;
+  return ['datos_antes', 'datos_despues'].some(field => {
+    const raw = _accessText_(event[field]);
+    if (!raw) return false;
+    try {
+      const snapshot = JSON.parse(raw);
+      return Boolean(snapshot && !Array.isArray(snapshot) &&
+        _accessText_(snapshot.persona_id) === expectedId);
+    } catch (_error) {
+      return false;
+    }
+  });
+}
+
+
 function _accessBuildEntityHistoryIndex_(source, entityType, recordId, relatedTypes) {
   const events = [];
   const seenEventIds = new Set();
+  const relatedRecordIds = new Set([recordId]);
 
   const consumeEvents = candidates => {
     (candidates || []).forEach(event => {
@@ -3930,7 +3948,9 @@ function _accessBuildEntityHistoryIndex_(source, entityType, recordId, relatedTy
       ) return;
 
       let matches = relatedTypes[entityType].includes(eventType) &&
-        eventRecordId === recordId;
+        (entityType === 'SERVIDOR'
+          ? relatedRecordIds.has(eventRecordId)
+          : eventRecordId === recordId);
 
       if (!matches && entityType === 'PERMISO' && eventType === 'ROL_PERMISO') {
         matches = _accessAuditContainsPermission_(event, recordId);
@@ -3948,6 +3968,53 @@ function _accessBuildEntityHistoryIndex_(source, entityType, recordId, relatedTy
     }
   );
   consumeEvents(directMatches.records);
+
+  if (entityType === 'SERVIDOR') {
+    // El historial del servidor reúne la identidad, la ficha personal y las
+    // asignaciones asociadas. Las asignaciones tienen sus propios IDs.
+    const assignmentMatches = SUNARPCore.findRecordsByFields(
+      _accessDirectorySource_('asignaciones'),
+      { persona_id: recordId },
+      {
+        searchField: 'persona_id',
+        requiredHeaders: ['asignacion_id', 'persona_id'],
+        projectionFields: ['asignacion_id', 'persona_id']
+      }
+    );
+    (assignmentMatches.records || []).forEach(assignment => {
+      const assignmentId = _accessText_(assignment.asignacion_id);
+      if (!assignmentId) return;
+      relatedRecordIds.add(assignmentId);
+      const assignmentEvents = SUNARPCore.findRecordsByFields(
+        source,
+        { registro_id: assignmentId },
+        {
+          searchField: 'registro_id',
+          requiredHeaders: ACCESS_MANAGEMENT_FIELDS.audit
+        }
+      );
+      consumeEvents(assignmentEvents.records);
+    });
+
+    // Recuperar también eventos de asignaciones ya eliminadas: el snapshot
+    // de auditoría conserva persona_id aunque la fila física ya no exista.
+    const historicalAssignmentMatches = SUNARPCore.searchRecordsByFields(
+      source,
+      recordId,
+      ['datos_antes', 'datos_despues'],
+      { matchCase: true, accentInsensitive: false }
+    );
+    (historicalAssignmentMatches.records || []).forEach(event => {
+      if (
+        _accessUpper_(event.tipo_entidad) === 'ASIGNACION' &&
+        ['DIRECTORIOS', 'INFORMACION_PERSONAL'].includes(_accessUpper_(event.modulo)) &&
+        _accessAuditSnapshotReferencesPerson_(event, recordId)
+      ) {
+        relatedRecordIds.add(_accessText_(event.registro_id));
+        consumeEvents([event]);
+      }
+    });
+  }
 
   if (entityType === 'PERMISO') {
     const relatedMatches = SUNARPCore.searchRecordsByFields(
@@ -3989,7 +4056,7 @@ function getAccessEntityHistory(payload) {
     USUARIO: ['USUARIO', 'USUARIO_ROL', 'AMBITO_ACCESO'],
     ROL: ['ROL', 'ROL_PERMISO'],
     PERMISO: ['PERMISO', 'ROL_PERMISO'],
-    SERVIDOR: ['SERVIDOR']
+    SERVIDOR: ['SERVIDOR', 'PERSONA', 'DATOS_PERSONALES', 'ASIGNACION']
   };
   if (!relatedTypes[entityType]) {
     throw new Error('No está habilitada la consulta de historial para ' + entityType + '.');

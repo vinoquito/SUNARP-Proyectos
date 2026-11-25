@@ -504,6 +504,64 @@ test('el historial por entidad ordena cronológicamente, conserva el total y adm
   assert.equal(empty.items.length, 0);
 });
 
+test('el historial de servidor reúne los eventos de persona, ficha personal y asignaciones', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  sandbox._accessRequirePermission_ = () => ({ authenticated: true });
+  sandbox._accessSecuritySource_ = sheet => ({ sheetName: sheet });
+  sandbox._accessDirectorySource_ = sheet => ({ sheetName: sheet });
+  const eventsByRecord = {
+    PER_009: [
+      { evento_id: 'EVT_001', fecha_hora: new Date('2026-11-20T09:00:00Z'), tipo_entidad: 'PERSONA', registro_id: 'PER_009', modulo: 'INFORMACION_PERSONAL' },
+      { evento_id: 'EVT_002', fecha_hora: new Date('2026-11-20T10:00:00Z'), tipo_entidad: 'DATOS_PERSONALES', registro_id: 'PER_009', modulo: 'INFORMACION_PERSONAL' }
+    ],
+    ASG_009: [
+      { evento_id: 'EVT_003', fecha_hora: new Date('2026-11-20T11:00:00Z'), tipo_entidad: 'ASIGNACION', registro_id: 'ASG_009', modulo: 'INFORMACION_PERSONAL' },
+      { evento_id: 'EVT_004', fecha_hora: new Date('2026-11-20T12:00:00Z'), tipo_entidad: 'ASIGNACION', registro_id: 'ASG_009', modulo: 'ACCESOS' }
+    ]
+  };
+  const queries = [];
+  const deletedAssignmentEvent = {
+    evento_id: 'EVT_005',
+    fecha_hora: new Date('2026-11-20T13:00:00Z'),
+    tipo_entidad: 'ASIGNACION',
+    registro_id: 'ASG_DELETED_009',
+    modulo: 'INFORMACION_PERSONAL',
+    datos_antes: '',
+    datos_despues: JSON.stringify({
+      asignacion_id: 'ASG_DELETED_009',
+      persona_id: 'PER_009',
+      cargo_id: 'CAR_002'
+    })
+  };
+  sandbox.SUNARPCore.findRecordsByFields = (source, filters) => {
+    queries.push({ source: source && source.sheetName, filters });
+    if (source && source.sheetName === 'asignaciones') {
+      return {
+        records: [{ asignacion_id: 'ASG_009', persona_id: 'PER_009' }],
+        total: 1
+      };
+    }
+    const records = eventsByRecord[filters.registro_id] || [];
+    return { records, total: records.length };
+  };
+  sandbox.SUNARPCore.searchRecordsByFields = (source, query, fields) => {
+    queries.push({ source: source && source.sheetName, snapshotSearch: query, fields });
+    return { records: [deletedAssignmentEvent], total: 1 };
+  };
+
+  const history = sandbox.getAccessEntityHistory({
+    tipo_entidad: 'SERVIDOR',
+    registro_id: 'PER_009',
+    page: 1,
+    pageSize: 10
+  });
+
+  assert.equal(history.total, 4);
+  assert.deepEqual(Array.from(history.items, item => item.evento_id), ['EVT_005', 'EVT_003', 'EVT_002', 'EVT_001']);
+  assert.ok(queries.some(item => item.source === 'asignaciones'));
+  assert.ok(queries.some(item => item.filters.registro_id === 'ASG_009'));
+});
+
 test('el historial conserva compatibilidad con SUNARP Core v9 mientras admite lectura de cola', () => {
   const start = accessSource.indexOf('function getAccessAuditHistory(filters) {');
   const end = accessSource.indexOf('function _accessParseAuditData_(', start);
