@@ -4,8 +4,8 @@
 
 **Fecha de referencia de los datos compartidos:** 24 de noviembre de 2026  
 **Rama examinada:** `feat/directorio-personas-datos-asignaciones`  
-**HEAD examinado:** `8522c7654ecb7ca1ba20745f03ef5fe9a5ea768f`  
-**Estado de CI en ese HEAD:** 272/272 pruebas aprobadas en GitHub Actions (push #1464 y PR #1465).  
+**HEAD examinado:** `ae07efe63c12451d2241b2b1a00ee10626f6f38f`. La comparación con `8522c7654ecb7ca1ba20745f03ef5fe9a5ea768f` muestra tres commits posteriores que únicamente añadieron este documento; los archivos de código examinados no cambiaron.  
+**Estado de CI del código examinado:** 272/272 pruebas aprobadas en GitHub Actions en `8522c7654ecb7ca1ba20745f03ef5fe9a5ea768f` (push #1464 y PR #1465). Los tres commits posteriores solo incorporaron documentación.  
 **Estado de despliegue:** la aprobación de CI no acredita que el comportamiento esté publicado ni validado en la implementación de pruebas de Apps Script.
 
 ---
@@ -277,3 +277,225 @@ Al retomar este proyecto:
 7. No desplegar ni pedir al responsable una nueva prueba hasta que las pruebas de servicio e interfaz demuestren el recorrido con las relaciones reales.
 
 **Criterio de cierre:** los selectores deben reflejar la jerarquía almacenada en `estructura_org.parent_id`, restringida por sede y asignaciones autorizadas resueltas mediante `estructura_local`. La interfaz debe mostrar un solo nivel descendiente por selección, sin saltos, aplanamientos ni ramas inventadas.
+
+
+---
+
+## 10. Comportamiento esperado según el ámbito autorizado
+
+La interfaz no debe decidir su comportamiento por el nombre del rol (administrador, editor o consulta), sino por los permisos y, especialmente, por los registros activos de **AmbitosAcceso** para **MOD_INFO_PERSONAL**. El permiso **INFORMACION_PERSONAL_VER** habilita la consulta; el ámbito determina el conjunto visible y la forma inicial de navegarlo.
+
+### 10.1. Administrador con ámbito TOTAL exclusivo
+
+Al entrar en Información de personal:
+
+- La tabla debe permanecer vacía.
+- El selector de sede debe estar visible y comenzar en **«Seleccione una opción»**.
+- Sus opciones deben ser las sedes activas que devuelve **getDirectoryInitialData()** para el ámbito TOTAL.
+- No debe seleccionarse automáticamente una sede.
+- No debe cargarse información agregada de todas las sedes.
+- No deben aparecer filtros de cargos ni de estructura orgánica mientras no se elija una sede.
+
+Cuando el administrador selecciona una sede:
+
+1. Se llama a **getDirectorySiteData(sedeId)**.
+2. El backend vuelve a comprobar el ámbito TOTAL y limita la respuesta a la sede seleccionada.
+3. La tabla muestra todos los registros autorizados de esa sede.
+4. Los filtros orgánicos se construyen únicamente con las estructuras de esa sede y las asignaciones autorizadas que contiene la respuesta.
+5. El filtro de cargos se construye con los cargos presentes en esos registros.
+
+El administrador puede cambiar de sede desde el mismo selector. Al volver a «Seleccione una opción», se limpia la tabla y se retiran los filtros dependientes; no se debe interpretar esa opción vacía como una solicitud de cargar todas las sedes.
+
+Esta regla se mantiene aunque el catálogo devolviera una sola sede: un ámbito TOTAL significa que la selección corresponde al usuario, no que la aplicación deba convertir el ámbito en una adscripción fija.
+
+### 10.2. Usuario con ámbito SEDE y una sola sede autorizada
+
+Al entrar:
+
+- La sede autorizada se aplica como contexto fijo.
+- No aparece el selector de sede, porque el usuario no tiene que elegir entre sedes.
+- Se carga automáticamente la sede mediante **getDirectorySiteData(sedeId)**.
+- La tabla muestra todos los registros permitidos en esa sede, no solo los de una estructura elegida en un filtro.
+- Los filtros orgánicos, si corresponden, permiten navegar la jerarquía de esa misma sede.
+- El filtro de cargos se alimenta exclusivamente de los registros autorizados.
+
+El rol no cambia este comportamiento. Un editor, un usuario de consulta u otro rol con el mismo ámbito SEDE debe recibir el mismo alcance de lectura.
+
+### 10.3. Usuario con ámbito ESTRUCTURA_ORG sobre una única área terminal
+
+Si el usuario tiene acceso a una unidad orgánica y esa unidad no tiene descendientes que formen parte de su autorización:
+
+- La sede se aplica como contexto fijo; no aparece el selector de sede cuando solo hay una sede autorizada.
+- La tabla muestra los registros de la unidad permitida.
+- No aparecen selectores de jerarquía orgánica.
+- Se muestra el filtro de cargos con los cargos presentes en esos registros.
+- No se muestran unidades hermanas, superiores ni descendientes que no estén incluidas en el ámbito.
+
+Si el ámbito tiene **incluir_descendientes = false**, la autorización se limita a la unidad indicada aunque el catálogo estructura_org tenga hijos. La existencia de hijos en el catálogo no concede permiso para mostrarlos ni consultar sus registros.
+
+Si **incluir_descendientes = true**, pero no existen descendientes con registros autorizados que permitan navegar, tampoco se muestran selectores orgánicos: la unidad autorizada queda implícita y la tabla presenta su conjunto completo permitido.
+
+### 10.4. Usuario con ámbito ESTRUCTURA_ORG y descendientes autorizados
+
+Cuando existe una única unidad raíz de ámbito:
+
+- Esa unidad se considera implícita; no se obliga al usuario a seleccionarla de nuevo.
+- El primer selector orgánico muestra solamente sus hijos directos que conduzcan a registros autorizados.
+- Cada selector posterior muestra exclusivamente los hijos directos del nodo seleccionado.
+- Si el nodo seleccionado no tiene hijos seleccionables, no se crea otro selector.
+- La tabla inicial contiene toda la información permitida por el ámbito (unidad raíz y descendientes autorizados); la selección orgánica es un filtro opcional sobre ese conjunto.
+
+Cuando hay varias referencias ESTRUCTURA_ORG autorizadas dentro de la misma sede, el primer nivel debe permitir distinguir esas áreas autorizadas. Una vez elegida una de ellas, los siguientes niveles deben continuar únicamente por sus hijos directos y respetar el valor **incluir_descendientes** de esa referencia. No se deben unir los hijos de referencias independientes en un selector que pierda la relación con su respectivo ámbito raíz.
+
+Si una referencia está completamente cubierta por otra referencia ancestro que ya concede acceso a sus descendientes, la navegación debe evitar duplicar la misma rama.
+
+### 10.5. Ámbito LOCAL
+
+Un ámbito LOCAL permite consultar las asignaciones que correspondan al local autorizado. No crea por sí mismo una unidad orgánica. Si las asignaciones carecen de **estructura_local_id** y solo tienen **local_id**, no se debe inventar una estructura para generar selectores. En ese caso no hay cascada orgánica; se presenta la tabla autorizada y el filtro de cargos.
+
+### 10.6. Reglas comunes
+
+- La autorización se aplica en el backend antes de devolver registros. Los filtros del navegador nunca amplían permisos.
+- La tabla de un usuario con ámbito fijo se carga con el conjunto completo que su ámbito permite; no se debe obligar a seleccionar cada nivel para que aparezcan los registros.
+- El selector de sede es una decisión de contexto: se exige para TOTAL y se omite cuando el ámbito no deja al usuario elegir entre sedes.
+- Los selectores orgánicos representan **estructura_org.parent_id**; cada nivel muestra hijos directos, no todos los descendientes.
+- Los nodos intermedios se conservan para que el recorrido no salte niveles, aunque no tengan asignaciones propias, siempre que sean ancestros reales de registros autorizados.
+- El filtro de cargos se muestra cuando el conjunto cargado contiene cargos. Si solo existe un cargo, se mantiene visible con su única opción y deshabilitado; no se oculta por el simple hecho de que haya una sola opción.
+- La jerarquía nunca se deduce de **locales.parent_id**, **estructura_local.id**, **tipo_estructura_id**, el nombre de las unidades o el campo **order**.
+
+---
+
+## 11. Divergencias comprobadas en el código vigente
+
+La revisión del código en el HEAD **ae07efe63c12451d2241b2b1a00ee10626f6f38f** confirma que la ruta actual no cumple todavía los escenarios anteriores.
+
+### 11.1. El ámbito TOTAL carga todas las sedes al entrar
+
+En **DirectoryScripts.html**, la función **load()** hace lo siguiente cuando **state.hasTotalScope** y hay más de una sede:
+
+1. Oculta el contenedor del selector de sede.
+2. Llama a **getDirectoryAuthorizedData()**.
+3. Coloca en **state.records** los registros de todas las sedes.
+4. Establece **state.activeSedeId = '__ALL__'**.
+5. Construye un índice jerárquico conjunto con estructuras de todas las sedes.
+6. Renderiza la tabla y los filtros sin que el administrador haya seleccionado una sede.
+
+Esto contradice directamente el escenario TOTAL: la tabla no debe cargar al entrar, el selector debe permanecer visible y la primera elección debe ser una sede concreta.
+
+Además, **getHierarchyNodes('')**, para el ámbito amplio, obtiene las raíces del índice completo. Cuando el índice contiene varias sedes, las raíces de esas sedes se presentan juntas. Se pierde la sede como primer nivel de contexto, por lo que la interfaz puede mostrar unidades orgánicas de distintas sedes dentro de una misma lista.
+
+La misma ruta también trata de forma distinta el caso TOTAL con una sola sede: el bloque **else if (state.authorizedSedes.length === 1)** la carga automáticamente. El ámbito TOTAL debe conservar la selección explícita incluso si el conjunto disponible tiene una sola opción.
+
+### 11.2. La regla de visibilidad del selector de sede depende solo del número de sedes
+
+**populateSedeFilter()** selecciona automáticamente la única sede y oculta el contenedor cuando **sedes.length <= 1**. Esa regla es correcta para un ámbito fijo de una sede, pero no para TOTAL. La visibilidad no puede depender exclusivamente del número de opciones: primero debe distinguirse si el ámbito es TOTAL o si la sede viene impuesta por la autorización.
+
+### 11.3. El filtro de cargos desaparece cuando hay una única opción
+
+**populateCargoFilter()** oculta el contenedor cuando **cargos.length <= 1**. Esto no coincide con el comportamiento solicitado para un usuario cuyo ámbito se reduce a una sola área terminal: en ese escenario no habrá filtros orgánicos y debe quedar disponible el filtro de cargos cuando el conjunto tenga cargos, incluso si solo existe uno.
+
+### 11.4. Falta una navegación explícita para varias raíces ESTRUCTURA_ORG
+
+En **getHierarchyNodes('')**, cuando no hay ámbito TOTAL o SEDE, el código combina los hijos directos de cada referencia **ESTRUCTURA_ORG** con **incluir_descendientes = true**. No representa explícitamente las propias referencias autorizadas cuando existen varias áreas independientes. Esa combinación puede hacer que se pierda el contexto de cuál de las áreas autorizadas origina cada rama.
+
+Debe diferenciarse el caso de una sola referencia (raíz implícita) del caso de varias referencias (primer nivel de elección entre las áreas autorizadas), sin ampliar ninguna de ellas.
+
+### 11.5. Lo que ya está correctamente separado y debe conservarse
+
+- **getDirectoryInitialData()** obtiene los ámbitos y sedes autorizadas sin cargar asignaciones.
+- **getDirectorySiteData(sedeId)** valida la sede elegida, vuelve a construir el contexto de autorización y produce una respuesta limitada a esa sede.
+- **_directoryBuildSiteData_()** autoriza las asignaciones antes del enriquecimiento y devuelve catálogos restringidos a la sede.
+- **_directoryResolveAssignmentLocation_()** resuelve la estructura a través de asignaciones.estructura_local_id → estructura_local.estructura_id → estructura_org.id.
+- **_directoryGetSelectableHierarchyChildren_()** devuelve hijos directos y verifica la sede del padre y del hijo.
+- El índice de cliente permite filtrar por subárbol sin recorrer repetidamente toda la jerarquía.
+
+La corrección debe aprovechar esas piezas; no requiere modificar las hojas, renormalizar datos ni cambiar el modelo de relaciones.
+
+---
+
+## 12. Solución técnica propuesta
+
+La solución se concentra en el flujo de carga inicial y en la selección de nodos de la interfaz. La autorización del backend se conserva como autoridad y cada carga de sede sigue validándose en el servidor.
+
+### Fase A. Separar el modo de selección de sede del número de sedes
+
+En el frontend, determinar el modo con el resumen del ámbito recibido por **getDirectoryInitialData()**:
+
+- **TOTAL exclusivo:** selector de sede visible, valor vacío y tabla sin registros al entrar. No llamar a **getDirectoryAuthorizedData()** desde la página.
+- **Ámbito fijo con una sola sede autorizada:** ocultar selector de sede, aplicar esa sede y ejecutar **getDirectorySiteData(sedeId)** automáticamente.
+- **Sin sede autorizada válida:** no cargar datos ni inventar un contexto.
+
+Para TOTAL, la opción vacía debe significar únicamente «todavía no se ha seleccionado una sede». Al volver a ella, limpiar **records**, índice jerárquico, ruta seleccionada, opciones de cargos y tabla. No debe invocar la carga agregada.
+
+La función **getDirectoryAuthorizedData()** puede conservarse si otro flujo del sistema la necesita; simplemente deja de ser la ruta de entrada de la página Información de personal.
+
+### Fase B. Cargar cada sede de manera aislada
+
+Después de elegir una sede, utilizar exclusivamente **getDirectorySiteData(sedeId)**. Mantener:
+
+- la comprobación de que esa sede pertenece al ámbito activo;
+- la autorización de cada asignación en el servidor;
+- los catálogos restringidos a esa sede;
+- la caché identificada por usuario, sede y huella de autorización.
+
+No se deben combinar instantáneas de distintas sedes para construir una única cascada. Cambiar de sede debe reemplazar los registros y el índice de la sede anterior, no agregarlos.
+
+### Fase C. Construir la cascada según el tipo y número de ámbitos de estructura
+
+Separar dos conceptos en el cálculo del navegador:
+
+1. **Nodos autorizados/seleccionables:** nodos con asignaciones autorizadas y ancestros reales necesarios para recorrerlos.
+2. **Raíces de navegación:** puntos desde los que el usuario debe empezar, derivados del ámbito de acceso.
+
+Aplicar estas reglas:
+
+- Para TOTAL o SEDE, la navegación comienza en las raíces orgánicas de la sede ya seleccionada.
+- Para una única referencia ESTRUCTURA_ORG, la referencia autorizada es implícita. Si permite descendientes, la navegación comienza en sus hijos directos seleccionables. Si no tiene descendientes autorizados con registros, no se muestra selector.
+- Para varias referencias ESTRUCTURA_ORG independientes en la misma sede, el primer selector presenta esas áreas autorizadas que tengan registros visibles; tras seleccionar una, se ofrecen solo sus hijos directos autorizados.
+- Para LOCAL sin estructura orgánica resoluble, no se construye cascada orgánica.
+
+En todos los casos, las opciones de cada nivel deben formar parte de rutas reales hacia registros autorizados. No basta con que la estructura exista en el catálogo. Los padres intermedios se conservan, y los nietos nunca se presentan como hijos directos.
+
+### Fase D. Mantener la tabla y los filtros independientes
+
+- Tras cargar una sede fija o seleccionar una sede con TOTAL, renderizar de inmediato todos los registros que el servidor ya autorizó para ese contexto.
+- La ruta jerárquica comienza vacía. Por tanto, no reduce el conjunto inicial de la tabla.
+- Una selección orgánica filtra por el subárbol de ese nodo.
+- El filtro de cargos se obtiene de los registros autorizados del contexto actual; debe permanecer visible si hay al menos un cargo y quedar deshabilitado si solo hay una opción.
+- Al cambiar de sede, se limpian todos los filtros dependientes y se crea un índice nuevo para la sede elegida.
+
+### Fase E. Pruebas de regresión e integración obligatorias
+
+Antes de publicar la corrección, probar el flujo completo, no solo los helpers:
+
+1. **TOTAL al entrar:** selector visible en «Seleccione una opción», tabla vacía y sin llamada a **getDirectoryAuthorizedData()**.
+2. **TOTAL al elegir Sede Central:** se carga solo **SEDE_CENTRAL**; el selector se mantiene para poder cambiar de sede; no aparecen registros de otras sedes.
+3. **Cascada de Sede Central:** Gerencia General → hijos directos Unidad Funcional de Integridad y Unidad Funcional de Gestión Documental → hijos directos de Gestión Documental, Trámite Documentario y Archivo Central, cuando existan registros autorizados para esas ramas.
+4. **TOTAL con una sola sede disponible:** el selector continúa visible y sin selección predeterminada.
+5. **SEDE con una sede:** carga automática de la tabla autorizada y selector de sede oculto.
+6. **ESTRUCTURA_ORG terminal:** tabla con sus registros; ningún selector orgánico; filtro de cargos visible si hay cargos.
+7. **ESTRUCTURA_ORG con descendientes:** la raíz autorizada es implícita si es una sola; la cascada comienza en sus hijos directos.
+8. **Varias referencias ESTRUCTURA_ORG en una sede:** primer nivel identifica las áreas autorizadas y cada rama conserva su propio padre.
+9. **ESTRUCTURA_ORG sin descendientes autorizados:** no muestra niveles de catálogo fuera del ámbito aunque existan hijos en estructura_org.
+10. **LOCAL:** sin estructura orgánica inventada.
+11. **Relaciones reales:** los datos de prueba deben comenzar con las columnas originales de asignaciones, estructura_local, estructura_org y locales; no se debe preinyectar estructura_id en las asignaciones de origen.
+12. **Interfaz real:** comprobar eventos change, reconstrucción de los niveles, conservación de la selección válida, limpieza de niveles posteriores y contenido final de la tabla.
+
+Los tests unitarios actuales del helper siguen siendo útiles, pero no bastan para dar por cerrada la incidencia. La prueba de integración debe cubrir backend, respuesta, estado del frontend y selectores renderizados.
+
+---
+
+## 13. Criterio final de aceptación
+
+La pantalla se comporta según el ámbito de autorización, no según una ruta universal de filtros:
+
+- **TOTAL:** primero se elige sede; la tabla permanece vacía hasta entonces.
+- **SEDE fija:** se carga directamente la tabla completa de esa sede autorizada, sin selector de sede.
+- **ESTRUCTURA_ORG terminal:** se carga directamente su información permitida, sin selectores orgánicos; queda el filtro de cargos.
+- **ESTRUCTURA_ORG con descendientes:** se navega desde la raíz autorizada, un nivel directo a la vez.
+- **Varias áreas autorizadas en la misma sede:** se distinguen sus raíces y se recorren sus ramas sin mezclarlas.
+- **LOCAL sin estructura:** no se fabrica jerarquía orgánica.
+
+La autorización del backend es invariable. Los filtros solo permiten explorar el conjunto ya autorizado. El arreglo no debe modificar las hojas ni alterar relaciones normalizadas.
+
+**Estado de implementación:** esta sección documenta la especificación y la solución propuesta. Todavía no modifica DirectoryScripts.html ni DirectoryService.js; la implementación debe realizarse contra los criterios de prueba anteriores, en una intervención separada y limitada a Información de personal.
