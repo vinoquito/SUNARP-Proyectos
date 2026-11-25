@@ -909,10 +909,10 @@ test('crear usuario, asignar rol y ámbito sin confundir el ámbito con su sede 
   });
   assert.equal(edited.success, true);
   const oldRoleList = sandbox.getAccessUsers({
-    rol_id: 'ROL_EDITOR', page: 1, pageSize: 10
+    rol_id: 'ROL_EDITOR', search: 'Nueva', page: 1, pageSize: 10
   });
   const updatedRoleList = sandbox.getAccessUsers({
-    rol_id: 'ROL_ADMIN', page: 1, pageSize: 10
+    rol_id: 'ROL_ADMIN', search: 'Nueva', page: 1, pageSize: 10
   });
   assert.equal(oldRoleList.total, 0, 'La lista deja de incluir el rol anterior después de editar');
   assert.equal(updatedRoleList.total, 1, 'La lista refleja el nuevo rol sin derivar sede del ámbito');
