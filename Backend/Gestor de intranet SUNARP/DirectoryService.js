@@ -4136,6 +4136,9 @@ function deleteDirectoryPerson(personaId) {
     }
   );
   const linkedAssignments = linkedResult.records || [];
+  if (Number(linkedResult.total) > linkedAssignments.length) {
+    throw new Error('No se pudieron recuperar todas las asignaciones del servidor; por seguridad no se permite eliminarlo.');
+  }
   _directoryAssertPersonMutationScope_(authorization, person, linkedAssignments, context);
 
   const personalData = _directoryFindPersonalDataById_(id);
@@ -4161,7 +4164,11 @@ function deleteDirectoryPerson(personaId) {
         ]
       }
     );
-    (matches.records || []).forEach(event => {
+    const records = matches.records || [];
+    if (Number(matches.total) > records.length) {
+      throw new Error('No se pudo comprobar toda la auditoría del servidor; por seguridad no se permite eliminarlo.');
+    }
+    records.forEach(event => {
       const module = _directoryText_(event.modulo).toUpperCase();
       const eventId = _directoryText_(event.evento_id);
       const duplicate = auditEvents.some(existing =>
@@ -4173,6 +4180,38 @@ function deleteDirectoryPerson(personaId) {
         auditEvents.push(event);
       }
     });
+  });
+
+  // Incluir acciones de asignaciones ya eliminadas, cuyo ID ya no aparece
+  // en la tabla asignaciones pero cuyos snapshots conservan persona_id.
+  const historicalAssignmentEvents = SUNARPCore.searchRecordsByFields(
+    auditSource,
+    id,
+    ['datos_antes', 'datos_despues'],
+    { matchCase: true, accentInsensitive: false }
+  );
+  (historicalAssignmentEvents.records || []).forEach(event => {
+    const module = _directoryText_(event.modulo).toUpperCase();
+    const entityType = _directoryText_(event.tipo_entidad).toUpperCase();
+    if (!['DIRECTORIOS', 'INFORMACION_PERSONAL'].includes(module) ||
+        entityType !== 'ASIGNACION') return;
+    const referencesPerson = ['datos_antes', 'datos_despues'].some(field => {
+      const raw = _directoryText_(event[field]);
+      if (!raw) return false;
+      try {
+        const snapshot = JSON.parse(raw);
+        return Boolean(snapshot && !Array.isArray(snapshot) &&
+          _directoryKey_(snapshot.persona_id) === id);
+      } catch (_error) {
+        return false;
+      }
+    });
+    if (!referencesPerson) return;
+    const eventId = _directoryText_(event.evento_id);
+    const duplicate = auditEvents.some(existing =>
+      eventId && _directoryText_(existing.evento_id) === eventId
+    );
+    if (!duplicate) auditEvents.push(event);
   });
 
   if (auditEvents.length) {
