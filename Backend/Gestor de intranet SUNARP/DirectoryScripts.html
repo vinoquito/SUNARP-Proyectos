@@ -1496,7 +1496,9 @@ const DirectoryPage = (() => {
     if (plan.entryScope === 'ESTRUCTURA_ORG') {
       const rootIds = plan.structureScopes.map(scope => key(scope.referenceId)).filter(Boolean);
       const rootIndex = path.findIndex(id => rootIds.includes(key(id)));
-      if (rootIndex >= 0) path.splice(0, rootIndex + 1);
+      if (rootIndex >= 0) {
+        path.splice(0, plan.structureScopes.length === 1 ? rootIndex + 1 : rootIndex);
+      }
 
       if (plan.structureScopes.length === 1) {
         const scope = plan.structureScopes[0];
@@ -2380,7 +2382,6 @@ const DirectoryPage = (() => {
     const documentNumberInput = document.getElementById('directoryFormNumeroDocumento');
     const personalFields = document.getElementById('directoryPersonalFields');
     const assignmentsFieldset = document.getElementById('directoryAssignmentsFieldset');
-    const addAssignmentButton = document.getElementById('directoryAddAssignment');
     const saveButton = document.getElementById('directoryFormSave');
 
     const setDocumentAlert = (type, title, message, details) => {
@@ -2401,7 +2402,6 @@ const DirectoryPage = (() => {
       if (saveButton && !isEditing) saveButton.disabled = !verified;
       if (personalFields && !isEditing) personalFields.disabled = !verified;
       if (assignmentsFieldset && !isEditing) assignmentsFieldset.disabled = !verified;
-      if (addAssignmentButton && !isEditing) addAssignmentButton.disabled = !verified;
     };
 
     if (!isEditing) {

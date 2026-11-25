@@ -39,11 +39,11 @@ test('el formulario organiza validación, datos personales y asignaciones', () =
 });
 
 test('los selectores de asignación siguen el plan de ámbitos y el Local seleccionado', () => {
-  assert.match(frontendSource, /_directoryGetAccessFilterPlan_\\(\\{ scopes \\}, sedeId\\)/);
-  assert.match(frontendSource, /function getFormHierarchyNodes\\(parentId, sedeId, localId\\)/);
-  assert.match(frontendSource, /key\\(relation\\.local_id\\) === effectiveLocalId/);
-  assert.match(frontendSource, /allowedSiteIds\\.size > 1/);
-  assert.match(frontendSource, /function renderFormHierarchy\\(sedeId, selectedPath, selectedRelationId, suffix = '', selectedLocalId = ''\\)/);
+  assert.match(frontendSource, /_directoryGetAccessFilterPlan_\(\{ scopes \}, sedeId\)/);
+  assert.match(frontendSource, /function getFormHierarchyNodes\(parentId, sedeId, localId\)/);
+  assert.match(frontendSource, /key\(relation\.local_id\) === effectiveLocalId/);
+  assert.match(frontendSource, /allowedSiteIds\.size > 1/);
+  assert.match(frontendSource, /function renderFormHierarchy\(sedeId, selectedPath, selectedRelationId, suffix = '', selectedLocalId = ''\)/);
 });
 
 const sandbox = vm.createContext({});
