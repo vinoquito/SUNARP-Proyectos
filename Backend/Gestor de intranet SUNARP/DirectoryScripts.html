@@ -1461,7 +1461,7 @@ const DirectoryPage = (() => {
     const siteScopes = scopes.filter(scope => scope.type === 'SEDE' && scope.referenceId);
     const structureScopes = scopes.filter(scope => scope.type === 'ESTRUCTURA_ORG' && scope.referenceId);
     const localScopes = scopes.filter(scope => scope.type === 'LOCAL' && scope.referenceId);
-    const totalScope = scopes.length === 1 && scopes[0].type === 'TOTAL';
+    const totalScope = scopes.some(scope => scope.type === 'TOTAL');
     const structureMapForScope = new Map((state.catalogs.estructuraOrg || []).map(node => [key(node.id), node]));
     const localMapForScope = new Map((state.catalogs.locales || []).map(node => [key(node.id), node]));
     const allowedSiteIds = new Set(siteScopes.map(scope => key(scope.referenceId)));
@@ -1815,7 +1815,7 @@ const DirectoryPage = (() => {
     const cancelButton = document.getElementById('directoryFormCancel');
     const scopes = state.formScopes || [];
     const siteScopes = scopes.filter(scope => scope.type === 'SEDE' && scope.referenceId);
-    const totalScope = scopes.length === 1 && scopes[0].type === 'TOTAL';
+    const totalScope = scopes.some(scope => scope.type === 'TOTAL');
     const canChooseSite = totalScope || siteScopes.length > 1;
 
     function getRowElement(id, suffix) {
