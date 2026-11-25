@@ -1397,7 +1397,6 @@ const DirectoryPage = (() => {
             ))
           : [];
       }
-
       return sortNodes(scopeRoots.map(item => item.node));
     }
 
@@ -1405,6 +1404,7 @@ const DirectoryPage = (() => {
       return [];
     }
 
+    // TOTAL/SEDE y LOCAL: estructura desde el Local elegido, por relación real.
     const allowedIds = new Set();
     (state.catalogs.estructuraLocal || [])
       .filter(relation =>
@@ -1470,9 +1470,7 @@ const DirectoryPage = (() => {
       select.appendChild(option);
     });
 
-    const selectedExists = relations.some(relation =>
-      key(relation.id) === key(selectedRelationId)
-    );
+    const selectedExists = relations.some(relation => key(relation.id) === key(selectedRelationId));
     select.value = selectedExists
       ? key(selectedRelationId)
       : (relations.length === 1 ? key(relations[0].id) : '');
@@ -1504,11 +1502,8 @@ const DirectoryPage = (() => {
         const scope = plan.structureScopes[0];
         const rootId = key(scope.referenceId);
         selectedStructureId = rootId;
-        if (scope.includeDescendants) {
-          initialParentId = rootId;
-        } else {
-          path.length = 0;
-        }
+        if (scope.includeDescendants) initialParentId = rootId;
+        else path.length = 0;
       }
     }
 
@@ -1589,17 +1584,567 @@ const DirectoryPage = (() => {
     const structureScopes = scopes.filter(scope => scope.type === 'ESTRUCTURA_ORG' && scope.referenceId);
     const localScopes = scopes.filter(scope => scope.type === 'LOCAL' && scope.referenceId);
     const totalScope = scopes.some(scope => scope.type === 'TOTAL');
+    const structureMapForScope = new Map((state.catalogs.estructuraOrg || []).map(node => [key(node.id), node]));
+    const localMapForScope = new Map((state.catalogs.locales || []).map(node => [key(node.id), node]));
     const allowedSiteIds = new Set(siteScopes.map(scope => key(scope.referenceId)));
     structureScopes.forEach(scope => {
-      const node = (state.catalogs.estructuraOrg || []).find(item =>
-        key(item.id) === key(scope.referenceId)
-      );
+      const node = structureMapForScope.get(key(scope.referenceId));
       if (node && node.sede_id) allowedSiteIds.add(key(node.sede_id));
     });
     localScopes.forEach(scope => {
-      const node = (state.catalogs.locales || []).find(item =>
-        key(item.id) === key(scope.referenceId)
+      const node = localMapForScope.get(key(scope.referenceId));
+      if (node && node.sede_id) allowedSiteIds.add(key(node.sede_id));
+    });
+    const fixedSiteId = !totalScope && allowedSiteIds.size === 1 ? Array.from(allowedSiteIds)[0] : '';
+    const selectedSede = record ? key(record.sede_id) : fixedSiteId;
+    const selectedPath = record
+      ? getFormStructurePath(record.estructura_id)
+      : (structureScopes.length === 1 ? [key(structureScopes[0].referenceId)] : []);
+    const canChooseSite = totalScope || allowedSiteIds.size > 1;
+    const cargoOptions = state.catalogs.cargos
+      .filter(cargo =>
+        cargo.active !== false &&
+        cargo.active !== 0 &&
+        String(cargo.active).toLowerCase() !== 'false'
+      )
+      .slice()
+      .sort(sortByName)
+      .map(cargo => `
+        <option
+          value="${escapeHtml(cargo.id)}"
+          ${record && key(record.cargo_id) === key(cargo.id) ? 'selected' : ''}>
+          ${escapeHtml(cargo.name)}
+        </option>
+      `)
+      .join('');
+
+    const sedeOptions = state.catalogs.sedes
+      .filter(sede =>
+        (totalScope || allowedSiteIds.has(key(sede.id))) &&
+        sede.active !== false &&
+        sede.active !== 0
+      )
+      .slice()
+      .sort(sortByName)
+      .map(sede => `
+        <option
+          value="${escapeHtml(sede.id)}"
+          ${selectedSede === key(sede.id) ? 'selected' : ''}>
+          ${escapeHtml(sede.name)}
+        </option>
+      `)
+      .join('');
+
+    const selectedMode = record && key(record.local_id) && key(record.estructura_local_id)
+      ? 'both'
+      : record && key(record.local_id)
+        ? 'local'
+        : 'structure';
+
+    const directLocalOptions = state.catalogs.locales
+      .filter(local => (totalScope || siteScopes.length || structureScopes.length
+          ? (totalScope || allowedSiteIds.has(key(local.sede_id)))
+          : (localScopes.length ? localScopes.some(scope => key(scope.referenceId) === key(local.id)) : false))
+        && local.active !== false && local.active !== 0 &&
+        String(local.active).toLowerCase() !== 'false')
+      .slice().sort(sortByName)
+      .map(local => `<option value="${escapeHtml(local.id)}" ${record && key(record.local_id) === key(local.id) ? 'selected' : ''}>${escapeHtml(local.name)}</option>`)
+      .join('');
+
+    return {
+      html: `
+        <form id="directoryForm" class="sunarp-form-grid"><input type="hidden" id="directoryFormPersonaId" value="${escapeHtml(record?.persona_id || '')}">
+
+          ${!isEditing ? `
+          <div class="sunarp-form-field sunarp-form-field--full" id="directoryDocumentSearchPanel">
+            <p>Antes de registrar, busca el documento para comprobar que la persona no exista.</p>
+            <button type="button" class="sunarp-btn sunarp-btn-outline" id="directoryDocumentSearch">Buscar persona</button>
+            <div id="directoryDocumentSearchResult" aria-live="polite"></div>
+            <input type="hidden" id="directoryDocumentVerified" value="false">
+          </div>
+          ` : ''}
+          <div class="sunarp-form-field">
+            <label for="directoryFormNombres">
+              Nombres *
+            </label>
+
+            <input
+              type="text"
+              class="sunarp-input"
+              id="directoryFormNombres"
+              maxlength="100"
+              value="${escapeHtml(record?.nombres || '')}"
+              required>
+          </div>
+
+          <div class="sunarp-form-field">
+            <label for="directoryFormApellidos">
+              Apellidos *
+            </label>
+
+            <input
+              type="text"
+              class="sunarp-input"
+              id="directoryFormApellidos"
+              maxlength="150"
+              value="${escapeHtml(record?.apellidos || '')}"
+              required>
+          </div>
+
+          
+          <div class="sunarp-form-field sunarp-form-field--full">
+            <label for="directoryFormCorreoInstitucional">Correo institucional</label>
+            <input
+              type="email"
+              class="sunarp-input"
+              id="directoryFormCorreoInstitucional"
+              maxlength="150"
+              placeholder="usuario@sunarp.gob.pe"
+              value="${escapeHtml(record?.correo_institucional || '')}">
+            <small>Se utiliza para vincular la identidad con la cuenta institucional de acceso.</small>
+          </div>
+
+          <div class="sunarp-form-field">
+            <label for="directoryFormTipoDocumento">Tipo de documento *</label>
+            <select class="sunarp-select" id="directoryFormTipoDocumento" required>
+              <option value="">Selecciona un tipo de documento</option>
+              ${(state.catalogs.documentTypes || []).map(item => `
+                <option value="${escapeHtml(item.id)}" ${key(record?.tipo_documento) === key(item.id) ? 'selected' : ''}>${escapeHtml(item.name)}</option>
+              `).join('')}
+            </select>
+          </div>
+
+          <div class="sunarp-form-field">
+            <label for="directoryFormNumeroDocumento">Número de documento *</label>
+            <input type="text" class="sunarp-input" id="directoryFormNumeroDocumento"
+              maxlength="30" value="${escapeHtml(record?.numero_documento || '')}" required>
+          </div>
+
+          <div class="sunarp-form-field">
+            <label for="directoryFormFechaNacimiento">Fecha de nacimiento</label>
+            <input type="date" class="sunarp-input" id="directoryFormFechaNacimiento"
+              value="${escapeHtml(record?.fecha_nacimiento || '')}">
+          </div>
+
+          <div class="sunarp-form-field">
+            <label for="directoryFormFechaInicio">Fecha de inicio de servicios</label>
+            <input type="date" class="sunarp-input" id="directoryFormFechaInicio"
+              value="${escapeHtml(record?.fecha_inicio_servicios || '')}">
+          </div>
+
+          <div class="sunarp-form-field">
+            <label for="directoryFormFechaCese">Fecha de cese</label>
+            <input type="date" class="sunarp-input" id="directoryFormFechaCese"
+              value="${escapeHtml(record?.fecha_cese || '')}">
+          </div>
+
+
+                    <div id="directoryAssignmentsContainer">
+            <div class="directory-assignment-row" id="directoryAssignmentRow" data-index="0">
+              <input type="hidden" id="directoryFormAssignmentId" value="${escapeHtml(record?.asignacion_id || record?.id || '')}">
+<div class="sunarp-form-field">
+            <label for="directoryFormCargo">
+              Cargo *
+            </label>
+
+            <select
+              id="directoryFormCargo"
+              class="sunarp-select"
+              required>
+
+              <option value="">Selecciona un cargo</option>
+
+              ${cargoOptions}
+
+            </select>
+          </div>
+
+          <div class="sunarp-form-field">
+            <label for="directoryFormCondicionCargo">
+              Condición del cargo
+            </label>
+            <input
+              type="text"
+              class="sunarp-input"
+              id="directoryFormCondicionCargo"
+              maxlength="150"
+              value="${escapeHtml(record?.condicion_cargo || '')}">
+          </div>
+
+          <div class="sunarp-form-field">
+            <label for="directoryFormAnexo">
+              Anexo
+            </label>
+
+            <input
+              type="number"
+              class="sunarp-input"
+              id="directoryFormAnexo"
+              min="1"
+              max="99999"
+              step="1"
+              value="${escapeHtml(record?.anexo ?? '')}">
+          </div>
+
+          <div class="sunarp-form-field sunarp-form-field--full">
+            <label for="directoryFormObservaciones">Observaciones</label>
+            <textarea
+              id="directoryFormObservaciones"
+              class="sunarp-input"
+              maxlength="1000"
+              rows="3">${escapeHtml(record?.observaciones || '')}</textarea>
+          </div>
+
+          <div class="sunarp-form-field sunarp-form-field--full">
+            <label for="directoryFormSede">
+              Sede
+            </label>
+
+            <select
+              id="directoryFormSede"
+              class="sunarp-select"
+              >
+
+              <option value="">Selecciona una sede</option>
+
+              ${sedeOptions}
+
+            </select>
+          </div>
+
+
+
+          <div class="sunarp-form-field sunarp-form-field--full" id="directoryFormHierarchyField">
+            <div id="directoryFormHierarchy"></div>
+          </div>
+
+          <div class="sunarp-form-field sunarp-form-field--full" id="directoryFormRelationField">
+            <label for="directoryFormLocal">Ubicación dentro del local *</label>
+            <select id="directoryFormLocal" class="sunarp-select" required disabled>
+              <option value="">Selecciona una dependencia</option>
+            </select>
+          </div>
+
+          <div class="sunarp-form-field sunarp-form-field--full" id="directoryFormDirectLocalField" style="display:none">
+            <label for="directoryFormDirectLocal">Local *</label>
+            <select id="directoryFormDirectLocal" class="sunarp-select">
+              <option value="">Selecciona un local</option>
+              ${directLocalOptions}
+            </select>
+          </div>
+
+                      </div>
+          </div>
+          <div class="sunarp-form-field sunarp-form-field--full">
+            <button type="button" class="sunarp-btn sunarp-btn-outline" id="directoryAddAssignment">Agregar asignación</button>
+          </div>
+
+<div class="sunarp-form-field sunarp-form-field--full">
+            <div class="directory-form-actions">
+
+              <button
+                type="button"
+                class="sunarp-btn sunarp-btn-outline"
+                id="directoryFormCancel">
+                Cancelar
+              </button>
+
+              <button
+                type="submit"
+                class="sunarp-btn sunarp-btn-primary"
+                id="directoryFormSave">
+                ${isEditing ? 'Guardar cambios' : 'Registrar servidor'}
+              </button>
+
+            </div>
+          </div>
+
+        </form>
+      `,
+
+      selectedSede,
+      selectedPath,
+      selectedRelationId: record ? key(record.estructura_local_id) : '',
+      selectedLocalId: record ? key(record.local_id) : '',
+      selectedMode
+    };
+  }
+
+
+  /* =====================================================
+     9. FORMULARIO: ALTA Y EDICIÓN
+     ===================================================== */
+
+
+  async function openDirectoryForm(record) {
+
+    const isEditing = Boolean(record);
+    let previousCatalogs = state.catalogs;
+    let formRecord = record;
+    try {
+      const formDataResponse = await callServer('getDirectoryFormData', isEditing ? 'INFORMACION_PERSONAL_EDITAR' : 'INFORMACION_PERSONAL_CREAR');
+      if (!formDataResponse || !formDataResponse.catalogs) {
+        throw new Error('No se pudieron cargar los catálogos del formulario.');
+      }
+      state.catalogs = Object.assign({}, previousCatalogs || {}, formDataResponse.catalogs);
+      state.formScopes = formDataResponse.scopes || [];
+    } catch (error) {
+      notify('error', error.message || 'No se pudieron cargar los datos del formulario.');
+      return;
+    }
+
+    if (isEditing) {
+      try {
+        const detail = await callServer('getDirectoryPersonById', record.persona_id);
+        if (!detail) throw new Error('No se encontró la ficha de la persona.');
+        const assignment = (detail.assignments || []).find(item =>
+          key(item.asignacion_id) === key(record.asignacion_id || record.id)
+        );
+        if (!assignment) throw new Error('No se encontró la asignación que deseas editar dentro de tu ámbito.');
+        const allAssignments = (detail.assignments || []).slice();
+        const orderedAssignments = [assignment].concat(allAssignments.filter(item =>
+          key(item.asignacion_id) !== key(assignment.asignacion_id)
+        ));
+        formRecord = Object.assign({}, detail, assignment, {
+          id: assignment.asignacion_id,
+          assignments: orderedAssignments
+        }, detail.personalData || {});
+      } catch (error) {
+        notify('error', error.message || 'No se pudo recuperar la ficha de la persona.');
+        return;
+      }
+    }
+
+    const formData = buildDirectoryForm(formRecord);
+
+    // Convertir la cadena HTML del formulario en un fragmento DOM.
+    const template = document.createElement('template');
+
+    template.innerHTML = formData.html.trim();
+
+    // SUNARP UI recibe un elemento DOM mediante la propiedad content.
+    SUNARPUI.openModal({
+      title: isEditing ? 'Editar servidor' : 'Registrar servidor',
+
+      content: template.content,
+      size: 'xl'
+    });
+
+    // Inicializar las asignaciones dentro del mismo formulario.
+    const form = document.getElementById('directoryForm');
+    const assignmentsContainer = document.getElementById('directoryAssignmentsContainer');
+    const firstAssignmentRow = document.getElementById('directoryAssignmentRow');
+    const cancelButton = document.getElementById('directoryFormCancel');
+    function createDirectoryFormSection(title, description, number) {
+      const section = document.createElement('section');
+      section.className = 'directory-form-section';
+      const heading = document.createElement('div');
+      heading.className = 'directory-form-section-heading';
+      const titleElement = document.createElement('h3');
+      titleElement.textContent = number + '. ' + title;
+      const descriptionElement = document.createElement('p');
+      descriptionElement.textContent = description;
+      heading.append(titleElement, descriptionElement);
+      section.appendChild(heading);
+      return section;
+    }
+
+    function arrangeDirectoryForm(formElement, editing) {
+      formElement.classList.add('directory-form');
+
+      const personaId = document.getElementById('directoryFormPersonaId');
+      const actions = formElement.querySelector('.directory-form-actions') ||
+        document.querySelector('#directoryFormCancel')?.parentElement?.parentElement;
+      const panel = document.getElementById('directoryDocumentSearchPanel');
+      const searchButton = document.getElementById('directoryDocumentSearch');
+      const resultHost = document.getElementById('directoryDocumentSearchResult');
+      const verifiedField = document.getElementById('directoryDocumentVerified');
+
+      let validationSection = null;
+      if (!editing && panel) {
+        const typeField = document.getElementById('directoryFormTipoDocumento')?.closest('.sunarp-form-field');
+        const numberField = document.getElementById('directoryFormNumeroDocumento')?.closest('.sunarp-form-field');
+        const grid = document.createElement('div');
+        grid.className = 'directory-form-grid';
+        if (typeField) grid.appendChild(typeField);
+        if (numberField) grid.appendChild(numberField);
+
+        const clearButton = document.createElement('button');
+        clearButton.type = 'button';
+        clearButton.id = 'directoryDocumentClear';
+        clearButton.className = 'sunarp-btn sunarp-btn-outline';
+        clearButton.textContent = 'Limpiar';
+
+        const buttonRow = document.createElement('div');
+        buttonRow.className = 'directory-form-inline-actions';
+        if (searchButton) {
+          searchButton.textContent = 'Buscar persona';
+          searchButton.className = 'sunarp-btn sunarp-btn-primary';
+          buttonRow.append(searchButton, clearButton);
+        }
+
+        panel.replaceChildren();
+        validationSection = createDirectoryFormSection(
+          'Validar identidad',
+          'Comprueba el tipo y número de documento antes de registrar a una persona.',
+          1
+        );
+        validationSection.classList.add('directory-form-validation');
+        validationSection.append(grid, buttonRow);
+        if (resultHost) validationSection.appendChild(resultHost);
+        if (verifiedField) validationSection.appendChild(verifiedField);
+        panel.replaceWith(validationSection);
+      }
+
+      const personalSection = createDirectoryFormSection(
+        'Datos personales',
+        'Información de identificación y datos personales del servidor.',
+        editing ? 1 : 2
       );
+      const personalFieldset = document.createElement('fieldset');
+      personalFieldset.id = 'directoryPersonalFields';
+      personalFieldset.className = 'directory-form-fieldset';
+      personalFieldset.disabled = !editing;
+      const personalGrid = document.createElement('div');
+      personalGrid.className = 'directory-form-grid';
+
+      const personalIds = editing
+        ? ['directoryFormTipoDocumento', 'directoryFormNumeroDocumento',
+           'directoryFormNombres', 'directoryFormApellidos',
+           'directoryFormCorreoInstitucional', 'directoryFormFechaNacimiento',
+           'directoryFormFechaInicio', 'directoryFormFechaCese']
+        : ['directoryFormNombres', 'directoryFormApellidos',
+           'directoryFormCorreoInstitucional', 'directoryFormFechaNacimiento',
+           'directoryFormFechaInicio', 'directoryFormFechaCese'];
+
+      personalIds.forEach(id => {
+        const control = document.getElementById(id);
+        const field = control && control.closest('.sunarp-form-field');
+        if (field) {
+          if (id === 'directoryFormCorreoInstitucional' ||
+              id === 'directoryFormFechaNacimiento' ||
+              id === 'directoryFormFechaInicio' ||
+              id === 'directoryFormFechaCese') {
+            field.classList.add('directory-form-field-full');
+          }
+          personalGrid.appendChild(field);
+        }
+      });
+      personalFieldset.appendChild(personalGrid);
+      personalSection.appendChild(personalFieldset);
+
+      const assignmentSection = createDirectoryFormSection(
+        'Asignaciones',
+        'Registra los cargos y la ubicación institucional correspondiente a cada asignación.',
+        editing ? 2 : 3
+      );
+      assignmentSection.classList.add('directory-form-assignments');
+      const assignmentFieldset = document.createElement('fieldset');
+      assignmentFieldset.id = 'directoryAssignmentsFieldset';
+      assignmentFieldset.className = 'directory-form-fieldset';
+      assignmentFieldset.disabled = !editing;
+
+      const addButton = document.getElementById('directoryAddAssignment');
+      const assignmentContainer = document.getElementById('directoryAssignmentsContainer');
+      if (addButton) {
+        addButton.textContent = 'Agregar asignación';
+        addButton.className = 'sunarp-btn sunarp-btn-outline directory-add-assignment';
+        assignmentFieldset.appendChild(addButton);
+      }
+
+      function arrangeAssignmentRow(row, index) {
+        row.classList.add('directory-assignment-row');
+        const hiddenId = row.querySelector('[id^="directoryFormAssignmentId"]');
+
+        const title = document.createElement('div');
+        title.className = 'directory-assignment-heading';
+        const titleText = document.createElement('strong');
+        titleText.className = 'directory-assignment-title';
+        titleText.textContent = 'Asignación ' + (index + 1);
+        title.appendChild(titleText);
+
+        const details = document.createElement('div');
+        details.className = 'directory-form-grid';
+        const location = document.createElement('div');
+        location.className = 'directory-assignment-location';
+        const locationTitle = document.createElement('h4');
+        locationTitle.textContent = 'Ubicación institucional';
+        const locationGrid = document.createElement('div');
+        locationGrid.className = 'directory-form-grid';
+        const actionsRow = document.createElement('div');
+        actionsRow.className = 'directory-assignment-row-actions';
+
+        const fieldFor = id => {
+          const control = row.querySelector('[id^="' + id + '"]');
+          return control ? control.closest('.sunarp-form-field') : null;
+        };
+
+        ['directoryFormCargo', 'directoryFormCondicionCargo',
+         'directoryFormAnexo', 'directoryFormObservaciones'].forEach(id => {
+          const field = fieldFor(id);
+          if (field) {
+            if (id === 'directoryFormObservaciones') field.classList.add('directory-form-field-full');
+            details.appendChild(field);
+          }
+        });
+
+        const siteField = fieldFor('directoryFormSede');
+        const localField = fieldFor('directoryFormDirectLocal');
+        const hierarchyField = row.querySelector('[id^="directoryFormHierarchyField"]');
+        const relationField = fieldFor('directoryFormLocal');
+
+        if (siteField) {
+          siteField.id = 'directoryFormSiteField';
+          locationGrid.appendChild(siteField);
+        }
+        if (localField) {
+          const label = localField.querySelector('label');
+          if (label) label.textContent = 'Local';
+          locationGrid.appendChild(localField);
+        }
+
+        location.append(locationTitle, locationGrid);
+        if (hierarchyField) {
+          hierarchyField.classList.add('directory-form-hierarchy');
+          location.appendChild(hierarchyField);
+        }
+        if (relationField) {
+          const label = relationField.querySelector('label');
+          if (label) label.textContent = 'Ubicación dentro del local';
+          relationField.classList.add('directory-form-field-full');
+          location.appendChild(relationField);
+        }
+
+        row.replaceChildren();
+        if (hiddenId) row.appendChild(hiddenId);
+        row.append(title, details, location, actionsRow);
+      }
+
+      if (assignmentContainer) {
+        Array.from(assignmentContainer.querySelectorAll('.directory-assignment-row'))
+          .forEach((row, index) => arrangeAssignmentRow(row, index));
+        assignmentFieldset.appendChild(assignmentContainer);
+      }
+      assignmentSection.appendChild(assignmentFieldset);
+
+      formElement.replaceChildren();
+      if (personaId) formElement.appendChild(personaId);
+      if (validationSection) formElement.appendChild(validationSection);
+      formElement.append(personalSection, assignmentSection);
+      if (actions) formElement.appendChild(actions);
+    }
+    const scopes = state.formScopes || [];
+    const siteScopes = scopes.filter(scope => scope.type === 'SEDE' && scope.referenceId);
+    const structureScopes = scopes.filter(scope => scope.type === 'ESTRUCTURA_ORG' && scope.referenceId);
+    const localScopes = scopes.filter(scope => scope.type === 'LOCAL' && scope.referenceId);
+    const totalScope = scopes.some(scope => scope.type === 'TOTAL');
+    const allowedSiteIds = new Set(siteScopes.map(scope => key(scope.referenceId)));
+    structureScopes.forEach(scope => {
+      const node = (state.catalogs.estructuraOrg || []).find(item => key(item.id) === key(scope.referenceId));
+      if (node && node.sede_id) allowedSiteIds.add(key(node.sede_id));
+    });
+    localScopes.forEach(scope => {
+      const node = (state.catalogs.locales || []).find(item => key(item.id) === key(scope.referenceId));
       if (node && node.sede_id) allowedSiteIds.add(key(node.sede_id));
     });
     const canChooseSite = totalScope || allowedSiteIds.size > 1;
@@ -1650,8 +2195,7 @@ const DirectoryPage = (() => {
       const localSelect = getRowElement('directoryFormDirectLocal', suffix);
       const sedeId = siteSelect ? key(siteSelect.value) : key(formData.selectedSede);
       const plan = _directoryGetAccessFilterPlan_({ scopes }, sedeId);
-      const localSelectable = plan.localMode === 'selectable' ||
-        plan.localMode === 'selectable-scoped';
+      const localSelectable = plan.localMode === 'selectable' || plan.localMode === 'selectable-scoped';
       const fixedLocalId = plan.localMode === 'fixed' ? key(plan.localScopeIds[0]) : '';
 
       const siteField = getRowElement('directoryFormSiteField', suffix);
@@ -1760,24 +2304,24 @@ const DirectoryPage = (() => {
 
       if (relationSelect) {
         relationSelect.addEventListener('change', () => {
-          const selectedRelation = (state.catalogs.estructuraLocal || []).find(item =>
+          const relationChoice = (state.catalogs.estructuraLocal || []).find(item =>
             key(item.id) === key(relationSelect.value)
           );
-          if (selectedRelation && localSelect &&
+          if (relationChoice && localSelect &&
               !getRowElement('directoryFormDirectLocalField', suffix)?.hidden) {
-            localSelect.value = key(selectedRelation.local_id);
+            localSelect.value = key(relationChoice.local_id);
           }
         });
       }
     }
-
-
 
     if (!form || !assignmentsContainer || !firstAssignmentRow || !cancelButton) {
       SUNARPUI.closeModal();
       notify('error', 'No se pudo inicializar el formulario del directorio.');
       return;
     }
+
+    arrangeDirectoryForm(form, isEditing);
 
     let assignmentsForForm = isEditing && Array.isArray(formRecord.assignments)
       ? formRecord.assignments.slice()

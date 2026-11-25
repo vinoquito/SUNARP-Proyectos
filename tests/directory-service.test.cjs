@@ -24,12 +24,14 @@ const scriptStart = frontendSource.split('<script>')[1];
 assert.ok(scriptStart, 'DirectoryScripts.html debe contener el bloque JavaScript principal');
 const frontendScript = scriptStart.split('</script>')[0];
 
-test('el formulario de servidor prioriza la validación y separa datos y asignaciones', () => {
-  const validation = frontendSource.indexOf('Antes de registrar, busca el documento');
+test('el formulario organiza validación, datos personales y asignaciones', () => {
+  const panel = frontendSource.indexOf('directoryDocumentSearchPanel');
+  const validation = frontendSource.indexOf('Validar identidad');
   const personal = frontendSource.indexOf('Datos personales');
   const assignments = frontendSource.indexOf('Asignaciones');
-  assert.ok(validation >= 0 && personal > validation && assignments > personal);
-  assert.ok(frontendSource.includes('Buscar persona'));
+  assert.ok(panel >= 0 && validation > panel && personal > validation && assignments > personal);
+  assert.ok(frontendSource.includes('directoryDocumentClear'));
+  assert.ok(frontendSource.includes("searchButton.textContent = 'Buscar persona'"));
   assert.ok(frontendSource.includes('SUNARPUI.showAlert({'));
   assert.ok(frontendSource.includes('directoryPersonalFields'));
   assert.ok(frontendSource.includes('directoryAssignmentsFieldset'));
