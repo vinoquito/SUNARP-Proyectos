@@ -771,8 +771,8 @@ test('getAccessUsers determina la sede por asignaciones activas y no por ámbito
   assert.ok(indexSources.includes('asignaciones'));
   assert.ok(indexSources.includes('estructura_local'));
   assert.ok(indexSources.includes('estructura_org'));
-  assert.ok(readRequests.includes('asignaciones'));
-  assert.ok(readRequests.includes('estructura_local'));
+  assert.ok(!readRequests.includes('asignaciones'), 'No se debe cargar el histórico completo de asignaciones.');
+  assert.ok(!readRequests.includes('estructura_local'), 'Las relaciones se consultan por los IDs usados.');
 });
 
 
@@ -977,7 +977,7 @@ test('la consulta de usuarios reutiliza la vista materializada, pagina en servid
   assert.ok(helper.includes("_accessDirectorySource_('estructura_org')"));
   assert.ok(helper.includes("_accessDirectorySource_('locales')"));
   assert.doesNotMatch(helper, /ACCESS_MANAGEMENT_CONFIG\.sheets\.scopes/);
-  assert.doesNotMatch(helper, /_accessFindOrgCatalogByIds_/);
+  assert.ok(helper.includes("_accessFindOrgCatalogByIds_('SEDE'"));
   assert.match(helper, /sede_nombre: siteIds\.map/);
   assert.ok(implementation.includes('SUNARPCore.queryRecords'));
   assert.ok(implementation.includes('filters: { persona_id: pageCandidateIds }'));
