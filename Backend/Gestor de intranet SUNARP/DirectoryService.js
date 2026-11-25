@@ -1694,8 +1694,11 @@ function getDirectoryFormData(action) {
   if (!sedes.length) {
     throw new Error('No se encontró una sede válida dentro de tus ámbitos autorizados para registrar información de personal.');
   }
+  if (!isTotal && sedes.length > 1) {
+    throw new Error('El ámbito de Información de personal no puede abarcar varias sedes para esta operación.');
+  }
 
-  const siteMode = isTotal || sedes.length > 1 ? 'selectable' : 'fixed';
+  const siteMode = isTotal ? 'selectable' : 'fixed';
   const fixedSedeId = siteMode === 'fixed' ? _directoryKey_(sedes[0].id) : '';
   const structureMap = _directoryCreateMap_(context.estructuraOrg || []);
   const localMap = _directoryCreateMap_(context.locales || []);
