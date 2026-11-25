@@ -187,30 +187,56 @@ function _directoryResolveDocumentTypesSource_() {
   return source;
 }
 
-function _directoryLoadAuthorizationCatalog_() {
-  // La autorización conserva sus fuentes propias: Sedes y EstructuraOrg
-  // proceden de Seguridad; los locales proceden de Directorios telefónicos.
-  // Se agrupan en una sola lectura Core y se reutilizan 5 minutos.
-  const catalogs = SUNARPCore.listRecordsFromSourcesCached([
-    {
-      key: 'sedes',
-      source: getIntranetDataSource('SECURITY', 'Sedes', 1),
-      requiredHeaders: ['id', 'name']
-    },
-    {
+function _directoryLoadAuthorizationCatalog_(auth) {
+  const moduleAccess = (auth && Array.isArray(auth.moduleAccess)
+    ? auth.moduleAccess
+    : []).find(item => item && item.modulo_id === 'MOD_INFO_PERSONAL');
+  const scopes = moduleAccess && Array.isArray(moduleAccess.scopes)
+    ? moduleAccess.scopes
+    : [];
+  const scopeTypes = new Set(scopes.map(scope =>
+    String(scope && scope.tipo_ambito_id || '').trim().toUpperCase()
+  ));
+
+  // TOTAL exclusivo no necesita catálogos de estructura/local para evaluar
+  // registros: Core aplica la autorización global antes de construir mapas.
+  const exclusiveTotal = scopes.length === 1 &&
+    scopeTypes.has('TOTAL') &&
+    !String(scopes[0].referencia_id || '').trim();
+  if (exclusiveTotal) {
+    return { estructuraOrg: [], locales: [] };
+  }
+
+  const requests = [];
+  if (scopeTypes.has('SEDE') || scopeTypes.has('ESTRUCTURA_ORG')) {
+    requests.push({
       key: 'estructuraOrg',
       source: getIntranetDataSource('SECURITY', 'EstructuraOrg', 1),
       requiredHeaders: ['id', 'name', 'parent_id', 'sede_id']
-    },
-    {
+    });
+  }
+  if (
+    scopeTypes.has('SEDE') ||
+    scopeTypes.has('ESTRUCTURA_ORG') ||
+    scopeTypes.has('LOCAL')
+  ) {
+    requests.push({
       key: 'locales',
       source: _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.locales),
       requiredHeaders: DIRECTORY_REQUIRED_HEADERS.locales
-    }
-  ], DIRECTORY_CATALOG_CACHE_TTL);
+    });
+  }
 
+  // Sedes no participa en la evaluación de ámbito del Core: la sede de cada
+  // registro se deriva de estructura_org o locales, y el catálogo visible
+  // se obtiene desde Directorios telefónicos.sede en el flujo de la pantalla.
+  if (!requests.length) return { estructuraOrg: [], locales: [] };
+
+  const catalogs = SUNARPCore.listRecordsFromSourcesCached(
+    requests,
+    DIRECTORY_CATALOG_CACHE_TTL
+  );
   return {
-    sedes: (catalogs.sedes || []).filter(_directoryIsActive_),
     estructuraOrg: (catalogs.estructuraOrg || []).filter(_directoryIsActive_),
     locales: (catalogs.locales || []).filter(_directoryIsActive_)
   };
@@ -221,7 +247,7 @@ function _directoryAuthorizationContext_(permissionCode) {
   const moduleId = 'MOD_INFO_PERSONAL';
   const requiredPermissionCode = permissionCode || 'INFORMACION_PERSONAL_VER';
   const auth = requirePermission_(requiredPermissionCode, moduleId);
-  const catalog = _directoryLoadAuthorizationCatalog_();
+  const catalog = _directoryLoadAuthorizationCatalog_(auth);
 
   return {
     auth: auth,

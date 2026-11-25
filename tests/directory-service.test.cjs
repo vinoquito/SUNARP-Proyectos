@@ -1234,6 +1234,99 @@ test('listDirectoryAssignments pagina mediante Core y no carga asignaciones comp
   assert.equal(result.records[0].sede_id, 'SEDE_1');
 });
 
+test('el ámbito TOTAL exclusivo omite catálogos de estructura y locales al autorizar Información de personal', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  const requests = [];
+  vmContext.getIntranetDataSource = (sourceKey, sheetName, headerRow) => ({
+    sourceKey, sheetName, headerRow
+  });
+  vmContext._directorySource_ = sheetName => ({ sourceKey: 'DIRECTORY', sheetName });
+  vmContext.SUNARPCore = {
+    listRecordsFromSourcesCached: items => {
+      requests.push(items);
+      return { estructuraOrg: [], locales: [] };
+    }
+  };
+
+  const result = vmContext._directoryLoadAuthorizationCatalog_({
+    moduleAccess: [{
+      modulo_id: 'MOD_INFO_PERSONAL',
+      scopes: [{ tipo_ambito_id: 'TOTAL', referencia_id: '' }]
+    }]
+  });
+
+  assert.equal(requests.length, 0, 'TOTAL exclusivo no requiere ninguna lectura de catálogo de autorización.');
+  assert.deepEqual(Array.from(result.estructuraOrg), []);
+  assert.deepEqual(Array.from(result.locales), []);
+});
+
+
+test('los ámbitos SEDE y ESTRUCTURA_ORG cargan solo estructura orgánica y locales, sin releer Sedes', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  let requested = null;
+  vmContext.getIntranetDataSource = (sourceKey, sheetName, headerRow) => ({
+    sourceKey, sheetName, headerRow
+  });
+  vmContext._directorySource_ = sheetName => ({ sourceKey: 'DIRECTORY', sheetName });
+  vmContext.SUNARPCore = {
+    listRecordsFromSourcesCached: items => {
+      requested = items;
+      return {
+        estructuraOrg: [{ id: 'ORG_1', active: true }],
+        locales: [{ id: 'LOCAL_1', active: true }]
+      };
+    }
+  };
+
+  const result = vmContext._directoryLoadAuthorizationCatalog_({
+    moduleAccess: [{
+      modulo_id: 'MOD_INFO_PERSONAL',
+      scopes: [{ tipo_ambito_id: 'SEDE', referencia_id: 'SEDE_1' }]
+    }]
+  });
+
+  assert.deepEqual(
+    Array.from(requested, item => item.key),
+    ['estructuraOrg', 'locales']
+  );
+  assert.equal(requested[0].source.sheetName, 'EstructuraOrg');
+  assert.equal(requested[1].source.sheetName, 'locales');
+  assert.equal(result.estructuraOrg.length, 1);
+  assert.equal(result.locales.length, 1);
+});
+
+
+test('el ámbito LOCAL carga únicamente el catálogo de locales', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  let requested = null;
+  vmContext.getIntranetDataSource = (sourceKey, sheetName, headerRow) => ({
+    sourceKey, sheetName, headerRow
+  });
+  vmContext._directorySource_ = sheetName => ({ sourceKey: 'DIRECTORY', sheetName });
+  vmContext.SUNARPCore = {
+    listRecordsFromSourcesCached: items => {
+      requested = items;
+      return { locales: [{ id: 'LOCAL_1', active: true }] };
+    }
+  };
+
+  const result = vmContext._directoryLoadAuthorizationCatalog_({
+    moduleAccess: [{
+      modulo_id: 'MOD_INFO_PERSONAL',
+      scopes: [{ tipo_ambito_id: 'LOCAL', referencia_id: 'LOCAL_1' }]
+    }]
+  });
+
+  assert.equal(requested.length, 1);
+  assert.equal(requested[0].key, 'locales');
+  assert.equal(result.estructuraOrg.length, 0);
+  assert.equal(result.locales.length, 1);
+});
+
+
 test('getDirectoryInitialData devuelve sedes autorizadas sin consultar asignaciones ni cargar catálogos completos', () => {
   const context = assignmentContext();
   const authorization = createDirectoryQueryAuthorization(context, [
