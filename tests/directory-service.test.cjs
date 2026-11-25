@@ -43,6 +43,7 @@ vm.runInContext(
     'resolveDocumentTypesSource: _directoryResolveDocumentTypesSource_,' +
     'buildFilterContract: _directoryBuildFilterContract_,' +
     'sortAssignments: _directorySortAssignments_,' +
+    'sortLocalCatalog: _directorySortLocalCatalog_,' +
     'getAuthorizedSedeIds: _directoryGetAuthorizedSedeIds_,' +
     'buildAssignmentQuery: _directoryBuildAssignmentQuery_,' +
     'executeAssignmentQuery: _directoryExecuteAssignmentQuery_' +
@@ -123,6 +124,13 @@ vm.runInContext(
   hierarchyIndexSandbox,
   { filename: 'DirectoryHierarchyIndex.js' }
 );
+const localHierarchySource = extractFrontendFunction('_directoryBuildLocalHierarchyFilterSets_');
+assert.ok(localHierarchySource, 'El frontend debe derivar estructuras desde el local seleccionado');
+vm.runInContext(
+  localHierarchySource + '\nthis.buildLocalHierarchyFilterSets = _directoryBuildLocalHierarchyFilterSets_;',
+  hierarchyIndexSandbox,
+  { filename: 'DirectoryLocalHierarchy.js' }
+);
 
 const hierarchyHelperMatch = frontendScript.match(/function _directoryBuildHierarchyFilterSets_\([\s\S]*?\n  \}/);
 assert.ok(hierarchyHelperMatch, 'El frontend debe calcular las rutas de estructuras con asignaciones autorizadas');
@@ -144,6 +152,106 @@ vm.runInContext(
   hierarchySandbox,
   { filename: 'DirectoryHierarchyFilters.js' }
 );
+
+
+test('el catálogo de locales ordena por order entre hermanos y respeta parent_id', () => {
+  const sourceRows = [
+    { id: 'ZR_IX_CALLAO', sede_id: 'ZR_IX', parent_id: '', order: 20 },
+    { id: 'ZR_IX_LIMA', sede_id: 'ZR_IX', parent_id: '', order: 10 },
+    { id: 'ZR_IX_LIMA_B', sede_id: 'ZR_IX', parent_id: 'ZR_IX_LIMA', order: 80 },
+    { id: 'ZR_IX_LIMA_A', sede_id: 'ZR_IX', parent_id: 'ZR_IX_LIMA', order: 15 },
+    { id: 'ZR_X_CUSCO', sede_id: 'ZR_X', parent_id: '', order: 5 }
+  ];
+  const result = api.sortLocalCatalog(sourceRows);
+  assert.equal(result.orderConfigured, true);
+  assert.deepEqual(
+    Array.from(result.records, item => item.id),
+    ['ZR_IX_LIMA', 'ZR_IX_LIMA_A', 'ZR_IX_LIMA_B', 'ZR_IX_CALLAO', 'ZR_X_CUSCO']
+  );
+});
+
+test('la ausencia de locales.order es transitoria y no sustituye el orden por alfabeto', () => {
+  const result = api.sortLocalCatalog([
+    { id: 'ZR_IX_LIMA', sede_id: 'ZR_IX', parent_id: '' },
+    { id: 'ZR_IX_CALLAO', sede_id: 'ZR_IX', parent_id: '' }
+  ]);
+  assert.equal(result.orderConfigured, false);
+  assert.equal(result.missingOrderCount, 2);
+  assert.deepEqual(Array.from(result.records, item => item.id), ['ZR_IX_LIMA', 'ZR_IX_CALLAO']);
+});
+
+test('locales.order rechaza valores ausentes, duplicados y parent_id incoherentes', () => {
+  assert.throws(() => api.sortLocalCatalog([
+    { id: 'LOCAL_A', sede_id: 'SEDE_A', parent_id: '', order: 1 },
+    { id: 'LOCAL_B', sede_id: 'SEDE_A', parent_id: '', order: 1 }
+  ]), /repiten order=1/);
+  assert.throws(() => api.sortLocalCatalog([
+    { id: 'LOCAL_A', sede_id: 'SEDE_A', parent_id: '', order: '' }
+  ]), /order entero positivo/);
+  assert.throws(() => api.sortLocalCatalog([
+    { id: 'PARENT', sede_id: 'SEDE_A', parent_id: '', order: 1 },
+    { id: 'CHILD', sede_id: 'SEDE_B', parent_id: 'PARENT', order: 1 }
+  ]), /padre de otra sede/);
+  assert.throws(() => api.sortLocalCatalog([
+    { id: 'A', sede_id: 'SEDE_A', parent_id: 'B', order: 1 },
+    { id: 'B', sede_id: 'SEDE_A', parent_id: 'A', order: 2 }
+  ]), /ciclo en locales.parent_id/);
+});
+
+test('Local limita las estructuras visibles sin heredar la ubicación de los padres', () => {
+  const structures = [
+    { id: 'ZR_IX_UNIDAD_REGISTRAL', name: 'Unidad Registral', sede_id: 'ZR_IX', parent_id: '', order: 12 },
+    { id: 'ZR_IX_BASE_GRAFICA', name: 'Subunidad de Base Gráfica', sede_id: 'ZR_IX', parent_id: 'ZR_IX_UNIDAD_REGISTRAL', order: 6 },
+    { id: 'ZR_IX_CATASTRO_HUACHO', name: 'Personal Catastro Huacho', sede_id: 'ZR_IX', parent_id: 'ZR_IX_BASE_GRAFICA', order: 1 },
+    { id: 'ZR_IX_JEFATURA_ZONAL', name: 'Jefatura Zonal', sede_id: 'ZR_IX', parent_id: '', order: 1 },
+    { id: 'ZR_IX_CALLAO_AREA', name: 'Área Registral', sede_id: 'ZR_IX', parent_id: '', order: 1 }
+  ];
+  const records = [
+    { asignacion_id: 'A1', estructura_id: 'ZR_IX_JEFATURA_ZONAL', filter_sede_id: 'ZR_IX', filter_local_id: 'ZR_IX_LIMA' },
+    { asignacion_id: 'A2', estructura_id: 'ZR_IX_CATASTRO_HUACHO', filter_sede_id: 'ZR_IX', filter_local_id: 'ZR_IX_HUACHO' },
+    { asignacion_id: 'A3', estructura_id: 'ZR_IX_CALLAO_AREA', filter_sede_id: 'ZR_IX', filter_local_id: 'ZR_IX_CALLAO' },
+    { asignacion_id: 'A4', estructura_id: '', filter_sede_id: 'ZR_IX', filter_local_id: 'ZR_IX_RECEPTORA' }
+  ];
+  const index = hierarchyIndexSandbox.buildIndex(records, structures);
+  const huachoIds = hierarchyIndexSandbox.buildLocalHierarchyFilterSets(
+    records, structures, 'ZR_IX_HUACHO', 'ZR_IX'
+  );
+  assert.deepEqual([...huachoIds].sort(), [
+    'ZR_IX_BASE_GRAFICA', 'ZR_IX_CATASTRO_HUACHO', 'ZR_IX_UNIDAD_REGISTRAL'
+  ]);
+  assert.deepEqual(
+    Array.from(hierarchySandbox.getSelectableChildren('ZR_IX_UNIDAD_REGISTRAL', index, huachoIds), node => node.id),
+    ['ZR_IX_BASE_GRAFICA']
+  );
+  assert.deepEqual(
+    Array.from(hierarchySandbox.getSelectableChildren('ZR_IX_BASE_GRAFICA', index, huachoIds), node => node.id),
+    ['ZR_IX_CATASTRO_HUACHO']
+  );
+  const callaoIds = hierarchyIndexSandbox.buildLocalHierarchyFilterSets(
+    records, structures, 'ZR_IX_CALLAO', 'ZR_IX'
+  );
+  assert.deepEqual([...callaoIds], ['ZR_IX_CALLAO_AREA']);
+  const receptionIds = hierarchyIndexSandbox.buildLocalHierarchyFilterSets(
+    records, structures, 'ZR_IX_RECEPTORA', 'ZR_IX'
+  );
+  assert.deepEqual([...receptionIds], []);
+  assert.equal(index.recordsByLocal.get('ZR_IX_RECEPTORA').length, 1);
+  assert.equal(index.recordsByLocal.get('ZR_IX_RECEPTORA')[0].estructura_id, '');
+});
+
+test('la interfaz integra Local antes de la cascada y filtra registros con filter_local_id', () => {
+  const viewPath = path.join(root, 'Backend/Gestor de intranet SUNARP/ViewDirectorios.html');
+  const viewSource = fs.readFileSync(viewPath, 'utf8');
+  const localPosition = viewSource.indexOf('directoryLocalFilter');
+  const hierarchyPosition = viewSource.indexOf('directoryHierarchyFilters');
+  assert.ok(localPosition >= 0 && hierarchyPosition > localPosition);
+  assert.ok(frontendScript.includes("document.getElementById(\n        'directoryLocalFilter'"));
+  assert.ok(frontendScript.includes('recordLocalId !== localId'));
+  assert.ok(frontendScript.includes("refreshDependentFilters('local')"));
+  assert.ok(frontendScript.includes('populateLocalFilter();\n      populateCargoFilter();\n      renderHierarchyFilters();'));
+  assert.ok(frontendScript.includes("label: 'Local'"));
+  assert.ok(frontendScript.includes('record.referencia'));
+});
 
 test('los filtros conservan ancestros intermedios y mantienen raíces reales independientes', () => {
   const structures = [

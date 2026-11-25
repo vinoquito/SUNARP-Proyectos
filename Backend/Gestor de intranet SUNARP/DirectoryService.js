@@ -417,6 +417,101 @@ function _directoryCompare_(a, b) {
 }
 
 /**
+ * Orden físico de locales. order es relativo a hermanos con igual
+ * sede_id y parent_id. Si el encabezado aún no existe, conserva el orden
+ * recibido solo como transición y comunica que la migración está pendiente.
+ */
+function _directorySortLocalCatalog_(locales) {
+  const items = Array.isArray(locales) ? locales.slice() : [];
+  const byId = new Map();
+  items.forEach(local => {
+    const id = _directoryKey_(local && local.id);
+    if (!id) throw new Error('La tabla locales contiene un registro sin id.');
+    if (byId.has(id)) throw new Error('La tabla locales contiene el id duplicado "' + id + '".');
+    byId.set(id, local);
+  });
+
+  items.forEach(local => {
+    const id = _directoryKey_(local.id);
+    const parentId = _directoryKey_(local.parent_id);
+    if (!parentId) return;
+    const parent = byId.get(parentId);
+    if (!parent) throw new Error('El local "' + id + '" referencia un parent_id inexistente: "' + parentId + '".');
+    if (_directoryKey_(parent.sede_id) !== _directoryKey_(local.sede_id)) {
+      throw new Error('El local "' + id + '" tiene un padre de otra sede.');
+    }
+    const visited = new Set([id]);
+    let current = parent;
+    while (current) {
+      const currentId = _directoryKey_(current.id);
+      if (visited.has(currentId)) throw new Error('Existe un ciclo en locales.parent_id que involucra "' + id + '".');
+      visited.add(currentId);
+      const nextParentId = _directoryKey_(current.parent_id);
+      current = nextParentId ? byId.get(nextParentId) : null;
+    }
+  });
+
+  const orderConfigured = items.some(local =>
+    Object.prototype.hasOwnProperty.call(local || {}, 'order')
+  );
+  if (!orderConfigured) {
+    return { records: items, orderConfigured: false, missingOrderCount: items.length };
+  }
+
+  const siblingOrders = new Map();
+  items.forEach(local => {
+    const id = _directoryKey_(local.id);
+    const normalized = _directoryText_(local.order);
+    const order = Number(local.order);
+    if (!normalized || !Number.isInteger(order) || order <= 0) {
+      throw new Error('El local "' + id + '" debe tener un order entero positivo.');
+    }
+    const group = JSON.stringify([_directoryKey_(local.sede_id), _directoryKey_(local.parent_id)]);
+    if (!siblingOrders.has(group)) siblingOrders.set(group, new Map());
+    const groupOrders = siblingOrders.get(group);
+    if (groupOrders.has(order)) {
+      throw new Error('Los locales "' + groupOrders.get(order) + '" y "' + id +
+        '" repiten order=' + order + ' dentro de la misma sede y parent_id.');
+    }
+    groupOrders.set(order, id);
+  });
+
+  const childrenByParent = new Map();
+  items.forEach(local => {
+    const parentId = _directoryKey_(local.parent_id);
+    if (!childrenByParent.has(parentId)) childrenByParent.set(parentId, []);
+    childrenByParent.get(parentId).push(local);
+  });
+  childrenByParent.forEach(children => children.sort((a, b) => Number(a.order) - Number(b.order)));
+
+  const ordered = [];
+  const visitedIds = new Set();
+  const visit = local => {
+    const id = _directoryKey_(local.id);
+    if (visitedIds.has(id)) return;
+    visitedIds.add(id);
+    ordered.push(local);
+    (childrenByParent.get(id) || []).forEach(visit);
+  };
+  const rootsBySite = new Map();
+  items.filter(local => !_directoryKey_(local.parent_id)).forEach(local => {
+    const siteId = _directoryKey_(local.sede_id);
+    if (!rootsBySite.has(siteId)) rootsBySite.set(siteId, []);
+    rootsBySite.get(siteId).push(local);
+  });
+  rootsBySite.forEach(roots => {
+    roots.sort((a, b) => Number(a.order) - Number(b.order));
+    roots.forEach(visit);
+  });
+  if (ordered.length !== items.length) {
+    const missing = items.filter(local => !visitedIds.has(_directoryKey_(local.id)))
+      .map(local => _directoryKey_(local.id));
+    throw new Error('No se pudo ordenar toda la jerarquía de locales: ' + missing.join(', ') + '.');
+  }
+  return { records: ordered, orderConfigured: true, missingOrderCount: 0 };
+}
+
+/**
  * Construye la relación estructura_local -> estructura_org + local
  * y añade las denominaciones de los catálogos.
  */
@@ -804,6 +899,10 @@ function _directorySortAssignments_(records, context) {
   const structureMap = _directoryCreateMap_(context.estructuraOrg);
   const sedeOrder = new Map();
   context.sedes.forEach((sede, index) => sedeOrder.set(_directoryKey_(sede.id), index));
+  const localOrderResult = _directorySortLocalCatalog_(context.locales || []);
+  const localOrder = new Map(localOrderResult.records.map((local, index) => [
+    _directoryKey_(local.id), index
+  ]));
   const pathMap = new Map();
   context.estructuraOrg.forEach(node => pathMap.set(
     _directoryKey_(node.id), _directoryGetStructureOrderPath_(node.id, structureMap)
@@ -816,6 +915,9 @@ function _directorySortAssignments_(records, context) {
     return {
       record,
       sedeOrder: sedeOrder.get(location.sede_id) ?? Number.MAX_SAFE_INTEGER,
+      localOrder: location.local
+        ? (localOrder.get(_directoryKey_(location.local.id)) ?? Number.MAX_SAFE_INTEGER)
+        : Number.MAX_SAFE_INTEGER,
       structurePath: location.estructura_id
         ? pathMap.get(location.estructura_id) || []
         : [],
@@ -825,7 +927,8 @@ function _directorySortAssignments_(records, context) {
 
   sortable.sort((a, b) => {
     if (a.sedeOrder !== b.sedeOrder) return a.sedeOrder - b.sedeOrder;
-    // Las adscripciones orgánicas se agrupan primero por su ruta real.
+    if (a.localOrder !== b.localOrder) return a.localOrder - b.localOrder;
+    // Dentro de cada local, las adscripciones orgánicas siguen su ruta real.
     // Las adscripciones solo a local, sin estructura declarada, quedan al final
     // y nunca reciben una unidad orgánica artificial.
     const hasStructureA = a.structurePath.length > 0;
@@ -1988,6 +2091,25 @@ function _directoryBuildSiteData_(
     permittedStructures.map(item => _directoryKey_(item.id))
   );
   const hierarchyDisplayIds = new Set(allowedStructureIds);
+  // Los registros ya fueron autorizados. Sus estructuras y ancestros
+  // orgánicos reales permiten navegar también en ámbitos LOCAL, sin ampliar
+  // el conjunto de asignaciones ni heredar ubicación física a los padres.
+  records.forEach(record => {
+    const recordSiteId = _directoryKey_(record.filter_sede_id || record.sede_id);
+    if (!recordSiteId || (allAuthorizedSites
+      ? !authorizedSedeIds.has(recordSiteId)
+      : recordSiteId !== selectedSedeId)) return;
+    let current = structureMap.get(_directoryKey_(record.estructura_id));
+    const visited = new Set();
+    while (current && _directoryKey_(current.sede_id) === recordSiteId) {
+      const id = _directoryKey_(current.id);
+      if (!id || visited.has(id)) break;
+      hierarchyDisplayIds.add(id);
+      visited.add(id);
+      const parentId = _directoryKey_(current.parent_id);
+      current = parentId ? structureMap.get(parentId) || null : null;
+    }
+  });
   permittedStructures.forEach(node => {
     let current = structureMap.get(_directoryKey_(node.parent_id));
     const visited = new Set();
@@ -2011,8 +2133,18 @@ function _directoryBuildSiteData_(
     const siteAllowed = allAuthorizedSites
       ? authorizedSedeIds.has(relationSedeId)
       : relationSedeId === selectedSedeId;
-    return item.active && siteAllowed && localSedeId === relationSedeId &&
-      allowedStructureIds.has(_directoryKey_(item.estructura_id));
+    const relationAuthorized = _accessRecordIsAllowed_(
+      authorization.auth,
+      'MOD_INFO_PERSONAL',
+      {
+        estructura_id: _directoryKey_(item.estructura_id),
+        sede_id: relationSedeId,
+        local_id: _directoryKey_(item.local_id)
+      },
+      authorization.structures,
+      authorization.locals
+    );
+    return item.active && siteAllowed && localSedeId === relationSedeId && relationAuthorized;
   });
   const scopedLocals = (context.locales || []).filter(local =>
     _directoryIsActive_(local) &&
@@ -2033,7 +2165,11 @@ function _directoryBuildSiteData_(
   const scopedLocalIds = new Set(
     scopedLocals.map(item => _directoryKey_(item.id))
   );
-  const catalogLocals = (context.locales || []).filter(local =>
+  const localOrderResult = _directorySortLocalCatalog_(context.locales || []);
+  if (!localOrderResult.orderConfigured) {
+    console.warn('[DirectoryService] locales.order no está configurado; se conserva temporalmente el orden recibido hasta completar la migración del catálogo.');
+  }
+  const catalogLocals = localOrderResult.records.filter(local =>
     _directoryIsActive_(local) &&
     (allAuthorizedSites
       ? authorizedSedeIds.has(_directoryKey_(local.sede_id))
@@ -2147,6 +2283,8 @@ function _directoryBuildSiteData_(
     totalAssignments: expectedTotal || 0,
     siteCatalogsRestricted: true,
     allAuthorizedSites,
+    localOrderConfigured: localOrderResult.orderConfigured,
+    localOrderMissingCount: localOrderResult.missingOrderCount,
     relationIntegrity
   }));
 
@@ -2169,8 +2307,14 @@ function _directoryBuildSiteData_(
       filterContract,
       filterVisibility: {
         sede: allAuthorizedSites && scopedSedes.length > 1,
+        local: usedLocalIds.size > 0,
         cargo: usedCargoIds.size > 1,
-        hierarchy: usedStructureIds.size > 1
+        hierarchy: usedStructureIds.size > 0
+      },
+      localOrder: {
+        configured: localOrderResult.orderConfigured,
+        missingOrderCount: localOrderResult.missingOrderCount,
+        semantics: 'order entero positivo y único por sede_id y parent_id'
       }
     },
     records,

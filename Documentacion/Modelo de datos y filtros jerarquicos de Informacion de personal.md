@@ -557,3 +557,68 @@ Antes de publicar, comprobar en la implementación de pruebas de Apps Script:
 7. Repetir la comprobación con una raíz sin permiso de descendientes y una referencia independiente sobre un área hija.
 
 **Despliegue:** no se ha ejecutado clasp push ni se ha publicado una versión de Apps Script desde este trabajo. La implementación está en GitHub, pendiente de que se sincronice y se pruebe en la implementación de prueba habitual.
+
+
+---
+
+## 15. Corrección del nivel físico Local — revisión del 25 de noviembre de 2026
+
+Esta sección **sustituye el estado de implementación descrito en las secciones 13 y 14** cuando se trate de la incidencia Sede → Local → Estructura organizacional. La incidencia se originó porque la interfaz anterior omitía el selector físico Local y empezaba directamente la cascada de estructura_org.
+
+### 15.1. Contrato de presentación
+
+La navegación de consulta queda definida como:
+
+1. **Sede:** limita el conjunto autorizado al ámbito de sede seleccionado.
+2. **Local:** presenta únicamente locales relacionados con asignaciones autorizadas de la sede. La lista se construye intersectando records[].filter_local_id con catalogs.locales; el catálogo por sí solo no habilita opciones.
+3. **Estructura organizacional:** presenta las rutas reales de estructura_org.parent_id que conducen a asignaciones autorizadas del local seleccionado.
+4. **Descendientes:** cada selector siguiente contiene exclusivamente hijos directos del nodo seleccionado, manteniendo estructura_org.order entre hermanos.
+
+El local seleccionado se aplica a los registros mediante filter_local_id. La sede se aplica mediante filter_sede_id. La selección de estructura filtra el subárbol real. Los tres filtros se acumulan con Cargo.
+
+La tabla presenta Sede y Local en columnas separadas. La referencia física se muestra como detalle del Local. La dependencia conserva su ruta orgánica real.
+
+### 15.2. Ubicación y autorización
+
+El frontend no resuelve ni amplía permisos. Las opciones de Local se derivan de registros devueltos por getDirectorySiteData() después de autorización. La respuesta se reutiliza en memoria para los cambios de Local y estructura; esos cambios no generan llamadas adicionales a Apps Script.
+
+Para permitir navegación con ámbito LOCAL, el backend incluye en el catálogo estructural los nodos de las asignaciones ya autorizadas y sus ancestros reales de la misma sede. Esto no incorpora asignaciones adicionales ni asigna al padre la ubicación de un hijo.
+
+Las relaciones estructura_local devueltas se comprueban por el ámbito efectivo incluyendo estructura_id, sede_id y local_id. Las asignaciones que solo tienen local_id permanecen en la tabla y no generan una estructura artificial.
+
+Los ámbitos TOTAL, SEDE, ESTRUCTURA_ORG y LOCAL conservan sus significados. Un Local fijo por ámbito se presenta como valor determinado y no habilita navegación a otros locales.
+
+### 15.3. Orden del catálogo físico
+
+La hoja locales observada en la fuente tiene 190 registros, todos con parent_id vacío, y no tiene encabezado order. Zona IX contiene 26 locales, entre ellos Lima y Callao. La tabla original no proporciona un campo institucional que formalice la precedencia física.
+
+Se incorpora compatibilidad para consumir locales.order con estas reglas:
+
+- Entero positivo.
+- Único dentro del grupo (sede_id, parent_id).
+- Valores no correlativos permitidos.
+- Orden de presentación en recorrido del árbol físico: padres y después hijos, con hermanos ordenados por order.
+- parent_id debe apuntar a un local existente de la misma sede y no puede formar ciclos.
+- No hay desempate alfabético para ocultar órdenes duplicados o ausentes.
+
+**Transición:** mientras la hoja no tenga el encabezado order, el código conserva temporalmente el orden recibido para no bloquear la aplicación, emite un diagnóstico de que la migración está pendiente y no interpreta ese orden de filas como una regla permanente. En cuanto el encabezado exista, todos los locales deben tener un entero positivo; valores ausentes o duplicados detienen la validación.
+
+La futura modificación de Sheets consiste en añadir una columna order al final de locales, después de active, y asignar un valor a los 190 locales. La precedencia Lima antes que Callao debe quedar expresada allí con valores distintos. Los valores institucionales concretos deben ser proporcionados o aprobados por el responsable de los datos; no se deducen de la posición actual de las filas. No se modifican estructura_local, estructura_org.order ni asignaciones.order.
+
+### 15.4. Orden de la tabla
+
+Las asignaciones se presentan agrupadas por sede, después por orden físico de Local y, dentro del local, por ruta orgánica real. asignaciones.order conserva su función dentro de la adscripción correspondiente. La ubicación efectiva continúa resolviéndose por estructura_local_id y/o local_id; no se infiere desde el padre orgánico.
+
+### 15.5. Integridad pendiente separada
+
+Las dos relaciones cruzadas detectadas en estructura_local (Sala Cuarta–Trujillo y Sala Quinta–Arequipa) no se corrigen con este cambio. La resolución de asignaciones continúa exigiendo coherencia de sede y esas relaciones permanecen como anomalías independientes para evaluación administrativa.
+
+### 15.6. Rendimiento
+
+El selector Local consume la respuesta existente de getDirectorySiteData(). No se añade una llamada al servidor por cambio de filtro ni se hidratan páginas adicionales. Se conservan los registros autorizados completos, la paginación, las cachés y las comprobaciones de Core.
+
+La medición de Zona IX del 25 de noviembre que registró 1.852 asignaciones, dos páginas y 8.833 ms de solicitud del servidor es una referencia de rendimiento anterior a esta corrección. No debe atribuirse a la interfaz Local ni considerarse una medición de la nueva implementación.
+
+### 15.7. Validación funcional
+
+La aceptación debe verificar conjuntamente el backend, records, catalogs.locales, catalogs.estructuraOrg, filterContract, el índice cliente, las opciones renderizadas y la tabla. Como mínimo: Lima, Callao, Huacho/Cañete/Huaral/Barranca, locales sin estructura, asignaciones local_id solamente, estructuras con varias relaciones físicas, estructura con ubicación directa distinta de la raíz, ámbitos TOTAL/SEDE/LOCAL/ESTRUCTURA_ORG, orden no correlativo y rechazos de orden ausente/duplicado cuando la columna esté habilitada.
