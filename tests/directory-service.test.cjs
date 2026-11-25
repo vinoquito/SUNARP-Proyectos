@@ -152,6 +152,16 @@ vm.runInContext(
   hierarchySandbox,
   { filename: 'DirectoryHierarchyFilters.js' }
 );
+vm.runInContext(
+  localHierarchySource + '\nthis.buildLocalHierarchyFilterSets = _directoryBuildLocalHierarchyFilterSets_;',
+  hierarchySandbox,
+  { filename: 'DirectoryLocalHierarchyFilters.js' }
+);
+vm.runInContext(
+  localHierarchySource + '\nthis.buildLocalHierarchyFilterSets = _directoryBuildLocalHierarchyFilterSets_;',
+  hierarchySandbox,
+  { filename: 'DirectoryLocalHierarchyFilters.js' }
+);
 
 
 test('el catálogo de locales ordena por order entre hermanos y respeta parent_id', () => {
@@ -213,7 +223,7 @@ test('Local limita las estructuras visibles sin heredar la ubicación de los pad
     { asignacion_id: 'A4', estructura_id: '', filter_sede_id: 'ZR_IX', filter_local_id: 'ZR_IX_RECEPTORA' }
   ];
   const index = hierarchyIndexSandbox.buildIndex(records, structures);
-  const huachoIds = hierarchyIndexSandbox.buildLocalHierarchyFilterSets(
+  const huachoIds = hierarchySandbox.buildLocalHierarchyFilterSets(
     records, structures, 'ZR_IX_HUACHO', 'ZR_IX'
   );
   assert.deepEqual([...huachoIds].sort(), [
@@ -227,11 +237,11 @@ test('Local limita las estructuras visibles sin heredar la ubicación de los pad
     Array.from(hierarchySandbox.getSelectableChildren('ZR_IX_BASE_GRAFICA', index, huachoIds), node => node.id),
     ['ZR_IX_CATASTRO_HUACHO']
   );
-  const callaoIds = hierarchyIndexSandbox.buildLocalHierarchyFilterSets(
+  const callaoIds = hierarchySandbox.buildLocalHierarchyFilterSets(
     records, structures, 'ZR_IX_CALLAO', 'ZR_IX'
   );
   assert.deepEqual([...callaoIds], ['ZR_IX_CALLAO_AREA']);
-  const receptionIds = hierarchyIndexSandbox.buildLocalHierarchyFilterSets(
+  const receptionIds = hierarchySandbox.buildLocalHierarchyFilterSets(
     records, structures, 'ZR_IX_RECEPTORA', 'ZR_IX'
   );
   assert.deepEqual([...receptionIds], []);
@@ -345,7 +355,7 @@ test('el ámbito TOTAL exige elegir sede y no carga registros agregados al entra
   assert.match(siteFilter, /if \(isTotalSelection\) select\.value = ''/);
   assert.match(siteFilter, /wrapper\.hidden = fixedSingleSede/);
   assert.match(siteChange, /loadSelectedSede\(key\(elements\.sedeFilter\.value\)\)/);
-  assert.match(frontendSource, /clearDirectoryTable\('Selecciona una sede para consultar la información de personal\.'/);
+  assert.match(frontendSource, /clearDirectoryTable\('Selecciona una sede y un local para consultar la información de personal\.'/);
 });
 
 test('las raíces de varios ámbitos orgánicos respetan estructura_org.order y no el orden de los permisos', () => {
@@ -610,7 +620,7 @@ test('las asignaciones se agrupan por jerarquía, respetan order por unidad y co
   const ordered = api.sortAssignments(records, context);
   assert.deepEqual(
     ordered.map(record => record.asignacion_id),
-    ['GG_01', 'GG_02', 'GG_03', 'UF_INT_01', 'TD_01', 'AC_01', 'DTR_01', 'LOCAL_ONLY_01']
+    ['GG_01', 'GG_02', 'UF_INT_01', 'TD_01', 'AC_01', 'DTR_01', 'LOCAL_ONLY_01', 'GG_03']
   );
 });
 test('el servicio, el frontend y las pruebas Core tienen sintaxis válida', () => {
@@ -2671,7 +2681,7 @@ test('el contrato de filtros reconoce TOTAL sin convertirlo en una selección re
 });
 
 
-test('Información de personal carga automáticamente la única sede autorizada sin filtrar por Local', () => {
+test('Información de personal carga automáticamente la única sede autorizada y muestra su selector Local', () => {
   assert.match(frontendSource, /state\.authorizedSedes\.length === 1/);
   assert.match(frontendSource, /result\.scopeSummary && result\.scopeSummary\.total/);
   assert.doesNotMatch(frontendSource, /callServer\('getDirectoryAuthorizedData'\)/);
@@ -2683,8 +2693,10 @@ test('Información de personal carga automáticamente la única sede autorizada 
   assert.match(frontendSource, /wrapper\.hidden = fixedSingleSede/);
   assert.match(frontendSource, /state\.hierarchySelectableIds = _directoryBuildHierarchyFilterSets_/);
   assert.match(frontendSource, /if \(wrapper\) wrapper\.hidden = cargos\.length === 0/);
-  assert.doesNotMatch(frontendSource, /localFilter\.addEventListener/);
-  assert.doesNotMatch(frontendSource, /recordsByLocal\.size > 0/);
+  assert.match(frontendSource, /localFilter\.addEventListener/);
+  assert.match(frontendSource, /function populateLocalFilter\(/);
+  assert.match(frontendSource, /_directoryBuildLocalHierarchyFilterSets_/);
+  assert.match(frontendSource, /key: 'local_display',\s*label: 'Local'/);
 });
 
 test('Información de personal carga por sede una vez y usa filtros, búsqueda y paginación locales', () => {
@@ -2694,7 +2706,7 @@ test('Información de personal carga por sede una vez y usa filtros, búsqueda y
   assert.match(frontendSource, /data:\s*preparedRows/);
   assert.match(frontendSource, /renderStackedTableCell\([\s\S]*?record\.local_display/);
   assert.match(frontendSource, /record\.estructura_path[\s\S]*?dependencia_secondary_display/);
-  assert.doesNotMatch(frontendSource, /key: 'local_display', label: 'Local'/);
+  assert.match(frontendSource, /key: 'local_display',\s*label: 'Local'/);
   assert.match(frontendSource, /state\.table\.setData\(options\.data\)/);
   assert.match(frontendSource, /siteDataCache/);
   assert.match(frontendSource, /DIRECTORY_SITE_CLIENT_CACHE_TTL_MS = 600000/);

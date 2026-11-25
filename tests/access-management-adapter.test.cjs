@@ -2294,17 +2294,18 @@ test('el contexto del Directorio reutiliza catálogos ensamblados por generació
   assert.match(implementation, /DIRECTORY_CATALOG_CACHE_TTL/);
 });
 
-test('Información de personal omite Local y solo muestra cascada cuando el ámbito lo hereda', () => {
+test('Información de personal muestra Local después de Sede y antes de la estructura', () => {
   assert.match(directoryViewSource, /id="directorySedeFilter"/);
-  assert.doesNotMatch(directoryViewSource, /directoryLocalFilter/);
+  assert.match(directoryViewSource, /id="directoryLocalFilter"/);
   assert.match(directoryViewSource, /id="directoryHierarchyFilters"/);
+  assert.ok(directoryViewSource.indexOf('directoryLocalFilter') < directoryViewSource.indexOf('directoryHierarchyFilters'));
   assert.match(directoryViewSource, /id="directoryCargoFilter"/);
-  assert.doesNotMatch(directoryUiSource, /localFilter: document\.getElementById\(/);
-  assert.doesNotMatch(directoryUiSource, /populateLocalFilter|localFilter|directoryLocalFilter/);
-  assert.match(directoryUiSource, /function getHierarchyFilterSets\(\)/);
-  assert.match(directoryUiSource, /appendHierarchyLevel\('', 0\)/);
-  assert.match(directoryUiSource, /state\.hierarchySelectableIds = _directoryBuildHierarchyFilterSets_/);
-  assert.match(directoryUiSource, /recordSiteId = key\(record\.filter_sede_id \|\| record\.sede_id\)/);
+  assert.match(directoryUiSource, /localFilter: document\.getElementById\(/);
+  assert.match(directoryUiSource, /function populateLocalFilter\(/);
+  assert.match(directoryUiSource, /function _directoryBuildLocalHierarchyFilterSets_/);
+  assert.match(directoryUiSource, /state\.hierarchySelectableIds = _directoryBuildLocalHierarchyFilterSets_/);
+  assert.match(directoryUiSource, /recordLocalId = key\(record\.filter_local_id \|\| record\.local_id\)/);
+  assert.match(directoryUiSource, /localFilter\.addEventListener\('change'/);
 });
 
 test('los cambios de filtro calculan cargos sobre la instantánea local sin nuevas consultas', () => {
@@ -2477,13 +2478,14 @@ test('los botones de Administración de accesos notifican errores sincrónicos y
 });
 
 
-test('Información de personal muestra directamente la unión del ámbito y solo crea filtros para descendientes heredados', () => {
-  assert.doesNotMatch(directoryUiSource, /localFilter|populateLocalFilter|directoryLocalFilter/);
+test('los filtros acumulan Sede, Local, estructura y Cargo sobre la instantánea autorizada', () => {
+  assert.match(directoryUiSource, /localFilter|populateLocalFilter|directoryLocalFilter/);
 
   const recordsStart = directoryUiSource.indexOf('function getRecordsForFilters(');
   const recordsEnd = directoryUiSource.indexOf('function getUsedCatalogItems(', recordsStart);
   const recordsFilter = directoryUiSource.slice(recordsStart, recordsEnd);
-  assert.doesNotMatch(recordsFilter, /localFilter|recordLocalId/);
+  assert.match(recordsFilter, /localId = elements\.localFilter/);
+  assert.match(recordsFilter, /recordLocalId !== localId/);
   assert.ok(recordsFilter.includes('return state.records.filter'));
 
   const hierarchyStart = directoryUiSource.indexOf('function getHierarchyFilterSets()');
@@ -2502,14 +2504,14 @@ test('Información de personal muestra directamente la unión del ámbito y solo
   const hierarchyNodes = directoryUiSource.slice(nodesStart, nodesEnd);
   assert.ok(hierarchyNodes.includes('_directoryGetHierarchyScopeRoots_'));
   assert.ok(hierarchyNodes.includes('_directoryGetSelectableHierarchyChildren_'));
+  assert.ok(hierarchyNodes.includes("scope.type === 'LOCAL'"));
   assert.equal(hierarchyNodes.includes('collectChildren'), false);
-  assert.equal(hierarchyNodes.includes('Los nodos intermedios sin asignaciones no se ofrecen'), false);
 
   const renderStart = directoryUiSource.indexOf('function renderHierarchyFilters()');
   const renderEnd = directoryUiSource.indexOf('function hasAvailableFilterSelection(filter)', renderStart);
   const renderHierarchy = directoryUiSource.slice(renderStart, renderEnd);
-  assert.ok(renderHierarchy.includes('selectableIds.size <= 1'));
-  assert.doesNotMatch(renderHierarchy, /localFilter|recordsByLocal/);
+  assert.ok(renderHierarchy.includes('_directoryBuildLocalHierarchyFilterSets_'));
+  assert.doesNotMatch(renderHierarchy, /selectableIds\.size <= 1/);
 
   const cargoStart = directoryUiSource.indexOf('function populateCargoFilter()');
   const cargoEnd = directoryUiSource.indexOf('function getHierarchyFilterSets()', cargoStart);
@@ -2517,6 +2519,6 @@ test('Información de personal muestra directamente la unión del ámbito y solo
   assert.ok(cargoFilter.includes("getRecordsForFilters(new Set(['cargo']))"));
   assert.ok(cargoFilter.includes('if (wrapper) wrapper.hidden = cargos.length === 0'));
 
-  assert.doesNotMatch(directoryViewSource, /directoryLocalFilter/);
+  assert.match(directoryViewSource, /directoryLocalFilter/);
   assert.match(directoryViewSource, /directoryCargoFilter/);
 });
