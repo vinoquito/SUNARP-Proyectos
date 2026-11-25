@@ -2452,6 +2452,42 @@ test('el bootstrap de Administración reutiliza catálogos mientras no cambie su
   );
 });
 
+test('Permisos y Asignaciones comparten catálogos en caché y no releen hojas entre pestañas', () => {
+  const sandbox = createAdapterSandbox(makeSecurityData());
+  const cache = new Map();
+  const reads = [];
+  const originalList = sandbox.SUNARPCore.listRecordsFromSourcesCached;
+  sandbox._accessRequirePermission_ = () => ({ authenticated: true });
+  sandbox._accessSecuritySource_ = sheet => ({ sheetName: sheet });
+  sandbox.SUNARPCore.getOrBuildCachedValue = (key, sources, builder, ttl) => {
+    assert.equal(ttl, 3600, 'Los catálogos administrativos deben conservarse durante una hora como máximo.');
+    if (cache.has(key)) return { value: cache.get(key), cacheHit: true, cacheStored: true };
+    const value = builder();
+    cache.set(key, value);
+    return { value, cacheHit: false, cacheStored: true };
+  };
+  sandbox.SUNARPCore.listRecordsFromSourcesCached = (requests, ttl) => {
+    assert.equal(ttl, 3600);
+    reads.push(requests.map(request => request.source.sheetName));
+    return originalList(requests);
+  };
+
+  const permissions = sandbox._getAccessManagementTabData_('permissions');
+  const assignments = sandbox._getAccessManagementTabData_('assignments');
+  const permissionsAgain = sandbox._getAccessManagementTabData_('permissions');
+
+  assert.equal(permissions.permissions.length, 5);
+  assert.equal(assignments.roles.length, 2);
+  assert.equal(assignments.rolePermissions.length, 5);
+  assert.equal(permissionsAgain.permissions.length, 5);
+  assert.deepEqual(reads, [
+    ['Modulos', 'Operaciones', 'Permisos'],
+    ['Roles', 'RolPermiso']
+  ], 'La segunda pestaña debe reutilizar los tres catálogos compartidos.');
+  assert.ok(cache.has('access-permission-catalogs:v1'));
+  assert.ok(cache.has('access-role-permission-catalogs:v1'));
+});
+
 test('el bootstrap de accesos agrupa catálogos del libro de Seguridad en una lectura', () => {
   const bootstrap = accessSource.slice(
     accessSource.indexOf('function getAccessManagementData()'),
@@ -2460,7 +2496,7 @@ test('el bootstrap de accesos agrupa catálogos del libro de Seguridad en una le
   assert.match(bootstrap, /bootstrapRequests/);
   assert.match(bootstrap, /getOrBuildCachedValue/);
   assert.match(bootstrap, /access-management-bootstrap:v1/);
-  assert.match(bootstrap, /listRecordsFromSourcesCached\(bootstrapRequests, 60\)/);
+  assert.match(bootstrap, /listRecordsFromSourcesCached\(bootstrapRequests, ACCESS_MANAGEMENT_CATALOG_CACHE_TTL_SECONDS\)/);
   assert.doesNotMatch(bootstrap, /_accessLoadSecurityRecords_\(/);
 });
 
