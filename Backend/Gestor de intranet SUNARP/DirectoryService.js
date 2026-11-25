@@ -3668,12 +3668,28 @@ function _saveDirectoryEntryPrimary_(payload) {
     if (_directoryKey_(previousAssignment.persona_id) !== personaId) {
       throw new Error('La asignación seleccionada no pertenece a la persona indicada.');
     }
-    const normalizedDocument = _directoryAssertDocumentAvailable_(
-      payload.tipo_documento,
-      payload.numero_documento,
-      null,
-      personaId
+    const documentType = _directoryText_(payload.tipo_documento);
+    const documentNumber = _directoryText_(payload.numero_documento);
+    const hasDocumentType = Boolean(documentType);
+    const hasDocumentNumber = Boolean(documentNumber);
+    const hasDocument = hasDocumentType && hasDocumentNumber;
+    const hasPersonalDates = Boolean(
+      _directoryText_(payload.fecha_nacimiento) ||
+      _directoryText_(payload.fecha_inicio_servicios) ||
+      _directoryText_(payload.fecha_cese)
     );
+    if (hasDocumentType !== hasDocumentNumber) {
+      throw new Error('Completa el tipo y número de documento antes de validar.');
+    }
+    if (previousPersonalData && !hasDocument) {
+      throw new Error('El servidor ya tiene una ficha de datos personales. Conserva o valida su tipo y número de documento.');
+    }
+    if (!hasDocument && hasPersonalDates) {
+      throw new Error('Para registrar fechas de datos personales debes indicar y validar el documento de identidad.');
+    }
+    const normalizedDocument = hasDocument
+      ? _directoryAssertDocumentAvailable_(documentType, documentNumber, null, personaId)
+      : null;
 
     let personUpdated = false;
     let personalDataUpdated = false;
@@ -3681,15 +3697,18 @@ function _saveDirectoryEntryPrimary_(payload) {
     try {
       personUpdated = true;
       const person = _saveDirectoryPerson_(personPayload);
-      personalDataUpdated = true;
-      const personalData = saveDirectoryPersonalData({
-        servidor_id: personaId,
-        tipo_documento: normalizedDocument.tipo_documento,
-        numero_documento: normalizedDocument.numero_documento,
-        fecha_nacimiento: payload.fecha_nacimiento,
-        fecha_inicio_servicios: payload.fecha_inicio_servicios,
-        fecha_cese: payload.fecha_cese
-      });
+      let personalData = previousPersonalData;
+      if (normalizedDocument) {
+        personalDataUpdated = true;
+        personalData = saveDirectoryPersonalData({
+          servidor_id: personaId,
+          tipo_documento: normalizedDocument.tipo_documento,
+          numero_documento: normalizedDocument.numero_documento,
+          fecha_nacimiento: payload.fecha_nacimiento,
+          fecha_inicio_servicios: payload.fecha_inicio_servicios,
+          fecha_cese: payload.fecha_cese
+        });
+      }
       assignmentUpdated = true;
       const assignment = saveDirectoryAssignment({
         asignacion_id: assignmentId,
