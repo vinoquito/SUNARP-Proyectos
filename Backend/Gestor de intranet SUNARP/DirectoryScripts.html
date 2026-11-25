@@ -1712,7 +1712,10 @@ const DirectoryPage = (() => {
           </div>
 
           `}
-          <div class="sunarp-form-field">
+                    <div id="directoryAssignmentsContainer">
+            <div class="directory-assignment-row" id="directoryAssignmentRow" data-index="0">
+              <input type="hidden" id="directoryFormAssignmentId" value="${escapeHtml(record?.asignacion_id || record?.id || '')}">
+<div class="sunarp-form-field">
             <label for="directoryFormCargo">
               Cargo *
             </label>
@@ -1803,7 +1806,13 @@ const DirectoryPage = (() => {
             </select>
           </div>
 
+                      </div>
+          </div>
           <div class="sunarp-form-field sunarp-form-field--full">
+            <button type="button" class="sunarp-btn sunarp-btn-outline" id="directoryAddAssignment">Agregar asignación</button>
+          </div>
+
+<div class="sunarp-form-field sunarp-form-field--full">
             <div class="directory-form-actions">
 
               <button
