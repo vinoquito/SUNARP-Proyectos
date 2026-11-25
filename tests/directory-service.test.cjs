@@ -128,15 +128,19 @@ const hierarchyHelperMatch = frontendScript.match(/function _directoryBuildHiera
 assert.ok(hierarchyHelperMatch, 'El frontend debe calcular las rutas de estructuras con asignaciones autorizadas');
 const hierarchyChildrenSource = extractFrontendFunction('_directoryGetSelectableHierarchyChildren_');
 const hierarchyScopeRootsSource = extractFrontendFunction('_directoryGetHierarchyScopeRoots_');
+const hierarchySelectionSource = extractFrontendFunction('_directoryMatchesHierarchySelection_');
 assert.ok(hierarchyChildrenSource, 'El frontend debe resolver únicamente hijos jerárquicos directos');
 assert.ok(hierarchyScopeRootsSource, 'El frontend debe resolver las raíces orgánicas de cada ámbito');
+assert.ok(hierarchySelectionSource, 'El frontend debe respetar el alcance de la raíz seleccionada');
 const hierarchySandbox = vm.createContext({});
 vm.runInContext(
   hierarchyHelperMatch[0] + '\n' + hierarchyChildrenSource +
     '\n' + hierarchySubtreeSource + '\n' + hierarchyScopeRootsSource +
+    '\n' + hierarchySelectionSource +
     '\nthis.buildHierarchyFilterSets = _directoryBuildHierarchyFilterSets_;' +
     '\nthis.getSelectableChildren = _directoryGetSelectableHierarchyChildren_;' +
-    '\nthis.getHierarchyScopeRoots = _directoryGetHierarchyScopeRoots_;',
+    '\nthis.getHierarchyScopeRoots = _directoryGetHierarchyScopeRoots_;' +
+    '\nthis.matchesHierarchySelection = _directoryMatchesHierarchySelection_;',
   hierarchySandbox,
   { filename: 'DirectoryHierarchyFilters.js' }
 );
@@ -316,6 +320,42 @@ test('los ámbitos de varias áreas muestran raíces propias y eliminan referenc
   const fixedRoots = hierarchySandbox.getHierarchyScopeRoots(fixedScopes, index, fixedSelectable, 'SEDE_A');
   assert.deepEqual(Array.from(fixedRoots, item => item.referenceId), ['ROOT_A', 'ROOT_B']);
   assert.deepEqual([...fixedSelectable].sort(), ['ROOT_A', 'ROOT_B']);
+});
+
+test('seleccionar un ámbito sin descendientes no incorpora nodos hijos autorizados por separado', () => {
+  const structures = [
+    { id: 'PARENT', parent_id: '', sede_id: 'SEDE_A' },
+    { id: 'CHILD', parent_id: 'PARENT', sede_id: 'SEDE_A' },
+    { id: 'GRANDCHILD', parent_id: 'CHILD', sede_id: 'SEDE_A' }
+  ];
+  const records = [
+    { estructura_id: 'PARENT', filter_sede_id: 'SEDE_A' },
+    { estructura_id: 'CHILD', filter_sede_id: 'SEDE_A' },
+    { estructura_id: 'GRANDCHILD', filter_sede_id: 'SEDE_A' }
+  ];
+  const scopes = [
+    { type: 'ESTRUCTURA_ORG', referenceId: 'PARENT', includeDescendants: false },
+    { type: 'ESTRUCTURA_ORG', referenceId: 'CHILD', includeDescendants: true }
+  ];
+  const index = hierarchyIndexSandbox.buildIndex(records, structures);
+  assert.equal(
+    hierarchySandbox.matchesHierarchySelection('PARENT', ['PARENT'], scopes, index),
+    true
+  );
+  assert.equal(
+    hierarchySandbox.matchesHierarchySelection('CHILD', ['PARENT'], scopes, index),
+    false,
+    'El permiso independiente sobre CHILD no amplía la referencia PARENT que excluye descendientes'
+  );
+  assert.equal(
+    hierarchySandbox.matchesHierarchySelection('CHILD', ['CHILD'], scopes, index),
+    true
+  );
+  assert.equal(
+    hierarchySandbox.matchesHierarchySelection('GRANDCHILD', ['CHILD'], scopes, index),
+    true,
+    'La selección de CHILD sí incluye su propio subárbol porque así lo autoriza ese ámbito'
+  );
 });
 
 test('el índice cliente conserva rutas reales sin convertir ancestros en opciones seleccionables', () => {
