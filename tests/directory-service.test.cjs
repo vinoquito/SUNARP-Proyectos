@@ -1307,6 +1307,62 @@ test('la edición coordinada recupera la asignación anterior por ID sin cargar 
   assert.equal(result.success, true);
 });
 
+test('la edición de un servidor histórico sin ficha documental conserva su ausencia si no se agrega documento', () => {
+  const context = createDirectorySandbox();
+  const person = {
+    persona_id: 'PER_013', nombres: 'Rosa', apellidos: 'López',
+    correo_institucional: 'rosa@sunarp.gob.pe'
+  };
+  const assignment = {
+    asignacion_id: 'ASG_013', persona_id: 'PER_013', cargo_id: 'CAR_001',
+    estructura_local_id: 'REL_1', local_id: '', active: true, order: 1
+  };
+  let documentLookups = 0;
+  let personalWrites = 0;
+  context._directoryLoadContext_ = () => ({
+    personas: [person], datosPersonales: [], asignaciones: [],
+    estructuraLocal: [], estructuraOrg: [], locales: []
+  });
+  context._directoryFindPersonById_ = () => person;
+  context._directoryFindPersonalDataById_ = () => null;
+  context._directoryFindAuthorizedAssignmentById_ = (_snapshot, _authorization, id) =>
+    id === 'ASG_013' ? assignment : null;
+  context._directoryAssertPersonMutationScope_ = () => true;
+  context._directoryAssertDocumentAvailable_ = () => {
+    documentLookups++;
+    return { tipo_documento: 'DNI', numero_documento: '12345678' };
+  };
+  context._saveDirectoryPerson_ = () => ({ person });
+  context.saveDirectoryPersonalData = () => {
+    personalWrites++;
+    return { personalData: { servidor_id: 'PER_013' } };
+  };
+  context.saveDirectoryAssignment = () => ({ assignment });
+  context.SUNARPCore.findRecordsByFields = (source, filters) => {
+    if (source === 'asignaciones') return { records: [assignment], total: 1 };
+    if (source === 'personas') return { records: [person], total: 1 };
+    if (source === 'servidores datos personales') return { records: [], total: 0 };
+    return { records: [], total: 0 };
+  };
+
+  const result = context.saveDirectoryEntry({
+    persona_id: 'PER_013',
+    asignacion_id: 'ASG_013',
+    nombres: 'Rosa',
+    apellidos: 'López',
+    correo_institucional: 'rosa@sunarp.gob.pe',
+    tipo_documento: '',
+    numero_documento: '',
+    cargo_id: 'CAR_001',
+    estructura_local_id: 'REL_1'
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.personalData, null);
+  assert.equal(documentLookups, 0);
+  assert.equal(personalWrites, 0);
+});
+
 test('la edición rechaza una asignación que pertenece a otra persona antes de escribir', () => {
   const context = createDirectorySandbox();
   let writes = 0;
@@ -1448,6 +1504,9 @@ test('el formulario de servidor usa el catálogo documental cargado por SUNARP C
   assert.match(serviceSource, /tiposDocumento:\s*documentTypes/);
   assert.match(serviceSource, /function _directoryAssertDocumentTypeAllowed_\(/);
   assert.match(serviceSource, /listRecordsFromSourcesCached\(/);
+  assert.match(serviceSource, /if \(previousPersonalData && !hasDocument\)/);
+  assert.match(frontendSource, /requiresExistingDocumentValidation/);
+  assert.match(frontendSource, /Este registro histórico no tiene ficha de documento/);
 });
 
 
