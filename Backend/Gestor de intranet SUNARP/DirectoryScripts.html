@@ -1538,7 +1538,19 @@ const DirectoryPage = (() => {
         if(!key(item.asignacion_id)||canDeleteAssignments){
           const remove=document.createElement('button');remove.type='button';remove.className='sunarp-btn sunarp-btn-outline directory-small-button';
           remove.textContent='Quitar';remove.disabled=editorIsOpen;
-          remove.addEventListener('click',()=>{const deleted=draft.splice(index,1)[0];if(key(deleted.asignacion_id))removedIds.add(key(deleted.asignacion_id));renderTable();});
+          remove.addEventListener('click',()=>{
+            const candidate=draft[index];
+            if(key(candidate.asignacion_id)){
+              const anotherPersisted=draft.some((item,itemIndex)=>itemIndex!==index&&key(item.asignacion_id));
+              if(!anotherPersisted){
+                notify('warning','Conserva al menos una asignación registrada. Puedes editarla o mantenerla y agregar otras asignaciones.');
+                return;
+              }
+            }
+            const deleted=draft.splice(index,1)[0];
+            if(key(deleted.asignacion_id))removedIds.add(key(deleted.asignacion_id));
+            renderTable();
+          });
           actions.appendChild(remove);
         }
         row.appendChild(actions);body.appendChild(row);
