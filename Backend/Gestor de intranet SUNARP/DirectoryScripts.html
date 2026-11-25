@@ -1304,16 +1304,16 @@ const DirectoryPage = (() => {
       '<form id="directoryForm" class="directory-form"><input type="hidden" id="directoryFormPersonaId" value="'+escapeHtml(record&&record.persona_id||'')+'">',
       !editing?[
         '<section class="directory-form-section directory-form-validation"><div class="directory-form-section-heading"><h3>1. Validar identidad</h3><p>Comprueba el documento antes de registrar a la persona.</p></div>',
-        '<div class="directory-form-document-fields"><div class="sunarp-form-field directory-form-field-full"><label for="directoryFormTipoDocumento">Tipo de documento *</label><select id="directoryFormTipoDocumento" class="sunarp-select" required><option value="">Selecciona un tipo de documento</option>'+docTypes+'</select></div>',
-        '<div class="sunarp-form-field directory-form-field-full"><label for="directoryFormNumeroDocumento">Número de documento *</label><input id="directoryFormNumeroDocumento" type="text" class="sunarp-input" maxlength="30" autocomplete="off" required></div></div>',
+        '<div class="directory-form-document-fields"><div class="sunarp-form-field"><label for="directoryFormTipoDocumento">Tipo de documento *</label><select id="directoryFormTipoDocumento" class="sunarp-select" required><option value="">Selecciona un tipo de documento</option>'+docTypes+'</select></div>',
+        '<div class="sunarp-form-field"><label for="directoryFormNumeroDocumento">Número de documento *</label><input id="directoryFormNumeroDocumento" type="text" class="sunarp-input" maxlength="30" autocomplete="off" required></div></div>',
         '<div class="directory-form-document-actions"><button type="button" class="sunarp-btn sunarp-btn-primary" id="directoryDocumentSearch">Buscar persona</button><button type="button" class="sunarp-btn sunarp-btn-outline" id="directoryDocumentClear">Limpiar</button></div>',
         '<div id="directoryDocumentSearchResult" aria-live="polite"></div><input type="hidden" id="directoryDocumentVerified" value="false"></section>'
       ].join(''):'',
       '<section class="directory-form-section"><div class="directory-form-section-heading"><h3>'+(editing?'1.':'2.')+' Datos personales</h3><p>Información de identificación y datos personales del servidor.</p></div>',
-      '<fieldset id="directoryPersonalFields" class="directory-form-fieldset"'+(!editing?' disabled':'')+'>',
-      editing?'<div class="directory-form-document-fields directory-form-edit-document"><div class="sunarp-form-field directory-form-field-full"><label for="directoryFormTipoDocumento">Tipo de documento *</label><select id="directoryFormTipoDocumento" class="sunarp-select" required><option value="">Selecciona un tipo de documento</option>'+docTypes+'</select></div><div class="sunarp-form-field directory-form-field-full"><label for="directoryFormNumeroDocumento">Número de documento *</label><input id="directoryFormNumeroDocumento" type="text" class="sunarp-input" maxlength="30" value="'+escapeHtml(record&&record.numero_documento||'')+'" required></div></div>':'',
-      '<div class="sunarp-form-field directory-form-field-full"><label for="directoryFormNombres">Nombres *</label><input id="directoryFormNombres" type="text" class="sunarp-input" maxlength="100" value="'+escapeHtml(record&&record.nombres||'')+'" required></div>',
-      '<div class="sunarp-form-field directory-form-field-full"><label for="directoryFormApellidos">Apellidos *</label><input id="directoryFormApellidos" type="text" class="sunarp-input" maxlength="150" value="'+escapeHtml(record&&record.apellidos||'')+'" required></div>',
+      '<fieldset id="directoryPersonalFields" class="directory-form-fieldset directory-form-personal-grid"'+(!editing?' disabled':'')+'>',
+      editing?'<div class="directory-form-document-fields directory-form-edit-document"><div class="sunarp-form-field"><label for="directoryFormTipoDocumento">Tipo de documento *</label><select id="directoryFormTipoDocumento" class="sunarp-select" required><option value="">Selecciona un tipo de documento</option>'+docTypes+'</select></div><div class="sunarp-form-field"><label for="directoryFormNumeroDocumento">Número de documento *</label><input id="directoryFormNumeroDocumento" type="text" class="sunarp-input" maxlength="30" value="'+escapeHtml(record&&record.numero_documento||'')+'" required></div></div>':'',
+      '<div class="sunarp-form-field"><label for="directoryFormNombres">Nombres *</label><input id="directoryFormNombres" type="text" class="sunarp-input" maxlength="100" value="'+escapeHtml(record&&record.nombres||'')+'" required></div>',
+      '<div class="sunarp-form-field"><label for="directoryFormApellidos">Apellidos *</label><input id="directoryFormApellidos" type="text" class="sunarp-input" maxlength="150" value="'+escapeHtml(record&&record.apellidos||'')+'" required></div>',
       '<div class="sunarp-form-field directory-form-field-full"><label for="directoryFormCorreoInstitucional">Correo institucional</label><input id="directoryFormCorreoInstitucional" type="email" class="sunarp-input" maxlength="150" placeholder="usuario@sunarp.gob.pe" value="'+escapeHtml(record&&record.correo_institucional||'')+'"><small>Se utiliza para vincular la identidad con la cuenta institucional de acceso.</small></div>',
       '<div class="directory-form-dates-grid"><div class="sunarp-form-field"><label for="directoryFormFechaNacimiento">Fecha de nacimiento</label><input id="directoryFormFechaNacimiento" type="date" class="sunarp-input" value="'+escapeHtml(record&&record.fecha_nacimiento||'')+'"></div>',
       '<div class="sunarp-form-field"><label for="directoryFormFechaInicio">Fecha de inicio de servicios</label><input id="directoryFormFechaInicio" type="date" class="sunarp-input" value="'+escapeHtml(record&&record.fecha_inicio_servicios||'')+'"></div>',
@@ -1366,7 +1366,7 @@ const DirectoryPage = (() => {
     const documentVerified=document.getElementById('directoryDocumentVerified'),documentSearch=document.getElementById('directoryDocumentSearch');
     const documentClear=document.getElementById('directoryDocumentClear'),documentAlert=document.getElementById('directoryDocumentSearchResult');
 
-    if(!form||!assignmentFieldset||!addButton||!editorHost||!tableHost||!cancelButton||!saveButton||
+    if(!form||!personalFieldset||!assignmentsFieldset||!addButton||!editorHost||!tableHost||!cancelButton||!saveButton||
        (!editing&&(!documentType||!documentNumber))) {
       SUNARPUI.closeModal();state.catalogs=previousCatalogs;state.formScopes=previousScopes;
       notify('error','No se pudo inicializar el formulario de Información de personal.');return;
@@ -1578,7 +1578,7 @@ const DirectoryPage = (() => {
       const annex=makeInput('number',current&&current.anexo);annex.id='directoryEditorAnnex';annex.min='1';annex.max='99999';annex.step='1';
       const observations=document.createElement('textarea');observations.id='directoryEditorObservations';observations.className='sunarp-input';
       observations.rows=2;observations.maxLength=1000;observations.value=current?key(current.observaciones):'';
-      fields.append(makeField('Cargo *',cargo),makeField('Condición del cargo *',condition),makeField('Anexo',annex),makeField('Observaciones',observations,true));
+      fields.append(makeField('Cargo *',cargo),makeField('Condición del cargo *',condition),makeField('Anexo',annex),makeField('Observaciones',observations));
       panel.append(heading,fields);
 
       const location=document.createElement('div');location.className='directory-assignment-location-editor';
