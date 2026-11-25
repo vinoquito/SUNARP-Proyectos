@@ -935,7 +935,14 @@ function createDirectorySandbox() {
   const context = vm.createContext({});
   vm.runInContext(serviceSource, context, { filename: 'DirectoryService.js' });
   context._directoryAssertAllowedFields_ = () => true;
-  context._directoryLoadContext_ = () => ({ datosPersonales: [] });
+  context._directoryLoadContext_ = () => ({
+    personas: [],
+    datosPersonales: [],
+    asignaciones: [],
+    estructuraLocal: [],
+    estructuraOrg: [],
+    locales: []
+  });
   context._directoryAuthorizationContext_ = permissionCode => ({
     auth: {},
     moduleId: 'MOD_INFO_PERSONAL',
@@ -943,6 +950,15 @@ function createDirectorySandbox() {
     structures: [],
     locals: []
   });
+  context._directoryFindPersonById_ = personaId =>
+    (context._directoryLoadContext_().personas || []).find(item =>
+      String(item.persona_id) === String(personaId)
+    ) || null;
+  context._directoryFindPersonalDataById_ = personaId =>
+    (context._directoryLoadContext_().datosPersonales || []).find(item =>
+      String(item.servidor_id) === String(personaId)
+    ) || null;
+  context._directoryAssertPersonMutationScope_ = () => true;
   context._directoryFindAuthorizedAssignmentById_ = (snapshot, _authorization, id) =>
     (snapshot.asignaciones || []).find(item =>
       String(item.asignacion_id) === String(id)
@@ -957,11 +973,13 @@ function createDirectorySandbox() {
     findRecordsByFields: (source, filters) => {
       const snapshot = context._directoryLoadContext_() || {};
       const field = Object.keys(filters)[0];
-      const rows = field === 'persona_id'
-        ? (snapshot.personas || [])
-        : field === 'servidor_id'
-          ? (snapshot.datosPersonales || [])
-          : [];
+      const rows = source === 'asignaciones'
+        ? (snapshot.asignaciones || [])
+        : source === 'personas'
+          ? (snapshot.personas || [])
+          : source === 'servidores datos personales'
+            ? (snapshot.datosPersonales || [])
+            : [];
       const records = rows.filter(item => String(item[field] || '') === String(filters[field] || ''));
       return { records, total: records.length };
     },
@@ -1148,6 +1166,18 @@ test('el formulario completo actualiza todas las asignaciones y elimina las reti
     deleted.push(id);
     return { success: true };
   };
+  const originalAssignments = [
+    { asignacion_id: 'ASG_030', persona_id: 'PER_030', cargo_id: 'CAR_001', local_id: 'LOC_001', active: true },
+    { asignacion_id: 'ASG_031', persona_id: 'PER_030', cargo_id: 'CAR_002', local_id: 'LOC_002', active: true }
+  ];
+  const originalPerson = { persona_id: 'PER_030', nombres: 'Ana', apellidos: 'Pérez' };
+  context._directoryFindPersonById_ = () => originalPerson;
+  context._directoryFindPersonalDataById_ = () => null;
+  context._directoryAssertPersonMutationScope_ = () => true;
+  context._directoryLoadContext_ = () => ({
+    personas: [originalPerson], datosPersonales: [], asignaciones: originalAssignments,
+    estructuraLocal: [], estructuraOrg: [], locales: []
+  });
 
   const result = context.saveDirectoryEntry({
     persona_id: 'PER_030',
@@ -1203,6 +1233,13 @@ test('la edición coordinada recupera la asignación anterior por ID sin cargar 
     lookupId = id;
     return previousAssignment;
   };
+  context._directoryFindPersonById_ = () => person;
+  context._directoryFindPersonalDataById_ = () => personalData;
+  context._directoryAssertPersonMutationScope_ = () => true;
+  context.SUNARPCore.findRecordsByFields = (source, filters) => {
+    if (source === 'asignaciones') return { records: [previousAssignment], total: 1 };
+    return { records: [], total: 0 };
+  };
   context._directoryAssertDocumentAvailable_ = () => ({
     tipo_documento: 'DNI',
     numero_documento: '12345678'
@@ -1236,8 +1273,14 @@ test('la edición rechaza una asignación que pertenece a otra persona antes de 
   context._directoryLoadContext_ = () => ({
     personas: [{ persona_id: 'PER_001', nombres: 'Ana', apellidos: 'Pérez' }],
     datosPersonales: [],
-    asignaciones: [{ asignacion_id: 'ASG_002', persona_id: 'PER_002' }]
+    asignaciones: [{ asignacion_id: 'ASG_002', persona_id: 'PER_002', local_id: 'LOC_2' }]
   });
+  context._directoryFindPersonById_ = () => ({ persona_id: 'PER_001', nombres: 'Ana', apellidos: 'Pérez' });
+  context._directoryAssertPersonMutationScope_ = () => true;
+  context.SUNARPCore.findRecordsByFields = (source, filters) =>
+    source === 'asignaciones'
+      ? { records: [{ asignacion_id: 'ASG_002', persona_id: 'PER_002', local_id: 'LOC_2' }], total: 1 }
+      : { records: [], total: 0 };
   context._directoryAssertDocumentAvailable_ = () => ({
     tipo_documento: 'DNI',
     numero_documento: '12345678'
