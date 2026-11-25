@@ -2491,11 +2491,16 @@ test('Información de personal muestra directamente la unión del ámbito y solo
   const hierarchy = directoryUiSource.slice(hierarchyStart, hierarchyEnd);
   assert.ok(hierarchy.includes('state.hierarchySelectableIds'));
 
+  const scopeRootsStart = directoryUiSource.indexOf('function _directoryGetHierarchyScopeRoots_');
   const nodesStart = directoryUiSource.indexOf('function getHierarchyNodes(parentId)');
+  const hierarchyScopeRoots = directoryUiSource.slice(scopeRootsStart, nodesStart);
+  assert.ok(hierarchyScopeRoots.includes("scope.type !== 'ESTRUCTURA_ORG'"));
+  assert.ok(hierarchyScopeRoots.includes('scope.includeDescendants'));
+  assert.ok(hierarchyScopeRoots.includes('_directoryMatchesHierarchySubtree_'));
+
   const nodesEnd = directoryUiSource.indexOf('function getHierarchyLabel(', nodesStart);
   const hierarchyNodes = directoryUiSource.slice(nodesStart, nodesEnd);
-  assert.ok(hierarchyNodes.includes("scope.type === 'ESTRUCTURA_ORG'"));
-  assert.ok(hierarchyNodes.includes('scope.includeDescendants === true'));
+  assert.ok(hierarchyNodes.includes('_directoryGetHierarchyScopeRoots_'));
   assert.ok(hierarchyNodes.includes('_directoryGetSelectableHierarchyChildren_'));
   assert.equal(hierarchyNodes.includes('collectChildren'), false);
   assert.equal(hierarchyNodes.includes('Los nodos intermedios sin asignaciones no se ofrecen'), false);
@@ -2510,7 +2515,7 @@ test('Información de personal muestra directamente la unión del ámbito y solo
   const cargoEnd = directoryUiSource.indexOf('function getHierarchyFilterSets()', cargoStart);
   const cargoFilter = directoryUiSource.slice(cargoStart, cargoEnd);
   assert.ok(cargoFilter.includes("getRecordsForFilters(new Set(['cargo']))"));
-  assert.ok(cargoFilter.includes('if (wrapper) wrapper.hidden = cargos.length <= 1'));
+  assert.ok(cargoFilter.includes('if (wrapper) wrapper.hidden = cargos.length === 0'));
 
   assert.doesNotMatch(directoryViewSource, /directoryLocalFilter/);
   assert.match(directoryViewSource, /directoryCargoFilter/);
