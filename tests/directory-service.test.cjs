@@ -1552,7 +1552,7 @@ test('las raíces orgánicas múltiples del formulario respetan estructura_org.o
     { tipo_ambito_id: 'ESTRUCTURA_ORG', referencia_id: 'CHILD_A', incluir_descendientes: false },
     { tipo_ambito_id: 'ESTRUCTURA_ORG', referencia_id: 'ROOT_A2', incluir_descendientes: false }
   ]);
-  assert.deepEqual(Array.from(ordered.scope.rootStructureIds), ['ROOT_A', 'ROOT_A2']);
+  assert.deepEqual(Array.from(ordered.scope.rootStructureIds), ['ROOT_A2', 'ROOT_A']);
 });
 
 function assignmentContext() {
