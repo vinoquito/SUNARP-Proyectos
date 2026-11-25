@@ -23,6 +23,10 @@ const uiDataTableSource = fs.readFileSync(uiDataTablePath, 'utf8');
 const scriptStart = frontendSource.split('<script>')[1];
 assert.ok(scriptStart, 'DirectoryScripts.html debe contener el bloque JavaScript principal');
 const frontendScript = scriptStart.split('</script>')[0];
+assert.doesNotThrow(
+  () => new vm.Script(frontendScript, { filename: 'DirectoryScripts.html' }),
+  'DirectoryScripts.html debe contener JavaScript sintácticamente válido'
+);
 
 const sandbox = vm.createContext({});
 vm.runInContext(
@@ -1074,6 +1078,54 @@ test('el formulario completo guarda varias asignaciones en una sola operación c
   assert.equal(result.assignments[1].asignacion_id, 'ASG_021');
 });
 
+test('si falla una asignación adicional, el alta compuesta elimina lo creado en las tres tablas', () => {
+  const context = createDirectorySandbox();
+  const deleted = [];
+  context._saveDirectoryEntryPrimary_ = () => ({
+    success: true,
+    person: { persona_id: 'PER_041' },
+    personalData: { servidor_id: 'PER_041' },
+    assignment: { asignacion_id: 'ASG_041', persona_id: 'PER_041' }
+  });
+  context.saveDirectoryAssignment = () => { throw new Error('fallo de la segunda asignación'); };
+  context._directoryFindPersonalDataById_ = () => ({
+    servidor_id: 'PER_041', tipo_documento: 'DNI', numero_documento: '12345678'
+  });
+  context.SUNARPCore = {
+    findRecordsByFields: (source, filters) => {
+      if (source === 'asignaciones') {
+        assert.deepEqual(JSON.parse(JSON.stringify(filters)), { persona_id: 'PER_041' });
+        return {
+          records: [{ asignacion_id: 'ASG_041', persona_id: 'PER_041' }],
+          total: 1
+        };
+      }
+      throw new Error('Fuente inesperada: ' + source);
+    },
+    deleteRecord: (source, field, id) => {
+      deleted.push([source, field, id]);
+      return { success: true };
+    }
+  };
+
+  assert.throws(() => context.saveDirectoryEntry({
+    nombres: 'María',
+    apellidos: 'Rojas',
+    tipo_documento: 'DNI',
+    numero_documento: '12345678',
+    assignments: [
+      { cargo_id: 'CAR_001', estructura_local_id: 'REL_001' },
+      { cargo_id: 'CAR_002', local_id: 'LOC_002' }
+    ]
+  }), /fallo de la segunda asignación/);
+
+  assert.deepEqual(deleted, [
+    ['asignaciones', 'asignacion_id', 'ASG_041'],
+    ['servidores datos personales', 'servidor_id', 'PER_041'],
+    ['personas', 'persona_id', 'PER_041']
+  ]);
+});
+
 test('el formulario completo actualiza todas las asignaciones y elimina las retiradas', () => {
   const context = createDirectorySandbox();
   const primaryWrites = [];
@@ -1289,6 +1341,25 @@ test('el formulario permite registrar y actualizar observaciones dentro de cada 
   assert.match(frontendSource, /controls\.observaciones = document\.createElement\('textarea'\)/);
   assert.match(frontendSource, /observaciones: key\(controls\.observaciones\.value\)/);
   assert.match(frontendSource, /directoryFormAssignments/);
+});
+
+test('Nuevo servidor y Editar usan ámbitos autorizados, DNI previo y asignaciones en el mismo formulario', () => {
+  assert.match(frontendSource, /callServer\('getDirectoryFormData'/);
+  assert.match(frontendSource, /callServer\('searchDirectoryDocument'/);
+  assert.match(frontendSource, /directoryFormTipoDocumento/);
+  assert.match(frontendSource, /directoryFormAddAssignment/);
+  assert.match(frontendSource, /onClick: \(\) => openDirectoryForm\(null\)/);
+  assert.doesNotMatch(frontendSource, /Adscripción de la asignación/);
+  assert.doesNotMatch(frontendSource, /label: 'Nueva asignación'/);
+  assert.doesNotMatch(frontendSource, /Selecciona una sede antes de registrar un servidor/);
+});
+
+test('el formulario de servidor usa el catálogo documental cargado por SUNARP Core', () => {
+  assert.match(serviceSource, /function getDirectoryFormData\(action\)/);
+  assert.match(serviceSource, /includeDocumentTypes:\s*true/);
+  assert.match(serviceSource, /tiposDocumento:\s*documentTypes/);
+  assert.match(serviceSource, /function _directoryAssertDocumentTypeAllowed_\(/);
+  assert.match(serviceSource, /listRecordsFromSourcesCached\(/);
 });
 
 
