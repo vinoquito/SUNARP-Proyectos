@@ -1036,6 +1036,7 @@ test('si falla la primera asignación, el alta coordinada compensa persona y fic
   context._saveDirectoryPersonalData_ = () => ({ personalData: { servidor_id: 'PER_002' } });
   context.saveDirectoryAssignment = () => { throw new Error('fallo de asignación'); };
   context.SUNARPCore = {
+    searchRecordsByFields: () => ({ records: [], total: 0 }),
     deleteRecord: (source, field, id) => {
       deleted.push([source, field, id]);
       return { success: true };
@@ -2803,6 +2804,54 @@ test('deleteDirectoryPerson elimina el servidor y sus tres tablas relacionadas c
   assert.equal(auditEvent.accion, 'ELIMINAR_SERVIDOR_DIRECTORIO');
 });
 
+test('deleteDirectoryPerson bloquea la eliminación si una asignación eliminada conserva auditoría vinculada al servidor', () => {
+  const vmContext = vm.createContext({});
+  vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
+  const person = { persona_id: 'PER_012', nombres: 'Eva', apellidos: 'Ruiz' };
+  const deleted = [];
+  vmContext._directoryAuthorizationContext_ = () => ({ auth: {}, structures: [], locals: [] });
+  vmContext._directoryLoadContext_ = () => ({ asignaciones: [], estructuraLocal: [], estructuraOrg: [], locales: [] });
+  vmContext._directoryFindPersonById_ = () => person;
+  vmContext._directoryFindPersonalDataById_ = () => null;
+  vmContext._directoryAssertPersonMutationScope_ = () => {};
+  vmContext._directorySource_ = name => name;
+  vmContext._accessSecuritySource_ = name => name;
+  vmContext.ACCESS_MANAGEMENT_CONFIG = { sheets: { audit: 'Auditoria' } };
+  vmContext._accessRunAudited_ = () => { throw new Error('No debe iniciar una eliminación auditada.'); };
+  vmContext.SUNARPCore = {
+    findRecordsByFields: source => source === 'asignaciones'
+      ? { records: [], total: 0 }
+      : { records: [], total: 0 },
+    searchRecordsByFields: (source, query, fields) => {
+      assert.equal(source, 'Auditoria');
+      assert.equal(query, 'PER_012');
+      assert.deepEqual(Array.from(fields), ['datos_antes', 'datos_despues']);
+      return {
+        records: [{
+          evento_id: 'EVT_OLD_ASSIGNMENT',
+          modulo: 'INFORMACION_PERSONAL',
+          tipo_entidad: 'ASIGNACION',
+          registro_id: 'ASG_DELETED_012',
+          datos_antes: '',
+          datos_despues: JSON.stringify({
+            asignacion_id: 'ASG_DELETED_012',
+            persona_id: 'PER_012',
+            cargo_id: 'CAR_001'
+          })
+        }],
+        total: 1
+      };
+    },
+    deleteRecord: (...args) => { deleted.push(args); return { success: true }; }
+  };
+
+  assert.throws(
+    () => vmContext.deleteDirectoryPerson('PER_012'),
+    /acción\(es\) registradas en la auditoría institucional/
+  );
+  assert.deepEqual(deleted, []);
+});
+
 test('deleteDirectoryPerson bloquea la eliminación cuando hay una acción previa de Información de personal', () => {
   const vmContext = vm.createContext({});
   vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
@@ -2828,6 +2877,7 @@ test('deleteDirectoryPerson bloquea la eliminación cuando hay una acción previ
           registro_id: 'ASG_011',
           accion: 'EDITAR_ASIGNACION_DIRECTORIO'
         }], total: 1 },
+    searchRecordsByFields: () => ({ records: [], total: 0 }),
     deleteRecord: (...args) => { deleted.push(args); return { success: true }; }
   };
 
