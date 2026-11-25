@@ -229,7 +229,7 @@ test('el ámbito TOTAL exige elegir sede y no carga registros agregados al entra
   assert.ok(load.includes('populateSedeFilter();'));
   assert.ok(load.includes('if (!state.hasTotalScope && state.authorizedSedes.length === 1)'));
   assert.doesNotMatch(load, /getDirectoryAuthorizedData|autoLoadedAllSites|__ALL__/);
-  assert.match(siteFilter, /isTotalSelection \?\s*'Seleccione una opción'/);
+  assert.match(siteFilter, /const placeholder = isTotalSelection\\s*\\?\\s*'Seleccione una opción'/);
   assert.match(siteFilter, /if \(isTotalSelection\) select\.value = ''/);
   assert.match(siteFilter, /wrapper\.hidden = fixedSingleSede/);
   assert.match(siteChange, /loadSelectedSede\(key\(elements\.sedeFilter\.value\)\)/);
