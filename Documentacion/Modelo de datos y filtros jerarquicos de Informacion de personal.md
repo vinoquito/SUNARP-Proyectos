@@ -79,7 +79,7 @@ Una unidad intermedia debe conservarse como opción cuando es ancestro de una un
 
 Esto no significa mostrar todas las estructuras del catálogo. Solo deben aparecer nodos que formen parte de rutas hacia registros autorizados y que respeten los ámbitos y sede aplicables. No deben inventarse hijos ni mostrarse ramas sin registros autorizados.
 
-**Importante sobre el extracto compartido:** el fragmento de `asignaciones` contiene 45 filas. Allí se ven asignaciones para Gerencia General, Integridad Institucional y Trámite Documentario; no aparece una asignación directa a `EL_SC_UF_GESTION_DOCUMENTAL` ni a `EL_SC_ARCHIVO_CENTRAL`. El extracto puede no ser la hoja completa. Por tanto, no se debe concluir que Archivo Central carezca de asignaciones en los datos completos. Antes de exigir que aparezca como opción, comprobar si existe una asignación autorizada que resuelva a `SC_ARCHIVO_CENTRAL`.
+La hoja `estructura_org` define las unidades y sus relaciones padre-hijo. La hoja `asignaciones`, mediante `estructura_local_id` y la relación correspondiente de `estructura_local`, permite resolver a qué unidad orgánica está vinculada cada asignación. Ambas fuentes cumplen funciones distintas dentro del modelo y deben interpretarse conjuntamente.
 
 ---
 
