@@ -1034,8 +1034,10 @@ test('si falla la primera asignación, el alta coordinada compensa persona y fic
   const deleted = [];
   context._saveDirectoryPerson_ = () => ({ person: { persona_id: 'PER_002' } });
   context._saveDirectoryPersonalData_ = () => ({ personalData: { servidor_id: 'PER_002' } });
+  context._directoryFindPersonalDataById_ = () => ({ servidor_id: 'PER_002' });
   context.saveDirectoryAssignment = () => { throw new Error('fallo de asignación'); };
   context.SUNARPCore = {
+    findRecordsByFields: () => ({ records: [], total: 0 }),
     searchRecordsByFields: () => ({ records: [], total: 0 }),
     deleteRecord: (source, field, id) => {
       deleted.push([source, field, id]);
