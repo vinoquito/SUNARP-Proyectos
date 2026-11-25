@@ -1908,9 +1908,10 @@ const DirectoryPage = (() => {
         siteSelect.required = canChooseSite;
         siteSelect.value = selectedSite;
       }
+      const singleStructureScope = scopes.length === 1 && scopes[0].type === 'ESTRUCTURA_ORG';
       const selectedPath = assignment && assignment.estructura_id
         ? getFormStructurePath(assignment.estructura_id)
-        : (index === 0 ? (formData.selectedPath || []).slice() : []);
+        : (singleStructureScope ? [key(scopes[0].referenceId)] : []);
       renderFormHierarchy(
         selectedSite,
         selectedPath,
