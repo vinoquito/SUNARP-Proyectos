@@ -41,18 +41,47 @@ test('el guardado compuesto retira únicamente las asignaciones de la persona in
   assert.match(serviceSource, /SUNARPCore\.insertRecord\([\s\S]*?_directoryGetAssignmentSchema_\(\)/);
 });
 
-test('el formulario apila tipo y número de documento y organiza los datos personales por ancho', () => {
+test('el formulario distribuye dos campos por fila y conserva las fechas en tres columnas', () => {
   assert.match(frontendSource, /directory-form-document-fields/);
+  assert.match(frontendSource, /directory-form-personal-grid/);
   assert.match(frontendSource, /directoryFormTipoDocumento/);
   assert.match(frontendSource, /directoryFormNumeroDocumento/);
   assert.match(frontendSource, /directoryFormNombres/);
   assert.match(frontendSource, /directoryFormApellidos/);
   assert.match(frontendSource, /directory-form-dates-grid/);
-  assert.match(viewSource, /\.directory-form-document-fields[\s\S]*?grid-template-columns:minmax\(0,1fr\)/);
-  assert.match(viewSource, /\.directory-form-dates-grid[\s\S]*?grid-template-columns:repeat\(3,minmax\(0,1fr\)/);
+  assert.ok(viewSource.includes('.directory-form-document-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))'));
+  assert.ok(viewSource.includes('.directory-form-personal-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))'));
+  assert.ok(viewSource.includes('.directory-form-dates-grid{display:grid;grid-column:1/-1;grid-template-columns:repeat(3,minmax(0,1fr))'));
+  assert.ok(viewSource.includes('.directory-form-field-full{grid-column:1/-1'));
   assert.match(frontendSource, /SUNARPUI\.showAlert\(/);
   assert.match(frontendSource, /Buscar persona/);
   assert.doesNotMatch(frontendSource, /Buscar DNI|Relación con local|Local directamente asignado/);
+});
+
+test('la inicialización del modal enlaza los botones y valida el fieldset correcto', () => {
+  const start = frontendSource.indexOf('async function openDirectoryForm(record)');
+  const end = frontendSource.indexOf('/* El guardado compuesto se gestiona', start);
+  assert.ok(start >= 0 && end > start);
+  const implementation = frontendSource.slice(start, end);
+  const guard = implementation.indexOf('if(!form||!personalFieldset||!assignmentsFieldset||');
+  assert.ok(guard >= 0, 'El guard debe validar las referencias declaradas del formulario.');
+  assert.equal(implementation.includes('!assignmentFieldset'), false);
+  for (const binding of [
+    "documentSearch.addEventListener('click'",
+    "documentClear.addEventListener('click'",
+    "addButton.addEventListener('click'",
+    "cancelButton.addEventListener('click'",
+    "form.addEventListener('submit'"
+  ]) {
+    const position = implementation.indexOf(binding);
+    assert.ok(position > guard, binding + ' debe enlazarse después de validar el formulario.');
+  }
+});
+
+test('la búsqueda documental devuelve coincidencia y ausencia de duplicados', () => {
+  assert.ok(serviceSource.includes('return { found: false'));
+  assert.ok(serviceSource.includes('found: true'));
+  assert.ok(serviceSource.includes('person: {'));
 });
 
 test('las asignaciones se administran desde una tabla editable y un editor único', () => {
