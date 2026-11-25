@@ -933,7 +933,7 @@ test('el despliegue de prueba del Gestor referencia la nueva versión de SUNARP 
   ));
   const coreLibrary = manifest.dependencies.libraries.find(item => item.userSymbol === 'SUNARPCore');
   assert.ok(coreLibrary);
-  assert.equal(coreLibrary.version, '14');
+  assert.equal(coreLibrary.version, '15');
   assert.equal(coreLibrary.developmentMode, undefined);
 });
 

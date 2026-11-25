@@ -163,7 +163,7 @@ test('el documento del contrato declara exactamente los métodos públicos y sus
   }
 });
 
-test('solo los consumidores que declaran SUNARPCore invocan la biblioteca y Gestor referencia v14', () => {
+test('solo los consumidores que declaran SUNARPCore invocan la biblioteca y Gestor referencia v15', () => {
   const gestorManifest = JSON.parse(fs.readFileSync(
     path.join(gestorDir, 'appsscript.json'),
     'utf8'
@@ -171,7 +171,7 @@ test('solo los consumidores que declaran SUNARPCore invocan la biblioteca y Gest
   const library = (gestorManifest.dependencies?.libraries || [])
     .find(item => item.userSymbol === 'SUNARPCore');
   assert.ok(library, 'Gestor debe declarar SUNARPCore.');
-  assert.equal(String(library.version), '14', 'Gestor debe referenciar la versión 14 de SUNARP Core.');
+  assert.equal(String(library.version), '15', 'Gestor debe referenciar la versión 15 de SUNARP Core.');
 
   const backendDir = path.join(root, 'Backend');
   const projectDirs = fs.readdirSync(backendDir, { withFileTypes: true })

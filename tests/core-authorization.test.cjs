@@ -183,9 +183,9 @@ test('Core deniega TOTAL cuando está combinado con ámbitos específicos', () =
   assert.equal(sandbox.authorizationIsRecordInScope(malformedTotal, 'MOD_1', {}, []), false);
 });
 
-test('el Gestor consume SUNARP Core versión 14 para consultas optimizadas', () => {
+test('el Gestor consume SUNARP Core versión 15 para consultas optimizadas', () => {
   const coreLibrary = appManifest.dependencies.libraries.find(item => item.userSymbol === 'SUNARPCore');
   assert.ok(coreLibrary, 'el manifiesto debe declarar SUNARPCore');
-  assert.equal(String(coreLibrary.version), '14');
+  assert.equal(String(coreLibrary.version), '15');
   assert.equal(coreLibrary.libraryId, '1mDzO7uTarQCKYpS5U7pMv5go0Wh76k3JoIh5GvxWPfU0zoUG7Jfp17tD');
 });
