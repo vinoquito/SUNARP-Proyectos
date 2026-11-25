@@ -2213,11 +2213,11 @@ function saveAccessUserConfiguration(payload) {
   const startedAt = Date.now();
   const authStartedAt = Date.now();
   const auth = _accessRequirePermission_('USUARIOS_ADMINISTRAR');
-  const accessModuleId = _accessResolveModuleId_(
+  const accessManagementModuleId = _accessResolveModuleId_(
     auth,
     ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses
   );
-  if (!_accessHasPermission_(auth, 'ROLES_ADMINISTRAR', accessModuleId)) {
+  if (!_accessHasPermission_(auth, 'ROLES_ADMINISTRAR', accessManagementModuleId)) {
     _accessWriteAudit_(auth, {
       accion: 'AUTORIZACION_DENEGADA',
       modulo: ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses,
