@@ -334,6 +334,8 @@
 
         try {
           await onSave();
+          // Las operaciones administrativas registran un evento de auditoría.
+          invalidateAccessAuditPageCache();
 
           SUNARPUI.closeModal();
 
@@ -507,6 +509,7 @@ async function changeAccessStatus(method, id, row, entityLabel) {
   let result;
   try {
     result = await rpc(method, id, nextActive);
+    invalidateAccessAuditPageCache();
     await refreshCurrentTabData(false);
   } finally {
     finishLoading();
@@ -3362,6 +3365,19 @@ window.SUNARPAccessHistory = Object.freeze({
   }
 
 
+  function invalidateAccessUserPageCache() {
+    state.userPageCache = {};
+    state.userPagePromises = {};
+    state.userCacheGeneration += 1;
+  }
+
+  function invalidateAccessAuditPageCache() {
+    state.auditPageCache = {};
+    state.auditPagePromises = {};
+    state.auditCacheGeneration += 1;
+  }
+
+
   async function refreshCurrentTabData(showNotification) {
     if (!state.data || state.tabRefreshing) return;
 
@@ -3370,12 +3386,8 @@ window.SUNARPAccessHistory = Object.freeze({
 
     try {
       const tab = state.activeTab;
-      state.auditPageCache = {};
-      state.userPageCache = {};
-      state.auditPagePromises = {};
-      state.userPagePromises = {};
-      state.auditCacheGeneration += 1;
-      state.userCacheGeneration += 1;
+      if (tab === 'users') invalidateAccessUserPageCache();
+      if (tab === 'audit') invalidateAccessAuditPageCache();
 
       if (tab === 'users') {
         if (state.userListController) {

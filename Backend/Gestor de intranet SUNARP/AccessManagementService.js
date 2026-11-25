@@ -2213,7 +2213,22 @@ function saveAccessUserConfiguration(payload) {
   const startedAt = Date.now();
   const authStartedAt = Date.now();
   const auth = _accessRequirePermission_('USUARIOS_ADMINISTRAR');
-  _accessRequirePermission_('ROLES_ADMINISTRAR');
+  const accessModuleId = _accessResolveModuleId_(
+    auth,
+    ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses
+  );
+  if (!_accessHasPermission_(auth, 'ROLES_ADMINISTRAR', accessModuleId)) {
+    _accessWriteAudit_(auth, {
+      accion: 'AUTORIZACION_DENEGADA',
+      modulo: ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses,
+      tipo_entidad: 'PERMISO',
+      registro_id: 'ROLES_ADMINISTRAR',
+      registro_nombre: 'ROLES_ADMINISTRAR',
+      resultado: 'DENEGADO',
+      detalle: 'La cuenta no tiene el permiso ROLES_ADMINISTRAR en el módulo indicado.'
+    });
+    throw new Error('No tienes autorización para realizar esta operación.');
+  }
   const authorizationMs = Date.now() - authStartedAt;
 
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -3367,6 +3382,10 @@ function _accessBuildUserListingIndex_() {
   console.log('[AccessManagement] User metadata index response:', JSON.stringify({
     cacheHit: cached.cacheHit === true,
     cacheStored: cached.cacheStored === true,
+    sourceGenerationMs: Number(cached.sourceGenerationMs) || 0,
+    sourceReadMs: Number(cached.value.sourceReadMs) || 0,
+    orgLookupMs: Number(cached.value.orgLookupMs) || 0,
+    indexBuildMs: Number(cached.value.indexBuildMs) || 0,
     users: cached.value.rows.length,
     durationMs: Date.now() - indexStartedAt
   }));
@@ -3396,11 +3415,12 @@ function getAccessUsers(filters) {
     if (roleId && !row.roles.some(role => _accessUpper_(role.rol_id) === roleId)) return false;
     return true;
   });
+  const candidateFilterMs = Date.now() - filterStartedAt;
   const candidatePersonaIds = matchingRows.map(row => row.persona_id);
   if (!candidatePersonaIds.length) {
     console.log('[AccessManagement] Users page timing:', JSON.stringify({
-      authorizationMs, indexLookupMs, candidateFilterMs: Date.now() - filterStartedAt,
-      peopleSearchMs: 0, peopleQueryMs: 0, candidateCount: 0,
+      authorizationMs, indexLookupMs, candidateFilterMs,
+      peopleSearchMs: 0, peopleSearchResultCount: 0, peopleQueryMs: 0, candidateCount: 0,
       page, pageSize, totalMs: Date.now() - requestStartedAt,
       cacheHit: indexed.cacheHit === true
     }));
@@ -3413,6 +3433,7 @@ function getAccessUsers(filters) {
   const peopleSource = _accessDirectorySource_(ACCESS_MANAGEMENT_CONFIG.sheets.people);
   let pageCandidateIds = candidatePersonaIds;
   let peopleSearchMs = 0;
+  let peopleSearchResultCount = 0;
   let searchTokens = [];
   if (query) {
     const searchStartedAt = Date.now();
@@ -3425,6 +3446,7 @@ function getAccessUsers(filters) {
       ['persona_id', 'nombres', 'apellidos', 'correo_institucional'],
       { matchCase: false }
     );
+    peopleSearchResultCount = (searchResult.records || []).length;
     const queryLower = query.toLocaleLowerCase();
     const nameMatches = (searchResult.records || []).filter(person => {
       const personaId = _accessText_(person.persona_id);
@@ -3505,10 +3527,33 @@ function getAccessUsers(filters) {
   };
   console.log('[AccessManagement] Users page timing:', JSON.stringify({
     authorizationMs, indexLookupMs,
-    candidateFilterMs: peopleSearchMs ? Math.max(0, peopleSearchMs) : Date.now() - filterStartedAt,
-    peopleSearchMs, peopleQueryMs, candidateCount: pageCandidateIds.length,
+    indexCacheHit: indexed.cacheHit === true,
+    indexSourceGenerationMs: Number(indexed.sourceGenerationMs) || 0,
+    indexSourceReadMs: Number(indexed.value.sourceReadMs) || 0,
+    indexOrgLookupMs: Number(indexed.value.orgLookupMs) || 0,
+    indexBuildMs: Number(indexed.value.indexBuildMs) || 0,
+    candidateFilterMs, peopleSearchMs, peopleSearchResultCount,
+    peopleQueryMs,
+    peopleQuery: {
+      cacheHit: peoplePage.cacheHit === true,
+      authorizedSnapshotCacheHit: peoplePage.authorizedSnapshotCacheHit === true,
+      candidateCacheHit: peoplePage.candidateCacheHit === true,
+      sourceGenerationMs: Number(peoplePage.sourceGenerationMs) || 0,
+      authorizedSnapshotLookupMs: Number(peoplePage.authorizedSnapshotLookupMs) || 0,
+      candidateCacheLookupMs: Number(peoplePage.candidateCacheLookupMs) || 0,
+      candidateLoadMs: Number(peoplePage.candidateLoadMs) || 0,
+      candidateEvaluationMs: Number(peoplePage.candidateEvaluationMs) || 0,
+      pageHydrationMs: Number(peoplePage.pageHydrationMs) || 0,
+      candidateCount: Number(peoplePage.candidateCount) || 0,
+      authorizedCount: Number(peoplePage.authorizedCount) || 0,
+      retainedForPage: Number(peoplePage.retainedForPage) || 0,
+      projectedFieldCount: Number(peoplePage.projectedFieldCount) || 0,
+      hydratedRowCount: Number(peoplePage.hydratedRowCount) || 0,
+      durationMs: Number(peoplePage.durationMs) || 0
+    },
+    candidateCount: pageCandidateIds.length,
     returned: items.length, searchTokens, page, pageSize,
-    total: result.total, cacheHit: indexed.cacheHit === true,
+    total: result.total,
     totalMs: Date.now() - requestStartedAt
   }));
   return result;
