@@ -273,7 +273,7 @@ test('los ámbitos de varias áreas muestran raíces propias y eliminan referenc
   ];
   const records = [
     { estructura_id: 'A_CHILD', filter_sede_id: 'SEDE_A' },
-    { estructura_id: 'B_CHILD', filter_sede_id: 'SEDE_A' },
+    { estructura_id: 'ROOT_B', filter_sede_id: 'SEDE_A' },
     { estructura_id: 'ROOT_COVERED', filter_sede_id: 'SEDE_A' }
   ];
   const scopes = [
@@ -285,7 +285,7 @@ test('los ámbitos de varias áreas muestran raíces propias y eliminan referenc
     records, structures, { scopes }, 'SEDE_A'
   );
   assert.deepEqual([...selectable].sort(), [
-    'A_CHILD', 'B_CHILD', 'ROOT_A', 'ROOT_B', 'ROOT_COVERED'
+    'A_CHILD', 'ROOT_A', 'ROOT_B', 'ROOT_COVERED'
   ]);
   const index = hierarchyIndexSandbox.buildIndex(records, structures);
   const roots = hierarchySandbox.getHierarchyScopeRoots(scopes, index, selectable, 'SEDE_A');
