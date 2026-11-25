@@ -3913,6 +3913,7 @@ function _accessAuditContainsPermission_(event, permissionId) {
 function _accessBuildEntityHistoryIndex_(source, entityType, recordId, relatedTypes) {
   const events = [];
   const seenEventIds = new Set();
+  const relatedRecordIds = new Set([recordId]);
 
   const consumeEvents = candidates => {
     (candidates || []).forEach(event => {
@@ -3930,7 +3931,9 @@ function _accessBuildEntityHistoryIndex_(source, entityType, recordId, relatedTy
       ) return;
 
       let matches = relatedTypes[entityType].includes(eventType) &&
-        eventRecordId === recordId;
+        (entityType === 'SERVIDOR'
+          ? relatedRecordIds.has(eventRecordId)
+          : eventRecordId === recordId);
 
       if (!matches && entityType === 'PERMISO' && eventType === 'ROL_PERMISO') {
         matches = _accessAuditContainsPermission_(event, recordId);
@@ -3964,6 +3967,7 @@ function _accessBuildEntityHistoryIndex_(source, entityType, recordId, relatedTy
     (assignmentMatches.records || []).forEach(assignment => {
       const assignmentId = _accessText_(assignment.asignacion_id);
       if (!assignmentId) return;
+      relatedRecordIds.add(assignmentId);
       const assignmentEvents = SUNARPCore.findRecordsByFields(
         source,
         { registro_id: assignmentId },
