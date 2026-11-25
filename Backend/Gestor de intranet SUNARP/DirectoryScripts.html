@@ -1278,294 +1278,7 @@ const DirectoryPage = (() => {
   }
 
 
-  function getFormStructurePath(structureId) {
 
-    const structureMap = new Map(
-      state.catalogs.estructuraOrg.map(node => [
-        key(node.id),
-        node
-      ])
-    );
-
-    const path = [];
-    const visited = new Set();
-
-    let current = structureMap.get(key(structureId));
-
-    while (current) {
-
-      const currentId = key(current.id);
-
-      if (!currentId || visited.has(currentId)) {
-        break;
-      }
-
-      visited.add(currentId);
-      path.unshift(currentId);
-
-      const parentId = key(current.parent_id);
-
-      current = parentId
-        ? structureMap.get(parentId) || null
-        : null;
-
-    }
-
-    return path;
-  }
-
-
-  function getFormHierarchyNodes(parentId, sedeId, localId) {
-    const scopes = state.formScopes || [];
-    const plan = _directoryGetAccessFilterPlan_({ scopes }, sedeId);
-    const structures = (state.catalogs.estructuraOrg || []).filter(isActive);
-    const structureById = new Map(structures.map(node => [key(node.id), node]));
-    const selectedParentId = key(parentId);
-    const selectedSiteId = key(sedeId);
-    const effectiveLocalId = key(localId) ||
-      (plan.localMode === 'fixed' ? key(plan.localScopeIds[0]) : '');
-
-    const sortNodes = nodes => nodes.slice().sort((a, b) => {
-      const rawA = a.order;
-      const rawB = b.order;
-      const orderA = rawA === '' || rawA === null || rawA === undefined
-        ? Number.MAX_SAFE_INTEGER : Number(rawA);
-      const orderB = rawB === '' || rawB === null || rawB === undefined
-        ? Number.MAX_SAFE_INTEGER : Number(rawB);
-      return (Number.isFinite(orderA) ? orderA : Number.MAX_SAFE_INTEGER) -
-        (Number.isFinite(orderB) ? orderB : Number.MAX_SAFE_INTEGER) ||
-        key(a.name).localeCompare(key(b.name), 'es', { sensitivity: 'base' });
-    });
-
-    if (!selectedSiteId) return [];
-
-    if (plan.entryScope === 'ESTRUCTURA_ORG') {
-      const scopeRoots = plan.structureScopes
-        .map(scope => ({ scope, node: structureById.get(key(scope.referenceId)) }))
-        .filter(item => item.node && key(item.node.sede_id) === selectedSiteId);
-
-      const allowedIds = new Set();
-      scopeRoots.forEach(({ scope, node }) => {
-        const rootId = key(node.id);
-        allowedIds.add(rootId);
-        if (!scope.includeDescendants) return;
-        const queue = [rootId];
-        while (queue.length) {
-          const currentId = queue.shift();
-          structures.forEach(child => {
-            const childId = key(child.id);
-            if (key(child.parent_id) === currentId &&
-                key(child.sede_id) === selectedSiteId &&
-                !allowedIds.has(childId)) {
-              allowedIds.add(childId);
-              queue.push(childId);
-            }
-          });
-        }
-      });
-
-      if (selectedParentId) {
-        if (!allowedIds.has(selectedParentId)) return [];
-        return sortNodes(structures.filter(node =>
-          key(node.parent_id) === selectedParentId &&
-          key(node.sede_id) === selectedSiteId &&
-          allowedIds.has(key(node.id))
-        ));
-      }
-
-      if (scopeRoots.length === 1) {
-        const root = scopeRoots[0];
-        return root.scope.includeDescendants
-          ? sortNodes(structures.filter(node =>
-              key(node.parent_id) === key(root.node.id) &&
-              key(node.sede_id) === selectedSiteId &&
-              allowedIds.has(key(node.id))
-            ))
-          : [];
-      }
-      return sortNodes(scopeRoots.map(item => item.node));
-    }
-
-    if ((plan.entryScope !== 'SITE' && plan.entryScope !== 'LOCAL') || !effectiveLocalId) {
-      return [];
-    }
-
-    // TOTAL/SEDE y LOCAL: estructura desde el Local elegido, por relación real.
-    const allowedIds = new Set();
-    (state.catalogs.estructuraLocal || [])
-      .filter(relation =>
-        isActive(relation) && key(relation.local_id) === effectiveLocalId
-      )
-      .forEach(relation => {
-        let current = structureById.get(key(relation.estructura_id));
-        const visited = new Set();
-        while (current) {
-          const id = key(current.id);
-          if (!id || visited.has(id) || key(current.sede_id) !== selectedSiteId) break;
-          visited.add(id);
-          allowedIds.add(id);
-          const parentId = key(current.parent_id);
-          current = parentId ? structureById.get(parentId) || null : null;
-        }
-      });
-
-    if (selectedParentId) {
-      if (!allowedIds.has(selectedParentId)) return [];
-      return sortNodes(structures.filter(node =>
-        key(node.parent_id) === selectedParentId &&
-        key(node.sede_id) === selectedSiteId &&
-        allowedIds.has(key(node.id))
-      ));
-    }
-
-    return sortNodes(structures.filter(node => {
-      if (!allowedIds.has(key(node.id)) || key(node.sede_id) !== selectedSiteId) return false;
-      const parent = structureById.get(key(node.parent_id));
-      return !parent || key(parent.sede_id) !== selectedSiteId ||
-        !allowedIds.has(key(parent.id));
-    }));
-  }
-
-  function renderFormLocalOptions(structureId, selectedRelationId, selectedLocalId, suffix = '') {
-    const select = document.getElementById('directoryFormLocal' + suffix);
-    if (!select) return;
-    const wrapper = select.closest('.sunarp-form-field');
-    select.replaceChildren();
-
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = 'Selecciona una ubicación';
-    select.appendChild(placeholder);
-
-    const relations = (state.catalogs.estructuraLocal || [])
-      .filter(relation =>
-        isActive(relation) &&
-        key(relation.estructura_id) === key(structureId) &&
-        (!key(selectedLocalId) || key(relation.local_id) === key(selectedLocalId))
-      )
-      .slice()
-      .sort((a, b) =>
-        key(a.referencia).localeCompare(key(b.referencia), 'es', { sensitivity: 'base' })
-      );
-
-    relations.forEach(relation => {
-      const option = document.createElement('option');
-      option.value = key(relation.id);
-      option.textContent = [relation.local_name, relation.referencia]
-        .filter(Boolean).join(' — ') || 'Ubicación registrada';
-      select.appendChild(option);
-    });
-
-    const selectedExists = relations.some(relation => key(relation.id) === key(selectedRelationId));
-    select.value = selectedExists
-      ? key(selectedRelationId)
-      : (relations.length === 1 ? key(relations[0].id) : '');
-
-    const needsChoice = relations.length > 1;
-    select.disabled = relations.length <= 1;
-    select.required = needsChoice;
-    if (wrapper) wrapper.hidden = !needsChoice;
-  }
-
-  function renderFormHierarchy(sedeId, selectedPath, selectedRelationId, suffix = '', selectedLocalId = '') {
-    const container = document.getElementById('directoryFormHierarchy' + suffix);
-    const relationSelect = document.getElementById('directoryFormLocal' + suffix);
-    if (!container) return;
-    container.replaceChildren();
-
-    const scopes = state.formScopes || [];
-    const plan = _directoryGetAccessFilterPlan_({ scopes }, sedeId);
-    const path = Array.isArray(selectedPath) ? selectedPath.slice() : [];
-    let selectedStructureId = '';
-    let initialParentId = '';
-
-    if (plan.entryScope === 'ESTRUCTURA_ORG') {
-      // El punto de entrada se determina por las referencias del ámbito que
-      // pertenecen a la sede seleccionada, no por el total de sedes autorizadas.
-      const siteStructureScopes = plan.structureScopes.filter(scope => {
-        const root = (state.catalogs.estructuraOrg || []).find(node =>
-          key(node.id) === key(scope.referenceId)
-        );
-        return root && key(root.sede_id) === key(sedeId);
-      });
-      const rootIds = siteStructureScopes.map(scope => key(scope.referenceId));
-      const rootIndex = path.findIndex(id => rootIds.includes(key(id)));
-      if (rootIndex >= 0) {
-        path.splice(0, siteStructureScopes.length === 1 ? rootIndex + 1 : rootIndex);
-      }
-
-      if (siteStructureScopes.length === 1) {
-        const scope = siteStructureScopes[0];
-        const rootId = key(scope.referenceId);
-        selectedStructureId = rootId;
-        if (scope.includeDescendants) initialParentId = rootId;
-        else path.length = 0;
-      }
-    }
-
-    function appendLevel(parentId, level) {
-      const nodes = getFormHierarchyNodes(parentId, sedeId, selectedLocalId);
-      if (!nodes.length) return;
-
-      const wrapper = document.createElement('div');
-      wrapper.className = 'sunarp-form-field directory-form-hierarchy-level';
-      const label = document.createElement('label');
-      const select = document.createElement('select');
-      const selectId = 'directoryFormHierarchySelect' + suffix + '_' + level;
-
-      label.htmlFor = selectId;
-      label.textContent = getHierarchyLabel(nodes, level);
-      select.id = selectId;
-      select.className = 'sunarp-select directory-form-hierarchy-select';
-
-      const placeholder = document.createElement('option');
-      placeholder.value = '';
-      placeholder.textContent = level === 0 ? 'Selecciona una opción' : 'Selecciona una dependencia';
-      select.appendChild(placeholder);
-
-      nodes.forEach(node => {
-        const option = document.createElement('option');
-        option.value = key(node.id);
-        option.textContent = key(node.name) || key(node.id);
-        select.appendChild(option);
-      });
-
-      const previous = key(path[level]);
-      const exists = nodes.some(node => key(node.id) === previous);
-      const selectedValue = exists ? previous : '';
-      if (!exists && previous) path.splice(level);
-      select.value = selectedValue;
-
-      select.addEventListener('change', () => {
-        path.splice(level);
-        if (select.value) path.push(select.value);
-        renderFormHierarchy(sedeId, path, '', suffix, selectedLocalId);
-      });
-
-      wrapper.append(label, select);
-      container.appendChild(wrapper);
-      if (selectedValue) {
-        selectedStructureId = selectedValue;
-        appendLevel(selectedValue, level + 1);
-      }
-    }
-
-    if (plan.hierarchyMode !== 'none') appendLevel(initialParentId, 0);
-    if (path.length) selectedStructureId = path[path.length - 1];
-
-    renderFormLocalOptions(
-      selectedStructureId,
-      selectedRelationId,
-      (plan.entryScope === 'SITE' || plan.entryScope === 'LOCAL') ? selectedLocalId : '',
-      suffix
-    );
-
-    if (relationSelect && !selectedStructureId) {
-      relationSelect.value = '';
-      const wrapper = relationSelect.closest('.sunarp-form-field');
-      if (wrapper) wrapper.hidden = true;
-    }
-  }
 
   /* =====================================================
      8. FORMULARIO: CONTENIDO
@@ -1618,696 +1331,387 @@ const DirectoryPage = (() => {
 
 
   async function openDirectoryForm(record) {
-
-    const isEditing = Boolean(record);
-    let previousCatalogs = state.catalogs;
-    let formRecord = record;
+    const editing=Boolean(record);
+    const previousCatalogs=state.catalogs, previousScopes=state.formScopes;
+    const previousRecords=state.records, previousSedeId=state.activeSedeId;
+    let response;
     try {
-      const formDataResponse = await callServer('getDirectoryFormData', isEditing ? 'INFORMACION_PERSONAL_EDITAR' : 'INFORMACION_PERSONAL_CREAR');
-      if (!formDataResponse || !formDataResponse.catalogs) {
-        throw new Error('No se pudieron cargar los catálogos del formulario.');
-      }
-      state.catalogs = Object.assign({}, previousCatalogs || {}, formDataResponse.catalogs);
-      state.formScopes = formDataResponse.scopes || [];
-    } catch (error) {
-      notify('error', error.message || 'No se pudieron cargar los datos del formulario.');
-      return;
-    }
+      response=await callServer('getDirectoryFormData',editing?'INFORMACION_PERSONAL_EDITAR':'INFORMACION_PERSONAL_CREAR');
+      if(!response||!response.catalogs)throw new Error('No se pudieron cargar los catálogos del formulario.');
+      state.catalogs=Object.assign({},previousCatalogs||{},response.catalogs);
+      state.formScopes=response.scopes||[];
+    } catch(error) { notify('error',error.message||'No se pudieron cargar los datos del formulario.');return; }
 
-    if (isEditing) {
+    let person=record||null;
+    if(editing) {
       try {
-        const detail = await callServer('getDirectoryPersonById', record.persona_id);
-        if (!detail) throw new Error('No se encontró la ficha de la persona.');
-        const assignment = (detail.assignments || []).find(item =>
-          key(item.asignacion_id) === key(record.asignacion_id || record.id)
-        );
-        if (!assignment) throw new Error('No se encontró la asignación que deseas editar dentro de tu ámbito.');
-        const allAssignments = (detail.assignments || []).slice();
-        const orderedAssignments = [assignment].concat(allAssignments.filter(item =>
-          key(item.asignacion_id) !== key(assignment.asignacion_id)
-        ));
-        formRecord = Object.assign({}, detail, assignment, {
-          id: assignment.asignacion_id,
-          assignments: orderedAssignments
-        }, detail.personalData || {});
-      } catch (error) {
-        notify('error', error.message || 'No se pudo recuperar la ficha de la persona.');
-        return;
+        const detail=await callServer('getDirectoryPersonById',record.persona_id);
+        if(!detail)throw new Error('No se encontró la ficha de la persona.');
+        person=Object.assign({},detail,detail.personalData||{},{assignments:(detail.assignments||[]).map(item=>Object.assign({},item))});
+      } catch(error) {
+        state.catalogs=previousCatalogs;state.formScopes=previousScopes;
+        notify('error',error.message||'No se pudo recuperar la ficha de la persona.');return;
       }
     }
 
-    const formData = buildDirectoryForm(formRecord);
+    const formData=buildDirectoryForm(person),template=document.createElement('template');
+    template.innerHTML=formData.html.trim();
+    SUNARPUI.openModal({title:editing?'Editar servidor':'Registrar servidor',content:template.content,size:'xl'});
 
-    // Convertir la cadena HTML del formulario en un fragmento DOM.
-    const template = document.createElement('template');
+    const form=document.getElementById('directoryForm'),personalFieldset=document.getElementById('directoryPersonalFields');
+    const assignmentsFieldset=document.getElementById('directoryAssignmentsFieldset'),addButton=document.getElementById('directoryAddAssignment');
+    const editorHost=document.getElementById('directoryAssignmentEditorHost'),tableHost=document.getElementById('directoryAssignmentsTableHost');
+    const cancelButton=document.getElementById('directoryFormCancel'),saveButton=document.getElementById('directoryFormSave');
+    const documentType=document.getElementById('directoryFormTipoDocumento'),documentNumber=document.getElementById('directoryFormNumeroDocumento');
+    const documentVerified=document.getElementById('directoryDocumentVerified'),documentSearch=document.getElementById('directoryDocumentSearch');
+    const documentClear=document.getElementById('directoryDocumentClear'),documentAlert=document.getElementById('directoryDocumentSearchResult');
 
-    template.innerHTML = formData.html.trim();
-
-    // SUNARP UI recibe un elemento DOM mediante la propiedad content.
-    SUNARPUI.openModal({
-      title: isEditing ? 'Editar servidor' : 'Registrar servidor',
-
-      content: template.content,
-      size: 'xl'
-    });
-
-    // Inicializar las asignaciones dentro del mismo formulario.
-    const form = document.getElementById('directoryForm');
-    const assignmentsContainer = document.getElementById('directoryAssignmentsContainer');
-    const firstAssignmentRow = document.getElementById('directoryAssignmentRow');
-    const cancelButton = document.getElementById('directoryFormCancel');
-    function createDirectoryFormSection(title, description, number) {
-      const section = document.createElement('section');
-      section.className = 'directory-form-section';
-      const heading = document.createElement('div');
-      heading.className = 'directory-form-section-heading';
-      const titleElement = document.createElement('h3');
-      titleElement.textContent = number + '. ' + title;
-      const descriptionElement = document.createElement('p');
-      descriptionElement.textContent = description;
-      heading.append(titleElement, descriptionElement);
-      section.appendChild(heading);
-      return section;
+    if(!form||!assignmentFieldset||!addButton||!editorHost||!tableHost||!cancelButton||!saveButton||
+       (!editing&&(!documentType||!documentNumber))) {
+      SUNARPUI.closeModal();state.catalogs=previousCatalogs;state.formScopes=previousScopes;
+      notify('error','No se pudo inicializar el formulario de Información de personal.');return;
     }
 
-    function arrangeDirectoryForm(formElement, editing) {
-      formElement.classList.add('directory-form');
+    const scopes=state.formScopes||[],siteScopes=scopes.filter(x=>x.type==='SEDE'&&x.referenceId);
+    const structureScopes=scopes.filter(x=>x.type==='ESTRUCTURA_ORG'&&x.referenceId),localScopes=scopes.filter(x=>x.type==='LOCAL'&&x.referenceId);
+    const totalScope=scopes.some(x=>x.type==='TOTAL');
+    const structuresById=new Map((state.catalogs.estructuraOrg||[]).map(x=>[key(x.id),x]));
+    const localsById=new Map((state.catalogs.locales||[]).map(x=>[key(x.id),x]));
+    const allowedSiteIds=new Set(siteScopes.map(x=>key(x.referenceId)));
+    structureScopes.forEach(scope=>{const item=structuresById.get(key(scope.referenceId));if(item&&item.sede_id)allowedSiteIds.add(key(item.sede_id));});
+    localScopes.forEach(scope=>{const item=localsById.get(key(scope.referenceId));if(item&&item.sede_id)allowedSiteIds.add(key(item.sede_id));});
+    const availableSites=(state.catalogs.sedes||[]).filter(x=>isActive(x)&&(totalScope||allowedSiteIds.has(key(x.id)))).slice().sort(sortByName);
+    const canChooseSite=totalScope||allowedSiteIds.size>1,fixedSiteId=!totalScope&&allowedSiteIds.size===1?Array.from(allowedSiteIds)[0]:'';
+    const canDeleteAssignments=Boolean(response.capabilities&&response.capabilities.deleteAssignments);
+    const cargos=(state.catalogs.cargos||[]).filter(isActive).slice().sort(sortByName);
+    const conditions=(state.catalogs.condicionCargo||[]).filter(isActive);
+    const draft=(editing&&Array.isArray(person.assignments)?person.assignments:[]).map(x=>Object.assign({},x));
+    const removedIds=new Set(),sitePromises=new Map();
+    let editorIsOpen=false,documentRequestId=0;
 
-      const personaId = document.getElementById('directoryFormPersonaId');
-      const actions = formElement.querySelector('.directory-form-actions') ||
-        document.querySelector('#directoryFormCancel')?.parentElement?.parentElement;
-      const panel = document.getElementById('directoryDocumentSearchPanel');
-      const searchButton = document.getElementById('directoryDocumentSearch');
-      const resultHost = document.getElementById('directoryDocumentSearchResult');
-      const verifiedField = document.getElementById('directoryDocumentVerified');
-
-      let validationSection = null;
-      if (!editing && panel) {
-        const typeField = document.getElementById('directoryFormTipoDocumento')?.closest('.sunarp-form-field');
-        const numberField = document.getElementById('directoryFormNumeroDocumento')?.closest('.sunarp-form-field');
-        const grid = document.createElement('div');
-        grid.className = 'directory-form-grid';
-        if (typeField) grid.appendChild(typeField);
-        if (numberField) grid.appendChild(numberField);
-
-        const clearButton = document.createElement('button');
-        clearButton.type = 'button';
-        clearButton.id = 'directoryDocumentClear';
-        clearButton.className = 'sunarp-btn sunarp-btn-outline';
-        clearButton.textContent = 'Limpiar';
-
-        const buttonRow = document.createElement('div');
-        buttonRow.className = 'directory-form-inline-actions';
-        if (searchButton) {
-          searchButton.textContent = 'Buscar persona';
-          searchButton.className = 'sunarp-btn sunarp-btn-primary';
-          buttonRow.append(searchButton, clearButton);
-        }
-
-        panel.replaceChildren();
-        validationSection = createDirectoryFormSection(
-          'Validar identidad',
-          'Comprueba el tipo y número de documento antes de registrar a una persona.',
-          1
-        );
-        validationSection.classList.add('directory-form-validation');
-        validationSection.append(grid, buttonRow);
-        if (resultHost) validationSection.appendChild(resultHost);
-        if (verifiedField) validationSection.appendChild(verifiedField);
-        panel.replaceWith(validationSection);
-      }
-
-      const personalSection = createDirectoryFormSection(
-        'Datos personales',
-        'Información de identificación y datos personales del servidor.',
-        editing ? 1 : 2
-      );
-      const personalFieldset = document.createElement('fieldset');
-      personalFieldset.id = 'directoryPersonalFields';
-      personalFieldset.className = 'directory-form-fieldset';
-      personalFieldset.disabled = !editing;
-      const personalGrid = document.createElement('div');
-      personalGrid.className = 'directory-form-grid';
-
-      const personalIds = editing
-        ? ['directoryFormTipoDocumento', 'directoryFormNumeroDocumento',
-           'directoryFormNombres', 'directoryFormApellidos',
-           'directoryFormCorreoInstitucional', 'directoryFormFechaNacimiento',
-           'directoryFormFechaInicio', 'directoryFormFechaCese']
-        : ['directoryFormNombres', 'directoryFormApellidos',
-           'directoryFormCorreoInstitucional', 'directoryFormFechaNacimiento',
-           'directoryFormFechaInicio', 'directoryFormFechaCese'];
-
-      personalIds.forEach(id => {
-        const control = document.getElementById(id);
-        const field = control && control.closest('.sunarp-form-field');
-        if (field) {
-          if (id === 'directoryFormCorreoInstitucional' ||
-              id === 'directoryFormFechaNacimiento' ||
-              id === 'directoryFormFechaInicio' ||
-              id === 'directoryFormFechaCese') {
-            field.classList.add('directory-form-field-full');
-          }
-          personalGrid.appendChild(field);
-        }
-      });
-      personalFieldset.appendChild(personalGrid);
-      personalSection.appendChild(personalFieldset);
-
-      const assignmentSection = createDirectoryFormSection(
-        'Asignaciones',
-        'Registra los cargos y la ubicación institucional correspondiente a cada asignación.',
-        editing ? 2 : 3
-      );
-      assignmentSection.classList.add('directory-form-assignments');
-      const assignmentFieldset = document.createElement('fieldset');
-      assignmentFieldset.id = 'directoryAssignmentsFieldset';
-      assignmentFieldset.className = 'directory-form-fieldset';
-      assignmentFieldset.disabled = !editing;
-
-      const addButton = document.getElementById('directoryAddAssignment');
-      const assignmentContainer = document.getElementById('directoryAssignmentsContainer');
-      if (addButton) {
-        addButton.textContent = 'Agregar asignación';
-        addButton.className = 'sunarp-btn sunarp-btn-outline directory-add-assignment';
-        assignmentFieldset.appendChild(addButton);
-      }
-
-      function arrangeAssignmentRow(row, index) {
-        row.classList.add('directory-assignment-row');
-        const hiddenId = row.querySelector('[id^="directoryFormAssignmentId"]');
-
-        const title = document.createElement('div');
-        title.className = 'directory-assignment-heading';
-        const titleText = document.createElement('strong');
-        titleText.className = 'directory-assignment-title';
-        titleText.textContent = 'Asignación ' + (index + 1);
-        title.appendChild(titleText);
-
-        const details = document.createElement('div');
-        details.className = 'directory-form-grid';
-        const location = document.createElement('div');
-        location.className = 'directory-assignment-location';
-        const locationTitle = document.createElement('h4');
-        locationTitle.textContent = 'Ubicación institucional';
-        const locationGrid = document.createElement('div');
-        locationGrid.className = 'directory-form-grid';
-        const actionsRow = document.createElement('div');
-        actionsRow.className = 'directory-assignment-row-actions';
-
-        const fieldFor = id => {
-          const control = row.querySelector('[id^="' + id + '"]');
-          return control ? control.closest('.sunarp-form-field') : null;
-        };
-
-        ['directoryFormCargo', 'directoryFormCondicionCargo',
-         'directoryFormAnexo', 'directoryFormObservaciones'].forEach(id => {
-          const field = fieldFor(id);
-          if (field) {
-            if (id === 'directoryFormObservaciones') field.classList.add('directory-form-field-full');
-            details.appendChild(field);
-          }
-        });
-
-        const siteField = fieldFor('directoryFormSede');
-        const localField = fieldFor('directoryFormDirectLocal');
-        const hierarchyField = row.querySelector('[id^="directoryFormHierarchyField"]');
-        const relationField = fieldFor('directoryFormLocal');
-
-        if (siteField) {
-          siteField.id = 'directoryFormSiteField';
-          locationGrid.appendChild(siteField);
-        }
-        if (localField) {
-          const label = localField.querySelector('label');
-          if (label) label.textContent = 'Local';
-          locationGrid.appendChild(localField);
-        }
-
-        location.append(locationTitle, locationGrid);
-        if (hierarchyField) {
-          hierarchyField.classList.add('directory-form-hierarchy');
-          location.appendChild(hierarchyField);
-        }
-        if (relationField) {
-          const label = relationField.querySelector('label');
-          if (label) label.textContent = 'Ubicación dentro del local';
-          relationField.classList.add('directory-form-field-full');
-          location.appendChild(relationField);
-        }
-
-        row.replaceChildren();
-        if (hiddenId) row.appendChild(hiddenId);
-        row.append(title, details, location, actionsRow);
-      }
-
-      if (assignmentContainer) {
-        Array.from(assignmentContainer.querySelectorAll('.directory-assignment-row'))
-          .forEach((row, index) => arrangeAssignmentRow(row, index));
-        assignmentFieldset.appendChild(assignmentContainer);
-      }
-      assignmentSection.appendChild(assignmentFieldset);
-
-      formElement.replaceChildren();
-      if (personaId) formElement.appendChild(personaId);
-      if (validationSection) formElement.appendChild(validationSection);
-      formElement.append(personalSection, assignmentSection);
-      if (actions) formElement.appendChild(actions);
+    function restoreState(){state.catalogs=previousCatalogs;state.formScopes=previousScopes;}
+    function showDocumentAlert(type,title,message,details){
+      if(!documentAlert)return;
+      SUNARPUI.showAlert({containerId:'directoryDocumentSearchResult',type,title,message,details,dismissible:false,replace:true});
     }
-    const scopes = state.formScopes || [];
-    const siteScopes = scopes.filter(scope => scope.type === 'SEDE' && scope.referenceId);
-    const structureScopes = scopes.filter(scope => scope.type === 'ESTRUCTURA_ORG' && scope.referenceId);
-    const localScopes = scopes.filter(scope => scope.type === 'LOCAL' && scope.referenceId);
-    const totalScope = scopes.some(scope => scope.type === 'TOTAL');
-    const allowedSiteIds = new Set(siteScopes.map(scope => key(scope.referenceId)));
-    structureScopes.forEach(scope => {
-      const node = (state.catalogs.estructuraOrg || []).find(item => key(item.id) === key(scope.referenceId));
-      if (node && node.sede_id) allowedSiteIds.add(key(node.sede_id));
-    });
-    localScopes.forEach(scope => {
-      const node = (state.catalogs.locales || []).find(item => key(item.id) === key(scope.referenceId));
-      if (node && node.sede_id) allowedSiteIds.add(key(node.sede_id));
-    });
-    const canChooseSite = totalScope || allowedSiteIds.size > 1;
-
-    function getRowElement(id, suffix) {
-      return document.getElementById(id + suffix);
+    function setVerified(verified){
+      if(documentVerified)documentVerified.value=verified?'true':'false';
+      if(!editing){personalFieldset.disabled=!verified;assignmentsFieldset.disabled=!verified;saveButton.disabled=!verified;}
     }
-
-    function refreshDirectLocalOptions(sedeId, selectedId, suffix) {
-      const select = getRowElement('directoryFormDirectLocal', suffix);
-      if (!select) return;
-      const current = selectedId !== undefined ? key(selectedId) : key(select.value);
-      select.replaceChildren();
-      const placeholder = document.createElement('option');
-      placeholder.value = '';
-      placeholder.textContent = 'Selecciona un local';
-      select.appendChild(placeholder);
-
-      const plan = _directoryGetAccessFilterPlan_({ scopes }, sedeId);
-      const permittedLocalIds = new Set(plan.localScopeIds || []);
-      let locals = [];
-      if (plan.localMode === 'selectable') {
-        locals = key(sedeId)
-          ? (state.catalogs.locales || []).filter(local => key(local.sede_id) === key(sedeId))
-          : [];
-      } else if (plan.localMode === 'selectable-scoped' || plan.localMode === 'fixed') {
-        locals = (state.catalogs.locales || []).filter(local =>
-          permittedLocalIds.has(key(local.id)) &&
-          (!key(sedeId) || key(local.sede_id) === key(sedeId))
-        );
-      }
-
-      locals.filter(isActive).slice().sort(sortByName).forEach(local => {
-        const option = document.createElement('option');
-        option.value = key(local.id);
-        option.textContent = local.name;
-        select.appendChild(option);
-      });
-
-      const fixedLocalId = plan.localMode === 'fixed' ? key(plan.localScopeIds[0]) : '';
-      const desired = current || fixedLocalId;
-      select.value = Array.from(select.options).some(option => option.value === desired)
-        ? desired : '';
-    }
-
-    function syncAssignmentMode(suffix) {
-      const siteSelect = getRowElement('directoryFormSede', suffix);
-      const localSelect = getRowElement('directoryFormDirectLocal', suffix);
-      const sedeId = siteSelect ? key(siteSelect.value) : key(formData.selectedSede);
-      const plan = _directoryGetAccessFilterPlan_({ scopes }, sedeId);
-      const localSelectable = plan.localMode === 'selectable' || plan.localMode === 'selectable-scoped';
-      const fixedLocalId = plan.localMode === 'fixed' ? key(plan.localScopeIds[0]) : '';
-
-      const siteField = getRowElement('directoryFormSiteField', suffix);
-      const localField = getRowElement('directoryFormDirectLocalField', suffix);
-      const hierarchyField = getRowElement('directoryFormHierarchyField', suffix);
-      const relationField = getRowElement('directoryFormRelationField', suffix);
-
-      if (siteField) siteField.hidden = !canChooseSite;
-      if (siteSelect) siteSelect.required = canChooseSite;
-      if (localField) {
-        localField.hidden = !localSelectable;
-        localField.style.display = localSelectable ? '' : 'none';
-      }
-      if (localSelect) {
-        localSelect.required = localSelectable;
-        if (fixedLocalId) localSelect.value = fixedLocalId;
-      }
-      if (hierarchyField) hierarchyField.hidden = plan.hierarchyMode === 'none';
-      if (relationField && !relationField.querySelector('select')?.options.length) {
-        relationField.hidden = true;
-      }
-    }
-
-    function initializeAssignmentRow(row, index, assignment) {
-      const suffix = index ? '_' + index : '';
-      row.dataset.index = String(index);
-      row.id = index ? 'directoryAssignmentRow_' + index : 'directoryAssignmentRow';
-
-      const get = prefix => row.querySelector('[id^="' + prefix + '"]');
-      const assignmentId = get('directoryFormAssignmentId');
-      const cargo = get('directoryFormCargo');
-      const condition = get('directoryFormCondicionCargo');
-      const annex = get('directoryFormAnexo');
-      const observations = get('directoryFormObservaciones');
-      const siteSelect = get('directoryFormSede');
-      const localSelect = get('directoryFormDirectLocal');
-      const relationSelect = get('directoryFormLocal');
-
-      const relation = assignment
-        ? (state.catalogs.estructuraLocal || []).find(item =>
-            key(item.id) === key(assignment.estructura_local_id))
-        : null;
-      const structure = assignment && assignment.estructura_id
-        ? (state.catalogs.estructuraOrg || []).find(item =>
-            key(item.id) === key(assignment.estructura_id))
-        : null;
-      const localId = assignment
-        ? key(assignment.local_id || (relation && relation.local_id))
-        : key(formData.selectedLocalId);
-      const local = localId
-        ? (state.catalogs.locales || []).find(item => key(item.id) === localId)
-        : null;
-      const selectedSite = assignment
-        ? key(assignment.sede_id || (structure && structure.sede_id) || (local && local.sede_id))
-        : key(formData.selectedSede);
-
-      if (assignmentId) assignmentId.value = assignment ? key(assignment.asignacion_id) : '';
-      if (cargo) cargo.value = assignment ? key(assignment.cargo_id) : '';
-      if (condition) condition.value = assignment ? (assignment.condicion_cargo || '') : '';
-      if (annex) annex.value = assignment && assignment.anexo !== undefined ? assignment.anexo : '';
-      if (observations) observations.value = assignment ? (assignment.observaciones || '') : '';
-      if (siteSelect) siteSelect.value = selectedSite;
-
-      refreshDirectLocalOptions(selectedSite, localId, suffix);
-      syncAssignmentMode(suffix);
-
-      let selectedPath = assignment && assignment.estructura_id
-        ? getFormStructurePath(assignment.estructura_id)
-        : (structureScopes.length === 1 ? [key(structureScopes[0].referenceId)] : []);
-
-      renderFormHierarchy(
-        selectedSite,
-        selectedPath,
-        assignment ? key(assignment.estructura_local_id) : '',
-        suffix,
-        localId
-      );
-
-      if (siteSelect) {
-        siteSelect.addEventListener('change', () => {
-          refreshDirectLocalOptions(siteSelect.value, '', suffix);
-          syncAssignmentMode(suffix);
-          selectedPath = [];
-          renderFormHierarchy(
-            siteSelect.value,
-            selectedPath,
-            '',
-            suffix,
-            localSelect ? localSelect.value : ''
-          );
-        });
-      }
-
-      if (localSelect) {
-        localSelect.addEventListener('change', () => {
-          selectedPath = [];
-          renderFormHierarchy(
-            siteSelect ? siteSelect.value : selectedSite,
-            selectedPath,
-            '',
-            suffix,
-            localSelect.value
-          );
-        });
-      }
-
-      if (relationSelect) {
-        relationSelect.addEventListener('change', () => {
-          const relationChoice = (state.catalogs.estructuraLocal || []).find(item =>
-            key(item.id) === key(relationSelect.value)
-          );
-          if (relationChoice && localSelect &&
-              !getRowElement('directoryFormDirectLocalField', suffix)?.hidden) {
-            localSelect.value = key(relationChoice.local_id);
-          }
-        });
-      }
-    }
-
-    if (!form || !assignmentsContainer || !firstAssignmentRow || !cancelButton) {
-      SUNARPUI.closeModal();
-      notify('error', 'No se pudo inicializar el formulario del directorio.');
-      return;
-    }
-
-    arrangeDirectoryForm(form, isEditing);
-
-    let assignmentsForForm = isEditing && Array.isArray(formRecord.assignments)
-      ? formRecord.assignments.slice()
-      : [null];
-    if (!assignmentsForForm.length) assignmentsForForm = [null];
-    assignmentsForForm.forEach((assignment, index) => {
-      let row = firstAssignmentRow;
-      if (index > 0) {
-        row = firstAssignmentRow.cloneNode(true);
-        row.querySelectorAll('[id]').forEach(element => {
-          element.id = element.id + '_' + index;
-        });
-        row.querySelectorAll('[for]').forEach(element => {
-          element.htmlFor = element.htmlFor + '_' + index;
-        });
-        row.querySelectorAll('[data-row-remove]').forEach(element => element.remove());
-        assignmentsContainer.appendChild(row);
-      }
-      initializeAssignmentRow(row, index, assignment);
-    });
-
-    let nextAssignmentIndex = assignmentsForForm.length;
-    const addAssignmentButton = document.getElementById('directoryAddAssignment');
-    if (addAssignmentButton) addAssignmentButton.addEventListener('click', () => {
-      const index = nextAssignmentIndex++;
-      const row = firstAssignmentRow.cloneNode(true);
-      row.querySelectorAll('[id]').forEach(element => {
-        element.id = element.id + '_' + index;
-      });
-      row.querySelectorAll('[for]').forEach(element => {
-        element.htmlFor = element.htmlFor + '_' + index;
-      });
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.className = 'sunarp-btn sunarp-btn-outline';
-      remove.textContent = 'Quitar asignación';
-      remove.addEventListener('click', () => row.remove());
-      const actions = row.querySelector('.directory-assignment-row-actions');
-      if (actions) actions.appendChild(remove);
-      assignmentsContainer.appendChild(row);
-      initializeAssignmentRow(row, index, null);
-    });
-
-    // Cerrar el formulario.
-    cancelButton.addEventListener('click', () => {
-      state.catalogs = previousCatalogs;
-      SUNARPUI.closeModal();
-    });
-
-    // El alta exige consultar el DNI antes de habilitar el guardado.
-    const documentSearchButton = document.getElementById('directoryDocumentSearch');
-    const documentClearButton = document.getElementById('directoryDocumentClear');
-    const documentVerified = document.getElementById('directoryDocumentVerified');
-    const documentSearchResult = document.getElementById('directoryDocumentSearchResult');
-    const documentTypeInput = document.getElementById('directoryFormTipoDocumento');
-    const documentNumberInput = document.getElementById('directoryFormNumeroDocumento');
-    const personalFields = document.getElementById('directoryPersonalFields');
-    const assignmentsFieldset = document.getElementById('directoryAssignmentsFieldset');
-    const saveButton = document.getElementById('directoryFormSave');
-
-    const setDocumentAlert = (type, title, message, details) => {
-      if (!documentSearchResult) return;
-      SUNARPUI.showAlert({
-        containerId: 'directoryDocumentSearchResult',
-        type,
-        title,
-        message,
-        details,
-        dismissible: false,
-        replace: true
-      });
-    };
-
-    const setDocumentVerified = verified => {
-      if (documentVerified) documentVerified.value = verified ? 'true' : 'false';
-      if (saveButton && !isEditing) saveButton.disabled = !verified;
-      if (personalFields && !isEditing) personalFields.disabled = !verified;
-      if (assignmentsFieldset && !isEditing) assignmentsFieldset.disabled = !verified;
-    };
-
-    if (!isEditing) {
-      setDocumentVerified(false);
-      const invalidateDocumentSearch = () => {
-        setDocumentVerified(false);
-        if (documentSearchResult) documentSearchResult.replaceChildren();
-      };
-
-      documentTypeInput.addEventListener('change', invalidateDocumentSearch);
-      documentNumberInput.addEventListener('input', invalidateDocumentSearch);
-
-      documentClearButton.addEventListener('click', () => {
-        documentTypeInput.value = '';
-        documentNumberInput.value = '';
-        invalidateDocumentSearch();
-        documentTypeInput.focus();
-      });
-
-      documentSearchButton.addEventListener('click', async () => {
-        if (!documentTypeInput.value) {
-          documentTypeInput.reportValidity();
-          return;
-        }
-        if (!documentNumberInput.value.trim()) {
-          documentNumberInput.reportValidity();
-          return;
-        }
-
-        invalidateDocumentSearch();
-        documentSearchButton.disabled = true;
-        documentClearButton.disabled = true;
-        documentSearchButton.textContent = 'Buscando...';
-        documentTypeInput.disabled = true;
-        documentNumberInput.disabled = true;
-
+    if(!editing){
+      setVerified(false);
+      const invalidate=()=>{documentRequestId++;setVerified(false);if(documentAlert)documentAlert.replaceChildren();};
+      documentType.addEventListener('change',invalidate);documentNumber.addEventListener('input',invalidate);
+      documentClear.addEventListener('click',()=>{documentType.value='';documentNumber.value='';invalidate();documentType.focus();});
+      documentSearch.addEventListener('click',async()=>{
+        if(!documentType.value)return documentType.reportValidity();
+        if(!documentNumber.value.trim())return documentNumber.reportValidity();
+        const requestId=++documentRequestId;
+        setVerified(false);documentSearch.disabled=true;documentClear.disabled=true;
+        documentType.disabled=true;documentNumber.disabled=true;documentSearch.textContent='Buscando...';
+        if(documentAlert)documentAlert.replaceChildren();
         try {
-          const result = await callServer('searchDirectoryPersonByDocument', {
-            tipo_documento: documentTypeInput.value,
-            numero_documento: documentNumberInput.value.trim()
-          });
-
-          if (result && result.found === true) {
-            setDocumentVerified(false);
-            const fullName = [
-              result.person && result.person.nombres,
-              result.person && result.person.apellidos
-            ].filter(Boolean).join(' ');
-            setDocumentAlert(
-              'warning',
-              'Documento ya registrado',
-              'Esta persona ya existe en Información de personal. No se creará un registro duplicado.',
-              fullName ? [fullName] : []
-            );
+          const result=await callServer('searchDirectoryPersonByDocument',{tipo_documento:documentType.value,numero_documento:documentNumber.value.trim()});
+          if(requestId!==documentRequestId)return;
+          if(result&&result.found===true){
+            const name=[result.person&&result.person.nombres,result.person&&result.person.apellidos].filter(Boolean).join(' ');
+            showDocumentAlert('warning','Documento ya registrado','Esta persona ya existe en Información de personal. No se creará un registro duplicado.',name?[name]:[]);
           } else {
-            setDocumentVerified(true);
-            setDocumentAlert(
-              'success',
-              'Documento disponible',
-              'No se encontró una persona con ese tipo y número de documento. Puedes continuar con el registro.'
-            );
+            setVerified(true);showDocumentAlert('success','Documento disponible','No se encontró una persona con ese tipo y número de documento. Puedes continuar con el registro.');
           }
-        } catch (error) {
-          setDocumentVerified(false);
-          setDocumentAlert(
-            'error',
-            'No se pudo comprobar el documento',
-            error.message || 'Ocurrió un error al consultar el directorio institucional.'
-          );
+        } catch(error) {
+          if(requestId!==documentRequestId)return;
+          setVerified(false);showDocumentAlert('error','No se pudo comprobar el documento',error.message||'Ocurrió un error al consultar el directorio institucional.');
         } finally {
-          documentTypeInput.disabled = false;
-          documentNumberInput.disabled = false;
-          documentSearchButton.disabled = false;
-          documentClearButton.disabled = false;
-          documentSearchButton.textContent = 'Buscar persona';
+          if(requestId===documentRequestId){
+            documentType.disabled=false;documentNumber.disabled=false;documentSearch.disabled=false;documentClear.disabled=false;documentSearch.textContent='Buscar persona';
+          }
         }
       });
     }
 
-    // Guardar el registro.
-    form.addEventListener('submit', saveForm);
+    function makeField(labelText,control,full){
+      const box=document.createElement('div');box.className='sunarp-form-field'+(full?' directory-form-field-full':'');
+      const label=document.createElement('label');label.textContent=labelText;if(control.id)label.htmlFor=control.id;
+      box.append(label,control);return box;
+    }
+    function makeSelect(options,placeholder,value){
+      const el=document.createElement('select');el.className='sunarp-select';
+      const blank=document.createElement('option');blank.value='';blank.textContent=placeholder;el.appendChild(blank);
+      options.forEach(item=>{const option=document.createElement('option');option.value=key(item.value);option.textContent=item.label;el.appendChild(option);});
+      if(value!==undefined&&value!==null)el.value=key(value);return el;
+    }
+    function makeInput(type,value){
+      const el=document.createElement('input');el.type=type;el.className='sunarp-input';el.value=value===null||value===undefined?'':String(value);return el;
+    }
+    function assignmentSite(item){
+      if(!item)return '';
+      const rel=(state.catalogs.estructuraLocal||[]).find(x=>key(x.id)===key(item.estructura_local_id));
+      const localId=key(item.local_id||(rel&&rel.local_id)),local=localsById.get(localId);
+      const structure=structuresById.get(key(item.estructura_id||(rel&&rel.estructura_id)));
+      return key(item.sede_id||(structure&&structure.sede_id)||(local&&local.sede_id));
+    }
+    async function getSiteSnapshot(siteId){
+      const id=key(siteId);if(!id)throw new Error('Selecciona una sede para configurar la asignación.');
+      if(previousSedeId===id&&previousCatalogs&&previousCatalogs.filterContract){
+        return {records:previousRecords||[],catalogs:Object.assign({},previousCatalogs,state.catalogs)};
+      }
+      const cached=getSiteClientCacheData(id);if(cached)return cached;
+      if(sitePromises.has(id))return sitePromises.get(id);
+      const pending=callServer('getDirectorySiteData',id).then(result=>{
+        if(!result||!result.catalogs||!Array.isArray(result.records))throw new Error('No se pudo cargar la jerarquía autorizada de la sede.');
+        rememberSiteClientCacheData(id,result);return result;
+      }).finally(()=>sitePromises.delete(id));
+      sitePromises.set(id,pending);return pending;
+    }
+    function getPlan(snapshot,siteId){
+      const contract=snapshot.catalogs.filterContract||{scopes:scopes};
+      return {contract,plan:_directoryGetAccessFilterPlan_(contract,siteId)};
+    }
+    function getLocalOptions(snapshot,siteId,plan){
+      const used=new Set((snapshot.records||[]).filter(x=>key(x.filter_sede_id||x.sede_id)===key(siteId))
+        .map(x=>key(x.filter_local_id||x.local_id)).filter(Boolean));
+      const permitted=plan.localMode==='selectable-scoped'?new Set(plan.localScopeIds||[]):null;
+      return (snapshot.catalogs.locales||[]).filter(x=>isActive(x)&&key(x.sede_id)===key(siteId)&&used.has(key(x.id))&&(!permitted||permitted.has(key(x.id)))).slice().sort(sortByName);
+    }
+    // Cascada de asignación y filtros: mismos índices, nodos permitidos y resolver.
+    function buildHierarchyContext(snapshot,siteId,localId){
+      const access=getPlan(snapshot,siteId),contract=access.contract,plan=access.plan;
+      const records=snapshot.records||[],structures=snapshot.catalogs.estructuraOrg||[];
+      const index=_directoryBuildHierarchyClientIndex_(records,structures);
+      let selectableIds=new Set();
+      if(plan.hierarchyMode==='structure-scope'){
+        selectableIds=_directoryBuildHierarchyFilterSets_(records,structures,contract,siteId);
+      } else if(plan.hierarchyMode==='local'){
+        const effective=key(localId)||(plan.localMode==='fixed'?key(plan.localScopeIds[0]):'');
+        if(effective)selectableIds=_directoryBuildLocalHierarchyFilterSets_(records,structures,effective,siteId);
+      }
+      return {contract,plan,index,selectableIds,nodes:parent=>getHierarchyNodesForContext(parent,siteId,index,selectableIds,contract)};
+    }
+    function structurePath(item){
+      const rel=(state.catalogs.estructuraLocal||[]).find(x=>key(x.id)===key(item&&item.estructura_local_id));
+      const id=key(item&&item.estructura_id)||(rel&&key(rel.estructura_id))||'';
+      const map=new Map((state.catalogs.estructuraOrg||[]).map(x=>[key(x.id),x]));
+      const path=[],seen=new Set();let node=map.get(id);
+      while(node){const current=key(node.id);if(!current||seen.has(current))break;seen.add(current);path.unshift(current);node=key(node.parent_id)?map.get(key(node.parent_id))||null:null;}
+      return path;
+    }
+    function conditionId(value){
+      const raw=key(value),v=raw.toLocaleLowerCase('es');
+      const match=conditions.find(x=>key(x.id)===raw||key(x.name).toLocaleLowerCase('es')===v);
+      return match?key(match.id):raw;
+    }
+    function conditionName(value){
+      const id=conditionId(value),item=conditions.find(x=>key(x.id)===id);
+      return item?key(item.name):key(value);
+    }
+    function assignmentLocation(item){
+      const rel=(state.catalogs.estructuraLocal||[]).find(x=>key(x.id)===key(item.estructura_local_id));
+      const localId=key(item.local_id||(rel&&rel.local_id)),local=localsById.get(localId);
+      const structureId=key(item.estructura_id||(rel&&rel.estructura_id)),structure=structuresById.get(structureId);
+      const siteId=key(item.sede_id||(structure&&structure.sede_id)||(local&&local.sede_id));
+      const site=(state.catalogs.sedes||[]).find(x=>key(x.id)===siteId);
+      const path=item.estructura_path||structurePath(item).map(id=>structuresById.get(id)).filter(Boolean).map(x=>key(x.name)).join(' / ');
+      return {site:key(item.sede_name||(site&&site.name)),local:key(item.local_name||(local&&local.name)),structure:key(path),reference:key(item.referencia||(rel&&rel.referencia))};
+    }
 
+    function renderTable(){
+      tableHost.replaceChildren();
+      if(!draft.length){const empty=document.createElement('p');empty.className='directory-assignment-empty';empty.textContent='Todavía no se ha agregado ninguna asignación.';tableHost.appendChild(empty);return;}
+      const table=document.createElement('table');table.className='directory-assignment-table';
+      const head=document.createElement('thead'),header=document.createElement('tr');
+      ['Cargo','Condición del cargo','Sede','Local','Dependencia','Anexo','Observaciones','Acciones'].forEach(label=>{
+        const th=document.createElement('th');th.scope='col';th.textContent=label;header.appendChild(th);
+      });
+      head.appendChild(header);table.appendChild(head);
+      const body=document.createElement('tbody');
+      draft.forEach((item,index)=>{
+        const loc=assignmentLocation(item),cargo=cargos.find(x=>key(x.id)===key(item.cargo_id));
+        const row=document.createElement('tr');
+        [cargo?key(cargo.name):key(item.cargo_name||item.cargo_id),conditionName(item.condicion_cargo),loc.site,
+          [loc.local,loc.reference].filter(Boolean).join(' — '),loc.structure,
+          item.anexo===''||item.anexo===null||item.anexo===undefined?'—':String(item.anexo),key(item.observaciones)
+        ].forEach(value=>{const td=document.createElement('td');td.textContent=value||'—';row.appendChild(td);});
+        const actions=document.createElement('td');actions.className='directory-assignment-actions';
+        const edit=document.createElement('button');edit.type='button';edit.className='sunarp-btn sunarp-btn-outline directory-small-button';
+        edit.textContent='Editar';edit.disabled=editorIsOpen;edit.addEventListener('click',()=>openAssignmentEditor(index));actions.appendChild(edit);
+        if(!key(item.asignacion_id)||canDeleteAssignments){
+          const remove=document.createElement('button');remove.type='button';remove.className='sunarp-btn sunarp-btn-outline directory-small-button';
+          remove.textContent='Quitar';remove.disabled=editorIsOpen;
+          remove.addEventListener('click',()=>{const deleted=draft.splice(index,1)[0];if(key(deleted.asignacion_id))removedIds.add(key(deleted.asignacion_id));renderTable();});
+          actions.appendChild(remove);
+        }
+        row.appendChild(actions);body.appendChild(row);
+      });
+      table.appendChild(body);tableHost.appendChild(table);
+    }
+
+    async function openAssignmentEditor(editIndex){
+      if(editorIsOpen){notify('warning','Guarda o cancela la edición actual antes de abrir otra asignación.');return;}
+      const current=Number.isInteger(editIndex)?draft[editIndex]:null;
+      const currentRel=current?(state.catalogs.estructuraLocal||[]).find(x=>key(x.id)===key(current.estructura_local_id)):null;
+      const initialSite=assignmentSite(current)||fixedSiteId;
+      editorIsOpen=true;addButton.disabled=true;tableHost.classList.add('directory-assignment-table--editing');editorHost.replaceChildren();
+
+      const panel=document.createElement('section');panel.className='directory-assignment-editor-panel';
+      const heading=document.createElement('div');heading.className='directory-assignment-editor-heading';
+      const title=document.createElement('h4');title.textContent=current?'Editar asignación':'Nueva asignación';
+      const description=document.createElement('p');description.textContent='Define el cargo, la condición y la ubicación institucional.';
+      heading.append(title,description);
+      const fields=document.createElement('div');fields.className='directory-assignment-editor-grid';
+      const cargo=makeSelect(cargos.map(x=>({value:x.id,label:key(x.name)})),'Selecciona un cargo',current&&current.cargo_id);
+      cargo.id='directoryEditorCargo';cargo.required=true;
+      const condition=makeSelect(conditions.map(x=>({value:x.id,label:key(x.name)})),'Selecciona una condición',current?conditionId(current.condicion_cargo):'');
+      condition.id='directoryEditorCondition';condition.required=true;
+      const annex=makeInput('number',current&&current.anexo);annex.id='directoryEditorAnnex';annex.min='1';annex.max='99999';annex.step='1';
+      const observations=document.createElement('textarea');observations.id='directoryEditorObservations';observations.className='sunarp-input';
+      observations.rows=2;observations.maxLength=1000;observations.value=current?key(current.observaciones):'';
+      fields.append(makeField('Cargo *',cargo),makeField('Condición del cargo *',condition),makeField('Anexo',annex),makeField('Observaciones',observations,true));
+      panel.append(heading,fields);
+
+      const location=document.createElement('div');location.className='directory-assignment-location-editor';
+      const locationTitle=document.createElement('h5');locationTitle.textContent='Ubicación institucional';
+      const locationFields=document.createElement('div');locationFields.className='directory-assignment-editor-grid';
+      const site=makeSelect(availableSites.map(x=>({value:x.id,label:key(x.name)})),'Selecciona una sede',initialSite);
+      site.id='directoryEditorSite';site.required=canChooseSite;
+      const siteField=makeField('Sede',site);siteField.hidden=!canChooseSite;
+      const local=makeSelect([],'Selecciona un local','');local.id='directoryEditorLocal';
+      const localField=makeField('Local',local);
+      const hierarchyHost=document.createElement('div');hierarchyHost.id='directoryEditorHierarchy';hierarchyHost.className='directory-form-hierarchy';
+      const relation=makeSelect([],'Selecciona una ubicación','');relation.id='directoryEditorRelation';
+      const relationField=makeField('Ubicación dentro del local',relation,true);relationField.hidden=true;
+      locationFields.append(siteField,localField);location.append(locationTitle,locationFields,hierarchyHost,relationField);panel.appendChild(location);
+
+      const actions=document.createElement('div');actions.className='directory-assignment-editor-actions';
+      const cancel=document.createElement('button');cancel.type='button';cancel.className='sunarp-btn sunarp-btn-outline';cancel.textContent='Cancelar';
+      const save=document.createElement('button');save.type='button';save.className='sunarp-btn sunarp-btn-primary';save.textContent=current?'Actualizar asignación':'Agregar a la tabla';
+      actions.append(cancel,save);panel.appendChild(actions);editorHost.appendChild(panel);
+
+      let snapshot=null,hierarchy=null;
+      let selectedLocal=key(current&&(current.local_id||(currentRel&&currentRel.local_id)));
+      let selectedPath=current?structurePath(current):[];
+      let selectedStructure='',selectedRelation=key(current&&current.estructura_local_id);
+
+      function closeEditor(){editorIsOpen=false;addButton.disabled=false;editorHost.replaceChildren();tableHost.classList.remove('directory-assignment-table--editing');renderTable();}
+      function renderRelations(){
+        relation.replaceChildren();const blank=document.createElement('option');blank.value='';blank.textContent='Selecciona una ubicación';relation.appendChild(blank);
+        const localMap=new Map((snapshot&&snapshot.catalogs.locales||[]).map(x=>[key(x.id),x]));
+        const choices=(snapshot&&snapshot.catalogs.estructuraLocal||[]).filter(item=>{
+          if(!isActive(item)||key(item.estructura_id)!==selectedStructure)return false;
+          const localItem=localMap.get(key(item.local_id));
+          return localItem&&isActive(localItem)&&key(localItem.sede_id)===key(site.value)&&(!selectedLocal||key(localItem.id)===selectedLocal);
+        }).slice().sort((a,b)=>{
+          const la=localMap.get(key(a.local_id)),lb=localMap.get(key(b.local_id));
+          return [la&&la.name,a.referencia].filter(Boolean).join(' — ').localeCompare([lb&&lb.name,b.referencia].filter(Boolean).join(' — '),'es',{sensitivity:'base'});
+        });
+        choices.forEach(item=>{const opt=document.createElement('option'),localItem=localMap.get(key(item.local_id));opt.value=key(item.id);opt.textContent=[localItem&&localItem.name,item.referencia].filter(Boolean).join(' — ')||'Ubicación registrada';relation.appendChild(opt);});
+        if(choices.some(x=>key(x.id)===selectedRelation))relation.value=selectedRelation;
+        else if(choices.length===1){selectedRelation=key(choices[0].id);relation.value=selectedRelation;}
+        else{selectedRelation='';relation.value='';}
+        relationField.hidden=choices.length<=1;relation.disabled=choices.length<=1;relation.required=choices.length>1;
+      }
+      function renderHierarchy(){
+        hierarchyHost.replaceChildren();selectedStructure='';
+        if(!snapshot||!hierarchy||hierarchy.plan.hierarchyMode==='none'){renderRelations();return;}
+        const path=selectedPath.slice();let parent='';
+        if(hierarchy.plan.hierarchyMode==='structure-scope'){
+          const roots=_directoryGetHierarchyScopeRoots_(hierarchy.contract.scopes||[],hierarchy.index,hierarchy.selectableIds,key(site.value));
+          if(roots.length===1){
+            const root=roots[0];
+            if(root.includeDescendants){const pos=path.indexOf(root.referenceId);if(pos>=0)path.splice(0,pos+1);parent=root.referenceId;}
+            else{selectedStructure=root.referenceId;path.length=0;}
+          }else if(roots.length>1){const pos=path.findIndex(id=>roots.some(item=>item.referenceId===key(id)));if(pos>0)path.splice(0,pos);}
+        }
+        function appendLevel(parentId,level){
+          const nodes=hierarchy.nodes(parentId);if(!nodes.length)return;
+          const holder=document.createElement('div');holder.className='directory-form-hierarchy-level';
+          const nodeSelect=makeSelect(nodes.map(x=>({value:x.id,label:key(x.name)||key(x.id)})),level===0?'Selecciona una opción':'Selecciona una dependencia',path[level]||'');
+          nodeSelect.id='directoryEditorHierarchy'+level;holder.appendChild(makeField(getHierarchyLabel(nodes,level),nodeSelect));
+          const exists=nodes.some(x=>key(x.id)===key(path[level])),value=exists?key(path[level]):'';
+          if(!exists&&path[level])path.splice(level);nodeSelect.value=value;
+          nodeSelect.addEventListener('change',()=>{path.splice(level);if(nodeSelect.value)path.push(key(nodeSelect.value));selectedPath=path.slice();selectedRelation='';renderHierarchy();});
+          hierarchyHost.appendChild(holder);if(value){selectedStructure=value;appendLevel(value,level+1);}
+        }
+        appendLevel(parent,0);if(path.length)selectedStructure=key(path[path.length-1]);renderRelations();
+      }
+      async function loadLocation(siteId,preserve){
+        const id=key(siteId);
+        if(!id){snapshot=null;hierarchy=null;localField.hidden=true;hierarchyHost.replaceChildren();relationField.hidden=true;return;}
+        save.disabled=true;
+        try{
+          snapshot=await getSiteSnapshot(id);
+          const access=getPlan(snapshot,id),plan=access.plan,locals=getLocalOptions(snapshot,id,plan);
+          local.replaceChildren();const blank=document.createElement('option');blank.value='';blank.textContent='Selecciona un local';local.appendChild(blank);
+          locals.forEach(item=>{const option=document.createElement('option');option.value=key(item.id);option.textContent=key(item.name);local.appendChild(option);});
+          if(plan.localMode==='fixed'){selectedLocal=key(plan.localScopeIds[0]);localField.hidden=true;local.required=false;}
+          else if(plan.localMode==='selectable'||plan.localMode==='selectable-scoped'){
+            if(!preserve||!locals.some(x=>key(x.id)===selectedLocal))selectedLocal='';
+            local.value=selectedLocal;localField.hidden=locals.length===0;local.disabled=locals.length===0;local.required=locals.length>1;
+            if(locals.length===1&&plan.localMode==='selectable-scoped'){selectedLocal=key(locals[0].id);localField.hidden=true;}
+          }else{selectedLocal='';localField.hidden=true;}
+          local.value=selectedLocal;hierarchy=buildHierarchyContext(snapshot,id,selectedLocal);
+          if(!preserve){selectedPath=[];selectedRelation='';}renderHierarchy();
+        }catch(error){snapshot=null;hierarchy=null;hierarchyHost.replaceChildren();relationField.hidden=true;notify('error',error.message||'No se pudo cargar la ubicación autorizada.');}
+        finally{save.disabled=false;}
+      }
+      site.addEventListener('change',()=>{selectedLocal='';selectedPath=[];selectedRelation='';loadLocation(site.value,false);});
+      local.addEventListener('change',()=>{selectedLocal=key(local.value);selectedPath=[];selectedRelation='';if(snapshot){hierarchy=buildHierarchyContext(snapshot,site.value,selectedLocal);renderHierarchy();}});
+      relation.addEventListener('change',()=>{selectedRelation=key(relation.value);});
+      cancel.addEventListener('click',closeEditor);
+      save.addEventListener('click',()=>{
+        if(!cargo.value)return cargo.reportValidity();if(!condition.value)return condition.reportValidity();
+        const relationId=key(relation.value||selectedRelation);
+        const relationItem=(snapshot&&snapshot.catalogs.estructuraLocal||[]).find(x=>key(x.id)===relationId);
+        let localId=key(selectedLocal);
+        if(relationItem){if(localId&&key(relationItem.local_id)!==localId){notify('warning','El local seleccionado no coincide con la ubicación institucional.');return;}localId=key(relationItem.local_id);}
+        else if(selectedStructure){notify('warning','La unidad orgánica elegida no tiene una ubicación física válida en el local seleccionado.');return;}
+        if(!relationId&&!localId){notify('warning','Selecciona una dependencia o un local para la asignación.');return;}
+        if(hierarchy&&hierarchy.plan.entryScope==='ESTRUCTURA_ORG'&&!relationId){notify('warning','El ámbito orgánico requiere una ubicación estructura-local válida.');return;}
+        const updated=Object.assign({},current||{},{asignacion_id:key(current&&current.asignacion_id),cargo_id:key(cargo.value),
+          condicion_cargo:key(condition.value),anexo:annex.value===''?'':Number(annex.value),observaciones:key(observations.value),
+          estructura_local_id:relationId,local_id:localId});
+        if(Number.isInteger(editIndex))draft[editIndex]=updated;else draft.push(updated);closeEditor();
+      });
+      if(initialSite)await loadLocation(initialSite,true);
+      else if(!canChooseSite&&fixedSiteId){site.value=fixedSiteId;await loadLocation(fixedSiteId,false);}
+    }
+
+    addButton.addEventListener('click',()=>{if(editorIsOpen){notify('warning','Guarda o cancela la edición actual antes de agregar otra asignación.');return;}openAssignmentEditor(null);});
+    renderTable();
+    cancelButton.addEventListener('click',()=>{restoreState();SUNARPUI.closeModal();});
+    form.addEventListener('submit',async event=>{
+      event.preventDefault();if(!form.reportValidity())return;
+      if(!editing&&(!documentVerified||documentVerified.value!=='true')){notify('warning','Primero debes comprobar que el documento no esté registrado.');return;}
+      if(!draft.length){notify('warning','Registra al menos una asignación.');return;}
+      const personaId=key(document.getElementById('directoryFormPersonaId').value);
+      const payload={
+        persona_id:personaId,nombres:key(document.getElementById('directoryFormNombres').value),
+        apellidos:key(document.getElementById('directoryFormApellidos').value),
+        correo_institucional:key(document.getElementById('directoryFormCorreoInstitucional').value).toLowerCase(),
+        tipo_documento:key(documentType&&documentType.value),numero_documento:key(documentNumber&&documentNumber.value),
+        fecha_nacimiento:document.getElementById('directoryFormFechaNacimiento').value||'',
+        fecha_inicio_servicios:document.getElementById('directoryFormFechaInicio').value||'',
+        fecha_cese:document.getElementById('directoryFormFechaCese').value||'',
+        assignments:draft.map(item=>({asignacion_id:key(item.asignacion_id),cargo_id:key(item.cargo_id),
+          condicion_cargo:conditionId(item.condicion_cargo),
+          anexo:item.anexo===''||item.anexo===null||item.anexo===undefined?'':Number(item.anexo),
+          observaciones:key(item.observaciones),estructura_local_id:key(item.estructura_local_id),local_id:key(item.local_id)})),
+        removedAssignmentIds:Array.from(removedIds)
+      };
+      saveButton.disabled=true;saveButton.textContent='Guardando...';
+      try{
+        const result=await callServer('saveDirectoryEntry',payload);
+        restoreState();SUNARPUI.closeModal();notify('success',result.message||'Servidor y asignaciones guardados correctamente.');
+        await refreshActiveSede();
+      }catch(error){notify('error',error.message||'No se pudo guardar el registro.');saveButton.disabled=false;saveButton.textContent=personaId?'Guardar cambios':'Registrar servidor';}
+    });
   }
-
-
 
   /* =====================================================
      10. GUARDAR REGISTRO
      ===================================================== */
 
-  async function saveForm(event) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    if (!form.reportValidity()) return;
-
-    const personaId = document.getElementById('directoryFormPersonaId').value;
-    const nombres = document.getElementById('directoryFormNombres').value.trim();
-    const apellidos = document.getElementById('directoryFormApellidos').value.trim();
-    const documentType = document.getElementById('directoryFormTipoDocumento')?.value || '';
-    const documentNumber = document.getElementById('directoryFormNumeroDocumento')?.value.trim() || '';
-    if (!personaId && document.getElementById('directoryDocumentVerified')?.value !== 'true') {
-      notify('warning', 'Primero debes comprobar que el documento no esté registrado.');
-      return;
-    }
-
-    const assignmentRows = Array.from(document.querySelectorAll('#directoryAssignmentsContainer .directory-assignment-row'));
-    const assignments = [];
-    for (const row of assignmentRows) {
-      const get = prefix => row.querySelector('[id^="' + prefix + '"]');
-      const relationSelect = get('directoryFormLocal');
-      const directLocalSelect = get('directoryFormDirectLocal');
-      const structureLocalId = relationSelect ? relationSelect.value : '';
-      const localId = directLocalSelect ? directLocalSelect.value : '';
-      if (!structureLocalId && !localId) {
-        notify('warning', 'Cada asignación debe tener una unidad orgánica o un local.');
-        return;
-      }
-      if (structureLocalId && localId) {
-        const relation = state.catalogs.estructuraLocal.find(item => key(item.id) === key(structureLocalId));
-        if (!relation || key(relation.local_id) !== key(localId)) {
-          notify('warning', 'El local debe coincidir con la relación estructura-local de cada asignación.');
-          return;
-        }
-      }
-      assignments.push({
-        asignacion_id: get('directoryFormAssignmentId')?.value || '',
-        cargo_id: get('directoryFormCargo')?.value || '',
-        condicion_cargo: get('directoryFormCondicionCargo')?.value.trim() || '',
-        anexo: get('directoryFormAnexo')?.value === '' ? '' : Number(get('directoryFormAnexo')?.value),
-        observaciones: get('directoryFormObservaciones')?.value.trim() || '',
-        estructura_local_id: structureLocalId,
-        local_id: localId
-      });
-    }
-    if (!assignments.length) {
-      notify('warning', 'Registra al menos una asignación.');
-      return;
-    }
-
-    const payload = {
-      persona_id: personaId,
-      nombres,
-      apellidos,
-      correo_institucional: document.getElementById('directoryFormCorreoInstitucional')?.value.trim().toLowerCase() || '',
-      tipo_documento: documentType,
-      numero_documento: documentNumber,
-      fecha_nacimiento: document.getElementById('directoryFormFechaNacimiento')?.value || '',
-      fecha_inicio_servicios: document.getElementById('directoryFormFechaInicio')?.value || '',
-      fecha_cese: document.getElementById('directoryFormFechaCese')?.value || '',
-      assignments
-    };
-
-    const saveButton = document.getElementById('directoryFormSave');
-    saveButton.disabled = true;
-    saveButton.textContent = 'Guardando...';
-    try {
-      const result = await callServer('saveDirectoryEntry', payload);
-      SUNARPUI.closeModal();
-      notify('success', result.message || 'Servidor y asignaciones guardados correctamente.');
-      await refreshActiveSede();
-    } catch (error) {
-      notify('error', error.message || 'No se pudo guardar el registro.');
-      saveButton.disabled = false;
-      saveButton.textContent = personaId ? 'Guardar cambios' : 'Registrar servidor';
-    }
-  }
-
+  // El guardado compuesto se gestiona en openDirectoryForm para conservar la tabla editable de asignaciones.
 
   /* =====================================================
      11. DESACTIVAR Y REACTIVAR
