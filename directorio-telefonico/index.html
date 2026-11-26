@@ -91,6 +91,39 @@
                     template="page-header-split"
                     :page="pageData"
                 >
+
+                    <template #aside>
+
+                        <div v-if="pageElementLinks.length">
+
+                            <h2 class="text-lg font-bold mb-4">
+                                Enlaces relacionados
+                            </h2>
+
+                            <ul class="space-y-3">
+
+                                <li
+                                    v-for="(item, index) in pageElementLinks"
+                                    :key="item.id || index"
+                                >
+
+                                    <a
+                                        :href="item.url_destination"
+                                        :target="item.target || '_self'"
+                                        :rel="item.target === '_blank' ? 'noopener noreferrer' : null"
+                                        class="text-blue-700 hover:underline font-medium"
+                                    >
+                                        {{ item.text }}
+                                    </a>
+
+                                </li>
+
+                            </ul>
+
+                        </div>
+
+                    </template>
+
                 </page-header-gob>
 
 
