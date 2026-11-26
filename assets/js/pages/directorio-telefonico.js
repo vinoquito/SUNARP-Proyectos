@@ -1258,7 +1258,7 @@ const app = createBaseApp({
 
             return String(item.telefono || '')
 
-                .split(/\\s*\\/\\s*/)
+                .split('/')
 
                 .map(number => number.trim())
 
