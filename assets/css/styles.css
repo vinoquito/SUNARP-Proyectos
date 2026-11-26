@@ -181,12 +181,31 @@ body {
 }
 
 .related-links-link {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--gob-icon-spacing);
+
     color: var(--gob-link-color);
 
     font-size: var(--gob-small-text-size);
     line-height: var(--gob-small-text-line-height);
     font-weight: var(--gob-fw-regular);
 
+    text-decoration: none;
+}
+
+.related-links-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    flex: 0 0 auto;
+
+    font-size: 20px;
+    line-height: 1;
+}
+
+.related-links-text {
     text-decoration: underline;
     text-underline-offset: 2px;
 }
@@ -821,6 +840,16 @@ body {
 
     text-align: left;
     caption-side: top;
+}
+
+.table-default-caption .material-symbols-outlined {
+    display: inline-block;
+
+    margin-right: var(--gob-icon-spacing);
+
+    font-size: 20px;
+    line-height: 1;
+    vertical-align: middle;
 }
 
 
