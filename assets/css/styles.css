@@ -159,9 +159,9 @@ body {
 
     color: var(--gob-text-primary);
 
-    font-size: var(--gob-paragraph-size);
-    line-height: var(--gob-paragraph-line-height);
-    font-weight: var(--gob-fw-regular);
+    font-size: var(--gob-h5-size);
+    line-height: var(--gob-h5-line-height);
+    font-weight: var(--gob-h5-weight);
 }
 
 .related-links-list {
@@ -188,8 +188,8 @@ body {
 .related-links-link {
     color: var(--gob-link-color);
 
-    font-size: var(--gob-paragraph-size);
-    line-height: var(--gob-paragraph-line-height);
+    font-size: var(--gob-small-text-size);
+    line-height: var(--gob-small-text-line-height);
     font-weight: var(--gob-fw-regular);
 
     text-decoration: none;
