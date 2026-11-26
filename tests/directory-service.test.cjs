@@ -208,7 +208,8 @@ test('el formulario distribuye dos campos por fila y conserva las fechas en tres
   assert.match(frontendSource, /SUNARPUI\.showAlert\(/);
   assert.match(frontendSource, /Buscar persona/);
   assert.doesNotMatch(frontendSource, /Buscar DNI|Relación con local|Local directamente asignado/);
-  assert.match(frontendSource, /locationTitle\.hidden=hierarchyHost\.childElementCount===0/);
+  assert.match(frontendSource, /scope\.includeDescendants===true/);
+  assert.match(frontendSource, /locationTitle\.hidden=hierarchyHost\.childElementCount===0\|\|!hasAuthorizedChildren/);
   assert.match(frontendSource, /locationTitle\.hidden=true/);
 });
 
