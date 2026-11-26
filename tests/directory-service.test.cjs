@@ -44,19 +44,58 @@ test('SUNARP UI conserva el loader global y ofrece un loader translúcido locali
   assert.doesNotMatch(sectionLoaderCss, /position: fixed/);
 });
 
-test('Nuevo servidor y Editar muestran el modal antes de esperar los datos remotos', () => {
+test('Nuevo servidor y Editar reutilizan catálogos precargados y muestran el modal antes de esperar el detalle', () => {
   const start = frontendSource.indexOf('async function openDirectoryForm(record)');
   const end = frontendSource.indexOf('const form=document.getElementById(\'directoryForm\')', start);
   assert.ok(start >= 0 && end > start);
   const implementation = frontendSource.slice(start, end);
   const modalIndex = implementation.indexOf('SUNARPUI.openModal({title:modalTitle');
-  const catalogIndex = implementation.indexOf("'getDirectoryFormData'");
+  const catalogIndex = implementation.indexOf('getDirectoryFormBootstrap()');
+  const detailIndex = implementation.indexOf("callServer('getDirectoryPersonById',record.persona_id)");
   const parallelIndex = implementation.indexOf('await Promise.all([catalogsPromise,detailPromise])');
   assert.ok(modalIndex >= 0 && catalogIndex > modalIndex && parallelIndex > catalogIndex);
+  assert.ok(detailIndex > catalogIndex);
   assert.match(implementation, /SUNARPUI\.beginSectionLoading\(modalBody/);
+  assert.doesNotMatch(implementation, /SUNARPUI\.beginLoading\(/);
   assert.match(implementation, /formRequestId/);
+  assert.match(implementation, /catalogsCacheHit/);
   assert.match(implementation, /catalogsRoundTripMs/);
   assert.match(implementation, /personRoundTripMs/);
+});
+
+test('la pantalla precarga catálogos de formulario en segundo plano sin bloquear la carga principal', () => {
+  assert.match(frontendSource, /DIRECTORY_FORM_BOOTSTRAP_CACHE_TTL_MS = 300000/);
+  assert.match(frontendSource, /function getDirectoryFormBootstrap\(force = false\)/);
+  assert.match(frontendSource, /function startDirectoryFormBootstrap\(\)/);
+  assert.match(frontendSource, /callServer\('getDirectoryFormBootstrap'\)/);
+  assert.match(frontendSource, /startDirectoryFormBootstrap\(\);/);
+  assert.match(frontendSource, /state\.formAccessCapabilities = result\.capabilities \|\| \{\}/);
+  const loadStart = frontendSource.indexOf('async function load(force = false)');
+  const bootstrapStart = frontendSource.indexOf('startDirectoryFormBootstrap();', loadStart);
+  const siteStart = frontendSource.indexOf('await loadSelectedSede(soleSedeId)', loadStart);
+  assert.ok(bootstrapStart > loadStart && siteStart > bootstrapStart);
+});
+
+test('el bootstrap de formulario verifica capacidades y mantiene la autorización del detalle de edición', () => {
+  const bootstrapStart = serviceSource.indexOf('function getDirectoryFormBootstrap()');
+  const bootstrapEnd = serviceSource.indexOf('function getDirectoryFormData(', bootstrapStart);
+  const bootstrap = serviceSource.slice(bootstrapStart, bootstrapEnd);
+  assert.match(bootstrap, /requirePermission_\('INFORMACION_PERSONAL_VER', moduleId\)/);
+  assert.match(bootstrap, /INFORMACION_PERSONAL_CREAR/);
+  assert.match(bootstrap, /INFORMACION_PERSONAL_EDITAR/);
+  assert.match(bootstrap, /if \(!canCreate && !canEdit\)/);
+  const helperStart = serviceSource.indexOf('function _directoryBuildFormCatalogPayload_(');
+  const helperEnd = serviceSource.indexOf('function getDirectoryFormBootstrap()', helperStart);
+  const helper = serviceSource.slice(helperStart, helperEnd);
+  assert.match(helper, /includeDocumentTypes: false/);
+  assert.match(helper, /includePeople: true/);
+  assert.match(helper, /key: 'documentTypes'/);
+  assert.match(helper, /key: 'conditionCargo'/);
+  assert.match(helper, /supplementalCatalogMs/);
+  const personStart = serviceSource.indexOf('function getDirectoryPersonById(');
+  const personEnd = serviceSource.indexOf('\nfunction ', personStart + 10);
+  const personDetail = serviceSource.slice(personStart, personEnd);
+  assert.match(personDetail, /_directoryAuthorizationContext_\('INFORMACION_PERSONAL_EDITAR'\)/);
 });
 
 test('las operaciones internas del formulario usan loader localizado, no el loader global', () => {
@@ -74,7 +113,7 @@ test('el formulario consulta el catálogo activo de condiciones del cargo y expo
   assert.match(serviceSource, /condicionCargo: 'condicion_cargo'/);
   assert.match(serviceSource, /requiredHeaders: DIRECTORY_REQUIRED_HEADERS\.condicionCargo/);
   assert.match(serviceSource, /condicionCargo: \(conditionCatalog\.conditionCargo \|\| \[\]\)\.filter\(_directoryIsActive_\)/);
-  assert.match(serviceSource, /capabilities: \{ deleteAssignments: canDeleteAssignments === true \}/);
+  assert.match(serviceSource, /capabilities: \{[\s\S]*?deleteAssignments: canDeleteAssignments === true/);
 });
 
 test('el guardado compuesto retira únicamente las asignaciones de la persona indicada', () => {
