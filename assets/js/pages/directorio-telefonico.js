@@ -32,6 +32,14 @@ const app = createBaseApp({
 
             directory: [],
 
+            /*
+             * ========================================================
+             * ELEMENTOS CONFIGURADOS PARA LA PÁGINA
+             * ========================================================
+             */
+
+            pageElementLinks: [],
+
 
             /*
              * ========================================================
@@ -267,7 +275,9 @@ const app = createBaseApp({
 
                 footerData,
 
-                rows
+                rows,
+
+                pageElements
 
             ] = await Promise.all([
 
@@ -277,7 +287,9 @@ const app = createBaseApp({
 
                 getFooterData(PAGE_NAME),
 
-                fetchSheet(PAGE_NAME)
+                fetchSheet(PAGE_NAME),
+
+                fetchSheet('page-elements')
 
             ]);
 
@@ -287,6 +299,39 @@ const app = createBaseApp({
             this.navbarData = navbarData;
 
             this.footerData = footerData;
+
+
+            /*
+             * ========================================================
+             * ENLACES RELACIONADOS
+             * ========================================================
+             */
+
+            this.pageElementLinks =
+
+                (Array.isArray(pageElements) ? pageElements : [])
+
+                    .filter(i =>
+
+                        String(i.page || '').trim() === PAGE_NAME &&
+
+                        String(i.group || '').trim() === 'Enlaces relacionados' &&
+
+                        String(i.block || '').trim() === 'featured-links' &&
+
+                        String(i.type || '').trim() === 'list' &&
+
+                        String(i.state || '').trim().toLowerCase() === 'activo' &&
+
+                        String(i.url_destination || '').trim() !== ''
+
+                    )
+
+                    .sort((a, b) =>
+
+                        Number(a.order || 0) - Number(b.order || 0)
+
+                    );
 
 
             /*
