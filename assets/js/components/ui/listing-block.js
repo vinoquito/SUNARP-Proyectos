@@ -42,6 +42,11 @@ const ListingBlock = {
             default: () => []
         },
 
+        groupExportByLocationAndOrg: {
+            type: Boolean,
+            default: false
+        },
+
         reportTitle: {
             type: String,
             default: ''
@@ -416,7 +421,7 @@ const ListingBlock = {
                 pdfColumns: this.pdfExportColumns.length
                     ? this.pdfExportColumns
                     : this.resolvedExportColumns,
-                groupByLocationAndOrg: true
+                groupByLocationAndOrg: this.groupExportByLocationAndOrg
             };
 
             return [
