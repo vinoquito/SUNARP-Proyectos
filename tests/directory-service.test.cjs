@@ -12,6 +12,8 @@ const viewPath = path.join(root, 'Backend/Gestor de intranet SUNARP/ViewDirector
 const coreTestsPath = path.join(root, 'Backend/SUNARP Core/DataCoreTests.js');
 const coreRepositoryPath = path.join(root, 'Backend/SUNARP Core/DataRepository.js');
 const uiDataTablePath = path.join(root, 'Backend/SUNARP UI/UIDataTableScripts.html');
+const uiScriptsPath = path.join(root, 'Backend/SUNARP UI/UIScripts.html');
+const uiStylesPath = path.join(root, 'Backend/SUNARP UI/UIStyles.html');
 
 const serviceSource = fs.readFileSync(servicePath, 'utf8');
 const accessServicePath = path.join(root, 'Backend/Gestor de intranet SUNARP/AccessManagementService.js');
@@ -21,10 +23,52 @@ const viewSource = fs.readFileSync(viewPath, 'utf8');
 const coreTestsSource = fs.readFileSync(coreTestsPath, 'utf8');
 const coreRepositorySource = fs.readFileSync(coreRepositoryPath, 'utf8');
 const uiDataTableSource = fs.readFileSync(uiDataTablePath, 'utf8');
+const uiScriptsSource = fs.readFileSync(uiScriptsPath, 'utf8');
+const uiStylesSource = fs.readFileSync(uiStylesPath, 'utf8');
 
 const scriptStart = frontendSource.split('<script>')[1];
 assert.ok(scriptStart, 'DirectoryScripts.html debe contener el bloque JavaScript principal');
 const frontendScript = scriptStart.split('</script>')[0];
+
+test('SUNARP UI conserva el loader global y ofrece un loader translúcido localizado', () => {
+  assert.match(uiScriptsSource, /function beginLoading\(options = \{\}\)/);
+  assert.match(uiScriptsSource, /function beginSectionLoading\(target, options = \{\}\)/);
+  assert.match(uiScriptsSource, /const sectionLoadingStates = new WeakMap\(\)/);
+  assert.match(uiScriptsSource, /beginSectionLoading,/);
+  const sectionLoaderCss = uiStylesSource.slice(
+    uiStylesSource.indexOf('.sunarp-section-loader {'),
+    uiStylesSource.indexOf('.sunarp-section-loader-content {')
+  );
+  assert.match(sectionLoaderCss, /position: absolute/);
+  assert.match(sectionLoaderCss, /background: rgba\(/);
+  assert.doesNotMatch(sectionLoaderCss, /position: fixed/);
+});
+
+test('Nuevo servidor y Editar muestran el modal antes de esperar los datos remotos', () => {
+  const start = frontendSource.indexOf('async function openDirectoryForm(record)');
+  const end = frontendSource.indexOf('const form=document.getElementById(\'directoryForm\')', start);
+  assert.ok(start >= 0 && end > start);
+  const implementation = frontendSource.slice(start, end);
+  const modalIndex = implementation.indexOf('SUNARPUI.openModal({title:modalTitle');
+  const catalogIndex = implementation.indexOf("'getDirectoryFormData'");
+  const parallelIndex = implementation.indexOf('await Promise.all([catalogsPromise,detailPromise])');
+  assert.ok(modalIndex >= 0 && catalogIndex > modalIndex && parallelIndex > catalogIndex);
+  assert.match(implementation, /SUNARPUI\.beginSectionLoading\(modalBody/);
+  assert.match(implementation, /formRequestId/);
+  assert.match(implementation, /catalogsRoundTripMs/);
+  assert.match(implementation, /personRoundTripMs/);
+});
+
+test('las operaciones internas del formulario usan loader localizado, no el loader global', () => {
+  assert.match(frontendSource, /SUNARPUI\.beginLoading\(\)/);
+  assert.match(frontendSource, /SUNARPUI\.beginSectionLoading\(documentAlert/);
+  assert.match(frontendSource, /SUNARPUI\.beginSectionLoading\(location/);
+  assert.match(frontendSource, /SUNARPUI\.beginSectionLoading\(form/);
+  assert.match(frontendSource, /finishSearchLoading\(\)/);
+  assert.match(frontendSource, /finishLocationLoading\(\)/);
+  assert.match(frontendSource, /finishSaveLoading\(\)/);
+});
+
 
 test('el formulario consulta el catálogo activo de condiciones del cargo y expone su capacidad de retiro', () => {
   assert.match(serviceSource, /condicionCargo: 'condicion_cargo'/);
