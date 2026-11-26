@@ -1480,6 +1480,9 @@ const DirectoryPage = (() => {
         :null,
       catalogsServerStages:diagnostics.stages||null,
       personRoundTripMs:editing?Math.round(personRoundTripMs):null,
+      personServerMs:editing&&detail&&detail.diagnostics?detail.diagnostics.serverMs:null,
+      personServerStages:editing&&detail&&detail.diagnostics?detail.diagnostics.stages:null,
+      personAssignments:editing&&detail&&Array.isArray(detail.assignments)?detail.assignments.length:null,
       totalWaitMs:Math.round(performance.now()-formLoadStartedAt)
     });
 
