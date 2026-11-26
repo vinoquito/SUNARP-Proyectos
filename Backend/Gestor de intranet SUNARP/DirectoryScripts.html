@@ -459,6 +459,8 @@ const DirectoryPage = (() => {
       } catch (error) {
         console.warn('[DirectoryPage] No se pudo iniciar el loader localizado:', error);
       }
+    } else {
+      console.error('[DirectoryPage] SUNARP UI no expone beginSectionLoading. Sincroniza el proyecto Backend/SUNARP UI.');
     }
     if (!host || typeof host.setAttribute !== 'function') {
       return function finishMissingDirectorySectionLoading() {};
@@ -1435,14 +1437,16 @@ const DirectoryPage = (() => {
     const modalTitle=editing?'Editar servidor':'Registrar servidor';
     const loadingContent=document.createElement('div');
     loadingContent.className='directory-form-loading-placeholder';
-    loadingContent.textContent=editing?'Recuperando los datos del servidor...':'Preparando el formulario...';
+    loadingContent.setAttribute('aria-hidden','true');
 
-    // El modal se muestra de inmediato; los catálogos ya se están precargando
-    // desde la carga inicial de la pantalla.
+    // El modal aparece de inmediato. El indicador visual lo proporciona
+    // SUNARP UI dentro del cuerpo del modal, sin texto sustituto del Gestor.
     SUNARPUI.openModal({title:modalTitle,content:loadingContent,size:'xl'});
     const modalBody=document.getElementById('sunarpModalBody');
     const finishFormLoading=modalBody
-      ?beginDirectorySectionLoading(modalBody,{message:'Preparando los catálogos y datos del servidor...'})
+      ?beginDirectorySectionLoading(modalBody,{
+        message:editing?'Recuperando la ficha del servidor...':'Preparando el formulario...'
+      })
       :function(){};
     const formLoadStartedAt=performance.now();
     const catalogsCacheHit=Boolean(state.formBootstrap&&
@@ -1750,7 +1754,7 @@ const DirectoryPage = (() => {
       panel.append(heading,fields);
 
       const location=document.createElement('div');location.className='directory-assignment-location-editor';
-      const locationTitle=document.createElement('h5');locationTitle.textContent='Ubicación institucional';
+      const locationTitle=document.createElement('h5');locationTitle.textContent='Ubicación institucional';locationTitle.hidden=true;
       const locationFields=document.createElement('div');locationFields.className='directory-assignment-editor-grid';
       const site=makeSelect(availableSites.map(x=>({value:x.id,label:key(x.name)})),'Selecciona una sede',initialSite);
       site.id='directoryEditorSite';site.required=canChooseSite;
@@ -1792,7 +1796,11 @@ const DirectoryPage = (() => {
       }
       function renderHierarchy(){
         hierarchyHost.replaceChildren();selectedStructure='';
-        if(!snapshot||!hierarchy||hierarchy.plan.hierarchyMode==='none'){renderRelations();return;}
+        if(!snapshot||!hierarchy||hierarchy.plan.hierarchyMode==='none'){
+          locationTitle.hidden=true;
+          renderRelations();
+          return;
+        }
         const path=selectedPath.slice();let parent='';
         if(hierarchy.plan.hierarchyMode==='structure-scope'){
           const roots=_directoryGetHierarchyScopeRoots_(hierarchy.contract.scopes||[],hierarchy.index,hierarchy.selectableIds,key(site.value));
@@ -1812,11 +1820,14 @@ const DirectoryPage = (() => {
           nodeSelect.addEventListener('change',()=>{path.splice(level);if(nodeSelect.value)path.push(key(nodeSelect.value));selectedPath=path.slice();selectedRelation='';renderHierarchy();});
           hierarchyHost.appendChild(holder);if(value){selectedStructure=value;appendLevel(value,level+1);}
         }
-        appendLevel(parent,0);if(path.length)selectedStructure=key(path[path.length-1]);renderRelations();
+        appendLevel(parent,0);
+        if(path.length)selectedStructure=key(path[path.length-1]);
+        locationTitle.hidden=hierarchyHost.childElementCount===0;
+        renderRelations();
       }
       async function loadLocation(siteId,preserve){
         const id=key(siteId);
-        if(!id){snapshot=null;hierarchy=null;localField.hidden=true;hierarchyHost.replaceChildren();relationField.hidden=true;return;}
+        if(!id){snapshot=null;hierarchy=null;locationTitle.hidden=true;localField.hidden=true;hierarchyHost.replaceChildren();relationField.hidden=true;return;}
         save.disabled=true;
         const finishLocationLoading=beginDirectorySectionLoading(location,{
           message:'Cargando los ámbitos y ubicaciones autorizados...'
@@ -1834,7 +1845,7 @@ const DirectoryPage = (() => {
           }else{selectedLocal='';localField.hidden=true;}
           local.value=selectedLocal;hierarchy=buildHierarchyContext(snapshot,id,selectedLocal);
           if(!preserve){selectedPath=[];selectedRelation='';}renderHierarchy();
-        }catch(error){snapshot=null;hierarchy=null;hierarchyHost.replaceChildren();relationField.hidden=true;notify('error',error.message||'No se pudo cargar la ubicación autorizada.');}
+        }catch(error){snapshot=null;hierarchy=null;locationTitle.hidden=true;hierarchyHost.replaceChildren();relationField.hidden=true;notify('error',error.message||'No se pudo cargar la ubicación autorizada.');}
         finally{save.disabled=false;finishLocationLoading();}
       }
       site.addEventListener('change',()=>{selectedLocal='';selectedPath=[];selectedRelation='';loadLocation(site.value,false);});
