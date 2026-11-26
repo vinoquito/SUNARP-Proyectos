@@ -146,11 +146,59 @@ const ExportExcelButton = {
         async handleExport() {
 
             const ExcelJS = window.ExcelJS;
+            const sections = this.resolveSections();
+
+            /*
+             * Compatibilidad con listados antiguos que cargan SheetJS.
+             * La exportación institucional de tres hojas requiere ExcelJS.
+             */
 
             if (!ExcelJS || typeof ExcelJS.Workbook !== 'function') {
 
+                if (sections.length === 1 && window.XLSX) {
+
+                    const section = sections[0];
+                    const rows = Array.isArray(section.data)
+                        ? section.data
+                        : [];
+                    const columns = Array.isArray(section.columns)
+                        ? section.columns
+                        : [];
+
+                    const worksheetData = [
+                        columns.map(column =>
+                            column.label || column.key || ''
+                        ),
+                        ...rows.map((row, index) =>
+                            columns.map(column =>
+                                this.getExportValue(row, column, index)
+                            )
+                        )
+                    ];
+
+                    const worksheet = window.XLSX.utils.aoa_to_sheet(
+                        worksheetData
+                    );
+
+                    const workbook = window.XLSX.utils.book_new();
+
+                    window.XLSX.utils.book_append_sheet(
+                        workbook,
+                        worksheet,
+                        'Datos'
+                    );
+
+                    window.XLSX.writeFile(
+                        workbook,
+                        `${this.filename}.xlsx`
+                    );
+
+                    return;
+
+                }
+
                 console.error(
-                    'ExcelJS no está disponible. Verifica la carga de la biblioteca.'
+                    'ExcelJS no está disponible. No se puede generar el libro con varias hojas y estilos.'
                 );
 
                 return;
@@ -169,7 +217,6 @@ const ExportExcelButton = {
                 workbook.subject = 'Directorio de personal, teléfonos directos y anexos';
 
                 const usedSheetNames = new Set();
-                const sections = this.resolveSections();
 
                 sections.forEach((section, sectionIndex) => {
 
