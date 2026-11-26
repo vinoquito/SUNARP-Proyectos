@@ -134,6 +134,80 @@
     };
   }
 
+  /**
+   * Loader localizado para una operación dentro de un contenedor.
+   * A diferencia de beginLoading(), no cubre ni bloquea toda la página.
+   * Devuelve una función idempotente para retirar únicamente su overlay.
+   */
+  const sectionLoadingStates = new WeakMap();
+
+  function beginSectionLoading(target, options = {}) {
+    const host = typeof target === 'string' ? $(target) : target;
+    if (!host || typeof host.appendChild !== 'function') {
+      return function finishMissingSectionLoading() {};
+    }
+
+    let hostState = sectionLoadingStates.get(host);
+    if (!hostState) {
+      hostState = {
+        count: 0,
+        hadHostClass: host.classList.contains('sunarp-section-loading-host'),
+        previousAriaBusy: host.getAttribute('aria-busy')
+      };
+      sectionLoadingStates.set(host, hostState);
+      host.classList.add('sunarp-section-loading-host');
+      host.setAttribute('aria-busy', 'true');
+    }
+    hostState.count += 1;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'sunarp-section-loader';
+    overlay.setAttribute('role', 'status');
+    overlay.setAttribute('aria-live', 'polite');
+
+    const content = document.createElement('div');
+    content.className = 'sunarp-section-loader-content';
+
+    const spinner = document.createElement('span');
+    spinner.className = 'sunarp-loader-spinner';
+    spinner.setAttribute('aria-hidden', 'true');
+    content.appendChild(spinner);
+
+    const message = String(options.message || '').trim();
+    if (message) {
+      const label = document.createElement('p');
+      label.className = 'sunarp-section-loader-message';
+      label.textContent = message;
+      content.appendChild(label);
+    }
+
+    overlay.appendChild(content);
+    host.appendChild(overlay);
+
+    let finished = false;
+    return function finishSectionLoading() {
+      if (finished) return;
+      finished = true;
+
+      overlay.remove();
+      const currentState = sectionLoadingStates.get(host);
+      if (!currentState) return;
+
+      currentState.count = Math.max(0, currentState.count - 1);
+      if (currentState.count > 0) return;
+
+      if (!currentState.hadHostClass) {
+        host.classList.remove('sunarp-section-loading-host');
+      }
+      if (currentState.previousAriaBusy === null) {
+        host.removeAttribute('aria-busy');
+      } else {
+        host.setAttribute('aria-busy', currentState.previousAriaBusy);
+      }
+      sectionLoadingStates.delete(host);
+    };
+  }
+
   // Mantener el loader hasta que carguen los recursos del navegador.
   if (!resourcesLoaded) {
     window.addEventListener('load', () => {
@@ -1217,6 +1291,7 @@
     openModal,
     closeModal,
     beginLoading,
+    beginSectionLoading,
     navigate,
     setPageActions,
     clearPageActions,
