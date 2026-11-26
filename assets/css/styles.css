@@ -167,7 +167,7 @@ body {
 .related-links-list {
     display: flex;
     flex-direction: column;
-    gap: var(--gob-space-sm);
+    gap: var(--gob-space-xs);
 
     margin: 0;
     padding: 0;
@@ -1098,6 +1098,11 @@ body {
    -------------------------------------------------------------------------- */
 
 @media (max-width: 767px) {
+
+    .related-links-title {
+        font-size: var(--gob-h4-mobile-size);
+        line-height: var(--gob-h4-mobile-line-height);
+    }
 
     /* ============================================================
        ESPACIADO HORIZONTAL GENERAL
