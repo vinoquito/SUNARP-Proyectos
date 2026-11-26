@@ -1459,6 +1459,9 @@ const DirectoryPage = (() => {
         setVerified(false);documentSearch.disabled=true;documentClear.disabled=true;
         documentType.disabled=true;documentNumber.disabled=true;documentSearch.textContent='Buscando...';
         if(documentAlert)documentAlert.replaceChildren();
+        const finishSearchLoading=SUNARPUI.beginSectionLoading(documentAlert,{
+          message:'Consultando el documento en Información de personal...'
+        });
         try {
           const result=await callServer('searchDirectoryPersonByDocument',{tipo_documento:documentType.value,numero_documento:documentNumber.value.trim()});
           if(requestId!==documentRequestId)return;
@@ -1472,6 +1475,7 @@ const DirectoryPage = (() => {
           if(requestId!==documentRequestId)return;
           setVerified(false);showDocumentAlert('error','No se pudo comprobar el documento',error.message||'Ocurrió un error al consultar el directorio institucional.');
         } finally {
+          finishSearchLoading();
           if(requestId===documentRequestId){
             documentType.disabled=false;documentNumber.disabled=false;documentSearch.disabled=false;documentClear.disabled=false;documentSearch.textContent='Buscar persona';
           }
@@ -1699,6 +1703,9 @@ const DirectoryPage = (() => {
         const id=key(siteId);
         if(!id){snapshot=null;hierarchy=null;localField.hidden=true;hierarchyHost.replaceChildren();relationField.hidden=true;return;}
         save.disabled=true;
+        const finishLocationLoading=SUNARPUI.beginSectionLoading(location,{
+          message:'Cargando los ámbitos y ubicaciones autorizados...'
+        });
         try{
           snapshot=await getSiteSnapshot(id);
           const access=getPlan(snapshot,id),plan=access.plan,locals=getLocalOptions(snapshot,id,plan);
@@ -1713,7 +1720,7 @@ const DirectoryPage = (() => {
           local.value=selectedLocal;hierarchy=buildHierarchyContext(snapshot,id,selectedLocal);
           if(!preserve){selectedPath=[];selectedRelation='';}renderHierarchy();
         }catch(error){snapshot=null;hierarchy=null;hierarchyHost.replaceChildren();relationField.hidden=true;notify('error',error.message||'No se pudo cargar la ubicación autorizada.');}
-        finally{save.disabled=false;}
+        finally{save.disabled=false;finishLocationLoading();}
       }
       site.addEventListener('change',()=>{selectedLocal='';selectedPath=[];selectedRelation='';loadLocation(site.value,false);});
       local.addEventListener('change',()=>{selectedLocal=key(local.value);selectedPath=[];selectedRelation='';if(snapshot){hierarchy=buildHierarchyContext(snapshot,site.value,selectedLocal);renderHierarchy();}});
@@ -1762,11 +1769,15 @@ const DirectoryPage = (() => {
         removedAssignmentIds:Array.from(removedIds)
       };
       saveButton.disabled=true;saveButton.textContent='Guardando...';
+      const finishSaveLoading=SUNARPUI.beginSectionLoading(form,{
+        message:'Guardando los datos personales y las asignaciones...'
+      });
       try{
         const result=await callServer('saveDirectoryEntry',payload);
         restoreState();SUNARPUI.closeModal();notify('success',result.message||'Servidor y asignaciones guardados correctamente.');
         await refreshActiveSede();
       }catch(error){notify('error',error.message||'No se pudo guardar el registro.');saveButton.disabled=false;saveButton.textContent=personaId?'Guardar cambios':'Registrar servidor';}
+      finally{finishSaveLoading();}
     });
   }
 
