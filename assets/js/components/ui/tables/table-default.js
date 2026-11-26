@@ -8,6 +8,11 @@ const TableDefault = {
             default: ''
         },
 
+        titleIcon: {
+            type: String,
+            default: ''
+        },
+
         items: {
             type: Array,
             default: () => []
@@ -190,6 +195,11 @@ const TableDefault = {
                             v-if="title"
                             class="table-default-caption"
                         >
+                            <span
+                                v-if="titleIcon"
+                                class="material-symbols-outlined"
+                                aria-hidden="true"
+                            >{{ titleIcon }}</span>
                             {{ title }}
                         </caption>
 
