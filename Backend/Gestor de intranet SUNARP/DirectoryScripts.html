@@ -1425,17 +1425,16 @@ const DirectoryPage = (() => {
         return result;
       });
 
-      // La ficha personal solo se consulta en edición y después de confirmar
-      // la capacidad correspondiente. La lectura del detalle y los catálogos
-      // siguen siendo concurrentes cuando la precarga aún no ha terminado.
-      const detailPromise=editing?catalogsPromise.then(()=>{
+      // La consulta de la ficha se ejecuta en paralelo con los catálogos.
+      // Su endpoint exige EDITAR y vuelve a comprobar los ámbitos en el servidor.
+      const detailPromise=editing?(()=>{
         const detailStartedAt=performance.now();
         return callServer('getDirectoryPersonById',record.persona_id).then(result=>{
           personRoundTripMs=performance.now()-detailStartedAt;
           if(!result)throw new Error('No se encontró la ficha de la persona.');
           return result;
         });
-      }):Promise.resolve(null);
+      })():Promise.resolve(null);
 
       [response,detail]=await Promise.all([catalogsPromise,detailPromise]);
       if(requestId!==state.formRequestId)return;
@@ -1459,7 +1458,7 @@ const DirectoryPage = (() => {
     state.formScopes=response.scopes||[];
     state.formAccessCapabilities=response.capabilities||state.formAccessCapabilities||{};
     const person=editing
-      ?Object.assign({},detail,detail.personalData||{},{ 
+      ?Object.assign({},detail,detail.personalData||{},{
         assignments:(detail.assignments||[]).map(item=>Object.assign({},item))
       })
       :null;
