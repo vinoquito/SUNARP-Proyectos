@@ -525,6 +525,19 @@ const app = createBaseApp({
 
 
                 /*
+                 * LOCAL
+                 */
+
+                {
+                    key: 'local',
+                    label: 'Local',
+                    placeholder: 'Todos los locales',
+                    showAfterSelection: true,
+                    hideWhenEmpty: true
+                },
+
+
+                /*
                  * NIVELES ORGANIZACIONALES
                  */
 
