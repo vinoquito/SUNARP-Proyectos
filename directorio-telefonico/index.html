@@ -94,13 +94,13 @@
 
                     <template v-if="pageElementLinks.length" #aside>
 
-                        <div v-if="pageElementLinks.length">
+                        <section class="related-links">
 
-                            <h2 class="text-lg font-bold mb-4">
+                            <h2 class="related-links-title">
                                 Enlaces relacionados
                             </h2>
 
-                            <ul class="space-y-3">
+                            <ul class="related-links-list">
 
                                 <li
                                     v-for="(item, index) in pageElementLinks"
@@ -111,7 +111,7 @@
                                         :href="item.url_destination"
                                         :target="item.target || '_self'"
                                         :rel="item.target === '_blank' ? 'noopener noreferrer' : null"
-                                        class="text-blue-700 hover:underline font-medium"
+                                        class="related-links-link"
                                     >
                                         {{ item.text }}
                                     </a>
@@ -120,7 +120,7 @@
 
                             </ul>
 
-                        </div>
+                        </section>
 
                     </template>
 
