@@ -37,6 +37,11 @@ const ExportPdfButton = {
             default: 'secondary'
         },
 
+        orientation: {
+            type: String,
+            default: 'landscape'
+        },
+
         reportTitle: {
             type: String,
             default: ''
@@ -173,16 +178,23 @@ const ExportPdfButton = {
 
                 const localGroup = localGroups.get(localKey);
                 const organizationLevels = this.getOrganizationLevels(row);
-                const organizationKey = organizationLevels.length
-                    ? organizationLevels.join('\u001f')
-                    : '__sin_organo__';
+                const reference = String(row.referencia || '').trim();
+
+                const organizationBaseTitle = organizationLevels.length
+                    ? organizationLevels.join(' / ')
+                    : 'Órgano / Unidad no especificado';
+
+                const organizationKey = [
+                    ...organizationLevels,
+                    reference
+                ].join(String.fromCharCode(31)) || '__sin_organo__';
 
                 if (!localGroup.organizations.has(organizationKey)) {
 
                     localGroup.organizations.set(organizationKey, {
-                        title: organizationLevels.length
-                            ? organizationLevels.join(' / ')
-                            : 'Órgano / Unidad no especificado',
+                        title: reference
+                            ? `${organizationBaseTitle} — ${reference}`
+                            : organizationBaseTitle,
                         rows: []
                     });
 
@@ -395,7 +407,7 @@ const ExportPdfButton = {
             const { jsPDF } = window.jspdf;
 
             const doc = new jsPDF({
-                orientation: 'landscape',
+                orientation: this.orientation,
                 unit: 'mm',
                 format: 'a4'
             });
@@ -485,7 +497,7 @@ const ExportPdfButton = {
                             : section.columns || [];
 
                     if (sectionIndex > 0) {
-                        cursorY += 5;
+                        cursorY += 9;
                     }
 
                     if (cursorY + 13 > bottomLimit) {
@@ -506,12 +518,13 @@ const ExportPdfButton = {
                     doc.setLineWidth(0.7);
                     doc.line(
                         leftMargin,
-                        cursorY,
+                        cursorY + 1,
                         pageWidth - rightMargin,
-                        cursorY
+                        cursorY + 1
                     );
 
-                    cursorY += 5;
+                    // Separación breve y constante después de la línea de sección.
+                    cursorY += 6;
 
                     if (!rows.length) {
 
@@ -592,6 +605,8 @@ const ExportPdfButton = {
                                 [50, 60, 55]
                             );
 
+                            cursorY += 2;
+
                         }
 
                         localGroup.organizations.forEach(organization => {
@@ -645,16 +660,34 @@ const ExportPdfButton = {
                                 )
                             );
 
+                            const columnStyles = {};
+
+                            columns.forEach((column, columnIndex) => {
+
+                                const width = Number(column.width);
+
+                                if (Number.isFinite(width) && width > 0) {
+
+                                    columnStyles[columnIndex] = {
+                                        cellWidth: width
+                                    };
+
+                                }
+
+                            });
+
                             doc.autoTable({
 
-                                startY: cursorY + 1,
+                                startY: cursorY + 2,
 
                                 margin: {
-                                    top: 41,
+                                    top: 48,
                                     bottom: 18,
                                     left: leftMargin,
                                     right: rightMargin
                                 },
+
+                                tableWidth: 'wrap',
 
                                 head: [
                                     columns.map(column =>
@@ -688,7 +721,7 @@ const ExportPdfButton = {
                                     fillColor: [245, 247, 246]
                                 },
 
-                                columnStyles: {},
+                                columnStyles,
 
                                 showHead: 'everyPage',
                                 rowPageBreak: 'avoid',
@@ -709,7 +742,7 @@ const ExportPdfButton = {
                                         doc.text(
                                             localTitle,
                                             leftMargin,
-                                            35,
+                                            34,
                                             {
                                                 maxWidth: contentWidth
                                             }
@@ -721,7 +754,7 @@ const ExportPdfButton = {
                                         doc.text(
                                             organization.title,
                                             leftMargin,
-                                            39,
+                                            40,
                                             {
                                                 maxWidth: contentWidth
                                             }
@@ -734,7 +767,7 @@ const ExportPdfButton = {
                             });
 
                             cursorY =
-                                doc.lastAutoTable.finalY + 6;
+                                doc.lastAutoTable.finalY + 4;
 
                         });
 
