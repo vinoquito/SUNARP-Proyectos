@@ -1689,8 +1689,8 @@ function _directoryBuildFormCatalogPayload_(auth, requestStartedAt, authorizatio
   const moduleAccess = (auth.moduleAccess || []).find(item =>
     _directoryKey_(item.modulo_id) === moduleId
   );
-  const canCreate = _accessHasPermission_(auth, 'INFORMACION_PERSONAL_CREAR', moduleId) === true;
-  const canEdit = _accessHasPermission_(auth, 'INFORMACION_PERSONAL_EDITAR', moduleId) === true;
+  const canCreate = SUNARPCore.authorizationHasPermission(auth, 'INFORMACION_PERSONAL_CREAR', moduleId) === true;
+  const canEdit = SUNARPCore.authorizationHasPermission(auth, 'INFORMACION_PERSONAL_EDITAR', moduleId) === true;
   const canDeleteAssignments = _accessHasPermission_(
     auth,
     'INFORMACION_PERSONAL_ELIMINAR',
@@ -1753,8 +1753,8 @@ function getDirectoryFormBootstrap() {
   const moduleId = 'MOD_INFO_PERSONAL';
   const auth = requirePermission_('INFORMACION_PERSONAL_VER', moduleId);
   const authorizationMs = Date.now() - authorizationStartedAt;
-  const canCreate = _accessHasPermission_(auth, 'INFORMACION_PERSONAL_CREAR', moduleId) === true;
-  const canEdit = _accessHasPermission_(auth, 'INFORMACION_PERSONAL_EDITAR', moduleId) === true;
+  const canCreate = SUNARPCore.authorizationHasPermission(auth, 'INFORMACION_PERSONAL_CREAR', moduleId) === true;
+  const canEdit = SUNARPCore.authorizationHasPermission(auth, 'INFORMACION_PERSONAL_EDITAR', moduleId) === true;
   if (!canCreate && !canEdit) {
     throw new Error('No tienes permiso para crear ni editar servidores.');
   }
@@ -1923,8 +1923,8 @@ function getDirectoryInitialData() {
   return {
     catalogs: { sedes },
     capabilities: {
-      canCreate: _accessHasPermission_(auth, 'INFORMACION_PERSONAL_CREAR', moduleId) === true,
-      canEdit: _accessHasPermission_(auth, 'INFORMACION_PERSONAL_EDITAR', moduleId) === true
+      canCreate: SUNARPCore.authorizationHasPermission(auth, 'INFORMACION_PERSONAL_CREAR', moduleId) === true,
+      canEdit: SUNARPCore.authorizationHasPermission(auth, 'INFORMACION_PERSONAL_EDITAR', moduleId) === true
     },
     scopeSummary: {
       total: hasTotalScope,
