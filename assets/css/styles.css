@@ -159,9 +159,9 @@ body {
 
     color: var(--gob-text-primary);
 
-    font-size: var(--gob-h5-size);
-    line-height: var(--gob-h5-line-height);
-    font-weight: var(--gob-h5-weight);
+    font-size: var(--gob-paragraph-size);
+    line-height: var(--gob-paragraph-line-height);
+    font-weight: var(--gob-fw-regular);
 }
 
 .related-links-list {
@@ -192,12 +192,13 @@ body {
     line-height: var(--gob-paragraph-line-height);
     font-weight: var(--gob-fw-regular);
 
-    text-decoration: underline;
-    text-underline-offset: 2px;
+    text-decoration: none;
 }
 
 .related-links-link:hover {
     color: var(--gob-link-hover);
+    text-decoration: underline;
+    text-underline-offset: 2px;
 }
 
 .related-links-link:focus-visible {
