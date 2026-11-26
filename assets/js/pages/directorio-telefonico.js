@@ -402,7 +402,7 @@ const app = createBaseApp({
                 },
 
                 {
-                    key: 'telefono',
+                    key: 'telefonoExport',
                     label: 'Teléfono'
                 },
 
@@ -423,6 +423,7 @@ const app = createBaseApp({
                 {
                     key: 'nombreCompleto',
                     label: 'Nombre',
+                    width: 62,
                     value: item => [
                         item.nombres,
                         item.apellidos
@@ -431,22 +432,20 @@ const app = createBaseApp({
 
                 {
                     key: 'cargo',
-                    label: 'Cargo'
+                    label: 'Cargo',
+                    width: 58
                 },
 
                 {
-                    key: 'referencia',
-                    label: 'Referencia'
-                },
-
-                {
-                    key: 'telefono',
-                    label: 'Teléfono'
+                    key: 'telefonoExport',
+                    label: 'Teléfono',
+                    width: 40
                 },
 
                 {
                     key: 'anexo',
-                    label: 'Anexo'
+                    label: 'Anexo',
+                    width: 20
                 }
 
             ],
@@ -471,8 +470,7 @@ const app = createBaseApp({
 
             directPhonePdfColumns: [
 
-                { key: 'referencia', label: 'Referencia' },
-                { key: 'numero', label: 'Teléfono' }
+                { key: 'numero', label: 'Teléfono', width: 55 }
 
             ],
 
@@ -498,10 +496,9 @@ const app = createBaseApp({
 
             annexEnvironmentPdfColumns: [
 
-                { key: 'referencia', label: 'Referencia' },
-                { key: 'ambiente', label: 'Ambiente' },
-                { key: 'numero', label: 'Teléfono de acceso' },
-                { key: 'anexo', label: 'Anexo' }
+                { key: 'ambiente', label: 'Ambiente', width: 65 },
+                { key: 'numero', label: 'Teléfono de acceso', width: 70 },
+                { key: 'anexo', label: 'Anexo', width: 25 }
 
             ]
 
@@ -891,6 +888,23 @@ const app = createBaseApp({
 
 
             /*
+             * TELÉFONO PARA EXPORTACIÓN
+             *
+             * En el directorio de personal se deja el teléfono general.
+             * Los números directos se publican en su sección independiente.
+             * No se modifica el teléfono que utiliza la tabla en pantalla.
+             */
+
+            this.directory = this.directory.map(item => ({
+
+                ...item,
+
+                telefonoExport: this.getDirectoryPhoneForExport(item)
+
+            }));
+
+
+            /*
              * ========================================================
              * CONFIGURACIÓN DE FILTROS
              * ========================================================
@@ -1197,6 +1211,64 @@ const app = createBaseApp({
 
 
     methods: {
+
+        getDirectoryPhoneForExport(item) {
+
+            const directNumbers = new Set(
+
+                this.directPhones
+
+                    .filter(phone => {
+
+                        if (phone.estructura_local_id) {
+
+                            return (
+                                phone.estructura_local_id === item.estructura_local_id &&
+                                (
+                                    !phone.local_id ||
+                                    phone.local_id === item.local_id
+                                )
+                            );
+
+                        }
+
+                        if (phone.local_id) {
+
+                            return (
+                                phone.local_id === item.local_id &&
+                                (
+                                    !phone.sede ||
+                                    phone.sede === item.sede
+                                )
+                            );
+
+                        }
+
+                        return Boolean(
+                            phone.sede &&
+                            phone.sede === item.sede
+                        );
+
+                    })
+
+                    .map(phone => String(phone.numero || '').trim())
+                    .filter(Boolean)
+
+            );
+
+            return String(item.telefono || '')
+
+                .split(/\\s*\\/\\s*/)
+
+                .map(number => number.trim())
+
+                .filter(number =>
+                    number && !directNumbers.has(number)
+                )
+
+                .join(' / ');
+
+        },
 
         onDirectoryFiltersChange(filters) {
 
