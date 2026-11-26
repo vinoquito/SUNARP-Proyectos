@@ -39,7 +39,7 @@ const ExportPdfButton = {
 
         reportTitle: {
             type: String,
-            default: 'DIRECTORIO TELEFÓNICO INSTITUCIONAL'
+            default: ''
         },
 
         reportSubtitle: {
@@ -299,7 +299,7 @@ const ExportPdfButton = {
                 doc.setTextColor(48, 60, 55);
 
                 doc.text(
-                    this.reportTitle,
+                    this.reportTitle || 'REPORTE DE DATOS',
                     51,
                     12,
                     {
@@ -502,7 +502,11 @@ const ExportPdfButton = {
 
                     }
 
-                    const localGroups = section.groupByLocationAndOrg
+                    const groupedByLocation = Boolean(
+                        section.groupByLocationAndOrg
+                    );
+
+                    const localGroups = groupedByLocation
                         ? this.groupRowsByLocalAndOrg(rows)
                         : [{
                             sede: '',
@@ -522,68 +526,76 @@ const ExportPdfButton = {
                             .filter(Boolean)
                             .join(' · ') || 'Local no especificado';
 
-                        const localLines = doc.splitTextToSize(
-                            localTitle,
-                            contentWidth
-                        );
+                        if (groupedByLocation) {
 
-                        const localHeadingHeight =
-                            localLines.length * 5 + 3;
-
-                        if (cursorY + localHeadingHeight + 13 > bottomLimit) {
-                            startNewPage();
-                        }
-
-                        cursorY += this.addWrappedHeading(
-                            doc,
-                            localTitle,
-                            leftMargin,
-                            cursorY,
-                            contentWidth,
-                            11,
-                            [50, 60, 55]
-                        );
-
-                        localGroup.organizations.forEach(organization => {
-
-                            const organizationLines = doc.splitTextToSize(
-                                organization.title,
+                            const localLines = doc.splitTextToSize(
+                                localTitle,
                                 contentWidth
                             );
 
-                            const organizationHeadingHeight =
-                                organizationLines.length * 4.3 + 3;
+                            const localHeadingHeight =
+                                localLines.length * 5 + 3;
 
-                            if (
-                                cursorY +
-                                organizationHeadingHeight +
-                                17 >
-                                bottomLimit
-                            ) {
-
+                            if (cursorY + localHeadingHeight + 13 > bottomLimit) {
                                 startNewPage();
-
-                                cursorY += this.addWrappedHeading(
-                                    doc,
-                                    localTitle,
-                                    leftMargin,
-                                    cursorY,
-                                    contentWidth,
-                                    10,
-                                    [70, 80, 75]
-                                );
-
                             }
 
                             cursorY += this.addWrappedHeading(
                                 doc,
-                                organization.title,
+                                localTitle,
                                 leftMargin,
                                 cursorY,
                                 contentWidth,
-                                9.5,
-                                [75, 75, 75]
+                                11,
+                                [50, 60, 55]
                             );
+
+                        }
+
+                        localGroup.organizations.forEach(organization => {
+
+                            if (groupedByLocation) {
+
+                                const organizationLines = doc.splitTextToSize(
+                                    organization.title,
+                                    contentWidth
+                                );
+
+                                const organizationHeadingHeight =
+                                    organizationLines.length * 4.3 + 3;
+
+                                if (
+                                    cursorY +
+                                    organizationHeadingHeight +
+                                    17 >
+                                    bottomLimit
+                                ) {
+
+                                    startNewPage();
+
+                                    cursorY += this.addWrappedHeading(
+                                        doc,
+                                        localTitle,
+                                        leftMargin,
+                                        cursorY,
+                                        contentWidth,
+                                        10,
+                                        [70, 80, 75]
+                                    );
+
+                                }
+
+                                cursorY += this.addWrappedHeading(
+                                    doc,
+                                    organization.title,
+                                    leftMargin,
+                                    cursorY,
+                                    contentWidth,
+                                    9.5,
+                                    [75, 75, 75]
+                                );
+
+                            }
 
                             const body = organization.rows.map((row, rowIndex) =>
                                 columns.map(column =>
@@ -643,7 +655,10 @@ const ExportPdfButton = {
 
                                     // Si una tabla continúa en otra página,
                                     // se repite el contexto físico y orgánico.
-                                    if (data.pageNumber > 1) {
+                                    if (
+                                        groupedByLocation &&
+                                        data.pageNumber > 1
+                                    ) {
 
                                         doc.setFont('helvetica', 'bold');
                                         doc.setFontSize(7.5);
