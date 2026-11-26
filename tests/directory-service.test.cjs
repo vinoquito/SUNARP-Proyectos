@@ -73,7 +73,7 @@ test('la pantalla precarga catálogos de formulario en segundo plano sin bloquea
   const loadStart = frontendSource.indexOf('async function load(force = false)');
   const bootstrapStart = frontendSource.indexOf('startDirectoryFormBootstrap();', loadStart);
   const siteStart = frontendSource.indexOf('await loadSelectedSede(soleSedeId)', loadStart);
-  assert.ok(bootstrapStart > loadStart && siteStart > bootstrapStart);
+  assert.ok(siteStart > loadStart && bootstrapStart > siteStart);
 });
 
 test('el bootstrap de formulario verifica capacidades y mantiene la autorización del detalle de edición', () => {
