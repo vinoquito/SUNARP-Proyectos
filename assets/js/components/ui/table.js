@@ -8,6 +8,11 @@ const DataTable = {
             default: ''
         },
 
+        titleIcon: {
+            type: String,
+            default: ''
+        },
+
         items: {
             type: Array,
             default: () => []
@@ -37,6 +42,7 @@ const DataTable = {
         <component
             :is="template"
             :title="title"
+            :title-icon="titleIcon"
             :items="items"
             :columns="columns"
             :empty-text="emptyText">
