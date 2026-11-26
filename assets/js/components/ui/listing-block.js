@@ -32,6 +32,31 @@ const ListingBlock = {
             default: () => []
         },
 
+        pdfExportColumns: {
+            type: Array,
+            default: () => []
+        },
+
+        additionalExportSections: {
+            type: Array,
+            default: () => []
+        },
+
+        reportTitle: {
+            type: String,
+            default: ''
+        },
+
+        reportSubtitle: {
+            type: String,
+            default: ''
+        },
+
+        reportLogo: {
+            type: String,
+            default: ''
+        },
+
         filename: {
             type: String,
             default: 'exportacion'
@@ -370,6 +395,34 @@ const ListingBlock = {
                 label: key
 
             }));
+
+        },
+
+
+        /*
+         * CONJUNTO COMPLETO DE SECCIONES PARA EXPORTACIÓN
+         *
+         * El directorio utiliza el resultado de sus filtros y búsqueda.
+         * Las secciones adicionales llegan ya filtradas desde la página.
+         */
+
+        exportSections() {
+
+            const directorySection = {
+                title: 'Directorio de personal',
+                sheetName: 'Directorio de personal',
+                data: this.filteredRows,
+                columns: this.resolvedExportColumns,
+                pdfColumns: this.pdfExportColumns.length
+                    ? this.pdfExportColumns
+                    : this.resolvedExportColumns,
+                groupByLocationAndOrg: true
+            };
+
+            return [
+                directorySection,
+                ...this.additionalExportSections
+            ];
 
         },
 
@@ -792,6 +845,7 @@ const ListingBlock = {
                     <export-excel-button
                         :data="filteredRows"
                         :columns="resolvedExportColumns"
+                        :sections="exportSections"
                         :filename="filename"
                     >
                     </export-excel-button>
@@ -800,6 +854,10 @@ const ListingBlock = {
                     <export-pdf-button
                         :data="filteredRows"
                         :columns="resolvedExportColumns"
+                        :sections="exportSections"
+                        :report-title="reportTitle"
+                        :report-subtitle="reportSubtitle"
+                        :logo="reportLogo"
                         :filename="filename"
                     >
                     </export-pdf-button>
