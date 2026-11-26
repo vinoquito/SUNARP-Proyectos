@@ -356,6 +356,7 @@ Densidad mínima:
    --gob-card-title-large: 1.5rem;
    --gob-card-title-medium: 1.25rem;
    --gob-card-title-small: 1.125rem;
+   --gob-card-title-small-line-height: 1.5rem;
 
    /* ======================================================================
        BADGES
