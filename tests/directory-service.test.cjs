@@ -44,6 +44,49 @@ test('SUNARP UI conserva el loader global y ofrece un loader translúcido locali
   assert.doesNotMatch(sectionLoaderCss, /position: fixed/);
 });
 
+
+test('el loader localizado utiliza SUNARP UI cuando está disponible y no bloquea si falta', () => {
+  const helperStart = frontendScript.indexOf('function beginDirectorySectionLoading(');
+  const helperEnd = frontendScript.indexOf('function getDirectoryFormBootstrap(', helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  const helperSource = frontendScript.slice(helperStart, helperEnd) +
+    '\\nthis.beginDirectorySectionLoading = beginDirectorySectionLoading;';
+
+  const calls = [];
+  const host = {
+    attributes: {},
+    getAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null; },
+    setAttribute(name, value) { this.attributes[name] = value; },
+    removeAttribute(name) { delete this.attributes[name]; }
+  };
+  const availableContext = vm.createContext({
+    window: { SUNARPUI: { beginSectionLoading(target, options) {
+      calls.push({ target, options });
+      return () => calls.push({ finished: true });
+    } } },
+    document: { getElementById() { return host; } },
+    console: { warn() {} }
+  });
+  vm.runInContext(helperSource, availableContext);
+  const finishAvailable = availableContext.beginDirectorySectionLoading('documentAlert', { message: 'Buscando' });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].target, host);
+  assert.equal(calls[0].options.message, 'Buscando');
+  finishAvailable();
+  assert.equal(calls[1].finished, true);
+
+  const fallbackContext = vm.createContext({
+    window: { SUNARPUI: {} },
+    document: { getElementById() { return host; } },
+    console: { warn() {} }
+  });
+  vm.runInContext(helperSource, fallbackContext);
+  const finishFallback = fallbackContext.beginDirectorySectionLoading('documentAlert');
+  assert.equal(host.getAttribute('aria-busy'), 'true');
+  finishFallback();
+  assert.equal(host.getAttribute('aria-busy'), null);
+});
+
 test('Nuevo servidor y Editar reutilizan catálogos precargados y muestran el modal antes de esperar el detalle', () => {
   const start = frontendSource.indexOf('async function openDirectoryForm(record)');
   const end = frontendSource.indexOf('const form=document.getElementById(\'directoryForm\')', start);
@@ -55,7 +98,8 @@ test('Nuevo servidor y Editar reutilizan catálogos precargados y muestran el mo
   const parallelIndex = implementation.indexOf('await Promise.all([catalogsPromise,detailPromise])');
   assert.ok(modalIndex >= 0 && catalogIndex > modalIndex && parallelIndex > catalogIndex);
   assert.ok(detailIndex > catalogIndex);
-  assert.match(implementation, /SUNARPUI\.beginSectionLoading\(modalBody/);
+  assert.match(implementation, /beginDirectorySectionLoading\(modalBody/);
+  assert.doesNotMatch(implementation, /SUNARPUI\.beginSectionLoading\(/);
   assert.doesNotMatch(implementation, /SUNARPUI\.beginLoading\(/);
   assert.match(implementation, /formRequestId/);
   assert.match(implementation, /catalogsCacheHit/);
