@@ -1390,7 +1390,7 @@ test('el editor guarda observaciones y condición dentro del borrador de la asig
 });
 
 test('el formulario usa búsqueda documental y administra asignaciones en una tabla única', () => {
-  assert.match(frontendSource, /callServer\(\s*'getDirectoryFormData'/);
+  assert.match(frontendSource, /callServer\('getDirectoryFormBootstrap'\)/);
   assert.ok(frontendSource.includes("callServer('searchDirectoryPersonByDocument'"));
   assert.ok(frontendSource.includes('directoryAssignmentEditorHost'));
   assert.ok(frontendSource.includes('directoryAssignmentsTableHost'));
