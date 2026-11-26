@@ -4,6 +4,52 @@ const CONFIG = {
     appId: 'directorio-telefonico'
 };
 
+
+/*
+ * Devuelve la jerarquía organizacional para las tablas telefónicas.
+ * Mantiene el mismo criterio visual del directorio de personal.
+ */
+function getDirectoryStructureParts(item) {
+
+    const levels = Object.keys(item)
+
+        .filter(key =>
+            /^estructura_nivel_\d+$/i.test(key)
+        )
+
+        .sort((a, b) =>
+            Number(a.match(/\d+$/)[0]) -
+            Number(b.match(/\d+$/)[0])
+        )
+
+        .map(key => item[key])
+
+        .filter(value =>
+            value !== undefined &&
+            value !== null &&
+            String(value).trim() !== ''
+        );
+
+    const fallbackLevels = String(item.organo || '')
+
+        .split(/\s*\/\s*/)
+
+        .filter(value => value.trim() !== '');
+
+    const resolvedLevels = levels.length
+        ? levels
+        : fallbackLevels;
+
+    return {
+
+        primary: resolvedLevels[0] || '',
+
+        secondary: resolvedLevels.slice(1)
+
+    };
+
+}
+
 const app = createBaseApp({
 
     data() {
@@ -31,6 +77,20 @@ const app = createBaseApp({
              */
 
             directory: [],
+
+            /*
+             * REGISTROS TELEFÓNICOS PUBLICADOS EN CSV
+             */
+
+            directPhones: [],
+
+            annexEnvironmentRecords: [],
+
+            /*
+             * SELECCIONES DEL LISTADO PRINCIPAL
+             */
+
+            selectedDirectoryFilters: {},
 
             /*
              * ========================================================
@@ -195,6 +255,91 @@ const app = createBaseApp({
 
             /*
              * ========================================================
+             * COLUMNAS DE TELÉFONOS DIRECTOS
+             * ========================================================
+             */
+
+            directPhoneTableColumns: [
+
+                {
+                    key: 'sedeDetalle',
+                    label: 'Sede',
+                    parts: item => ({
+                        primary: item.sede,
+                        secondary: [
+                            item.local,
+                            item.referencia
+                        ]
+                    }),
+                    class: 'table-default-hierarchy-cell'
+                },
+
+                {
+                    key: 'estructura',
+                    label: 'Órgano / Unidad',
+                    parts: item => getDirectoryStructureParts(item),
+                    class: 'table-default-hierarchy-cell'
+                },
+
+                {
+                    key: 'numero',
+                    label: 'Teléfono',
+                    nowrap: true
+                }
+
+            ],
+
+
+            /*
+             * ========================================================
+             * COLUMNAS DE ANEXOS DE AMBIENTES Y SERVICIOS
+             * ========================================================
+             */
+
+            annexEnvironmentTableColumns: [
+
+                {
+                    key: 'sedeDetalle',
+                    label: 'Sede',
+                    parts: item => ({
+                        primary: item.sede,
+                        secondary: [
+                            item.local,
+                            item.referencia
+                        ]
+                    }),
+                    class: 'table-default-hierarchy-cell'
+                },
+
+                {
+                    key: 'estructura',
+                    label: 'Órgano / Unidad',
+                    parts: item => getDirectoryStructureParts(item),
+                    class: 'table-default-hierarchy-cell'
+                },
+
+                {
+                    key: 'ambiente',
+                    label: 'Ambiente'
+                },
+
+                {
+                    key: 'numero',
+                    label: 'Teléfono de acceso',
+                    nowrap: true
+                },
+
+                {
+                    key: 'anexo',
+                    label: 'Anexo',
+                    nowrap: true
+                }
+
+            ],
+
+
+            /*
+             * ========================================================
              * CONFIGURACIÓN DE FILTROS
              * ========================================================
              */
@@ -293,7 +438,11 @@ const app = createBaseApp({
 
                 rows,
 
-                pageElements
+                pageElements,
+
+                directPhoneRows,
+
+                annexEnvironmentRows
 
             ] = await Promise.all([
 
@@ -305,7 +454,29 @@ const app = createBaseApp({
 
                 fetchSheet(PAGE_NAME),
 
-                fetchSheet('page-elements')
+                fetchSheet('page-elements'),
+
+                fetchSheet('data-telefonos').catch(error => {
+
+                    console.error(
+                        'No se pudieron cargar los teléfonos directos:',
+                        error
+                    );
+
+                    return [];
+
+                }),
+
+                fetchSheet('data-anexos-ambientes').catch(error => {
+
+                    console.error(
+                        'No se pudieron cargar los anexos de ambientes:',
+                        error
+                    );
+
+                    return [];
+
+                })
 
             ]);
 
@@ -530,6 +701,97 @@ const app = createBaseApp({
 
             /*
              * ========================================================
+             * REGISTROS DE TELÉFONOS DIRECTOS
+             * ========================================================
+             */
+
+            const isActivePublishedRow = row =>
+
+                String(row.page || '').trim() === PAGE_NAME &&
+
+                (
+                    row.active === true ||
+                    String(row.active || '').trim().toLowerCase() === 'true'
+                ) &&
+
+                String(row.id ?? '').trim() !== '';
+
+
+            const mapLocationFields = row => {
+
+                const item = {
+
+                    id: row.id,
+
+                    sede: row.Sede || row.sede || '',
+
+                    local: row.Local || row.local || '',
+
+                    referencia: row.Referencia || row.referencia || '',
+
+                    organo:
+                        row['Órgano / Unidad'] ||
+                        row.organo ||
+                        row['Organo / Unidad'] ||
+                        '',
+
+                    template: 'table-default'
+
+                };
+
+                structureLevelKeys.forEach(key => {
+
+                    item[key] = row[key] || '';
+
+                });
+
+                return item;
+
+            };
+
+
+            this.directPhones =
+
+                (Array.isArray(directPhoneRows) ? directPhoneRows : [])
+
+                    .filter(isActivePublishedRow)
+
+                    .map(row => ({
+
+                        ...mapLocationFields(row),
+
+                        numero: row.numero || row.Telefono || ''
+
+                    }));
+
+
+            /*
+             * ========================================================
+             * REGISTROS DE ANEXOS DE AMBIENTES Y SERVICIOS
+             * ========================================================
+             */
+
+            this.annexEnvironmentRecords =
+
+                (Array.isArray(annexEnvironmentRows) ? annexEnvironmentRows : [])
+
+                    .filter(isActivePublishedRow)
+
+                    .map(row => ({
+
+                        ...mapLocationFields(row),
+
+                        ambiente: row.ambiente || row.Ambiente || '',
+
+                        numero: row.numero || row.Telefono || '',
+
+                        anexo: row.Anexo || row.anexo || ''
+
+                    }));
+
+
+            /*
+             * ========================================================
              * CONFIGURACIÓN DE FILTROS
              * ========================================================
              */
@@ -688,6 +950,75 @@ const app = createBaseApp({
             );
 
             this.loading = false;
+
+        }
+
+    },
+
+    computed: {
+
+        filteredDirectPhones() {
+
+            return this.filterRowsByDirectoryFilters(
+                this.directPhones
+            );
+
+        },
+
+        filteredAnnexEnvironmentRecords() {
+
+            return this.filterRowsByDirectoryFilters(
+                this.annexEnvironmentRecords
+            );
+
+        }
+
+    },
+
+
+    methods: {
+
+        onDirectoryFiltersChange(filters) {
+
+            this.selectedDirectoryFilters = {
+                ...filters
+            };
+
+        },
+
+        filterRowsByDirectoryFilters(rows) {
+
+            const filterKeys = this.directoryFilterFields
+
+                .map(field =>
+                    typeof field === 'string'
+                        ? field
+                        : field.key
+                )
+
+                /*
+                 * Cargo solo corresponde al directorio de personal.
+                 */
+                .filter(key =>
+                    key && key !== 'cargo'
+                );
+
+            return rows.filter(row =>
+
+                filterKeys.every(key => {
+
+                    const selectedValue =
+                        this.selectedDirectoryFilters[key];
+
+                    if (!selectedValue) {
+                        return true;
+                    }
+
+                    return String(row[key] ?? '') === String(selectedValue);
+
+                })
+
+            );
 
         }
 

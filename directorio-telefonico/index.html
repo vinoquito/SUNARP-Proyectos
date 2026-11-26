@@ -151,6 +151,7 @@
 
                     filename="directorio-telefonico"
 
+                    @filters-change="onDirectoryFiltersChange"
 
                 >
 
@@ -175,6 +176,38 @@
 
 
                 </listing-block>
+
+
+                <data-table
+
+                    v-if="filteredDirectPhones.length"
+
+                    title="Teléfonos directos"
+
+                    :items="filteredDirectPhones"
+
+                    :columns="directPhoneTableColumns"
+
+                    empty-text="No se encontraron teléfonos directos."
+
+                >
+                </data-table>
+
+
+                <data-table
+
+                    v-if="filteredAnnexEnvironmentRecords.length"
+
+                    title="Anexos de ambientes y servicios"
+
+                    :items="filteredAnnexEnvironmentRecords"
+
+                    :columns="annexEnvironmentTableColumns"
+
+                    empty-text="No se encontraron anexos para la ubicación seleccionada."
+
+                >
+                </data-table>
 
 
             </main>

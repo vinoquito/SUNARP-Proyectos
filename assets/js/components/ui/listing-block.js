@@ -44,6 +44,8 @@ const ListingBlock = {
 
     },
 
+    emits: ['filters-change'],
+
 
     data() {
 
@@ -453,6 +455,11 @@ const ListingBlock = {
             handler() {
 
                 this.currentPage = 1;
+
+                this.$emit(
+                    'filters-change',
+                    { ...this.selectedFilters }
+                );
 
             }
 
