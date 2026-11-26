@@ -2904,6 +2904,9 @@ function getDirectoryPersonById(personaId) {
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_EDITAR');
   const authorizationMs = Date.now() - authorizationStartedAt;
   const userId = _directoryKey_(authorization.auth && authorization.auth.personaId);
+  if (!userId) {
+    throw new Error('No se pudo identificar al usuario autorizado para recuperar la ficha.');
+  }
   const authorizationFingerprint = _directoryAuthorizationCacheFingerprint_(authorization);
   const cacheKey = 'directory-person-detail:v1:' + userId + ':' +
     authorizationFingerprint + ':' + id;
