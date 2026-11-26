@@ -1653,32 +1653,50 @@ function _directoryGetAuthorizedSedeIds_(authorization, sedes) {
  * Catálogos y ámbitos efectivos para crear/editar servidores.
  * Se consultan al abrir el formulario, no al entrar a la pantalla.
  */
-function getDirectoryFormData(permissionCode) {
-  const requestedPermission = _directoryText_(permissionCode).toUpperCase();
-  const allowedPermissions = ['INFORMACION_PERSONAL_CREAR', 'INFORMACION_PERSONAL_EDITAR'];
-  if (!allowedPermissions.includes(requestedPermission)) throw new Error('Operación de formulario no válida.');
-  const authorization = _directoryAuthorizationContext_(requestedPermission);
+/**
+ * Construye los catálogos compartidos del formulario. La lista de catálogos
+ * operativos se reutiliza desde SUNARP Core; documentos y condiciones se
+ * agrupan en una sola consulta complementaria.
+ */
+function _directoryBuildFormCatalogPayload_(auth, requestStartedAt, authorizationMs) {
+  const contextStartedAt = Date.now();
   const context = _directoryLoadContext_({
     includePersonalData: false,
-    includePeople: false,
+    includePeople: true,
     includeAssignments: false,
-    includeDocumentTypes: true,
+    includeDocumentTypes: false,
     validateSnapshot: false
   });
-  const moduleAccess = (authorization.auth.moduleAccess || []).find(item =>
-    _directoryKey_(item.modulo_id) === authorization.moduleId
+  const contextElapsed = Date.now() - contextStartedAt;
+
+  const catalogStartedAt = Date.now();
+  const conditionCatalog = SUNARPCore.listRecordsFromSourcesCached([
+    {
+      key: 'documentTypes',
+      source: _directoryResolveDocumentTypesSource_(),
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.documentTypes
+    },
+    {
+      key: 'conditionCargo',
+      source: _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.condicionCargo),
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.condicionCargo
+    }
+  ], DIRECTORY_CATALOG_CACHE_TTL);
+  const supplementalCatalogElapsed = Date.now() - catalogStartedAt;
+
+  const mappingStartedAt = Date.now();
+  const moduleId = 'MOD_INFO_PERSONAL';
+  const moduleAccess = (auth.moduleAccess || []).find(item =>
+    _directoryKey_(item.modulo_id) === moduleId
   );
-  const conditionCatalog = SUNARPCore.listRecordsFromSourcesCached([{
-    key: 'conditionCargo',
-    source: _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.condicionCargo),
-    requiredHeaders: DIRECTORY_REQUIRED_HEADERS.condicionCargo
-  }], DIRECTORY_CATALOG_CACHE_TTL);
+  const canCreate = _accessHasPermission_(auth, 'INFORMACION_PERSONAL_CREAR', moduleId) === true;
+  const canEdit = _accessHasPermission_(auth, 'INFORMACION_PERSONAL_EDITAR', moduleId) === true;
   const canDeleteAssignments = _accessHasPermission_(
-    authorization.auth,
+    auth,
     'INFORMACION_PERSONAL_ELIMINAR',
-    authorization.moduleId
+    moduleId
   );
-  return {
+  const result = {
     catalogs: {
       sedes: (context.sedes || []).filter(_directoryIsActive_).map(x => ({
         id: _directoryKey_(x.id), name: _directoryText_(x.name), active: true
@@ -1694,17 +1712,68 @@ function getDirectoryFormData(permissionCode) {
       condicionCargo: (conditionCatalog.conditionCargo || []).filter(_directoryIsActive_).map(x => ({
         id: _directoryKey_(x.id), name: _directoryText_(x.name)
       })).filter(x => x.id && x.name),
-      documentTypes: (context.documentTypes || []).filter(_directoryIsActive_).map(x => ({
+      documentTypes: (conditionCatalog.documentTypes || []).filter(_directoryIsActive_).map(x => ({
         id: _directoryKey_(x.id), name: _directoryText_(x.name)
       })).filter(x => x.id && x.name)
     },
-    capabilities: { deleteAssignments: canDeleteAssignments === true },
+    capabilities: {
+      canCreate,
+      canEdit,
+      deleteAssignments: canDeleteAssignments === true
+    },
     scopes: (moduleAccess && moduleAccess.scopes || []).filter(_directoryIsActive_).map(scope => ({
       type: _directoryText_(scope.tipo_ambito_id).toUpperCase(),
       referenceId: _directoryKey_(scope.referencia_id),
       includeDescendants: _directoryNormalizeBoolean_(scope.incluir_descendientes === undefined ? false : scope.incluir_descendientes)
     }))
   };
+  const mappingElapsed = Date.now() - mappingStartedAt;
+  const diagnostics = {
+    serverMs: Date.now() - requestStartedAt,
+    stages: {
+      authorizationMs: authorizationMs,
+      contextMs: contextElapsed,
+      supplementalCatalogMs: supplementalCatalogElapsed,
+      responseMappingMs: mappingElapsed
+    }
+  };
+  result.diagnostics = diagnostics;
+  console.log('[DirectoryService] Form catalog timing:', JSON.stringify(diagnostics));
+  return result;
+}
+
+/**
+ * Precarga de solo lectura para el formulario. Requiere acceso al módulo y
+ * al menos una capacidad de alta o edición; las escrituras vuelven a validar
+ * el permiso y el ámbito en sus propios endpoints.
+ */
+function getDirectoryFormBootstrap() {
+  const requestStartedAt = Date.now();
+  const authorizationStartedAt = Date.now();
+  const moduleId = 'MOD_INFO_PERSONAL';
+  const auth = requirePermission_('INFORMACION_PERSONAL_VER', moduleId);
+  const authorizationMs = Date.now() - authorizationStartedAt;
+  const canCreate = _accessHasPermission_(auth, 'INFORMACION_PERSONAL_CREAR', moduleId) === true;
+  const canEdit = _accessHasPermission_(auth, 'INFORMACION_PERSONAL_EDITAR', moduleId) === true;
+  if (!canCreate && !canEdit) {
+    throw new Error('No tienes permiso para crear ni editar servidores.');
+  }
+  return _directoryBuildFormCatalogPayload_(auth, requestStartedAt, authorizationMs);
+}
+
+/**
+ * Endpoint compatible para clientes que solicitan explícitamente una
+ * operación. La precarga de pantalla usa getDirectoryFormBootstrap().
+ */
+function getDirectoryFormData(permissionCode) {
+  const requestedPermission = _directoryText_(permissionCode).toUpperCase();
+  const allowedPermissions = ['INFORMACION_PERSONAL_CREAR', 'INFORMACION_PERSONAL_EDITAR'];
+  if (!allowedPermissions.includes(requestedPermission)) throw new Error('Operación de formulario no válida.');
+  const requestStartedAt = Date.now();
+  const authorizationStartedAt = Date.now();
+  const auth = requirePermission_(requestedPermission, 'MOD_INFO_PERSONAL');
+  const authorizationMs = Date.now() - authorizationStartedAt;
+  return _directoryBuildFormCatalogPayload_(auth, requestStartedAt, authorizationMs);
 }
 
 /** Busca el documento antes de permitir el alta y evita duplicar personas. */
@@ -1853,6 +1922,10 @@ function getDirectoryInitialData() {
 
   return {
     catalogs: { sedes },
+    capabilities: {
+      canCreate: _accessHasPermission_(auth, 'INFORMACION_PERSONAL_CREAR', moduleId) === true,
+      canEdit: _accessHasPermission_(auth, 'INFORMACION_PERSONAL_EDITAR', moduleId) === true
+    },
     scopeSummary: {
       total: hasTotalScope,
       types: Array.from(scopeTypes)
@@ -2736,7 +2809,7 @@ function listDirectoryAssignments(options) {
 function getDirectoryPersonById(personaId) {
   const id = _directoryKey_(personaId);
   if (!id) throw new Error('Debes proporcionar persona_id.');
-  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_EDITAR');
   const context = _directoryLoadContext_({
     includePersonalData: false,
     includePeople: false,
