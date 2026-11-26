@@ -436,14 +436,42 @@ const DirectoryPage = (() => {
 
   function callServer(functionName, ...args) {
     return new Promise((resolve, reject) => {
-
       const runner = google.script.run
         .withSuccessHandler(resolve)
         .withFailureHandler(reject);
-
       runner[functionName](...args);
-
     });
+  }
+
+  /**
+   * Utiliza el loader localizado publicado por SUNARP UI.
+   * Una versión de biblioteca que aún no exponga el método no debe
+   * interrumpir el flujo antes de su try/finally.
+   */
+  function beginDirectorySectionLoading(target, options = {}) {
+    const ui = window.SUNARPUI;
+    const host = typeof target === 'string'
+      ? document.getElementById(target)
+      : target;
+    if (ui && typeof ui.beginSectionLoading === 'function') {
+      try {
+        return ui.beginSectionLoading(host || target, options || {});
+      } catch (error) {
+        console.warn('[DirectoryPage] No se pudo iniciar el loader localizado:', error);
+      }
+    }
+    if (!host || typeof host.setAttribute !== 'function') {
+      return function finishMissingDirectorySectionLoading() {};
+    }
+    const previousAriaBusy = host.getAttribute('aria-busy');
+    host.setAttribute('aria-busy', 'true');
+    let finished = false;
+    return function finishDirectorySectionLoadingFallback() {
+      if (finished) return;
+      finished = true;
+      if (previousAriaBusy === null) host.removeAttribute('aria-busy');
+      else host.setAttribute('aria-busy', previousAriaBusy);
+    };
   }
 
 
@@ -458,7 +486,11 @@ const DirectoryPage = (() => {
     if (!force && state.formBootstrapPromise) return state.formBootstrapPromise;
 
     const requestStartedAt = performance.now();
-    const request = callServer('getDirectoryFormBootstrap')
+    const contextReady = state.contextWarmupPromise
+      ? state.contextWarmupPromise.catch(() => null)
+      : Promise.resolve(null);
+    const request = contextReady
+      .then(() => callServer('getDirectoryFormBootstrap'))
       .then(result => {
         if (!result || !result.catalogs || !Array.isArray(result.scopes) || !result.capabilities) {
           throw new Error('El servidor devolvió catálogos incompletos para el formulario.');
@@ -1409,8 +1441,8 @@ const DirectoryPage = (() => {
     // desde la carga inicial de la pantalla.
     SUNARPUI.openModal({title:modalTitle,content:loadingContent,size:'xl'});
     const modalBody=document.getElementById('sunarpModalBody');
-    const finishFormLoading=modalBody&&typeof SUNARPUI.beginSectionLoading==='function'
-      ?SUNARPUI.beginSectionLoading(modalBody,{message:'Preparando los catálogos y datos del servidor...'})
+    const finishFormLoading=modalBody
+      ?beginDirectorySectionLoading(modalBody,{message:'Preparando los catálogos y datos del servidor...'})
       :function(){};
     const formLoadStartedAt=performance.now();
     const catalogsCacheHit=Boolean(state.formBootstrap&&
@@ -1434,7 +1466,10 @@ const DirectoryPage = (() => {
       // Su endpoint exige EDITAR y vuelve a comprobar los ámbitos en el servidor.
       const detailPromise=editing?(()=>{
         const detailStartedAt=performance.now();
-        return callServer('getDirectoryPersonById',record.persona_id).then(result=>{
+        const contextReady=state.contextWarmupPromise
+          ?state.contextWarmupPromise.catch(()=>null)
+          :Promise.resolve(null);
+        return contextReady.then(()=>callServer('getDirectoryPersonById',record.persona_id)).then(result=>{
           personRoundTripMs=performance.now()-detailStartedAt;
           if(!result)throw new Error('No se encontró la ficha de la persona.');
           return result;
@@ -1538,7 +1573,8 @@ const DirectoryPage = (() => {
         setVerified(false);documentSearch.disabled=true;documentClear.disabled=true;
         documentType.disabled=true;documentNumber.disabled=true;documentSearch.textContent='Buscando...';
         if(documentAlert)documentAlert.replaceChildren();
-        const finishSearchLoading=SUNARPUI.beginSectionLoading(documentAlert,{
+        showDocumentAlert('info','Consultando documento','Estamos verificando si la persona ya está registrada.');
+        const finishSearchLoading=beginDirectorySectionLoading(documentAlert,{
           message:'Consultando el documento en Información de personal...'
         });
         try {
@@ -1782,7 +1818,7 @@ const DirectoryPage = (() => {
         const id=key(siteId);
         if(!id){snapshot=null;hierarchy=null;localField.hidden=true;hierarchyHost.replaceChildren();relationField.hidden=true;return;}
         save.disabled=true;
-        const finishLocationLoading=SUNARPUI.beginSectionLoading(location,{
+        const finishLocationLoading=beginDirectorySectionLoading(location,{
           message:'Cargando los ámbitos y ubicaciones autorizados...'
         });
         try{
@@ -1848,7 +1884,7 @@ const DirectoryPage = (() => {
         removedAssignmentIds:Array.from(removedIds)
       };
       saveButton.disabled=true;saveButton.textContent='Guardando...';
-      const finishSaveLoading=SUNARPUI.beginSectionLoading(form,{
+      const finishSaveLoading=beginDirectorySectionLoading(form,{
         message:'Guardando los datos personales y las asignaciones...'
       });
       try{
@@ -2247,6 +2283,17 @@ async function deleteDirectoryEntry(record) {
       bindEvents();
       state.loaded = true;
       setPageActions();
+
+      // La sede y el formulario comparten el contexto autorizado. Prepararlo
+      // antes de la carga de la sede evita una lectura paralela al abrir Nuevo/Editar.
+      if (!state.hasTotalScope && state.authorizedSedes.length) {
+        startDirectoryContextWarmup();
+      }
+      if (state.formAccessCapabilities.canCreate === true ||
+          state.formAccessCapabilities.canEdit === true) {
+        startDirectoryFormBootstrap();
+      }
+
       const clientSetupMs = performance.now() - clientSetupStartedAt;
       const diagnostics = result.diagnostics || {};
       const serverMs = Number.isFinite(Number(diagnostics.serverMs))
@@ -2265,8 +2312,6 @@ async function deleteDirectoryEntry(record) {
           });
           await loadSelectedSede(soleSedeId);
         }
-      } else if (!state.hasTotalScope && state.authorizedSedes.length > 1) {
-        startDirectoryContextWarmup();
       }
 
       console.info('[DirectoryPage] Selector inicial de sedes:', {
@@ -2289,9 +2334,6 @@ async function deleteDirectoryEntry(record) {
         await loadSelectedSede(previousSedeId, true);
       }
 
-      if (state.formAccessCapabilities.canCreate === true || state.formAccessCapabilities.canEdit === true) {
-        startDirectoryFormBootstrap();
-      }
     } catch (error) {
       state.loaded = hadLoadedSnapshot;
       console.error('Error al cargar el selector de Información de personal:', error);
