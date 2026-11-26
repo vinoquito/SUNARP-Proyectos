@@ -50,7 +50,7 @@ test('el loader localizado utiliza SUNARP UI cuando está disponible y no bloque
   const helperEnd = frontendScript.indexOf('function getDirectoryFormBootstrap(', helperStart);
   assert.ok(helperStart >= 0 && helperEnd > helperStart);
   const helperSource = frontendScript.slice(helperStart, helperEnd) +
-    '\\nthis.beginDirectorySectionLoading = beginDirectorySectionLoading;';
+    '\nthis.beginDirectorySectionLoading = beginDirectorySectionLoading;';
 
   const calls = [];
   const host = {
