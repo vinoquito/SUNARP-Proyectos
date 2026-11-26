@@ -320,6 +320,7 @@ Densidad mínima:
        ====================================================================== */
 
    --gob-bg-page: var(--gob-neutral-200);
+   --gob-bg-surface: var(--gob-gray-100);
    --gob-bg-container: var(--gob-blue-350);
    --gob-bg-section: var(--gob-blue-150);
    --gob-bg-section-alt: var(--gob-blue-300);
