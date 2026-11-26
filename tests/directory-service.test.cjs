@@ -95,6 +95,9 @@ test('el bootstrap de formulario verifica capacidades y mantiene la autorizació
   const personStart = serviceSource.indexOf('function getDirectoryPersonById(');
   const personEnd = serviceSource.indexOf('\nfunction ', personStart + 10);
   const personDetail = serviceSource.slice(personStart, personEnd);
+  assert.match(personDetail, /includePeople: true/);
+  assert.match(personDetail, /Person detail timing/);
+  assert.match(frontendSource, /personServerStages/);
   assert.match(personDetail, /_directoryAuthorizationContext_\('INFORMACION_PERSONAL_EDITAR'\)/);
 });
 
@@ -2430,7 +2433,7 @@ test('getDirectoryPersonById consulta solo asignaciones autorizadas de la person
   vmContext._directoryAuthorizationContext_ = () => ({ auth: {}, moduleId: 'MOD_INFO_PERSONAL' });
   vmContext._directoryLoadContext_ = options => {
     assert.equal(options.includeAssignments, false);
-    assert.equal(options.includePeople, false);
+    assert.equal(options.includePeople, true);
     assert.equal(options.includePersonalData, false);
     return { asignaciones: [], personas: [], datosPersonales: [] };
   };
@@ -2457,6 +2460,9 @@ test('getDirectoryPersonById consulta solo asignaciones autorizadas de la person
   assert.equal(result.assignments.length, 1);
   assert.equal(result.assignments[0].nombres, 'Ana');
   assert.equal(result.personalData.servidor_id, 'PER_007');
+  assert.ok(result.diagnostics.serverMs >= 0);
+  assert.ok(result.diagnostics.stages.contextMs >= 0);
+  assert.ok(result.diagnostics.stages.assignmentQueryMs >= 0);
   assert.equal(JSON.stringify(lookups), JSON.stringify([
     { source: 'personas', filters: { persona_id: 'PER_007' } },
     { source: 'servidores datos personales', filters: { servidor_id: 'PER_007' } }
