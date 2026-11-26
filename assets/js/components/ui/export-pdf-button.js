@@ -1,6 +1,7 @@
 const ExportPdfButton = {
 
     props: {
+
         data: {
             type: Array,
             required: true
@@ -9,6 +10,11 @@ const ExportPdfButton = {
         columns: {
             type: Array,
             required: true
+        },
+
+        sections: {
+            type: Array,
+            default: () => []
         },
 
         filename: {
@@ -29,49 +35,673 @@ const ExportPdfButton = {
         variant: {
             type: String,
             default: 'secondary'
+        },
+
+        reportTitle: {
+            type: String,
+            default: 'DIRECTORIO TELEFÓNICO INSTITUCIONAL'
+        },
+
+        reportSubtitle: {
+            type: String,
+            default: ''
+        },
+
+        logo: {
+            type: String,
+            default: ''
         }
+
     },
 
     methods: {
 
-        handleExport() {
+        resolveSections() {
+
+            if (this.sections.length) {
+                return this.sections;
+            }
+
+            return [{
+                title: 'Datos',
+                data: this.data,
+                columns: this.columns,
+                pdfColumns: this.columns,
+                groupByLocationAndOrg: false
+            }];
+
+        },
+
+        getExportValue(row, column, index) {
+
+            let value;
+
+            if (typeof column.value === 'function') {
+
+                value = column.value(row, index);
+
+            } else if (typeof column.parts === 'function') {
+
+                const parts = column.parts(row, index) || {};
+
+                value = [
+                    parts.primary,
+                    ...(Array.isArray(parts.secondary)
+                        ? parts.secondary
+                        : [])
+                ]
+                    .filter(part =>
+                        part !== undefined &&
+                        part !== null &&
+                        String(part).trim() !== ''
+                    )
+                    .join(' / ');
+
+            } else {
+
+                value = row?.[column.key];
+
+            }
+
+            if (value === undefined || value === null) {
+                return '';
+            }
+
+            return Array.isArray(value)
+                ? value.join(' / ')
+                : String(value);
+
+        },
+
+        getOrganizationLevels(row) {
+
+            const levelKeys = Object.keys(row || {})
+                .filter(key =>
+                    /^estructura_nivel_\d+$/i.test(key)
+                )
+                .sort((a, b) =>
+                    Number(a.match(/\d+$/)[0]) -
+                    Number(b.match(/\d+$/)[0])
+                );
+
+            const levels = levelKeys
+                .map(key => row[key])
+                .filter(value =>
+                    value !== undefined &&
+                    value !== null &&
+                    String(value).trim() !== ''
+                )
+                .map(value => String(value).trim());
+
+            if (levels.length) {
+                return levels;
+            }
+
+            return String(row?.organo || '')
+                .split(/\s*\/\s*/)
+                .map(value => value.trim())
+                .filter(Boolean);
+
+        },
+
+        groupRowsByLocalAndOrg(rows) {
+
+            const localGroups = new Map();
+
+            // Map conserva el orden de primera aparición de cada local.
+            // Los registros dentro de cada grupo también conservan su orden CSV.
+            rows.forEach(row => {
+
+                const sede = String(row.sede || '').trim();
+                const local = String(row.local || '').trim();
+                const localId = String(row.local_id || '').trim();
+
+                const localKey = [
+                    sede,
+                    localId || local || '__sin_local__'
+                ].join('\u001f');
+
+                if (!localGroups.has(localKey)) {
+
+                    localGroups.set(localKey, {
+                        sede,
+                        local: local || 'Local no especificado',
+                        organizations: new Map()
+                    });
+
+                }
+
+                const localGroup = localGroups.get(localKey);
+                const organizationLevels = this.getOrganizationLevels(row);
+                const organizationKey = organizationLevels.length
+                    ? organizationLevels.join('\u001f')
+                    : '__sin_organo__';
+
+                if (!localGroup.organizations.has(organizationKey)) {
+
+                    localGroup.organizations.set(organizationKey, {
+                        title: organizationLevels.length
+                            ? organizationLevels.join(' / ')
+                            : 'Órgano / Unidad no especificado',
+                        rows: []
+                    });
+
+                }
+
+                localGroup.organizations
+                    .get(organizationKey)
+                    .rows
+                    .push(row);
+
+            });
+
+            return Array.from(localGroups.values()).map(localGroup => ({
+                ...localGroup,
+                organizations: Array.from(localGroup.organizations.values())
+            }));
+
+        },
+
+        async loadLogoData() {
+
+            if (!this.logo) {
+                return null;
+            }
+
+            try {
+
+                const response = await fetch(this.logo);
+
+                if (!response.ok) {
+                    throw new Error(`No se pudo cargar el logo: ${response.status}`);
+                }
+
+                const blob = await response.blob();
+
+                return await new Promise((resolve, reject) => {
+
+                    const reader = new FileReader();
+
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = () => reject(reader.error);
+
+                    reader.readAsDataURL(blob);
+
+                });
+
+            } catch (error) {
+
+                console.warn(
+                    'No se pudo incorporar el logo al PDF. Se continuará sin él.',
+                    error
+                );
+
+                return null;
+
+            }
+
+        },
+
+        drawReportHeaderFooter(doc, logoData) {
+
+            const pageWidth = doc.internal.pageSize.getWidth();
+            const pageHeight = doc.internal.pageSize.getHeight();
+            const totalPages = doc.getNumberOfPages();
+
+            const generatedDate = new Date().toLocaleDateString(
+                'es-PE',
+                {
+                    day: '2-digit',
+                    month: 'long',
+                    year: 'numeric',
+                    timeZone: 'America/Lima'
+                }
+            );
+
+            for (let page = 1; page <= totalPages; page++) {
+
+                doc.setPage(page);
+
+                if (logoData) {
+
+                    try {
+
+                        const imageProperties = doc.getImageProperties(logoData);
+                        const maxWidth = 31;
+                        const maxHeight = 17;
+                        const scale = Math.min(
+                            maxWidth / imageProperties.width,
+                            maxHeight / imageProperties.height
+                        );
+
+                        doc.addImage(
+                            logoData,
+                            'PNG',
+                            14,
+                            6,
+                            imageProperties.width * scale,
+                            imageProperties.height * scale
+                        );
+
+                    } catch (error) {
+
+                        console.warn(
+                            'No se pudo dibujar el logo en el PDF.',
+                            error
+                        );
+
+                    }
+
+                }
+
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(12);
+                doc.setTextColor(48, 60, 55);
+
+                doc.text(
+                    this.reportTitle,
+                    51,
+                    12,
+                    {
+                        maxWidth: pageWidth - 65
+                    }
+                );
+
+                if (this.reportSubtitle) {
+
+                    doc.setFont('helvetica', 'normal');
+                    doc.setFontSize(8.5);
+                    doc.setTextColor(80, 80, 80);
+
+                    const subtitleLines = doc.splitTextToSize(
+                        this.reportSubtitle,
+                        pageWidth - 65
+                    );
+
+                    doc.text(
+                        subtitleLines.slice(0, 2),
+                        51,
+                        18
+                    );
+
+                }
+
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(7.5);
+                doc.setTextColor(100, 100, 100);
+
+                doc.text(
+                    `Generado: ${generatedDate}`,
+                    51,
+                    26
+                );
+
+                doc.setDrawColor(160, 160, 160);
+                doc.setLineWidth(0.25);
+                doc.line(14, 30, pageWidth - 14, 30);
+
+                doc.setDrawColor(190, 190, 190);
+                doc.line(14, pageHeight - 13, pageWidth - 14, pageHeight - 13);
+
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(7.5);
+                doc.setTextColor(100, 100, 100);
+
+                doc.text(
+                    'SUNARP · Directorio telefónico institucional',
+                    14,
+                    pageHeight - 7
+                );
+
+                doc.text(
+                    `Página ${page} de ${totalPages}`,
+                    pageWidth - 14,
+                    pageHeight - 7,
+                    {
+                        align: 'right'
+                    }
+                );
+
+            }
+
+        },
+
+        addWrappedHeading(doc, text, x, y, maxWidth, fontSize, color) {
+
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(fontSize);
+            doc.setTextColor(...color);
+
+            const lines = doc.splitTextToSize(
+                String(text || ''),
+                maxWidth
+            );
+
+            doc.text(lines, x, y);
+
+            return lines.length * (fontSize * 0.42) + 2;
+
+        },
+
+        async handleExport() {
 
             if (!window.jspdf) {
+
                 console.error('jsPDF no está disponible.');
                 return;
+
             }
 
             const { jsPDF } = window.jspdf;
 
-            const doc = new jsPDF('landscape');
+            const doc = new jsPDF({
+                orientation: 'landscape',
+                unit: 'mm',
+                format: 'a4'
+            });
 
             if (typeof doc.autoTable !== 'function') {
+
                 console.error(
                     'jsPDF AutoTable no está disponible.'
                 );
+
                 return;
+
             }
 
-            doc.autoTable({
+            try {
 
-                head: [
-                    this.columns.map(
-                        column => column.label
-                    )
-                ],
+                const logoData = await this.loadLogoData();
+                const sections = this.resolveSections();
 
-                body: this.data.map(row =>
-                    this.columns.map(
-                        column =>
-                            row[column.key] ?? ''
-                    )
-                )
-            });
+                const pageWidth = doc.internal.pageSize.getWidth();
+                const pageHeight = doc.internal.pageSize.getHeight();
+                const leftMargin = 14;
+                const rightMargin = 14;
+                const bottomLimit = pageHeight - 19;
+                const contentWidth = pageWidth - leftMargin - rightMargin;
 
-            doc.save(
-                `${this.filename}.pdf`
-            );
+                let cursorY = 37;
+
+                const startNewPage = () => {
+
+                    doc.addPage();
+                    cursorY = 37;
+
+                };
+
+                sections.forEach((section, sectionIndex) => {
+
+                    const rows = Array.isArray(section.data)
+                        ? section.data
+                        : [];
+
+                    const columns = Array.isArray(section.pdfColumns)
+                        && section.pdfColumns.length
+                            ? section.pdfColumns
+                            : section.columns || [];
+
+                    if (sectionIndex > 0) {
+                        cursorY += 5;
+                    }
+
+                    if (cursorY + 13 > bottomLimit) {
+                        startNewPage();
+                    }
+
+                    cursorY += this.addWrappedHeading(
+                        doc,
+                        `${sectionIndex + 1}. ${section.title || 'Sección'}`,
+                        leftMargin,
+                        cursorY,
+                        contentWidth,
+                        14,
+                        [48, 60, 55]
+                    );
+
+                    doc.setDrawColor(142, 195, 33);
+                    doc.setLineWidth(0.7);
+                    doc.line(
+                        leftMargin,
+                        cursorY,
+                        pageWidth - rightMargin,
+                        cursorY
+                    );
+
+                    cursorY += 5;
+
+                    if (!rows.length) {
+
+                        doc.setFont('helvetica', 'italic');
+                        doc.setFontSize(9);
+                        doc.setTextColor(100, 100, 100);
+                        doc.text(
+                            'No hay registros que coincidan con los filtros seleccionados.',
+                            leftMargin,
+                            cursorY + 3
+                        );
+
+                        cursorY += 11;
+                        return;
+
+                    }
+
+                    if (!columns.length) {
+
+                        doc.setFont('helvetica', 'italic');
+                        doc.setFontSize(9);
+                        doc.text(
+                            'La sección no tiene columnas de exportación configuradas.',
+                            leftMargin,
+                            cursorY + 3
+                        );
+
+                        cursorY += 11;
+                        return;
+
+                    }
+
+                    const localGroups = section.groupByLocationAndOrg
+                        ? this.groupRowsByLocalAndOrg(rows)
+                        : [{
+                            sede: '',
+                            local: '',
+                            organizations: [{
+                                title: '',
+                                rows
+                            }]
+                        }];
+
+                    localGroups.forEach(localGroup => {
+
+                        const localTitle = [
+                            localGroup.sede,
+                            localGroup.local
+                        ]
+                            .filter(Boolean)
+                            .join(' · ') || 'Local no especificado';
+
+                        const localLines = doc.splitTextToSize(
+                            localTitle,
+                            contentWidth
+                        );
+
+                        const localHeadingHeight =
+                            localLines.length * 5 + 3;
+
+                        if (cursorY + localHeadingHeight + 13 > bottomLimit) {
+                            startNewPage();
+                        }
+
+                        cursorY += this.addWrappedHeading(
+                            doc,
+                            localTitle,
+                            leftMargin,
+                            cursorY,
+                            contentWidth,
+                            11,
+                            [50, 60, 55]
+                        );
+
+                        localGroup.organizations.forEach(organization => {
+
+                            const organizationLines = doc.splitTextToSize(
+                                organization.title,
+                                contentWidth
+                            );
+
+                            const organizationHeadingHeight =
+                                organizationLines.length * 4.3 + 3;
+
+                            if (
+                                cursorY +
+                                organizationHeadingHeight +
+                                17 >
+                                bottomLimit
+                            ) {
+
+                                startNewPage();
+
+                                cursorY += this.addWrappedHeading(
+                                    doc,
+                                    localTitle,
+                                    leftMargin,
+                                    cursorY,
+                                    contentWidth,
+                                    10,
+                                    [70, 80, 75]
+                                );
+
+                            }
+
+                            cursorY += this.addWrappedHeading(
+                                doc,
+                                organization.title,
+                                leftMargin,
+                                cursorY,
+                                contentWidth,
+                                9.5,
+                                [75, 75, 75]
+                            );
+
+                            const body = organization.rows.map((row, rowIndex) =>
+                                columns.map(column =>
+                                    this.getExportValue(row, column, rowIndex)
+                                )
+                            );
+
+                            doc.autoTable({
+
+                                startY: cursorY + 1,
+
+                                margin: {
+                                    top: 41,
+                                    bottom: 18,
+                                    left: leftMargin,
+                                    right: rightMargin
+                                },
+
+                                head: [
+                                    columns.map(column =>
+                                        column.label || column.key || ''
+                                    )
+                                ],
+
+                                body,
+
+                                theme: 'grid',
+
+                                styles: {
+                                    font: 'helvetica',
+                                    fontSize: 8,
+                                    cellPadding: 2.2,
+                                    overflow: 'linebreak',
+                                    valign: 'top',
+                                    textColor: [40, 40, 40],
+                                    lineColor: [215, 220, 217],
+                                    lineWidth: 0.15
+                                },
+
+                                headStyles: {
+                                    fillColor: [50, 60, 55],
+                                    textColor: [255, 255, 255],
+                                    fontStyle: 'bold',
+                                    fontSize: 8
+                                },
+
+                                alternateRowStyles: {
+                                    fillColor: [245, 247, 246]
+                                },
+
+                                columnStyles: {},
+
+                                showHead: 'everyPage',
+                                rowPageBreak: 'avoid',
+
+                                willDrawPage: data => {
+
+                                    // Si una tabla continúa en otra página,
+                                    // se repite el contexto físico y orgánico.
+                                    if (data.pageNumber > 1) {
+
+                                        doc.setFont('helvetica', 'bold');
+                                        doc.setFontSize(7.5);
+                                        doc.setTextColor(75, 75, 75);
+
+                                        doc.text(
+                                            localTitle,
+                                            leftMargin,
+                                            35,
+                                            {
+                                                maxWidth: contentWidth
+                                            }
+                                        );
+
+                                        doc.setFont('helvetica', 'normal');
+                                        doc.setFontSize(7.2);
+
+                                        doc.text(
+                                            organization.title,
+                                            leftMargin,
+                                            39,
+                                            {
+                                                maxWidth: contentWidth
+                                            }
+                                        );
+
+                                    }
+
+                                }
+
+                            });
+
+                            cursorY =
+                                doc.lastAutoTable.finalY + 6;
+
+                        });
+
+                    });
+
+                });
+
+                this.drawReportHeaderFooter(doc, logoData);
+
+                doc.save(
+                    `${this.filename}.pdf`
+                );
+
+            } catch (error) {
+
+                console.error(
+                    'No se pudo generar el archivo PDF:',
+                    error
+                );
+
+            }
+
         }
+
     },
 
     template: `
@@ -82,4 +712,5 @@ const ExportPdfButton = {
             @click="handleExport"
         />
     `
+
 };
