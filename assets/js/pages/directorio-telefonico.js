@@ -411,6 +411,98 @@ const app = createBaseApp({
                     label: 'Anexo'
                 }
 
+            ],
+
+            /*
+             * COLUMNAS DEL PDF: LOS DATOS DE UBICACIÓN Y DEPENDENCIA
+             * SE REPRESENTAN COMO TÍTULOS DE AGRUPACIÓN.
+             */
+
+            directoryPdfColumns: [
+
+                {
+                    key: 'nombreCompleto',
+                    label: 'Nombre',
+                    value: item => [
+                        item.nombres,
+                        item.apellidos
+                    ].filter(Boolean).join(' ')
+                },
+
+                {
+                    key: 'cargo',
+                    label: 'Cargo'
+                },
+
+                {
+                    key: 'referencia',
+                    label: 'Referencia'
+                },
+
+                {
+                    key: 'telefono',
+                    label: 'Teléfono'
+                },
+
+                {
+                    key: 'anexo',
+                    label: 'Anexo'
+                }
+
+            ],
+
+            /*
+             * COLUMNAS DE EXCEL: TELÉFONOS DIRECTOS.
+             */
+
+            directPhoneExportColumns: [
+
+                { key: 'sede', label: 'Sede' },
+                { key: 'local', label: 'Local' },
+                { key: 'referencia', label: 'Referencia' },
+                { key: 'organo', label: 'Órgano / Unidad' },
+                { key: 'numero', label: 'Teléfono' }
+
+            ],
+
+            /*
+             * COLUMNAS DE PDF: TELÉFONOS DIRECTOS.
+             */
+
+            directPhonePdfColumns: [
+
+                { key: 'referencia', label: 'Referencia' },
+                { key: 'numero', label: 'Teléfono' }
+
+            ],
+
+            /*
+             * COLUMNAS DE EXCEL: ANEXOS DE AMBIENTES Y SERVICIOS.
+             */
+
+            annexEnvironmentExportColumns: [
+
+                { key: 'sede', label: 'Sede' },
+                { key: 'local', label: 'Local' },
+                { key: 'referencia', label: 'Referencia' },
+                { key: 'organo', label: 'Órgano / Unidad' },
+                { key: 'ambiente', label: 'Ambiente' },
+                { key: 'numero', label: 'Teléfono de acceso' },
+                { key: 'anexo', label: 'Anexo' }
+
+            ],
+
+            /*
+             * COLUMNAS DE PDF: ANEXOS DE AMBIENTES Y SERVICIOS.
+             */
+
+            annexEnvironmentPdfColumns: [
+
+                { key: 'referencia', label: 'Referencia' },
+                { key: 'ambiente', label: 'Ambiente' },
+                { key: 'numero', label: 'Teléfono de acceso' },
+                { key: 'anexo', label: 'Anexo' }
+
             ]
 
         };
@@ -585,6 +677,10 @@ const app = createBaseApp({
 
                     id: i.id,
 
+                    // Identificadores necesarios para agrupar por ubicación física.
+                    local_id: i.local_id || '',
+                    estructura_local_id: i.estructura_local_id || '',
+
 
                     /*
                      * PERSONA
@@ -722,6 +818,10 @@ const app = createBaseApp({
                 const item = {
 
                     id: row.id,
+
+                    // Identificadores físicos para mantener separadas las ubicaciones.
+                    local_id: row.local_id || '',
+                    estructura_local_id: row.estructura_local_id || '',
 
                     sede: row.Sede || row.sede || '',
 
@@ -1002,6 +1102,78 @@ const app = createBaseApp({
         annexEnvironmentTableTitle() {
 
             return `Anexos de ambientes y servicios — ${this.directoryContextLabel}`;
+
+        },
+
+        /*
+         * Contexto completo de filtros que se incorpora al encabezado del PDF.
+         * Cargo se identifica expresamente porque solo afecta al personal.
+         */
+
+        exportContextLabel() {
+
+            const selected = this.directoryFilterFields
+
+                .map(field =>
+                    typeof field === 'string'
+                        ? { key: field, label: field }
+                        : field
+                )
+
+                .filter(field =>
+                    field.key &&
+                    this.selectedDirectoryFilters[field.key] !== undefined &&
+                    this.selectedDirectoryFilters[field.key] !== null &&
+                    String(this.selectedDirectoryFilters[field.key]).trim() !== ''
+                )
+
+                .map(field => {
+
+                    const value = this.selectedDirectoryFilters[field.key];
+
+                    const label = field.key === 'cargo'
+                        ? 'Cargo (solo personal)'
+                        : field.label;
+
+                    return `${label}: ${value}`;
+
+                });
+
+            return selected.length
+                ? selected.join(' · ')
+                : 'Todas las sedes';
+
+        },
+
+        /*
+         * Secciones adicionales ya filtradas por sede, local y jerarquía.
+         * No se les aplica Cargo ni el buscador del directorio, porque
+         * esos controles no forman parte de las otras dos tablas.
+         */
+
+        additionalExportSections() {
+
+            return [
+
+                {
+                    title: 'Teléfonos directos',
+                    sheetName: 'Teléfonos directos',
+                    data: this.filteredDirectPhones,
+                    columns: this.directPhoneExportColumns,
+                    pdfColumns: this.directPhonePdfColumns,
+                    groupByLocationAndOrg: true
+                },
+
+                {
+                    title: 'Anexos de ambientes y servicios',
+                    sheetName: 'Anexos de ambientes',
+                    data: this.filteredAnnexEnvironmentRecords,
+                    columns: this.annexEnvironmentExportColumns,
+                    pdfColumns: this.annexEnvironmentPdfColumns,
+                    groupByLocationAndOrg: true
+                }
+
+            ];
 
         },
 
