@@ -487,7 +487,12 @@ const DirectoryPage = (() => {
 
 
   function startDirectoryFormBootstrap() {
-    getDirectoryFormBootstrap().catch(error => {
+    // Primero se deja terminar la carga del contexto que ya requiere la tabla.
+    // Así la precarga comparte su snapshot y no compite por leer las mismas fuentes.
+    const contextReady = state.contextWarmupPromise
+      ? state.contextWarmupPromise.catch(() => null)
+      : Promise.resolve(null);
+    contextReady.then(() => getDirectoryFormBootstrap()).catch(error => {
       console.warn('[DirectoryPage] No se pudo precargar el formulario:', error.message || error);
     });
   }
@@ -2215,9 +2220,6 @@ async function deleteDirectoryEntry(record) {
       const clientSetupStartedAt = performance.now();
       state.authorizedSedes = result.catalogs.sedes;
       state.formAccessCapabilities = result.capabilities || {};
-      if (state.formAccessCapabilities.canCreate === true || state.formAccessCapabilities.canEdit === true) {
-        startDirectoryFormBootstrap();
-      }
       state.hasTotalScope = Boolean(result.scopeSummary && result.scopeSummary.total === true);
       state.catalogs = { sedes: state.authorizedSedes };
       state.records = [];
@@ -2282,6 +2284,10 @@ async function deleteDirectoryEntry(record) {
           state.authorizedSedes.some(item => key(item.id) === previousSedeId)) {
         elements.sedeFilter.value = previousSedeId;
         await loadSelectedSede(previousSedeId, true);
+      }
+
+      if (state.formAccessCapabilities.canCreate === true || state.formAccessCapabilities.canEdit === true) {
+        startDirectoryFormBootstrap();
       }
     } catch (error) {
       state.loaded = hadLoadedSnapshot;
