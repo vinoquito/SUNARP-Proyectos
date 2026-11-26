@@ -115,7 +115,14 @@
                                         :rel="item.target === '_blank' ? 'noopener noreferrer' : null"
                                         class="related-links-link"
                                     >
-                                        {{ item.text }}
+                                        <span
+                                            v-if="item.icon"
+                                            class="material-symbols-outlined related-links-icon"
+                                            aria-hidden="true"
+                                        >{{ item.icon }}</span>
+                                        <span class="related-links-text">
+                                            {{ item.text }}
+                                        </span>
                                     </a>
 
                                 </li>
@@ -163,6 +170,8 @@
 
                             :title="directoryTableTitle"
 
+                            title-icon="groups"
+
                             :items="items"
 
                             :columns="directoryTableColumns"
@@ -184,6 +193,8 @@
 
                     :title="directPhoneTableTitle"
 
+                    title-icon="call"
+
                     :items="filteredDirectPhones"
 
                     :columns="directPhoneTableColumns"
@@ -199,6 +210,8 @@
                     v-if="filteredAnnexEnvironmentRecords.length"
 
                     :title="annexEnvironmentTableTitle"
+
+                    title-icon="dialpad"
 
                     :items="filteredAnnexEnvironmentRecords"
 
