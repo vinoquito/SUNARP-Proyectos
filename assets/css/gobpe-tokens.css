@@ -273,6 +273,9 @@ Densidad mínima:
    --gob-paragraph-line-height: 1.5rem;
    --gob-paragraph-weight: 400;
 
+   --gob-small-text-size: 0.875rem;
+   --gob-small-text-line-height: 1.25rem;
+
    --gob-button-font-size-desktop: 1.125rem;
    --gob-button-font-size-mobile: 1rem;
    --gob-button-line-height-desktop: 1.75rem;
