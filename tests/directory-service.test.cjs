@@ -124,7 +124,7 @@ test('la pantalla precarga catálogos de formulario en segundo plano sin bloquea
   const bootstrapFunctionEnd = frontendSource.indexOf('function startDirectoryFormBootstrap()', bootstrapFunctionStart);
   const bootstrapFunction = frontendSource.slice(bootstrapFunctionStart, bootstrapFunctionEnd);
   assert.match(bootstrapFunction, /state\.contextWarmupPromise/);
-  assert.match(bootstrapFunction, /contextReady\.then\(\(\) => callServer\('getDirectoryFormBootstrap'\)\)/);
+  assert.match(bootstrapFunction, /contextReady\s*\.then\(\(\) => callServer\('getDirectoryFormBootstrap'\)\)/);
 });
 
 test('el bootstrap de formulario verifica capacidades y mantiene la autorización del detalle de edición', () => {
