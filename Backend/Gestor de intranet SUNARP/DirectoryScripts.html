@@ -420,7 +420,8 @@ const DirectoryPage = (() => {
     loading: false,
     loaded: false,
     eventsBound: false,
-    pageActionsActive: false
+    pageActionsActive: false,
+    formRequestId: 0
   };
 
 
@@ -1331,32 +1332,80 @@ const DirectoryPage = (() => {
 
 
   async function openDirectoryForm(record) {
+    const requestId=++state.formRequestId;
     const editing=Boolean(record);
     const previousCatalogs=state.catalogs, previousScopes=state.formScopes;
     const previousRecords=state.records, previousSedeId=state.activeSedeId;
-    let response;
-    try {
-      response=await callServer('getDirectoryFormData',editing?'INFORMACION_PERSONAL_EDITAR':'INFORMACION_PERSONAL_CREAR');
-      if(!response||!response.catalogs)throw new Error('No se pudieron cargar los catálogos del formulario.');
-      state.catalogs=Object.assign({},previousCatalogs||{},response.catalogs);
-      state.formScopes=response.scopes||[];
-    } catch(error) { notify('error',error.message||'No se pudieron cargar los datos del formulario.');return; }
+    const modalTitle=editing?'Editar servidor':'Registrar servidor';
+    const loadingContent=document.createElement('div');
+    loadingContent.className='directory-form-loading-placeholder';
+    loadingContent.textContent=editing?'Recuperando los datos del servidor...':'Preparando el formulario...';
 
-    let person=record||null;
-    if(editing) {
-      try {
-        const detail=await callServer('getDirectoryPersonById',record.persona_id);
-        if(!detail)throw new Error('No se encontró la ficha de la persona.');
-        person=Object.assign({},detail,detail.personalData||{},{assignments:(detail.assignments||[]).map(item=>Object.assign({},item))});
-      } catch(error) {
-        state.catalogs=previousCatalogs;state.formScopes=previousScopes;
-        notify('error',error.message||'No se pudo recuperar la ficha de la persona.');return;
+    // El modal se muestra antes de iniciar/esperar las consultas remotas.
+    SUNARPUI.openModal({title:modalTitle,content:loadingContent,size:'xl'});
+    const modalBody=document.getElementById('sunarpModalBody');
+    const finishFormLoading=modalBody&&typeof SUNARPUI.beginSectionLoading==='function'
+      ?SUNARPUI.beginSectionLoading(modalBody,{message:'Cargando catálogos y datos autorizados...'})
+      :function(){};
+    const formLoadStartedAt=performance.now();
+    let catalogRoundTripMs=0,personRoundTripMs=0,response=null,detail=null;
+
+    try {
+      const catalogStartedAt=performance.now();
+      const catalogsPromise=callServer(
+        'getDirectoryFormData',
+        editing?'INFORMACION_PERSONAL_EDITAR':'INFORMACION_PERSONAL_CREAR'
+      ).then(result=>{
+        catalogRoundTripMs=performance.now()-catalogStartedAt;
+        if(!result||!result.catalogs)throw new Error('No se pudieron cargar los catálogos del formulario.');
+        return result;
+      });
+
+      // En edición, la ficha y los catálogos no dependen entre sí:
+      // se solicitan en paralelo para no sumar sus latencias.
+      const detailPromise=editing?(()=>{
+        const detailStartedAt=performance.now();
+        return callServer('getDirectoryPersonById',record.persona_id).then(result=>{
+          personRoundTripMs=performance.now()-detailStartedAt;
+          if(!result)throw new Error('No se encontró la ficha de la persona.');
+          return result;
+        });
+      })():Promise.resolve(null);
+
+      [response,detail]=await Promise.all([catalogsPromise,detailPromise]);
+      if(requestId!==state.formRequestId)return;
+      const activeModal=document.getElementById('sunarpModalLayer');
+      if(!activeModal||activeModal.hidden)return;
+    } catch(error) {
+      if(requestId===state.formRequestId) {
+        const activeModal=document.getElementById('sunarpModalLayer');
+        if(activeModal&&!activeModal.hidden) {
+          SUNARPUI.closeModal();
+          notify('error',error.message||'No se pudieron cargar los datos del formulario.');
+        }
       }
+      return;
+    } finally {
+      finishFormLoading();
     }
 
+    if(requestId!==state.formRequestId)return;
+    state.catalogs=Object.assign({},previousCatalogs||{},response.catalogs);
+    state.formScopes=response.scopes||[];
+    const person=editing
+      ?Object.assign({},detail,detail.personalData||{},{
+        assignments:(detail.assignments||[]).map(item=>Object.assign({},item))
+      })
+      :null;
     const formData=buildDirectoryForm(person),template=document.createElement('template');
     template.innerHTML=formData.html.trim();
-    SUNARPUI.openModal({title:editing?'Editar servidor':'Registrar servidor',content:template.content,size:'xl'});
+    SUNARPUI.openModal({title:modalTitle,content:template.content,size:'xl'});
+    console.info('[DirectoryPage] Formulario preparado:',{
+      mode:editing?'edit':'create',
+      catalogsRoundTripMs:Math.round(catalogRoundTripMs),
+      personRoundTripMs:editing?Math.round(personRoundTripMs):null,
+      totalWaitMs:Math.round(performance.now()-formLoadStartedAt)
+    });
 
     const form=document.getElementById('directoryForm'),personalFieldset=document.getElementById('directoryPersonalFields');
     const assignmentsFieldset=document.getElementById('directoryAssignmentsFieldset'),addButton=document.getElementById('directoryAddAssignment');
