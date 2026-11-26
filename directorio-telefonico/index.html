@@ -161,7 +161,7 @@
 
                         <data-table
 
-                            title=""
+                            :title="directoryTableTitle"
 
                             :items="items"
 
@@ -182,7 +182,7 @@
 
                     v-if="filteredDirectPhones.length"
 
-                    title="Teléfonos directos"
+                    :title="directPhoneTableTitle"
 
                     :items="filteredDirectPhones"
 
@@ -198,7 +198,7 @@
 
                     v-if="filteredAnnexEnvironmentRecords.length"
 
-                    title="Anexos de ambientes y servicios"
+                    :title="annexEnvironmentTableTitle"
 
                     :items="filteredAnnexEnvironmentRecords"
 

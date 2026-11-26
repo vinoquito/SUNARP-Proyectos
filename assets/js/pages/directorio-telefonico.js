@@ -957,6 +957,54 @@ const app = createBaseApp({
 
     computed: {
 
+        directoryContextLabel() {
+
+            const selectedValues = this.directoryFilterFields
+
+                .map(field =>
+                    typeof field === 'string'
+                        ? field
+                        : field.key
+                )
+
+                .filter(key =>
+                    key && key !== 'cargo'
+                )
+
+                .map(key =>
+                    this.selectedDirectoryFilters[key]
+                )
+
+                .filter(value =>
+                    value !== undefined &&
+                    value !== null &&
+                    String(value).trim() !== ''
+                );
+
+            return selectedValues.length
+                ? selectedValues.join(' · ')
+                : 'Todas las sedes';
+
+        },
+
+        directoryTableTitle() {
+
+            return `Directorio de personal — ${this.directoryContextLabel}`;
+
+        },
+
+        directPhoneTableTitle() {
+
+            return `Teléfonos directos — ${this.directoryContextLabel}`;
+
+        },
+
+        annexEnvironmentTableTitle() {
+
+            return `Anexos de ambientes y servicios — ${this.directoryContextLabel}`;
+
+        },
+
         filteredDirectPhones() {
 
             return this.filterRowsByDirectoryFilters(
