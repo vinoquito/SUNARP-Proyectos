@@ -1822,7 +1822,12 @@ const DirectoryPage = (() => {
         }
         appendLevel(parent,0);
         if(path.length)selectedStructure=key(path[path.length-1]);
-        locationTitle.hidden=hierarchyHost.childElementCount===0;
+        const hasAuthorizedChildren=hierarchy.plan.hierarchyMode!=='structure-scope'||
+          (hierarchy.contract.scopes||[]).some(scope=>
+            scope.type==='ESTRUCTURA_ORG'&&scope.includeDescendants===true&&
+            hierarchy.nodes(scope.referenceId).length>0
+          );
+        locationTitle.hidden=hierarchyHost.childElementCount===0||!hasAuthorizedChildren;
         renderRelations();
       }
       async function loadLocation(siteId,preserve){
