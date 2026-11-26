@@ -170,6 +170,17 @@ const app = createBaseApp({
                 },
 
                 /*
+                 * TELÉFONO
+                 */
+
+                {
+                    key: 'telefono',
+                    label: 'Teléfono',
+                    nowrap: true
+                },
+
+
+                /*
                  * ANEXO
                  */
 
@@ -243,6 +254,11 @@ const app = createBaseApp({
                 {
                     key: 'organo',
                     label: 'Órgano / Unidad'
+                },
+
+                {
+                    key: 'telefono',
+                    label: 'Teléfono'
                 },
 
                 {
@@ -477,6 +493,13 @@ const app = createBaseApp({
 
 
                     /*
+                     * TELÉFONO
+                     */
+
+                    telefono: i.Telefono || i.telefono || '',
+
+
+                    /*
                      * ANEXO
                      */
 
@@ -636,6 +659,8 @@ const app = createBaseApp({
                 'referencia',
 
                 'organo',
+
+                'telefono',
 
                 'anexo',
 
