@@ -410,10 +410,52 @@ const ExportPdfButton = {
 
             }
 
+            const sections = this.resolveSections();
+
+            const requiresStructuredReport = Boolean(
+                this.reportTitle ||
+                this.reportSubtitle ||
+                this.logo ||
+                sections.length > 1 ||
+                sections.some(section => section.groupByLocationAndOrg)
+            );
+
+            // Conserva la exportación simple de los listados genéricos.
+            if (!requiresStructuredReport) {
+
+                const section = sections[0] || {};
+                const rows = Array.isArray(section.data)
+                    ? section.data
+                    : [];
+                const columns = Array.isArray(section.columns)
+                    ? section.columns
+                    : [];
+
+                doc.autoTable({
+
+                    head: [
+                        columns.map(column =>
+                            column.label || column.key || ''
+                        )
+                    ],
+
+                    body: rows.map((row, rowIndex) =>
+                        columns.map(column =>
+                            this.getExportValue(row, column, rowIndex)
+                        )
+                    )
+
+                });
+
+                doc.save(`${this.filename}.pdf`);
+
+                return;
+
+            }
+
             try {
 
                 const logoData = await this.loadLogoData();
-                const sections = this.resolveSections();
 
                 const pageWidth = doc.internal.pageSize.getWidth();
                 const pageHeight = doc.internal.pageSize.getHeight();
