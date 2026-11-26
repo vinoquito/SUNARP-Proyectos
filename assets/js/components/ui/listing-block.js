@@ -62,6 +62,11 @@ const ListingBlock = {
             default: ''
         },
 
+        pdfOrientation: {
+            type: String,
+            default: 'landscape'
+        },
+
         filename: {
             type: String,
             default: 'exportacion'
@@ -863,6 +868,7 @@ const ListingBlock = {
                         :report-title="reportTitle"
                         :report-subtitle="reportSubtitle"
                         :logo="reportLogo"
+                        :orientation="pdfOrientation"
                         :filename="filename"
                     >
                     </export-pdf-button>
