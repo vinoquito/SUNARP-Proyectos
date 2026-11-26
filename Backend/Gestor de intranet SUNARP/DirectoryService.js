@@ -45,6 +45,7 @@ const DIRECTORY_DATA_CACHE_TTL = 300;
 const DIRECTORY_CATALOG_CACHE_TTL = 300;
 const DIRECTORY_SITE_SNAPSHOT_CACHE_TTL = 600;
 const DIRECTORY_ASSIGNMENT_QUERY_CACHE_TTL = 300;
+const DIRECTORY_PERSON_DETAIL_CACHE_TTL = 120;
 
 const DIRECTORY_REQUIRED_HEADERS = Object.freeze({
   personas: ['persona_id', 'nombres', 'apellidos', 'correo_institucional'],
@@ -2806,20 +2807,12 @@ function listDirectoryAssignments(options) {
 }
 
 
-function getDirectoryPersonById(personaId) {
-  const startedAt = Date.now();
-  const id = _directoryKey_(personaId);
-  if (!id) throw new Error('Debes proporcionar persona_id.');
-
-  const authorizationStartedAt = Date.now();
-  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_EDITAR');
-  const authorizationMs = Date.now() - authorizationStartedAt;
-
+function _directoryBuildPersonDetail_(id, authorization) {
   const contextStartedAt = Date.now();
   const context = _directoryLoadContext_({
     includePersonalData: false,
-    // La tabla de la sede y la precarga del formulario construyen este mismo
-    // contexto. Reutilizar la variante evita una segunda lectura de catálogos.
+    // Reutiliza el contexto compartido que precalientan la pantalla y los
+    // catálogos del formulario. No carga datos personales ni asignaciones completas.
     includePeople: true,
     includeAssignments: false,
     includeDocumentTypes: false,
@@ -2827,8 +2820,6 @@ function getDirectoryPersonById(personaId) {
   });
   const contextMs = Date.now() - contextStartedAt;
 
-  // Core consulta únicamente las asignaciones de esta persona y aplica su
-  // autorización antes de devolver cualquier fila al servicio de negocio.
   const assignmentStartedAt = Date.now();
   const assignmentResult = _directoryExecuteAssignmentQuery_(
     context,
@@ -2846,17 +2837,17 @@ function getDirectoryPersonById(personaId) {
     throw new Error('La persona supera el límite de asignaciones recuperables en una sola consulta.');
   }
 
+  // El contexto ya contiene la identidad desde el precalentamiento compartido.
+  // Evita una segunda lectura puntual de personas al abrir repetidamente Editar.
   const personLookupStartedAt = Date.now();
-  const personResult = SUNARPCore.findRecordsByFields(
-    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
-    { persona_id: id },
-    { searchField: 'persona_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas }
+  const matchingPeople = (context.personas || []).filter(item =>
+    _directoryKey_(item.persona_id) === id
   );
   const personLookupMs = Date.now() - personLookupStartedAt;
-  if (personResult.total > 1) {
+  if (matchingPeople.length > 1) {
     throw new Error('El identificador de persona está duplicado en el directorio.');
   }
-  const person = personResult.records[0] || null;
+  const person = matchingPeople[0] || null;
   if (!person) {
     throw new Error('Las asignaciones autorizadas no tienen una identidad válida en el directorio.');
   }
@@ -2883,9 +2874,7 @@ function getDirectoryPersonById(personaId) {
   }));
   const mappingMs = Date.now() - mappingStartedAt;
   const diagnostics = {
-    serverMs: Date.now() - startedAt,
     stages: {
-      authorizationMs,
       contextMs,
       assignmentQueryMs,
       personLookupMs,
@@ -2894,13 +2883,70 @@ function getDirectoryPersonById(personaId) {
     },
     assignments: assignments.length
   };
-  console.log('[DirectoryService] Person detail timing:', JSON.stringify(diagnostics));
 
   return Object.assign({}, person, {
     assignments: enrichedAssignments,
     personalData: personalDataResult.records[0] || null,
     diagnostics
   });
+}
+
+
+function getDirectoryPersonById(personaId) {
+  const startedAt = Date.now();
+  const id = _directoryKey_(personaId);
+  if (!id) throw new Error('Debes proporcionar persona_id.');
+
+  // La autorización se vuelve a resolver en cada apertura. El usuario y la
+  // huella de permisos/ámbitos forman parte de la clave; los cambios de fuentes
+  // invalidan el valor por generación en SUNARP Core.
+  const authorizationStartedAt = Date.now();
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_EDITAR');
+  const authorizationMs = Date.now() - authorizationStartedAt;
+  const userId = _directoryKey_(authorization.auth && authorization.auth.personaId);
+  const authorizationFingerprint = _directoryAuthorizationCacheFingerprint_(authorization);
+  const cacheKey = 'directory-person-detail:v1:' + userId + ':' +
+    authorizationFingerprint + ':' + id;
+  const cacheSources = _directoryGetSiteDataCacheSources_().slice();
+  cacheSources.push(_directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales));
+
+  const cacheStartedAt = Date.now();
+  const cached = typeof SUNARPCore.getOrBuildCachedValue === 'function'
+    ? SUNARPCore.getOrBuildCachedValue(
+        cacheKey,
+        cacheSources,
+        () => _directoryBuildPersonDetail_(id, authorization),
+        DIRECTORY_PERSON_DETAIL_CACHE_TTL
+      )
+    : {
+        value: _directoryBuildPersonDetail_(id, authorization),
+        cacheHit: false,
+        cacheStored: false
+      };
+  if (!cached || !cached.value) return null;
+
+  const cachedDiagnostics = cached.value.diagnostics || {};
+  const diagnostics = Object.assign({}, cachedDiagnostics, {
+    serverMs: Date.now() - startedAt,
+    stages: Object.assign({}, cachedDiagnostics.stages || {}, {
+      authorizationMs,
+      cacheLookupMs: Date.now() - cacheStartedAt
+    }),
+    cache: {
+      hit: cached.cacheHit === true,
+      stored: cached.cacheStored === true
+    }
+  });
+  console.log('[DirectoryService] Person detail timing:', JSON.stringify({
+    serverMs: diagnostics.serverMs,
+    authorizationMs,
+    cacheLookupMs: diagnostics.stages.cacheLookupMs,
+    cacheHit: diagnostics.cache.hit,
+    cacheStored: diagnostics.cache.stored,
+    assignments: cached.value.assignments.length
+  }));
+
+  return Object.assign({}, cached.value, { diagnostics });
 }
 
 function getDirectoryAssignmentsByPersonId(personaId, options) {
