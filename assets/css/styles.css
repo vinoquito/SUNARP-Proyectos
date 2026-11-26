@@ -159,9 +159,9 @@ body {
 
     color: var(--gob-text-primary);
 
-    font-size: var(--gob-h4-desktop-size);
-    line-height: var(--gob-h4-desktop-line-height);
-    font-weight: var(--gob-h4-weight);
+    font-size: var(--gob-h5-size);
+    line-height: var(--gob-h5-line-height);
+    font-weight: var(--gob-h5-weight);
 }
 
 .related-links-list {
@@ -190,7 +190,7 @@ body {
 
     font-size: var(--gob-paragraph-size);
     line-height: var(--gob-paragraph-line-height);
-    font-weight: var(--gob-fw-medium);
+    font-weight: var(--gob-fw-regular);
 
     text-decoration: underline;
     text-underline-offset: 2px;
@@ -1098,11 +1098,6 @@ body {
    -------------------------------------------------------------------------- */
 
 @media (max-width: 767px) {
-
-    .related-links-title {
-        font-size: var(--gob-h4-mobile-size);
-        line-height: var(--gob-h4-mobile-line-height);
-    }
 
     /* ============================================================
        ESPACIADO HORIZONTAL GENERAL
