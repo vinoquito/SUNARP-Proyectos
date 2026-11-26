@@ -1831,6 +1831,7 @@ test('getDirectoryInitialData devuelve sedes autorizadas sin consultar asignacio
     { id: 'SEDE_3', name: 'Inactiva', active: false }
   ];
   vmContext.SUNARPCore = {
+    authorizationHasPermission: () => false,
     listRecordsFromSourcesCached: (requests, ttl) => {
       catalogRequests = { requests, ttl };
       return { sedes: allSedes };
