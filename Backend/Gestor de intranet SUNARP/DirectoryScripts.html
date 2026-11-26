@@ -402,6 +402,7 @@ const DirectoryPage = (() => {
 
   const DIRECTORY_SITE_CLIENT_CACHE_TTL_MS = 600000;
   const DIRECTORY_SITE_CLIENT_CACHE_MAX_ENTRIES = 5;
+  const DIRECTORY_FORM_BOOTSTRAP_CACHE_TTL_MS = 300000;
 
   const state = {
     records: [],
@@ -421,7 +422,11 @@ const DirectoryPage = (() => {
     loaded: false,
     eventsBound: false,
     pageActionsActive: false,
-    formRequestId: 0
+    formRequestId: 0,
+    formAccessCapabilities: null,
+    formBootstrap: null,
+    formBootstrapLoadedAt: 0,
+    formBootstrapPromise: null
   };
 
 
@@ -438,6 +443,52 @@ const DirectoryPage = (() => {
 
       runner[functionName](...args);
 
+    });
+  }
+
+
+  /**
+   * Devuelve los catálogos de formulario desde la caché de esta pantalla.
+   * La primera solicitud se inicia en segundo plano al cargar el módulo.
+   */
+  function getDirectoryFormBootstrap(force = false) {
+    const cacheIsFresh = state.formBootstrap &&
+      Date.now() - state.formBootstrapLoadedAt < DIRECTORY_FORM_BOOTSTRAP_CACHE_TTL_MS;
+    if (!force && cacheIsFresh) return Promise.resolve(state.formBootstrap);
+    if (!force && state.formBootstrapPromise) return state.formBootstrapPromise;
+
+    const requestStartedAt = performance.now();
+    const request = callServer('getDirectoryFormBootstrap')
+      .then(result => {
+        if (!result || !result.catalogs || !Array.isArray(result.scopes) || !result.capabilities) {
+          throw new Error('El servidor devolvió catálogos incompletos para el formulario.');
+        }
+        state.formBootstrap = result;
+        state.formBootstrapLoadedAt = Date.now();
+        const diagnostics = result.diagnostics || {};
+        console.info('[DirectoryPage] Catálogos de formulario precargados:', {
+          roundTripMs: Math.round(performance.now() - requestStartedAt),
+          serverMs: Number.isFinite(Number(diagnostics.serverMs))
+            ? Number(diagnostics.serverMs)
+            : null,
+          serverStages: diagnostics.stages || null,
+          catalogs: Object.keys(result.catalogs).length,
+          scopes: result.scopes.length
+        });
+        return result;
+      })
+      .finally(() => {
+        if (state.formBootstrapPromise === request) state.formBootstrapPromise = null;
+      });
+
+    state.formBootstrapPromise = request;
+    return request;
+  }
+
+
+  function startDirectoryFormBootstrap() {
+    getDirectoryFormBootstrap().catch(error => {
+      console.warn('[DirectoryPage] No se pudo precargar el formulario:', error.message || error);
     });
   }
 
@@ -1332,8 +1383,16 @@ const DirectoryPage = (() => {
 
 
   async function openDirectoryForm(record) {
-    const requestId=++state.formRequestId;
     const editing=Boolean(record);
+    const capabilityName=editing?'canEdit':'canCreate';
+    if(state.formAccessCapabilities&&state.formAccessCapabilities[capabilityName]===false) {
+      notify('warning',editing
+        ?'No tienes permiso para editar servidores.'
+        :'No tienes permiso para crear servidores.');
+      return;
+    }
+
+    const requestId=++state.formRequestId;
     const previousCatalogs=state.catalogs, previousScopes=state.formScopes;
     const previousRecords=state.records, previousSedeId=state.activeSedeId;
     const modalTitle=editing?'Editar servidor':'Registrar servidor';
@@ -1341,36 +1400,42 @@ const DirectoryPage = (() => {
     loadingContent.className='directory-form-loading-placeholder';
     loadingContent.textContent=editing?'Recuperando los datos del servidor...':'Preparando el formulario...';
 
-    // El modal se muestra antes de iniciar/esperar las consultas remotas.
+    // El modal se muestra de inmediato; los catálogos ya se están precargando
+    // desde la carga inicial de la pantalla.
     SUNARPUI.openModal({title:modalTitle,content:loadingContent,size:'xl'});
     const modalBody=document.getElementById('sunarpModalBody');
     const finishFormLoading=modalBody&&typeof SUNARPUI.beginSectionLoading==='function'
-      ?SUNARPUI.beginSectionLoading(modalBody,{message:'Cargando catálogos y datos autorizados...'})
+      ?SUNARPUI.beginSectionLoading(modalBody,{message:'Preparando los catálogos y datos del servidor...'})
       :function(){};
     const formLoadStartedAt=performance.now();
+    const catalogsCacheHit=Boolean(state.formBootstrap&&
+      Date.now()-state.formBootstrapLoadedAt<DIRECTORY_FORM_BOOTSTRAP_CACHE_TTL_MS);
     let catalogRoundTripMs=0,personRoundTripMs=0,response=null,detail=null;
 
     try {
       const catalogStartedAt=performance.now();
-      const catalogsPromise=callServer(
-        'getDirectoryFormData',
-        editing?'INFORMACION_PERSONAL_EDITAR':'INFORMACION_PERSONAL_CREAR'
-      ).then(result=>{
+      const catalogsPromise=getDirectoryFormBootstrap().then(result=>{
         catalogRoundTripMs=performance.now()-catalogStartedAt;
         if(!result||!result.catalogs)throw new Error('No se pudieron cargar los catálogos del formulario.');
+        if(!result.capabilities||result.capabilities[capabilityName]!==true) {
+          throw new Error(editing
+            ?'No tienes permiso para editar servidores.'
+            :'No tienes permiso para crear servidores.');
+        }
         return result;
       });
 
-      // En edición, la ficha y los catálogos no dependen entre sí:
-      // se solicitan en paralelo para no sumar sus latencias.
-      const detailPromise=editing?(()=>{
+      // La ficha personal solo se consulta en edición y después de confirmar
+      // la capacidad correspondiente. La lectura del detalle y los catálogos
+      // siguen siendo concurrentes cuando la precarga aún no ha terminado.
+      const detailPromise=editing?catalogsPromise.then(()=>{
         const detailStartedAt=performance.now();
         return callServer('getDirectoryPersonById',record.persona_id).then(result=>{
           personRoundTripMs=performance.now()-detailStartedAt;
           if(!result)throw new Error('No se encontró la ficha de la persona.');
           return result;
         });
-      })():Promise.resolve(null);
+      }):Promise.resolve(null);
 
       [response,detail]=await Promise.all([catalogsPromise,detailPromise]);
       if(requestId!==state.formRequestId)return;
@@ -1392,17 +1457,24 @@ const DirectoryPage = (() => {
     if(requestId!==state.formRequestId)return;
     state.catalogs=Object.assign({},previousCatalogs||{},response.catalogs);
     state.formScopes=response.scopes||[];
+    state.formAccessCapabilities=response.capabilities||state.formAccessCapabilities||{};
     const person=editing
-      ?Object.assign({},detail,detail.personalData||{},{
+      ?Object.assign({},detail,detail.personalData||{},{ 
         assignments:(detail.assignments||[]).map(item=>Object.assign({},item))
       })
       :null;
     const formData=buildDirectoryForm(person),template=document.createElement('template');
     template.innerHTML=formData.html.trim();
     SUNARPUI.openModal({title:modalTitle,content:template.content,size:'xl'});
+    const diagnostics=response.diagnostics||{};
     console.info('[DirectoryPage] Formulario preparado:',{
       mode:editing?'edit':'create',
+      catalogsCacheHit,
       catalogsRoundTripMs:Math.round(catalogRoundTripMs),
+      catalogsServerMs:Number.isFinite(Number(diagnostics.serverMs))
+        ?Number(diagnostics.serverMs)
+        :null,
+      catalogsServerStages:diagnostics.stages||null,
       personRoundTripMs:editing?Math.round(personRoundTripMs):null,
       totalWaitMs:Math.round(performance.now()-formLoadStartedAt)
     });
@@ -2143,6 +2215,10 @@ async function deleteDirectoryEntry(record) {
       }
       const clientSetupStartedAt = performance.now();
       state.authorizedSedes = result.catalogs.sedes;
+      state.formAccessCapabilities = result.capabilities || {};
+      if (state.formAccessCapabilities.canCreate === true || state.formAccessCapabilities.canEdit === true) {
+        startDirectoryFormBootstrap();
+      }
       state.hasTotalScope = Boolean(result.scopeSummary && result.scopeSummary.total === true);
       state.catalogs = { sedes: state.authorizedSedes };
       state.records = [];
