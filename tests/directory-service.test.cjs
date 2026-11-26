@@ -78,7 +78,7 @@ test('el loader localizado utiliza SUNARP UI cuando está disponible y no bloque
   const fallbackContext = vm.createContext({
     window: { SUNARPUI: {} },
     document: { getElementById() { return host; } },
-    console: { warn() {} }
+    console: { warn() {}, error() {} }
   });
   vm.runInContext(helperSource, fallbackContext);
   const finishFallback = fallbackContext.beginDirectorySectionLoading('documentAlert');
@@ -1026,8 +1026,7 @@ test('las lecturas del Directorio no ejecutan validación integral de todas las 
   for (const name of [
     'getDirectorySiteData',
     'listDirectoryPeople',
-    'listDirectoryAssignments',
-    'getDirectoryPersonById'
+    'listDirectoryAssignments'
   ]) {
     const start = serviceSource.indexOf('function ' + name + '(');
     assert.ok(start >= 0, 'Debe existir ' + name);
@@ -1035,6 +1034,12 @@ test('las lecturas del Directorio no ejecutan validación integral de todas las 
     const implementation = serviceSource.slice(start, next < 0 ? serviceSource.length : next);
     assert.match(implementation, /validateSnapshot:\s*false/);
   }
+
+  const personBuilderStart = serviceSource.indexOf('function _directoryBuildPersonDetail_(');
+  const personBuilderEnd = serviceSource.indexOf('function getDirectoryPersonById(', personBuilderStart);
+  const personBuilder = serviceSource.slice(personBuilderStart, personBuilderEnd);
+  assert.ok(personBuilderStart >= 0 && personBuilderEnd > personBuilderStart);
+  assert.match(personBuilder, /validateSnapshot:\s*false/);
 
   const initialStart = serviceSource.indexOf('function getDirectoryInitialData(');
   const siteStart = serviceSource.indexOf('function getDirectorySiteData(', initialStart);
@@ -2534,7 +2539,7 @@ test('getDirectoryPersonById revalida permisos y reutiliza el detalle por usuari
     },
     findRecordsByFields: (source, filters) => {
       assert.equal(source, 'servidores datos personales');
-      assert.deepEqual(filters, { servidor_id: 'PER_007' });
+      assert.equal(JSON.stringify(filters), JSON.stringify({ servidor_id: 'PER_007' }));
       return { records: [personalData], total: 1 };
     }
   };
