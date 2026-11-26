@@ -2807,19 +2807,29 @@ function listDirectoryAssignments(options) {
 
 
 function getDirectoryPersonById(personaId) {
+  const startedAt = Date.now();
   const id = _directoryKey_(personaId);
   if (!id) throw new Error('Debes proporcionar persona_id.');
+
+  const authorizationStartedAt = Date.now();
   const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_EDITAR');
+  const authorizationMs = Date.now() - authorizationStartedAt;
+
+  const contextStartedAt = Date.now();
   const context = _directoryLoadContext_({
     includePersonalData: false,
-    includePeople: false,
+    // La tabla de la sede y la precarga del formulario construyen este mismo
+    // contexto. Reutilizar la variante evita una segunda lectura de catálogos.
+    includePeople: true,
     includeAssignments: false,
     includeDocumentTypes: false,
     validateSnapshot: false
   });
+  const contextMs = Date.now() - contextStartedAt;
 
   // Core consulta únicamente las asignaciones de esta persona y aplica su
   // autorización antes de devolver cualquier fila al servicio de negocio.
+  const assignmentStartedAt = Date.now();
   const assignmentResult = _directoryExecuteAssignmentQuery_(
     context,
     authorization,
@@ -2829,17 +2839,20 @@ function getDirectoryPersonById(personaId) {
     1000,
     false
   );
+  const assignmentQueryMs = Date.now() - assignmentStartedAt;
   const assignments = assignmentResult.records || [];
   if (!assignments.length) return null;
   if (Number(assignmentResult.total) > assignments.length) {
     throw new Error('La persona supera el límite de asignaciones recuperables en una sola consulta.');
   }
 
+  const personLookupStartedAt = Date.now();
   const personResult = SUNARPCore.findRecordsByFields(
     _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
     { persona_id: id },
     { searchField: 'persona_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas }
   );
+  const personLookupMs = Date.now() - personLookupStartedAt;
   if (personResult.total > 1) {
     throw new Error('El identificador de persona está duplicado en el directorio.');
   }
@@ -2848,6 +2861,7 @@ function getDirectoryPersonById(personaId) {
     throw new Error('Las asignaciones autorizadas no tienen una identidad válida en el directorio.');
   }
 
+  const personalDataLookupStartedAt = Date.now();
   const personalDataResult = SUNARPCore.findRecordsByFields(
     _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
     { servidor_id: id },
@@ -2856,19 +2870,36 @@ function getDirectoryPersonById(personaId) {
       requiredHeaders: DIRECTORY_REQUIRED_HEADERS.datosPersonales
     }
   );
+  const personalDataLookupMs = Date.now() - personalDataLookupStartedAt;
   if (personalDataResult.total > 1) {
     throw new Error('La ficha de datos personales está duplicada para la persona solicitada.');
   }
 
+  const mappingStartedAt = Date.now();
   const enrichedAssignments = assignments.map(item => Object.assign({}, item, {
     nombres: person.nombres,
     apellidos: person.apellidos,
     correo_institucional: person.correo_institucional
   }));
+  const mappingMs = Date.now() - mappingStartedAt;
+  const diagnostics = {
+    serverMs: Date.now() - startedAt,
+    stages: {
+      authorizationMs,
+      contextMs,
+      assignmentQueryMs,
+      personLookupMs,
+      personalDataLookupMs,
+      responseMappingMs: mappingMs
+    },
+    assignments: assignments.length
+  };
+  console.log('[DirectoryService] Person detail timing:', JSON.stringify(diagnostics));
 
   return Object.assign({}, person, {
     assignments: enrichedAssignments,
-    personalData: personalDataResult.records[0] || null
+    personalData: personalDataResult.records[0] || null,
+    diagnostics
   });
 }
 
