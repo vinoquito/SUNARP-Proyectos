@@ -92,7 +92,7 @@
                     :page="pageData"
                 >
 
-                    <template #aside>
+                    <template v-if="pageElementLinks.length" #aside>
 
                         <div v-if="pageElementLinks.length">
 
