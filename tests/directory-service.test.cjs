@@ -72,8 +72,15 @@ test('la pantalla precarga catálogos de formulario en segundo plano sin bloquea
   assert.match(frontendSource, /state\.formAccessCapabilities = result\.capabilities \|\| \{\}/);
   const loadStart = frontendSource.indexOf('async function load(force = false)');
   const bootstrapStart = frontendSource.indexOf('startDirectoryFormBootstrap();', loadStart);
+  const warmupStart = frontendSource.indexOf('startDirectoryContextWarmup();', loadStart);
   const siteStart = frontendSource.indexOf('await loadSelectedSede(soleSedeId)', loadStart);
-  assert.ok(siteStart > loadStart && bootstrapStart > siteStart);
+  assert.ok(siteStart > loadStart && bootstrapStart > loadStart && bootstrapStart < siteStart);
+  assert.ok(warmupStart > loadStart && warmupStart < siteStart);
+  const bootstrapFunctionStart = frontendSource.indexOf('function getDirectoryFormBootstrap(force = false)');
+  const bootstrapFunctionEnd = frontendSource.indexOf('function startDirectoryFormBootstrap()', bootstrapFunctionStart);
+  const bootstrapFunction = frontendSource.slice(bootstrapFunctionStart, bootstrapFunctionEnd);
+  assert.match(bootstrapFunction, /state\.contextWarmupPromise/);
+  assert.match(bootstrapFunction, /contextReady\.then\(\(\) => callServer\('getDirectoryFormBootstrap'\)\)/);
 });
 
 test('el bootstrap de formulario verifica capacidades y mantiene la autorización del detalle de edición', () => {
@@ -103,9 +110,13 @@ test('el bootstrap de formulario verifica capacidades y mantiene la autorizació
 
 test('las operaciones internas del formulario usan loader localizado, no el loader global', () => {
   assert.match(frontendSource, /SUNARPUI\.beginLoading\(\)/);
-  assert.match(frontendSource, /SUNARPUI\.beginSectionLoading\(documentAlert/);
-  assert.match(frontendSource, /SUNARPUI\.beginSectionLoading\(location/);
-  assert.match(frontendSource, /SUNARPUI\.beginSectionLoading\(form/);
+  assert.match(frontendSource, /function beginDirectorySectionLoading\(target, options = \{\}\)/);
+  assert.match(frontendSource, /ui && typeof ui\.beginSectionLoading === 'function'/);
+  assert.match(frontendSource, /beginDirectorySectionLoading\(documentAlert/);
+  assert.match(frontendSource, /beginDirectorySectionLoading\(location/);
+  assert.match(frontendSource, /beginDirectorySectionLoading\(form/);
+  assert.doesNotMatch(frontendSource, /SUNARPUI\.beginSectionLoading\(/);
+  assert.match(frontendSource, /showDocumentAlert\('info','Consultando documento'/);
   assert.match(frontendSource, /finishSearchLoading\(\)/);
   assert.match(frontendSource, /finishLocationLoading\(\)/);
   assert.match(frontendSource, /finishSaveLoading\(\)/);
