@@ -99,6 +99,8 @@ test('Nuevo servidor y Editar reutilizan catálogos precargados y muestran el mo
   assert.ok(modalIndex >= 0 && catalogIndex > modalIndex && parallelIndex > catalogIndex);
   assert.ok(detailIndex > catalogIndex);
   assert.match(implementation, /beginDirectorySectionLoading\(modalBody/);
+  assert.match(implementation, /Recuperando la ficha del servidor/);
+  assert.doesNotMatch(implementation, /loadingContent\.textContent/);
   assert.doesNotMatch(implementation, /SUNARPUI\.beginSectionLoading\(/);
   assert.doesNotMatch(implementation, /SUNARPUI\.beginLoading\(/);
   assert.match(implementation, /formRequestId/);
@@ -143,13 +145,21 @@ test('el bootstrap de formulario verifica capacidades y mantiene la autorizació
   assert.match(helper, /key: 'documentTypes'/);
   assert.match(helper, /key: 'conditionCargo'/);
   assert.match(helper, /supplementalCatalogMs/);
+  const builderStart = serviceSource.indexOf('function _directoryBuildPersonDetail_(');
   const personStart = serviceSource.indexOf('function getDirectoryPersonById(');
+  const builderEnd = serviceSource.indexOf('function getDirectoryPersonById(', builderStart);
   const personEnd = serviceSource.indexOf('\nfunction ', personStart + 10);
+  const personBuilder = serviceSource.slice(builderStart, builderEnd);
   const personDetail = serviceSource.slice(personStart, personEnd);
-  assert.match(personDetail, /includePeople: true/);
+  assert.match(personBuilder, /includePeople: true/);
+  assert.match(personBuilder, /assignmentQueryMs/);
   assert.match(personDetail, /Person detail timing/);
-  assert.match(frontendSource, /personServerStages/);
   assert.match(personDetail, /_directoryAuthorizationContext_\('INFORMACION_PERSONAL_EDITAR'\)/);
+  assert.match(personDetail, /_directoryAuthorizationCacheFingerprint_\(authorization\)/);
+  assert.match(personDetail, /SUNARPCore\.getOrBuildCachedValue/);
+  assert.match(personDetail, /_directoryGetSiteDataCacheSources_\(\)/);
+  assert.match(personDetail, /DIRECTORY_PERSON_DETAIL_CACHE_TTL/);
+  assert.match(frontendSource, /personServerStages/);
 });
 
 test('las operaciones internas del formulario usan loader localizado, no el loader global', () => {
@@ -198,6 +208,8 @@ test('el formulario distribuye dos campos por fila y conserva las fechas en tres
   assert.match(frontendSource, /SUNARPUI\.showAlert\(/);
   assert.match(frontendSource, /Buscar persona/);
   assert.doesNotMatch(frontendSource, /Buscar DNI|Relación con local|Local directamente asignado/);
+  assert.match(frontendSource, /locationTitle\.hidden=hierarchyHost\.childElementCount===0/);
+  assert.match(frontendSource, /locationTitle\.hidden=true/);
 });
 
 test('la inicialización del modal enlaza los botones y valida el fieldset correcto', () => {
@@ -2464,66 +2476,92 @@ test('getDirectorySiteData carga todas las asignaciones de una sola sede con pag
   assert.equal(queryCalls.length, 2, 'La sede no autorizada se rechaza antes de consultar asignaciones.');
 });
 
-test('getDirectoryPersonById consulta solo asignaciones autorizadas de la persona solicitada', () => {
+test('getDirectoryPersonById revalida permisos y reutiliza el detalle por usuario, ámbito y generación de fuentes', () => {
   const vmContext = vm.createContext({});
   vm.runInContext(serviceSource, vmContext, { filename: 'DirectoryService.js' });
   const assignment = {
-    asignacion_id: 'ASG_007',
-    persona_id: 'PER_007',
-    cargo_id: 'CAR_001',
-    active: true,
-    order: 1
+    asignacion_id: 'ASG_007', persona_id: 'PER_007', cargo_id: 'CAR_001',
+    active: true, order: 1
   };
   const person = {
-    persona_id: 'PER_007',
-    nombres: 'Ana',
-    apellidos: 'Pérez',
+    persona_id: 'PER_007', nombres: 'Ana', apellidos: 'Pérez',
     correo_institucional: 'ana@sunarp.gob.pe'
   };
   const personalData = {
-    servidor_id: 'PER_007',
-    tipo_documento: 'DNI',
-    numero_documento: '12345678'
+    servidor_id: 'PER_007', tipo_documento: 'DNI', numero_documento: '12345678'
   };
-  vmContext._directoryAuthorizationContext_ = () => ({ auth: {}, moduleId: 'MOD_INFO_PERSONAL' });
+  let authorizationCalls = 0, queryCalls = 0, detailBuilds = 0;
+  let queryOptions = null, cacheKey = '', cacheSources = [], cacheTtl = 0;
+  const memoryCache = new Map();
+
+  vmContext._directoryAuthorizationContext_ = permissionCode => {
+    authorizationCalls++;
+    assert.equal(permissionCode, 'INFORMACION_PERSONAL_EDITAR');
+    return {
+      auth: { personaId: 'PER_117', moduleAccess: [] },
+      moduleId: 'MOD_INFO_PERSONAL',
+      permissionCode
+    };
+  };
+  vmContext._directoryAuthorizationCacheFingerprint_ = () => 'AUTH_SCOPE_FP';
+  vmContext._directoryGetSiteDataCacheSources_ = () => [
+    'personas', 'asignaciones', 'sede', 'locales', 'estructura_org'
+  ];
   vmContext._directoryLoadContext_ = options => {
     assert.equal(options.includeAssignments, false);
     assert.equal(options.includePeople, true);
     assert.equal(options.includePersonalData, false);
-    return { asignaciones: [], personas: [], datosPersonales: [] };
+    return { personas: [person], asignaciones: [] };
   };
-  let queryOptions = null;
   vmContext._directoryExecuteAssignmentQuery_ = (_context, _authorization, options) => {
+    queryCalls++;
     queryOptions = options;
     return { records: [assignment], total: 1 };
   };
   vmContext._directorySource_ = name => name;
-  const lookups = [];
   vmContext.SUNARPCore = {
+    getOrBuildCachedValue: (key, sources, builder, ttl) => {
+      cacheKey = key;
+      cacheSources = sources;
+      cacheTtl = ttl;
+      if (memoryCache.has(key)) {
+        return { value: memoryCache.get(key), cacheHit: true, cacheStored: false };
+      }
+      const value = builder();
+      detailBuilds++;
+      memoryCache.set(key, value);
+      return { value, cacheHit: false, cacheStored: true };
+    },
     findRecordsByFields: (source, filters) => {
-      lookups.push({ source, filters });
-      if (source === 'personas') return { records: [person], total: 1 };
-      if (source === 'servidores datos personales') return { records: [personalData], total: 1 };
-      return { records: [], total: 0 };
+      assert.equal(source, 'servidores datos personales');
+      assert.deepEqual(filters, { servidor_id: 'PER_007' });
+      return { records: [personalData], total: 1 };
     }
   };
 
-  const result = vmContext.getDirectoryPersonById('PER_007');
+  const first = vmContext.getDirectoryPersonById('PER_007');
+  const second = vmContext.getDirectoryPersonById('PER_007');
   assert.equal(queryOptions.personaId, 'PER_007');
   assert.equal(queryOptions.active, 'all');
-  assert.equal(result.persona_id, 'PER_007');
-  assert.equal(result.assignments.length, 1);
-  assert.equal(result.assignments[0].nombres, 'Ana');
-  assert.equal(result.personalData.servidor_id, 'PER_007');
-  assert.ok(result.diagnostics.serverMs >= 0);
-  assert.ok(result.diagnostics.stages.contextMs >= 0);
-  assert.ok(result.diagnostics.stages.assignmentQueryMs >= 0);
-  assert.equal(JSON.stringify(lookups), JSON.stringify([
-    { source: 'personas', filters: { persona_id: 'PER_007' } },
-    { source: 'servidores datos personales', filters: { servidor_id: 'PER_007' } }
-  ]));
+  assert.equal(first.persona_id, 'PER_007');
+  assert.equal(first.assignments.length, 1);
+  assert.equal(first.assignments[0].nombres, 'Ana');
+  assert.equal(first.personalData.servidor_id, 'PER_007');
+  assert.equal(second.personalData.numero_documento, '12345678');
+  assert.equal(first.diagnostics.cache.hit, false);
+  assert.equal(second.diagnostics.cache.hit, true);
+  assert.ok(first.diagnostics.serverMs >= 0);
+  assert.ok(first.diagnostics.stages.contextMs >= 0);
+  assert.ok(first.diagnostics.stages.assignmentQueryMs >= 0);
+  assert.equal(authorizationCalls, 2, 'La autorización debe comprobarse en cada apertura.');
+  assert.equal(detailBuilds, 1, 'El detalle debe construirse una sola vez mientras la generación siga vigente.');
+  assert.equal(queryCalls, 1, 'La consulta de asignaciones no debe repetirse en un acierto de caché.');
+  assert.equal(cacheTtl, 120);
+  assert.ok(cacheKey.includes('PER_117'));
+  assert.ok(cacheKey.includes('AUTH_SCOPE_FP'));
+  assert.ok(cacheKey.endsWith(':PER_007'));
+  assert.ok(cacheSources.includes('servidores datos personales'));
 });
-
 test('las consultas puntuales de asignaciones comprueban permiso y ámbito en Core', () => {
   const start = serviceSource.indexOf('function _directoryBuildAssignmentQuery_(');
   const end = serviceSource.indexOf('function _directoryExecuteAssignmentQuery_(', start);
