@@ -10,80 +10,82 @@ const FooterDefault = {
 
     template: `
 
-    <footer
-        class="footer-gob 
-               text-white"
-               >
+    <div>
 
-        <div
-            class="max-w-7xl
-                   mx-auto
-                   px-16
-                   py-10"
-                   >
+        <footer
+            class="footer-gob
+                   text-white">
 
             <div
-                class="flex
-                       flex-col 
-                       md:flex-row
-                       justify-between
-                       gap-8">
+                class="max-w-7xl
+                       mx-auto
+                       px-16
+                       py-10">
 
-                <div>
+                <div
+                    class="flex
+                           flex-col
+                           md:flex-row
+                           justify-between
+                           gap-8">
 
-                    <div
-                        v-for="(item,index)
-                            in structure.left?.contact || []"
-                        :key="index"
-                        class="flex gap-3 mb-3">
+                    <div>
 
-                        <span
-                            v-if="item.icon"
-                            class="material-symbols-outlined">
+                        <div
+                            v-for="(item,index)
+                                in structure.left?.contact || []"
+                            :key="index"
+                            class="flex gap-3 mb-3">
 
-                            {{ item.icon }}
+                            <span
+                                v-if="item.icon"
+                                class="material-symbols-outlined">
+                                {{ item.icon }}
+                            </span>
 
-                        </span>
+                            <span>{{ item.text }}</span>
 
-                        <span>
+                        </div>
 
-                            {{ item.text }}
+                    </div>
 
-                        </span>
+                    <div>
+
+                        <img
+                            v-if="structure.right?.brand?.[0]?.image"
+                            :src="structure.right.brand[0].image"
+                            :alt="structure.right.brand[0].image_name || ''"
+                            class="h-32 brightness-0 invert">
 
                     </div>
 
                 </div>
 
-                <div>
-
-                    <img
-                        v-if="structure.right?.brand?.[0]?.image"
-                        :src="structure.right.brand[0].image"
-                        :alt="structure.right.brand[0].image_name || ''"
-                        class="h-32 brightness-0 invert">
-
-                </div>
-
             </div>
 
+        </footer>
+
+        <div
+            v-if="structure.left?.credits?.length"
+            class="footer-gob-credits">
+
             <div
-                v-if="structure.left?.credits?.length"
-                class="footer-gob-credits">
+                class="max-w-7xl
+                       mx-auto
+                       px-16
+                       py-3">
 
                 <div
                     v-for="(item,index) in structure.left.credits"
                     :key="index">
-
                     {{ item.text }}
-
                 </div>
 
             </div>
 
         </div>
 
-    </footer>
+    </div>
 
     `
 };
