@@ -498,8 +498,14 @@ const ExportPdfButton = {
 
                 await this.$nextTick();
 
+                // Deja que el navegador pinte el estado de carga antes
+                // de iniciar la generación síncrona de jsPDF/AutoTable.
+                // El segundo frame garantiza que el primero ya tuvo oportunidad
+                // de presentarse, incluso cuando el logo procede de la caché.
                 await new Promise(resolve =>
-                    requestAnimationFrame(resolve)
+                    requestAnimationFrame(() =>
+                        requestAnimationFrame(resolve)
+                    )
                 );
 
                 if (!window.jspdf) {
