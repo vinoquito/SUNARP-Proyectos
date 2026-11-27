@@ -1,5 +1,6 @@
 const exportPdfLogoCache = new Map();
 const exportPdfLogoRequests = new Map();
+const exportPdfLoadingStates = Vue.reactive({});
 
 const ExportPdfButton = {
 
@@ -58,22 +59,29 @@ const ExportPdfButton = {
         logo: {
             type: String,
             default: ''
-        },
-
-        loading: {
-            type: Boolean,
-            default: false
         }
 
     },
 
-    emits: ['export-start', 'export-end'],
+    computed: {
 
-    data() {
+        exportLoadingKey() {
 
-        return {
-            isExporting: false
-        };
+            return [
+                this.filename || 'export',
+                this.reportTitle || '',
+                this.logo || ''
+            ].join('::');
+
+        },
+
+        isExporting() {
+
+            return Boolean(
+                exportPdfLoadingStates[this.exportLoadingKey]
+            );
+
+        }
 
     },
 
@@ -478,12 +486,13 @@ const ExportPdfButton = {
 
         async handleExport() {
 
-            if (this.isExporting || this.loading) {
+            const exportKey = this.exportLoadingKey;
+
+            if (exportPdfLoadingStates[exportKey]) {
                 return;
             }
 
-            this.isExporting = true;
-            this.$emit('export-start');
+            exportPdfLoadingStates[exportKey] = true;
 
             try {
 
@@ -922,8 +931,7 @@ const ExportPdfButton = {
 
             } finally {
 
-                this.isExporting = false;
-                this.$emit('export-end');
+                exportPdfLoadingStates[exportKey] = false;
 
             }
 
@@ -933,11 +941,11 @@ const ExportPdfButton = {
 
     template: `
         <app-button
-            :label="(isExporting || loading) ? 'Generando PDF...' : label"
-            :icon="(isExporting || loading) ? 'progress_activity' : icon"
+            :label="isExporting ? 'Generando PDF...' : label"
+            :icon="isExporting ? 'progress_activity' : icon"
             :variant="variant"
-            :disabled="isExporting || loading"
-            :loading="isExporting || loading"
+            :disabled="isExporting"
+            :loading="isExporting"
             @click="handleExport"
         />
     `
