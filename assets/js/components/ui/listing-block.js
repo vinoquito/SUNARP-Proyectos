@@ -92,6 +92,9 @@ const ListingBlock = {
 
             currentPage: 1,
 
+            // Estado del botón PDF, independiente de los cambios de filtros.
+            isExportingPdf: false,
+
             pageSize: [12, 24, 48].includes(Number(this.perPage))
                 ? Number(this.perPage)
                 : 12
@@ -570,6 +573,18 @@ const ListingBlock = {
 
     methods: {
 
+        onPdfExportStart() {
+
+            this.isExportingPdf = true;
+
+        },
+
+        onPdfExportEnd() {
+
+            this.isExportingPdf = false;
+
+        },
+
         /*
          * VISIBILIDAD DE FILTROS EN CASCADA
          */
@@ -870,6 +885,9 @@ const ListingBlock = {
                         :logo="reportLogo"
                         :orientation="pdfOrientation"
                         :filename="filename"
+                        :loading="isExportingPdf"
+                        @export-start="onPdfExportStart"
+                        @export-end="onPdfExportEnd"
                     >
                     </export-pdf-button>
 
