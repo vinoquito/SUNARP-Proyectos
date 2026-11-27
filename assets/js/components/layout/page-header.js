@@ -9,6 +9,11 @@ const PageHeaderGob = {
         page: {
             type: Object,
             default: () => ({})
+        },
+
+        imageLayout: {
+            type: String,
+            default: 'standard'
         }
     },
 
@@ -22,7 +27,8 @@ const PageHeaderGob = {
 
         <component
             :is="getComponent()"
-            :page="page">
+            :page="page"
+            :image-layout="imageLayout">
 
             <template
                 v-for="(_, slotName) in $slots"
