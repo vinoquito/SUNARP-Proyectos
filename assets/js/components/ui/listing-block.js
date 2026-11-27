@@ -75,20 +75,11 @@ const ListingBlock = {
         showExport: {
             type: Boolean,
             default: true
-        },
-
-        pdfExporting: {
-            type: Boolean,
-            default: false
         }
 
     },
 
-    emits: [
-        'filters-change',
-        'pdf-export-start',
-        'pdf-export-end'
-    ],
+    emits: ['filters-change'],
 
 
     data() {
@@ -879,9 +870,6 @@ const ListingBlock = {
                         :logo="reportLogo"
                         :orientation="pdfOrientation"
                         :filename="filename"
-                        :loading="pdfExporting"
-                        @export-start="$emit('pdf-export-start')"
-                        @export-end="$emit('pdf-export-end')"
                     >
                     </export-pdf-button>
 
