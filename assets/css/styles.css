@@ -259,6 +259,14 @@ body {
     background-color: var(--gob-bg-footer);
 }
 
+.footer-gob-credits {
+    margin-top: 24px;
+
+    font-size: 0.875rem;
+    line-height: 1.5;
+    text-align: left;
+}
+
 
 /* ==========================================================================
    CARD DEFAULT
