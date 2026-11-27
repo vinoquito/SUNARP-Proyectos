@@ -122,9 +122,12 @@ body {
 
     color: var(--gob-link-color);
 
-    font-size: var(--gob-h5-size);
-    line-height: var(--gob-h5-line-height);
+    font-size: var(--gob-card-title-small);
+    line-height: var(--gob-card-title-small-line-height);
     font-weight: var(--gob-h5-weight);
+
+    text-decoration: underline;
+    text-underline-offset: 3px;
 }
 
 /*
@@ -260,10 +263,10 @@ body {
 }
 
 .footer-gob-credits {
-    background-color: #26312d;
+    background-color: var(--gob-neutral-800);
     color: #fff;
 
-    font-size: 0.75rem;
+    font-size: var(--gob-badge-size);
     line-height: 1.5;
     text-align: left;
 }
