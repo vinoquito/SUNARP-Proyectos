@@ -118,13 +118,30 @@ body {
    ========================================================================== */
 
 .page-entity {
-    margin-bottom: 2rem;
+    margin: 0;
 
     color: var(--gob-link-color);
 
     font-size: var(--gob-h5-size);
     line-height: var(--gob-h5-line-height);
     font-weight: var(--gob-h5-weight);
+}
+
+/*
+ * Elementos compartidos por los tres diseños de page-header.
+ * La estructura y sus espacios son iguales; solo cambia
+ * la distribución de las columnas y la ubicación de la imagen.
+ */
+
+.page-header-rule {
+    display: block;
+    flex: 0 0 auto;
+
+    width: 16px;
+    height: 7px;
+    margin-top: 6px;
+
+    background-color: var(--gob-text-primary);
 }
 
 .page-title {
@@ -137,6 +154,10 @@ body {
     font-weight: var(--gob-h1-weight);
 }
 
+.page-header-title {
+    margin: 46px 0 0;
+}
+
 .page-description {
     margin: 0;
 
@@ -145,6 +166,10 @@ body {
     font-size: var(--gob-paragraph-size);
     line-height: var(--gob-paragraph-line-height);
     font-weight: var(--gob-paragraph-weight);
+}
+
+.page-header-description {
+    margin-top: 28px;
 }
 
 
@@ -1222,55 +1247,8 @@ body {
 
 /* ==========================================================================
    PAGE HEADER: FEATURE
-   Composición editorial con texto e imagen en proporción 2:3.
+   Única diferencia: proporción de columnas y tratamiento de la imagen.
    ========================================================================== */
-
-.page-header-feature {
-    width: 100%;
-    background-color: var(--gob-bg-page);
-}
-
-.page-header-feature-container {
-    display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
-    align-items: stretch;
-    gap: clamp(24px, 4.2vw, 50px);
-
-    width: 100%;
-    max-width: 1280px;
-    margin: 0 auto;
-    padding: 24px 36px;
-}
-
-.page-header-feature-content {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    min-width: 0;
-}
-
-.page-header-feature-entity {
-    margin: 0;
-}
-
-.page-header-feature-rule {
-    display: block;
-    flex: 0 0 auto;
-
-    width: 16px;
-    height: 7px;
-    margin-top: 6px;
-
-    background-color: var(--gob-text-primary);
-}
-
-.page-header-feature-title {
-    margin: 46px 0 0;
-}
-
-.page-header-feature-description {
-    margin-top: 28px;
-}
 
 .page-header-feature-action {
     margin-top: 22px;
@@ -1309,22 +1287,4 @@ body {
     aspect-ratio: 16 / 9;
 
     object-fit: cover;
-}
-
-@media (max-width: 767px) {
-
-    .page-header-feature-container {
-        grid-template-columns: minmax(0, 1fr);
-        gap: 24px;
-        padding: 24px 16px;
-    }
-
-    .page-header-feature-title {
-        margin-top: 32px;
-    }
-
-    .page-header-feature-description {
-        margin-top: 20px;
-    }
-
 }
