@@ -84,15 +84,39 @@ const app = createBaseApp({
                 pageData,
                 navbarData,
                 footerData,
-                rows
+                rows,
+                pageElements
             ] = await Promise.all([
                 getPage(PAGE_NAME),
                 getNavbarData(PAGE_NAME),
                 getFooterData(PAGE_NAME),
-                fetchSheet(PAGE_NAME)
+                fetchSheet(PAGE_NAME),
+                fetchSheet('page-elements')
             ]);
 
-            this.pageData = pageData;
+            /*
+             * ========================================================
+             * IMAGEN DEL PAGE HEADER
+             * Se obtiene desde page-elements:
+             * page = agente-sunarp, block = hero.
+             * ========================================================
+             */
+
+            const heroImage = (Array.isArray(pageElements) ? pageElements : [])
+                .find(item =>
+                    String(item.page || '').trim() === PAGE_NAME &&
+                    String(item.block || '').trim() === 'hero' &&
+                    String(item.state || '').trim().toLowerCase() === 'activo' &&
+                    String(item.image_id || '').trim() !== ''
+                );
+
+            this.pageData = {
+                ...pageData,
+                image: heroImage
+                    ? buildImageUrl(heroImage.image_id)
+                    : pageData?.image || '',
+                alt: heroImage?.image_name || pageData?.alt || ''
+            };
             this.navbarData = navbarData;
             this.footerData = footerData;
 
