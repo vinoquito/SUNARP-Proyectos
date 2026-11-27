@@ -1,3 +1,6 @@
+const exportPdfLogoCache = new Map();
+const exportPdfLogoRequests = new Map();
+
 const ExportPdfButton = {
 
     props: {
@@ -56,6 +59,14 @@ const ExportPdfButton = {
             type: String,
             default: ''
         }
+
+    },
+
+    data() {
+
+        return {
+            isExporting: false
+        };
 
     },
 
@@ -220,9 +231,19 @@ const ExportPdfButton = {
                 return null;
             }
 
-            try {
+            const logoUrl = String(this.logo).trim();
 
-                const response = await fetch(this.logo);
+            if (exportPdfLogoCache.has(logoUrl)) {
+                return exportPdfLogoCache.get(logoUrl);
+            }
+
+            if (exportPdfLogoRequests.has(logoUrl)) {
+                return exportPdfLogoRequests.get(logoUrl);
+            }
+
+            const logoRequest = (async () => {
+
+                const response = await fetch(logoUrl);
 
                 if (!response.ok) {
                     throw new Error(`No se pudo cargar el logo: ${response.status}`);
@@ -241,6 +262,18 @@ const ExportPdfButton = {
 
                 });
 
+            })();
+
+            exportPdfLogoRequests.set(logoUrl, logoRequest);
+
+            try {
+
+                const logoData = await logoRequest;
+
+                exportPdfLogoCache.set(logoUrl, logoData);
+
+                return logoData;
+
             } catch (error) {
 
                 console.warn(
@@ -249,6 +282,10 @@ const ExportPdfButton = {
                 );
 
                 return null;
+
+            } finally {
+
+                exportPdfLogoRequests.delete(logoUrl);
 
             }
 
@@ -434,7 +471,21 @@ const ExportPdfButton = {
 
         async handleExport() {
 
-            if (!window.jspdf) {
+            if (this.isExporting) {
+                return;
+            }
+
+            this.isExporting = true;
+
+            try {
+
+                await this.$nextTick();
+
+                await new Promise(resolve =>
+                    requestAnimationFrame(resolve)
+                );
+
+                if (!window.jspdf) {
 
                 console.error('jsPDF no está disponible.');
                 return;
@@ -501,8 +552,6 @@ const ExportPdfButton = {
                 return;
 
             }
-
-            try {
 
                 const logoData = await this.loadLogoData();
 
@@ -863,6 +912,10 @@ const ExportPdfButton = {
                     error
                 );
 
+            } finally {
+
+                this.isExporting = false;
+
             }
 
         }
@@ -871,9 +924,11 @@ const ExportPdfButton = {
 
     template: `
         <app-button
-            :label="label"
-            :icon="icon"
+            :label="isExporting ? 'Generando PDF...' : label"
+            :icon="isExporting ? 'progress_activity' : icon"
             :variant="variant"
+            :disabled="isExporting"
+            :loading="isExporting"
             @click="handleExport"
         />
     `
