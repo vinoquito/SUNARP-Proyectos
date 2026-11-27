@@ -13,7 +13,7 @@ const PageHeaderFeature = {
 
         <section class="max-w-7xl mx-auto px-16 py-8 content-stack">
 
-            <div class="grid gap-8 md:grid-cols-5">
+            <div class="grid gap-8 md:grid-cols-3">
 
                 <div class="md:col-span-2 page-content">
 
@@ -49,7 +49,7 @@ const PageHeaderFeature = {
 
                 <div
                     v-if="$slots.aside || page.image"
-                    class="md:col-span-3 page-header-feature-media">
+                    class="md:col-span-2 page-header-feature-media">
 
                     <slot name="aside">
                         <img
