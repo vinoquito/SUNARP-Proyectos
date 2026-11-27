@@ -15,7 +15,7 @@ const PageHeaderFeature = {
 
             <div class="grid gap-8 md:grid-cols-3">
 
-                <div class="md:col-span-2 page-content">
+                <div class="page-content">
 
                     <a href="https://www.gob.pe/sunarp" class="page-entity">
                         Superintendencia Nacional de los Registros Públicos
