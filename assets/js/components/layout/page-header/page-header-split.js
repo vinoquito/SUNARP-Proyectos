@@ -4,6 +4,11 @@ var PageHeaderSplit = {
         page: {
             type: Object,
             default: () => ({})
+        },
+
+        imageLayout: {
+            type: String,
+            default: 'standard'
         }
     },
 
@@ -13,9 +18,19 @@ var PageHeaderSplit = {
 
         <section class="max-w-7xl mx-auto px-16 py-8 content-stack">
 
-            <div class="grid gap-8 md:grid-cols-3">
+            <div
+                class="grid gap-8"
+                :class="imageLayout === 'half'
+                    ? 'md:grid-cols-2'
+                    : 'md:grid-cols-3'"
+            >
 
-                <div class="md:col-span-2 page-content">
+                <div
+                    class="page-content"
+                    :class="imageLayout === 'half'
+                        ? 'md:col-span-1'
+                        : 'md:col-span-2'"
+                >
 
                     <a href="https://www.gob.pe/sunarp" class="page-entity">
                         Superintendencia Nacional de los Registros Públicos
