@@ -77,9 +77,18 @@ const ListingBlock = {
             default: true
         },
 
+        pdfExporting: {
+            type: Boolean,
+            default: false
+        }
+
     },
 
-    emits: ['filters-change'],
+    emits: [
+        'filters-change',
+        'pdf-export-start',
+        'pdf-export-end'
+    ],
 
 
     data() {
@@ -91,9 +100,6 @@ const ListingBlock = {
             searchQuery: '',
 
             currentPage: 1,
-
-            // Estado del botón PDF, independiente de los cambios de filtros.
-            isExportingPdf: false,
 
             pageSize: [12, 24, 48].includes(Number(this.perPage))
                 ? Number(this.perPage)
@@ -573,18 +579,6 @@ const ListingBlock = {
 
     methods: {
 
-        onPdfExportStart() {
-
-            this.isExportingPdf = true;
-
-        },
-
-        onPdfExportEnd() {
-
-            this.isExportingPdf = false;
-
-        },
-
         /*
          * VISIBILIDAD DE FILTROS EN CASCADA
          */
@@ -885,9 +879,9 @@ const ListingBlock = {
                         :logo="reportLogo"
                         :orientation="pdfOrientation"
                         :filename="filename"
-                        :loading="isExportingPdf"
-                        @export-start="onPdfExportStart"
-                        @export-end="onPdfExportEnd"
+                        :loading="pdfExporting"
+                        @export-start="$emit('pdf-export-start')"
+                        @export-end="$emit('pdf-export-end')"
                     >
                     </export-pdf-button>
 
