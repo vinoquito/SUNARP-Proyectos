@@ -32,11 +32,13 @@ const PageHeaderBanner = {
                         Superintendencia Nacional de los Registros Públicos
                     </a>
 
-                    <h1 class="page-title">
+                    <span class="page-header-rule" aria-hidden="true"></span>
+
+                    <h1 class="page-title page-header-title">
                         {{ page.title }}
                     </h1>
 
-                    <p v-if="page.description" class="page-description">
+                    <p v-if="page.description" class="page-description page-header-description">
                         {{ page.description }}
                     </p>
 
