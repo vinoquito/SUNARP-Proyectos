@@ -81,9 +81,8 @@ function getAppShellConfig() {
 
 /**
  * Incorpora los cinco grupos de mantenimiento al árbol del shell.
- * Las rutas se mantienen bajo un único nodo padre y permanecen visibles para
- * facilitar las pruebas. La autorización de datos y operaciones sigue siendo
- * obligatoria en los servicios del backend.
+ * Las rutas se mantienen bajo un único nodo padre. Los permisos se verifican
+ * al construir el menú y de nuevo en cada servicio del backend.
  */
 function _mergeMaintenanceNavigationItems_(sourceItems) {
   const items = (sourceItems || []).map(item => Object.assign({}, item));
@@ -110,7 +109,7 @@ function _mergeMaintenanceNavigationItems_(sourceItems) {
       icon: 'settings',
       route: '',
       order: 80,
-      permissionCode: ''
+      permissionCode: 'MANTENIMIENTOS_VER'
     };
     items.push(parent);
     usedIds.add(id);
@@ -120,7 +119,7 @@ function _mergeMaintenanceNavigationItems_(sourceItems) {
     parent.description = 'Administración centralizada de catálogos institucionales.';
     parent.icon = parent.icon || 'settings';
     parent.route = '';
-    parent.permissionCode = '';
+    parent.permissionCode = 'MANTENIMIENTOS_VER';
   }
 
   const parentId = String(parent.id);
@@ -184,7 +183,7 @@ function _mergeMaintenanceNavigationItems_(sourceItems) {
         icon: group.icon,
         route: group.route,
         order: group.order,
-        permissionCode: ''
+        permissionCode: 'MANTENIMIENTOS_VER'
       };
       items.push(item);
       usedIds.add(id.toUpperCase());
@@ -193,7 +192,7 @@ function _mergeMaintenanceNavigationItems_(sourceItems) {
       item.label = group.label;
       item.description = group.description;
       item.icon = item.icon || group.icon;
-      item.permissionCode = '';
+      item.permissionCode = 'MANTENIMIENTOS_VER';
       item.order = group.order;
     }
   });

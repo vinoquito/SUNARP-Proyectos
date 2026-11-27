@@ -252,11 +252,11 @@ test('la navegación agrega un único nodo y exactamente los cinco grupos acorda
       'directorio-telefonico'
     ]
   );
-  assert.ok(children.every(item => item.permissionCode === ''));
-  assert.equal(parent[0].permissionCode, '');
+  assert.ok(children.every(item => item.permissionCode === 'MANTENIMIENTOS_VER'));
+  assert.equal(parent[0].permissionCode, 'MANTENIMIENTOS_VER');
 });
 
-test('el shell muestra los cinco mantenimientos aunque falten permisos de menú y conserva el filtro de otros módulos', () => {
+test('el shell conserva el control de permiso MANTENIMIENTOS_VER para padre e hijos', () => {
   const sandbox = vm.createContext({});
   vm.runInContext(navigationSource, sandbox, { filename: 'Código.js' });
 
@@ -274,7 +274,7 @@ test('el shell muestra los cinco mantenimientos aunque falten permisos de menú 
   sandbox.getAuthContext_ = () => ({ authenticated: true });
   sandbox.getNavigationItems_ = () => sourceItems.map(item => ({ ...item }));
   sandbox._accessIsGlobalAdministrator_ = () => false;
-  sandbox.hasPermission_ = () => false;
+  sandbox.hasPermission_ = (_auth, code) => code === 'MANTENIMIENTOS_VER';
 
   const config = sandbox.getAppShellConfig();
   const navigation = Array.from(config.navigation);
@@ -293,7 +293,17 @@ test('el shell muestra los cinco mantenimientos aunque falten permisos de menú 
       'directorio-telefonico'
     ]
   );
-  assert.equal(navigation.some(item => item.id === 'INFORMACION_PERSONAL'), false);
+
+  sandbox.hasPermission_ = () => false;
+  const denied = sandbox.getAppShellConfig();
+  assert.equal(
+    Array.from(denied.navigation).some(item => item.id === 'MANTENIMIENTOS'),
+    false
+  );
+  assert.equal(
+    Array.from(denied.navigation).some(item => item.parentId === 'MANTENIMIENTOS'),
+    false
+  );
 });
 
 test('la ruta datos-personal coincide entre Menu, el evento de navegación y la vista', () => {
