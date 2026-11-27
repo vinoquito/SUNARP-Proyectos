@@ -4,6 +4,11 @@ const PageHeaderBanner = {
         page: {
             type: Object,
             default: () => ({})
+        },
+
+        imageLayout: {
+            type: String,
+            default: 'standard'
         }
     },
 
