@@ -1,0 +1,456 @@
+<script>
+(function () {
+  'use strict';
+
+  const geoState = {
+    initialized: false,
+    tabs: null,
+    table: null,
+    data: null,
+    loadPromise: null,
+    activeTab: 'departments',
+    stagedTabs: {}
+  };
+
+  const geoTabs = [
+    { id: 'departments', label: 'Departamentos' },
+    { id: 'provinces', label: 'Provincias' },
+    { id: 'districts', label: 'Distritos' }
+  ];
+
+  const stagedGroups = {
+    'sedes-locales': {
+      tabsId: 'maintenanceSedesTabs',
+      panelId: 'maintenanceSedesPanel',
+      label: 'Sedes y locales',
+      tabs: [
+        { id: 'sedes', label: 'Sedes' },
+        { id: 'tipos-local', label: 'Tipos de local' },
+        { id: 'locales', label: 'Locales' }
+      ]
+    },
+    'organizacion-institucional': {
+      tabsId: 'maintenanceOrganizacionTabs',
+      panelId: 'maintenanceOrganizacionPanel',
+      label: 'Organización institucional',
+      tabs: [
+        { id: 'tipos-estructura', label: 'Tipos de estructura' },
+        { id: 'estructura-organica', label: 'Estructura orgánica' }
+      ]
+    },
+    'datos-de-personal': {
+      tabsId: 'maintenancePersonalTabs',
+      panelId: 'maintenancePersonalPanel',
+      label: 'Datos de personal',
+      tabs: [
+        { id: 'cargos', label: 'Cargos' },
+        { id: 'condiciones-cargo', label: 'Condiciones de cargo' },
+        { id: 'tipos-documento', label: 'Tipos de documento de identidad' }
+      ]
+    },
+    'directorio-telefonico': {
+      tabsId: 'maintenanceTelefonicoTabs',
+      panelId: 'maintenanceTelefonicoPanel',
+      label: 'Directorio telefónico',
+      tabs: [
+        { id: 'tipos-telefono', label: 'Tipos de teléfono' },
+        { id: 'telefonos', label: 'Teléfonos' }
+      ]
+    }
+  };
+
+  function geoRpc(functionName, ...args) {
+    return new Promise((resolve, reject) => {
+      const runner = google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(reject);
+      runner[functionName](...args);
+    });
+  }
+
+  function geoNotify(type, message) {
+    if (window.SUNARPUI && typeof SUNARPUI.notify === 'function') {
+      SUNARPUI.notify(type, message);
+      return;
+    }
+    console[type === 'error' ? 'error' : 'log'](message);
+  }
+
+  function geoFinishTable() {
+    if (geoState.table && typeof geoState.table.destroy === 'function') {
+      geoState.table.destroy();
+    }
+    geoState.table = null;
+  }
+
+  function geoElement(tag, className, text) {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    if (text !== undefined) element.textContent = text;
+    return element;
+  }
+
+  function geoCreateButton(label, className, onClick) {
+    const button = geoElement('button', className, label);
+    button.type = 'button';
+    button.addEventListener('click', onClick);
+    return button;
+  }
+
+  function geoBeginLoading(target, message) {
+    if (window.SUNARPUI && typeof SUNARPUI.beginSectionLoading === 'function') {
+      return SUNARPUI.beginSectionLoading(target, { message: message || '' });
+    }
+    return function () {};
+  }
+
+  function geoEnsureTabs() {
+    if (geoState.tabs) return;
+    geoState.tabs = SUNARPUI.createTabs({
+      containerId: 'geographicMaintenanceTabs',
+      panelId: 'geographicMaintenancePanel',
+      label: 'Ubicación geográfica',
+      tabs: geoTabs,
+      activeId: geoState.activeTab,
+      onChange: function (nextTab) {
+        geoState.activeTab = nextTab;
+        geoRenderTab();
+      }
+    });
+  }
+
+  function geoLoadData(force, suppressErrorNotification) {
+    if (!force && geoState.data) return Promise.resolve(geoState.data);
+    if (geoState.loadPromise) return geoState.loadPromise;
+
+    const panel = document.getElementById('geographicMaintenancePanel');
+    const finish = geoBeginLoading(panel, 'Consultando catálogos geográficos...');
+    geoState.loadPromise = geoRpc('getGeographicMaintenanceData')
+      .then(data => {
+        geoState.data = data || null;
+        if (!geoState.data) throw new Error('El servidor no devolvió los catálogos geográficos.');
+        geoEnsureTabs();
+        geoRenderTab();
+        return geoState.data;
+      })
+      .catch(error => {
+        geoState.data = null;
+        geoFinishTable();
+        if (panel) {
+          panel.replaceChildren(
+            geoElement('p', 'maintenance-error', error.message || 'No se pudieron consultar los catálogos.')
+          );
+        }
+        if (!suppressErrorNotification) {
+          geoNotify('error', error.message || 'No se pudieron consultar los catálogos geográficos.');
+        }
+        throw error;
+      })
+      .finally(() => {
+        finish();
+        geoState.loadPromise = null;
+      });
+
+    return geoState.loadPromise;
+  }
+
+  function geoColumns(tab) {
+    if (tab === 'departments') {
+      return [
+        { key: 'id', label: 'Código', searchable: true },
+        { key: 'name', label: 'Departamento', searchable: true }
+      ];
+    }
+    if (tab === 'provinces') {
+      return [
+        { key: 'id', label: 'Código', searchable: true },
+        { key: 'name', label: 'Provincia', searchable: true },
+        { key: 'departamento', label: 'Departamento', searchable: true }
+      ];
+    }
+    return [
+      { key: 'id', label: 'Código', searchable: true },
+      { key: 'name', label: 'Distrito', searchable: true },
+      { key: 'provincia', label: 'Provincia', searchable: true },
+      { key: 'departamento', label: 'Departamento', searchable: true }
+    ];
+  }
+
+  function geoTabName(tab) {
+    const found = geoTabs.find(item => item.id === tab);
+    return found ? found.label.toLowerCase() : 'registro';
+  }
+
+  function geoCreateTable(host, tab) {
+    const capabilities = geoState.data.capabilities || {};
+    const actions = [];
+
+    if (capabilities.canEdit) {
+      actions.push({
+        label: 'Editar',
+        icon: 'edit',
+        variant: 'primary',
+        title: 'Editar ' + geoTabName(tab),
+        onClick: record => geoOpenForm(tab, record)
+      });
+    }
+
+    if (capabilities.canDelete &&
+        (tab !== 'districts' || capabilities.canDeleteDistricts === true)) {
+      actions.push({
+        label: 'Eliminar',
+        icon: 'delete',
+        variant: 'danger',
+        title: 'Eliminar ' + geoTabName(tab),
+        onClick: record => geoDeleteRecord(tab, record)
+      });
+    }
+
+    geoState.table = SUNARPUI.createDataTable({
+      containerId: host.id,
+      mode: 'client',
+      data: geoState.data[tab] || [],
+      columns: geoColumns(tab),
+      rowActions: actions,
+      search: true,
+      searchPlaceholder: 'Buscar ' + geoTabName(tab) + '...',
+      pageSize: 10,
+      pageSizeOptions: [10, 25, 50],
+      emptyMessage: 'No hay ' + geoTabName(tab) + ' para mostrar.'
+    });
+  }
+
+  function geoRenderTab() {
+    const panel = document.getElementById('geographicMaintenancePanel');
+    if (!panel || !geoState.data) return;
+
+    geoFinishTable();
+    panel.replaceChildren();
+
+    const heading = geoElement('div', 'maintenance-section-heading');
+    heading.appendChild(geoElement('h2', '', geoTabs.find(item => item.id === geoState.activeTab).label));
+    heading.appendChild(geoElement('p', '', 'Administra el catálogo compartido y conserva sus relaciones jerárquicas.'));
+
+    const capabilities = geoState.data.capabilities || {};
+    if (capabilities.canCreate) {
+      const label = geoState.activeTab === 'departments'
+        ? 'Nuevo departamento'
+        : geoState.activeTab === 'provinces'
+          ? 'Nueva provincia'
+          : 'Nuevo distrito';
+      heading.appendChild(geoCreateButton(
+        label,
+        'sunarp-btn sunarp-btn--primary',
+        () => geoOpenForm(geoState.activeTab, null)
+      ));
+    }
+
+    const tableHost = geoElement('div', 'maintenance-table-host');
+    tableHost.id = 'geographicMaintenanceTable';
+    panel.appendChild(heading);
+    panel.appendChild(tableHost);
+    geoCreateTable(tableHost, geoState.activeTab);
+  }
+
+  function geoField(labelText, value, type) {
+    const wrapper = geoElement('label', 'sunarp-form-field');
+    wrapper.appendChild(geoElement('span', '', labelText));
+    const input = geoElement(type === 'select' ? 'select' : 'input',
+      type === 'select' ? 'sunarp-select' : 'sunarp-input');
+    if (type !== 'select') input.type = 'text';
+    input.required = true;
+    if (type !== 'select') {
+      input.maxLength = 150;
+      input.value = value || '';
+    }
+    wrapper.appendChild(input);
+    return { wrapper, input };
+  }
+
+  function geoAddHint(wrapper, message) {
+    wrapper.appendChild(geoElement('small', 'access-field-hint', message));
+  }
+
+  function geoParentOptions(tab) {
+    if (tab === 'provinces') {
+      return (geoState.data.departments || []).map(item => ({
+        value: item.id,
+        label: item.name
+      }));
+    }
+
+    const departments = new Map((geoState.data.departments || []).map(item => [item.id, item.name]));
+    return (geoState.data.provinces || [])
+      .filter(item => departments.has(item.id_departamento))
+      .map(item => ({
+        value: item.id,
+        label: item.name + ' — ' + departments.get(item.id_departamento)
+      }));
+  }
+
+  function geoOpenForm(tab, record) {
+    const editing = Boolean(record);
+    const parentField = tab === 'provinces'
+      ? 'id_departamento'
+      : tab === 'districts'
+        ? 'id_provincia'
+        : '';
+    const title = (editing ? 'Editar ' : 'Registrar ') + geoTabName(tab).replace(/^./, value => value.toUpperCase());
+    const form = geoElement('form', 'sunarp-form-grid');
+    form.addEventListener('submit', event => event.preventDefault());
+    const name = geoField(tab === 'departments' ? 'Nombre del departamento' :
+      tab === 'provinces' ? 'Nombre de la provincia' : 'Nombre del distrito',
+      record && record.name, 'text');
+    name.input.name = 'name';
+    name.input.autocomplete = 'off';
+    form.appendChild(name.wrapper);
+
+    let parentSelect = null;
+    if (parentField) {
+      const parentLabel = tab === 'provinces' ? 'Departamento' : 'Provincia y departamento';
+      const field = geoField(parentLabel, '', 'select');
+      parentSelect = field.input;
+      const empty = geoElement('option', '', 'Selecciona ' + (tab === 'provinces' ? 'un departamento' : 'una provincia'));
+      empty.value = '';
+      parentSelect.appendChild(empty);
+      geoParentOptions(tab).forEach(option => {
+        const element = geoElement('option', '', option.label);
+        element.value = option.value;
+        parentSelect.appendChild(element);
+      });
+
+      if (editing) {
+        const parentId = record[parentField] || '';
+        if (parentId && !Array.from(parentSelect.options).some(option => option.value === parentId)) {
+          const missing = geoElement('option', '', 'Referencia no disponible (' + parentId + ')');
+          missing.value = parentId;
+          parentSelect.appendChild(missing);
+        }
+        parentSelect.value = parentId;
+        parentSelect.disabled = true;
+        geoAddHint(field.wrapper, 'La relación superior no se cambia en edición para conservar el código territorial y las referencias de otros módulos.');
+      } else {
+        parentSelect.value = '';
+        geoAddHint(field.wrapper, tab === 'provinces'
+          ? 'La provincia debe pertenecer a un departamento existente.'
+          : 'El distrito debe pertenecer a una provincia existente.');
+      }
+      parentSelect.name = parentField;
+      form.appendChild(field.wrapper);
+    }
+
+    const footer = geoElement('div', 'access-modal-actions');
+    footer.appendChild(geoCreateButton('Cancelar', 'sunarp-btn sunarp-btn--outline', () => SUNARPUI.closeModal()));
+    const save = geoCreateButton(editing ? 'Guardar cambios' : 'Registrar', 'sunarp-btn sunarp-btn--primary', async () => {
+      if (!form.reportValidity() || save.disabled) return;
+      save.disabled = true;
+      const finish = geoBeginLoading(form, 'Guardando registro...');
+      try {
+        const payload = {
+          entity: tab,
+          action: editing ? 'edit' : 'create',
+          id: editing ? record.id : '',
+          name: name.input.value.trim()
+        };
+        if (parentField) payload[parentField] = parentSelect.value;
+        const result = await geoRpc('saveGeographicCatalogRecord', payload);
+        SUNARPUI.closeModal();
+        geoNotify('success', result && result.message || 'El registro se guardó correctamente.');
+        try {
+          await geoLoadData(true, true);
+        } catch (refreshError) {
+          geoNotify('error', 'El registro se guardó, pero no se pudo actualizar el listado. ' +
+            (refreshError.message || 'Vuelve a consultar la pestaña.'));
+        }
+      } catch (error) {
+        geoNotify('error', error.message || 'No se pudo guardar el registro.');
+      } finally {
+        finish();
+        if (save.isConnected) save.disabled = false;
+      }
+    });
+    footer.appendChild(save);
+
+    SUNARPUI.openModal({
+      title: title,
+      content: form,
+      footer: footer,
+      size: 'md'
+    });
+  }
+
+  async function geoDeleteRecord(tab, record) {
+    const confirmed = window.confirm(
+      '¿Deseas eliminar ' + geoTabName(tab).replace(/s$/, '') +
+      ' "' + record.name + '" (' + record.id + ')?\n\n' +
+      'La operación se rechazará si existen registros geográficos relacionados.'
+    );
+    if (!confirmed) return;
+
+    const panel = document.getElementById('geographicMaintenancePanel');
+    const finish = geoBeginLoading(panel, 'Eliminando registro...');
+    try {
+      const result = await geoRpc('deleteGeographicCatalogRecord', tab, record.id);
+      geoNotify('success', result && result.message || 'El registro se eliminó correctamente.');
+      try {
+        await geoLoadData(true, true);
+      } catch (refreshError) {
+        geoNotify('error', 'El registro se eliminó, pero no se pudo actualizar el listado. ' +
+          (refreshError.message || 'Vuelve a consultar la pestaña.'));
+      }
+    } catch (error) {
+      geoNotify('error', error.message || 'No se pudo eliminar el registro.');
+    } finally {
+      finish();
+    }
+  }
+
+  function geoInitialize() {
+    if (geoState.initialized) {
+      geoLoadData(false).catch(() => {});
+      return;
+    }
+    geoState.initialized = true;
+    geoEnsureTabs();
+    geoLoadData(false).catch(() => {});
+  }
+
+  function initializeStagedGroup(route) {
+    const config = stagedGroups[route];
+    if (!config) return;
+
+    const panel = document.getElementById(config.panelId);
+    if (!panel) return;
+
+    let instance = geoState.stagedTabs[route];
+    if (instance) {
+      panel.textContent = 'Este grupo está incorporado a la navegación. Sus mantenimientos se desarrollarán en una etapa posterior.';
+      return;
+    }
+
+    instance = SUNARPUI.createTabs({
+      containerId: config.tabsId,
+      panelId: config.panelId,
+      label: config.label,
+      tabs: config.tabs,
+      activeId: config.tabs[0].id,
+      onChange: function (tabId) {
+        panel.textContent = config.tabs.find(item => item.id === tabId).label +
+          ': este mantenimiento se desarrollará en una etapa posterior.';
+      }
+    });
+    geoState.stagedTabs[route] = instance;
+    panel.textContent = config.tabs[0].label +
+      ': este mantenimiento se desarrollará en una etapa posterior.';
+  }
+
+  document.addEventListener('sunarp:navigate', event => {
+    const route = event && event.detail && event.detail.route;
+    if (route === 'ubicacion-geografica') {
+      geoInitialize();
+      return;
+    }
+    initializeStagedGroup(route);
+  });
+})();
+</script>

@@ -38,7 +38,7 @@ function include(fileName) {
  */
 function getAppShellConfig() {
   const auth = getAuthContext_();
-  const sourceItems = getNavigationItems_();
+  const sourceItems = _mergeMaintenanceNavigationItems_(getNavigationItems_());
 
   const allowedItems = sourceItems.filter(item => {
     const requiredCode = String(item.permissionCode || '')
@@ -78,6 +78,129 @@ function getAppShellConfig() {
     navigation
   };
 }
+
+/**
+ * Incorpora los cinco grupos de mantenimiento al árbol del shell.
+ * Las rutas se mantienen bajo un único nodo padre. Los permisos se verifican
+ * al construir el menú y de nuevo en cada servicio del backend.
+ */
+function _mergeMaintenanceNavigationItems_(sourceItems) {
+  const items = (sourceItems || []).map(item => Object.assign({}, item));
+  const normalize = value => String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+
+  let parent = items.find(item =>
+    normalize(item.label) === 'modulos de mantenimiento'
+  );
+
+  const usedIds = new Set(items.map(item => String(item.id || '').toUpperCase()));
+  if (!parent) {
+    let id = 'MANTENIMIENTOS';
+    let suffix = 2;
+    while (usedIds.has(id)) id = 'MANTENIMIENTOS_' + suffix++;
+    parent = {
+      id: id,
+      parentId: '',
+      label: 'Módulos de mantenimiento',
+      description: 'Administración centralizada de catálogos institucionales.',
+      icon: 'settings',
+      route: '',
+      order: 80,
+      permissionCode: 'MANTENIMIENTOS_VER'
+    };
+    items.push(parent);
+    usedIds.add(id);
+  } else {
+    parent.parentId = '';
+    parent.label = 'Módulos de mantenimiento';
+    parent.description = 'Administración centralizada de catálogos institucionales.';
+    parent.icon = parent.icon || 'settings';
+    parent.route = '';
+    parent.permissionCode = 'MANTENIMIENTOS_VER';
+  }
+
+  const parentId = String(parent.id);
+  const groups = [
+    {
+      id: 'MANT_UBICACION_GEOGRAFICA',
+      label: 'Ubicación geográfica',
+      route: 'ubicacion-geografica',
+      description: 'Administra departamentos, provincias y distritos.',
+      icon: 'public',
+      order: 1
+    },
+    {
+      id: 'MANT_SEDES_LOCALES',
+      label: 'Sedes y locales',
+      route: 'sedes-locales',
+      description: 'Administra sedes, tipos de local y locales.',
+      icon: 'location_city',
+      order: 2
+    },
+    {
+      id: 'MANT_ORGANIZACION_INSTITUCIONAL',
+      label: 'Organización institucional',
+      route: 'organizacion-institucional',
+      description: 'Administra tipos de estructura y estructura orgánica.',
+      icon: 'account_tree',
+      order: 3
+    },
+    {
+      id: 'MANT_DATOS_PERSONAL',
+      label: 'Datos de personal',
+      route: 'datos-de-personal',
+      description: 'Administra cargos, condiciones de cargo y tipos de documento de identidad.',
+      icon: 'badge',
+      order: 4
+    },
+    {
+      id: 'MANT_DIRECTORIO_TELEFONICO',
+      label: 'Directorio telefónico',
+      route: 'directorio-telefonico',
+      description: 'Administra tipos de teléfono y teléfonos.',
+      icon: 'phone',
+      order: 5
+    }
+  ];
+
+  groups.forEach(group => {
+    let item = items.find(candidate =>
+      String(candidate.route || '').trim().toLowerCase() === group.route
+    );
+
+    if (!item) {
+      let id = group.id;
+      let suffix = 2;
+      while (usedIds.has(id.toUpperCase())) id = group.id + '_' + suffix++;
+      item = {
+        id: id,
+        parentId: parentId,
+        label: group.label,
+        description: group.description,
+        icon: group.icon,
+        route: group.route,
+        order: group.order,
+        permissionCode: 'MANTENIMIENTOS_VER'
+      };
+      items.push(item);
+      usedIds.add(id.toUpperCase());
+    } else {
+      item.parentId = parentId;
+      item.label = group.label;
+      item.description = group.description;
+      item.icon = item.icon || group.icon;
+      item.permissionCode = 'MANTENIMIENTOS_VER';
+      item.order = group.order;
+    }
+  });
+
+  return items.sort((a, b) => Number(a.order || 9999) - Number(b.order || 9999));
+}
+
+
 /**
  * Lee y valida la configuración del menú.
  */

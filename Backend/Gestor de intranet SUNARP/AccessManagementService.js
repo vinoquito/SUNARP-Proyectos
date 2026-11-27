@@ -215,6 +215,24 @@ function hasPermission_(auth, permissionCode) {
   );
   if (matches.length !== 1) return false;
 
+  if (code.indexOf('MANTENIMIENTOS_') === 0) {
+    try {
+      const moduleId = _accessResolveModuleId_(auth, 'MANTENIMIENTOS');
+      const moduleAccess = _accessGetModuleAccess_(auth, moduleId);
+      const scopes = moduleAccess && Array.isArray(moduleAccess.scopes)
+        ? moduleAccess.scopes
+        : [];
+      const exclusiveTotal = scopes.length === 1 &&
+        _accessUpper_(scopes[0].tipo_ambito_id || scopes[0].tipo_ambito) === 'TOTAL' &&
+        !_accessText_(scopes[0].referencia_id);
+      return _accessHasPermission_(auth, code, moduleId) &&
+        exclusiveTotal &&
+        SUNARPCore.authorizationIsRecordInScope(auth, moduleId, {}, []);
+    } catch (error) {
+      return false;
+    }
+  }
+
   return _accessHasPermission_(auth, code, matches[0].modulo_id);
 }
 

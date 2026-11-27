@@ -1554,11 +1554,16 @@ function listRecordsFromSourcesCached(requests, expirationSeconds) {
     }
     seen.add(key);
 
+    const valueMode = String(request.valueMode || 'raw').trim().toLowerCase();
+    if (!['raw', 'display'].includes(valueMode)) {
+      throw new Error('SUNARP Core: valueMode debe ser "raw" o "display".');
+    }
+    const cacheNamespace = valueMode === 'display' ? 'display-records' : 'records';
     const generation = typeof _coreGetSourceGeneration_ === 'function'
       ? _coreGetSourceGeneration_(request.source)
       : null;
     const cacheKey = generation
-      ? _coreBuildSourceCacheKey_(request.source, 'records') + ':' + generation
+      ? _coreBuildSourceCacheKey_(request.source, cacheNamespace) + ':' + generation
       : null;
     const cached = cacheKey ? getCachedValue(cacheKey) : null;
 
@@ -1569,7 +1574,8 @@ function listRecordsFromSourcesCached(requests, expirationSeconds) {
         key,
         source: request.source,
         cacheKey,
-        requiredHeaders: request.requiredHeaders || []
+        requiredHeaders: request.requiredHeaders || [],
+        valueMode
       });
     }
   });
@@ -1585,8 +1591,11 @@ function listRecordsFromSourcesCached(requests, expirationSeconds) {
         const generation = typeof _coreGetSourceGeneration_ === 'function'
           ? _coreGetSourceGeneration_(item.source)
           : null;
+        const cacheNamespace = item.valueMode === 'display'
+          ? 'display-records'
+          : 'records';
         item.cacheKey = generation
-          ? _coreBuildSourceCacheKey_(item.source, 'records') + ':' + generation
+          ? _coreBuildSourceCacheKey_(item.source, cacheNamespace) + ':' + generation
           : null;
         const cached = item.cacheKey ? getCachedValue(item.cacheKey) : null;
         if (Array.isArray(cached)) result[item.key] = cached;
@@ -1598,7 +1607,8 @@ function listRecordsFromSourcesCached(requests, expirationSeconds) {
       const loaded = listRecordsFromSources(pending.map(item => ({
         key: item.key,
         source: item.source,
-        requiredHeaders: item.requiredHeaders
+        requiredHeaders: item.requiredHeaders,
+        valueMode: item.valueMode
       })));
 
       pending.forEach(item => {
@@ -1673,9 +1683,13 @@ function listRecordsFromSources(requests) {
     const requiredHeaders = request.requiredHeaders === undefined
       ? []
       : request.requiredHeaders;
+    const valueMode = String(request.valueMode || 'raw').trim().toLowerCase();
 
     if (!Array.isArray(requiredHeaders) || requiredHeaders.some(header => !String(header || '').trim())) {
       throw new Error('SUNARP Core: requiredHeaders debe ser un arreglo de nombres de columnas válidos.');
+    }
+    if (!['raw', 'display'].includes(valueMode)) {
+      throw new Error('SUNARP Core: valueMode debe ser "raw" o "display".');
     }
 
     const groupKey = config.spreadsheetId;
@@ -1687,7 +1701,8 @@ function listRecordsFromSources(requests) {
     groups.get(groupKey).push({
       key,
       config,
-      requiredHeaders: requiredHeaders.map(String)
+      requiredHeaders: requiredHeaders.map(String),
+      valueMode
     });
 
     requestedKeys.add(key);
@@ -1748,7 +1763,10 @@ function listRecordsFromSources(requests) {
 
       // Una lectura contigua por pestaña, conservando el mismo contrato
       // de encabezados y registros que la implementación anterior.
-      const values = sheet.getRange(1, 1, lastRow, lastColumn).getValues();
+      const dataRange = sheet.getRange(1, 1, lastRow, lastColumn);
+      const values = item.valueMode === 'display'
+        ? dataRange.getDisplayValues()
+        : dataRange.getValues();
 
       const headers = values[
         config.headerRow - 1

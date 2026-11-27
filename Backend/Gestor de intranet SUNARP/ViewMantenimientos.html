@@ -1,0 +1,107 @@
+<style>
+  .maintenance-card {
+    padding: 22px;
+  }
+
+  .maintenance-section-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin: 0 0 16px;
+  }
+
+  .maintenance-section-heading h2 {
+    margin: 0;
+    color: var(--ui-ink);
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  .maintenance-section-heading p {
+    margin: 4px 0 0;
+    color: var(--ui-muted);
+    font-size: 12px;
+  }
+
+  .maintenance-table-host {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .maintenance-error,
+  .maintenance-placeholder {
+    margin: 0;
+    padding: 14px;
+    border: 1px solid var(--ui-border);
+    border-radius: 6px;
+    background: var(--ui-background);
+    color: var(--ui-muted);
+    font-size: 13px;
+  }
+
+  .maintenance-error {
+    border-color: #f0c4bd;
+    background: var(--ui-red-soft);
+    color: #a82b1a;
+  }
+
+  .maintenance-card .sunarp-form-field > span {
+    color: var(--ui-ink);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .maintenance-card .access-field-hint {
+    color: var(--ui-muted);
+    font-size: 11px;
+    line-height: 1.45;
+  }
+
+  @media (max-width: 767.98px) {
+    .maintenance-card {
+      padding: 16px;
+    }
+
+    .maintenance-section-heading {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+  }
+</style>
+
+<section data-app-view="ubicacion-geografica" hidden>
+  <div class="sunarp-card maintenance-card">
+    <div id="geographicMaintenanceTabs"></div>
+    <div id="geographicMaintenancePanel" aria-live="polite"></div>
+  </div>
+</section>
+
+<section data-app-view="sedes-locales" hidden>
+  <div class="sunarp-card maintenance-card">
+    <div id="maintenanceSedesTabs"></div>
+    <div id="maintenanceSedesPanel" class="maintenance-placeholder" aria-live="polite"></div>
+  </div>
+</section>
+
+<section data-app-view="organizacion-institucional" hidden>
+  <div class="sunarp-card maintenance-card">
+    <div id="maintenanceOrganizacionTabs"></div>
+    <div id="maintenanceOrganizacionPanel" class="maintenance-placeholder" aria-live="polite"></div>
+  </div>
+</section>
+
+<section data-app-view="datos-de-personal" hidden>
+  <div class="sunarp-card maintenance-card">
+    <div id="maintenancePersonalTabs"></div>
+    <div id="maintenancePersonalPanel" class="maintenance-placeholder" aria-live="polite"></div>
+  </div>
+</section>
+
+<section data-app-view="directorio-telefonico" hidden>
+  <div class="sunarp-card maintenance-card">
+    <div id="maintenanceTelefonicoTabs"></div>
+    <div id="maintenanceTelefonicoPanel" class="maintenance-placeholder" aria-live="polite"></div>
+  </div>
+</section>
