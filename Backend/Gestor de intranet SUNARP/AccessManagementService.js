@@ -962,6 +962,86 @@ function getAuthContext_() {
   return _accessGetAuthContext_();
 }
 
+/**
+ * Actualiza las cachés de autorización después de cambios manuales en las
+ * hojas de Seguridad. No concede permisos ni altera asignaciones: únicamente
+ * invalida las generaciones y vuelve a resolver la autorización del usuario
+ * actual. Está protegida por la administración global de ACCESOS.
+ */
+function refreshCurrentUserAuthorizationCache() {
+  _accessRequirePermission_('USUARIOS_ADMINISTRAR');
+
+  if (!SUNARPCore || typeof SUNARPCore.invalidateSourceCache !== 'function') {
+    throw new Error('La versión de SUNARP Core disponible no expone invalidateSourceCache.');
+  }
+
+  const s = ACCESS_MANAGEMENT_CONFIG.sheets;
+  const sources = [
+    _accessDirectorySource_(s.people),
+    _accessSecuritySource_(s.users),
+    _accessSecuritySource_(s.modules),
+    _accessSecuritySource_(s.roles),
+    _accessSecuritySource_(s.userRoles),
+    _accessSecuritySource_(s.permissions),
+    _accessSecuritySource_(s.rolePermissions),
+    _accessSecuritySource_(s.scopes),
+    getIntranetDataSource('APP_DATA', 'Menu', 1)
+  ];
+
+  const refreshedSources = [];
+  sources.forEach(source => {
+    const result = SUNARPCore.invalidateSourceCache(source);
+    if (!result || result.success !== true) {
+      throw new Error(
+        'No se pudo invalidar la caché de autorización de "' +
+        _accessText_(source.sheetName) + '". ' +
+        (result && result.error ? result.error : '')
+      );
+    }
+    refreshedSources.push(_accessText_(source.sheetName));
+  });
+
+  const auth = _accessGetAuthContext_();
+  const module = (auth.modules || []).find(item =>
+    _accessUpper_(item.codigo) === 'MANTENIMIENTOS'
+  ) || null;
+  const access = module
+    ? (auth.moduleAccess || []).find(item =>
+        _accessText_(item.modulo_id) === _accessText_(module.modulo_id)
+      ) || null
+    : null;
+  const visibleNavigation = getAppShellConfig().navigation || [];
+  const menuVisible = visibleNavigation.some(item =>
+    _accessUpper_(item.id) === 'MANTENIMIENTOS'
+  );
+
+  const result = {
+    success: true,
+    email: _accessText_(auth.email),
+    personaId: _accessText_(auth.personaId),
+    refreshedSources,
+    maintenance: {
+      moduleId: module ? _accessText_(module.modulo_id) : '',
+      moduleActive: Boolean(module && _accessIsActive_(module.active)),
+      roleId: access ? _accessText_(access.rol_id) : '',
+      permissionGranted: Boolean(
+        access &&
+        (access.permissionCodes || []).includes('MANTENIMIENTOS_VER')
+      ),
+      scopes: access
+        ? (access.scopes || []).map(scope => ({
+            tipoAmbito: _accessText_(scope.tipo_ambito_id || scope.tipo_ambito),
+            referenciaId: _accessText_(scope.referencia_id)
+          }))
+        : [],
+      canSeeMenu: menuVisible
+    }
+  };
+
+  console.log('[AccessManagement] Manual authorization cache refresh:', JSON.stringify(result));
+  return result;
+}
+
 
 /**
  * Registra un evento en Auditoria.

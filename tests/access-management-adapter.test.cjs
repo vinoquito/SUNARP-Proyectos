@@ -1,3 +1,74 @@
+
+test('refreshCurrentUserAuthorizationCache invalida fuentes y reconstruye el contexto sin conceder permisos', () => {
+  const invalidated = [];
+  const sandbox = vm.createContext({
+    console: { log() {}, warn() {}, error() {} },
+    getIntranetDataSource: (sourceKey, sheetName, headerRow) => ({
+      sourceKey, sheetName, headerRow
+    }),
+    SUNARPCore: {
+      invalidateSourceCache(source) {
+        invalidated.push(source.sheetName);
+        return { success: true };
+      }
+    }
+  });
+
+  vm.runInContext(accessSource, sandbox, { filename: 'AccessManagementService.js' });
+
+  const auth = {
+    authenticated: true,
+    email: 'prueba@sunarp.gob.pe',
+    personaId: 'PER_117',
+    modules: [{
+      modulo_id: 'MOD_MANTENIMIENTOS',
+      codigo: 'MANTENIMIENTOS',
+      active: true
+    }],
+    moduleAccess: [{
+      modulo_id: 'MOD_MANTENIMIENTOS',
+      rol_id: 'ROL_ADMIN',
+      permissionCodes: ['MANTENIMIENTOS_VER'],
+      scopes: [{
+        tipo_ambito_id: 'TOTAL',
+        referencia_id: ''
+      }]
+    }]
+  };
+
+  sandbox._accessRequirePermission_ = code => {
+    assert.equal(code, 'USUARIOS_ADMINISTRAR');
+    return { authenticated: true };
+  };
+  sandbox._accessGetAuthContext_ = () => auth;
+  sandbox.getAppShellConfig = () => ({
+    navigation: [{ id: 'MANTENIMIENTOS' }]
+  });
+
+  const result = sandbox.refreshCurrentUserAuthorizationCache();
+
+  assert.deepEqual(
+    invalidated,
+    [
+      'personas',
+      'Usuarios',
+      'Modulos',
+      'Roles',
+      'UsuarioRol',
+      'Permisos',
+      'RolPermiso',
+      'AmbitosAcceso',
+      'Menu'
+    ]
+  );
+  assert.equal(result.success, true);
+  assert.equal(result.personaId, 'PER_117');
+  assert.equal(result.maintenance.roleId, 'ROL_ADMIN');
+  assert.equal(result.maintenance.permissionGranted, true);
+  assert.equal(result.maintenance.canSeeMenu, true);
+  assert.deepEqual(Array.from(result.maintenance.scopes, item => item.tipoAmbito), ['TOTAL']);
+});
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
