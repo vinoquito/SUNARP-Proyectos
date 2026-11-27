@@ -435,7 +435,6 @@ function saveGeographicCatalogRecord(payload) {
 
   const id = _geoText_(payload.id);
   if (!id) throw new Error('Debes indicar el identificador del registro que deseas modificar.');
-  _geoValidateCode_(config.key, id, parentId);
   const existing = _geoFindById_(records, id);
   if (!existing) throw new Error('No se encontró el registro geográfico que deseas modificar.');
 
@@ -444,6 +443,8 @@ function saveGeographicCatalogRecord(payload) {
       'No se puede cambiar el nivel superior de un registro existente: su código territorial identifica esa relación y puede estar referenciado por otros módulos. Modifica únicamente el nombre.'
     );
   }
+
+  _geoValidateCode_(config.key, id, parentId);
 
   _geoAssertUniqueName_(records, name, parentField, parentId, id);
   const next = Object.assign({}, existing, { name: name });
