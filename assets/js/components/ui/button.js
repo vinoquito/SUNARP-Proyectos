@@ -250,7 +250,7 @@ const AppButton = {
                 <span
                     v-if="icon"
                     class="material-symbols-outlined"
-                    :style="loading ? { animation: 'spin 1s linear infinite' } : null""
+                    :style="loading ? { animation: 'spin 1s linear infinite' } : null"
                 >
                     {{ icon }}
                 </span>
