@@ -756,7 +756,7 @@ const ExportPdfButton = {
                                 startY: cursorY + 0.5,
 
                                 margin: {
-                                    top: 48,
+                                    top: 42,
                                     bottom: 18,
                                     left: leftMargin,
                                     right: rightMargin
@@ -823,8 +823,8 @@ const ExportPdfButton = {
                                             }
                                         );
 
-                                        doc.setFont('helvetica', 'normal');
-                                        doc.setFontSize(7.2);
+                                        doc.setFont('helvetica', 'bold');
+                                        doc.setFontSize(9.5);
 
                                         doc.text(
                                             organization.title,
@@ -842,7 +842,7 @@ const ExportPdfButton = {
                             });
 
                             cursorY =
-                                doc.lastAutoTable.finalY + 7;
+                                doc.lastAutoTable.finalY + 9;
 
                         });
 
