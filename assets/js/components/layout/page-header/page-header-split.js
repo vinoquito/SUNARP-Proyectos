@@ -27,9 +27,9 @@ var PageHeaderSplit = {
 
                 <div
                     class="page-content"
-                    :class="imageLayout === 'half'
-                        ? 'md:col-span-1'
-                        : 'md:col-span-2'"
+                    :class="imageLayout === 'standard'
+                        ? 'md:col-span-2'
+                        : 'md:col-span-1'"
                 >
 
                     <a href="https://www.gob.pe/sunarp" class="page-entity">
@@ -48,7 +48,9 @@ var PageHeaderSplit = {
 
                 <aside
                     v-if="$slots.aside || page.image"
-                    class="md:col-span-1">
+                    :class="imageLayout === 'image-wide'
+                        ? 'md:col-span-2'
+                        : 'md:col-span-1'">
 
                     <slot name="aside">
                         <img
