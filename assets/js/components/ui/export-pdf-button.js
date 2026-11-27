@@ -321,12 +321,12 @@ const ExportPdfButton = {
 
                 if (this.reportSubtitle) {
 
-                    doc.setFont('helvetica', 'normal');
-                    doc.setFontSize(8.5);
-                    doc.setTextColor(80, 80, 80);
+                    doc.setFont('helvetica', 'bold');
+                    doc.setFontSize(12);
+                    doc.setTextColor(48, 60, 55);
 
                     const subtitleLines = doc.splitTextToSize(
-                        this.reportSubtitle,
+                        String(this.reportSubtitle).toUpperCase(),
                         pageWidth - 65
                     );
 
@@ -345,12 +345,12 @@ const ExportPdfButton = {
                 doc.text(
                     `Generado: ${generatedDate}`,
                     51,
-                    26
+                    30
                 );
 
                 doc.setDrawColor(160, 160, 160);
                 doc.setLineWidth(0.25);
-                doc.line(14, 30, pageWidth - 14, 30);
+                doc.line(14, 34, pageWidth - 14, 34);
 
                 doc.setDrawColor(190, 190, 190);
                 doc.line(14, pageHeight - 13, pageWidth - 14, pageHeight - 13);
@@ -476,12 +476,12 @@ const ExportPdfButton = {
                 const bottomLimit = pageHeight - 19;
                 const contentWidth = pageWidth - leftMargin - rightMargin;
 
-                let cursorY = 37;
+                let cursorY = 40;
 
                 const startNewPage = () => {
 
                     doc.addPage();
-                    cursorY = 37;
+                    cursorY = 40;
 
                 };
 
@@ -497,7 +497,7 @@ const ExportPdfButton = {
                             : section.columns || [];
 
                     if (sectionIndex > 0) {
-                        cursorY += 9;
+                        cursorY += 4;
                     }
 
                     if (cursorY + 13 > bottomLimit) {
@@ -518,13 +518,13 @@ const ExportPdfButton = {
                     doc.setLineWidth(0.7);
                     doc.line(
                         leftMargin,
-                        cursorY + 1,
+                        cursorY + 4,
                         pageWidth - rightMargin,
-                        cursorY + 1
+                        cursorY + 4
                     );
 
-                    // Separación breve y constante después de la línea de sección.
-                    cursorY += 6;
+                    // Separación entre el título, la línea verde y el contenido.
+                    cursorY += 9;
 
                     if (!rows.length) {
 
@@ -678,7 +678,7 @@ const ExportPdfButton = {
 
                             doc.autoTable({
 
-                                startY: cursorY + 2,
+                                startY: cursorY + 1,
 
                                 margin: {
                                     top: 48,
