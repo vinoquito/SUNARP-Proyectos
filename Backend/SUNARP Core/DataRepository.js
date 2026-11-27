@@ -1763,10 +1763,9 @@ function listRecordsFromSources(requests) {
 
       // Una lectura contigua por pestaña, conservando el mismo contrato
       // de encabezados y registros que la implementación anterior.
-      const dataRange = sheet.getRange(1, 1, lastRow, lastColumn);
       const values = item.valueMode === 'display'
-        ? dataRange.getDisplayValues()
-        : dataRange.getValues();
+        ? sheet.getRange(1, 1, lastRow, lastColumn).getDisplayValues()
+        : sheet.getRange(1, 1, lastRow, lastColumn).getValues();
 
       const headers = values[
         config.headerRow - 1

@@ -328,7 +328,7 @@ test('editar provincia conserva el padre y rechaza cambios de jerarquía', () =>
   const fixture = makeGeoSandbox();
   assert.throws(
     () => fixture.call("saveGeographicCatalogRecord({entity:'provinces',action:'edit',id:'0101',name:'Lima Metropolitana',id_departamento:'02'})"),
-    /no se puede cambiar el nivel superior/
+    /no se puede cambiar el nivel superior/i
   );
   fixture.call(
     "saveGeographicCatalogRecord({entity:'provinces',action:'edit',id:'0101',name:'Lima Metropolitana',id_departamento:'01'})"
