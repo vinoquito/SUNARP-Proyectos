@@ -710,14 +710,21 @@ const ExportPdfButton = {
 
                                 }
 
-                                cursorY += this.addWrappedHeading(
-                                    doc,
-                                    organization.title,
-                                    leftMargin,
-                                    cursorY,
-                                    contentWidth,
-                                    9.5,
-                                    [75, 75, 75]
+                                const organizationHeadingHeight =
+                                    this.addWrappedHeading(
+                                        doc,
+                                        organization.title,
+                                        leftMargin,
+                                        cursorY,
+                                        contentWidth,
+                                        9.5,
+                                        [75, 75, 75]
+                                    );
+
+                                // Mantiene el título prácticamente unido a la tabla siguiente.
+                                cursorY += Math.max(
+                                    0,
+                                    organizationHeadingHeight - 4.5
                                 );
 
                             }
@@ -746,7 +753,7 @@ const ExportPdfButton = {
 
                             doc.autoTable({
 
-                                startY: cursorY + 1,
+                                startY: cursorY + 0.5,
 
                                 margin: {
                                     top: 48,
