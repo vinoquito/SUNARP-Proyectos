@@ -21,7 +21,7 @@ const NavbarDefault = {
 template: `
 
 <nav
-    class="fixed top-0 left-0 w-full z-50 bg-white border-b border-gob py-4">
+    class="fixed top-0 left-0 w-full z-50 bg-white border-b border-gob py-3">
 
     <div
         class="max-w-7xl
