@@ -254,11 +254,53 @@ const ExportPdfButton = {
 
         },
 
+        getReportHeaderLayout(doc) {
+
+            const pageWidth = doc.internal.pageSize.getWidth();
+
+            const subtitleY = 19;
+            let subtitleLines = [];
+
+            if (this.reportSubtitle) {
+
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(12);
+
+                subtitleLines = doc.splitTextToSize(
+                    String(this.reportSubtitle).toUpperCase(),
+                    pageWidth - 65
+                ).slice(0, 2);
+
+            }
+
+            /*
+             * La fecha se coloca inmediatamente después del subtítulo.
+             * Su posición se calcula según una o dos líneas para evitar
+             * dejar un espacio fijo excesivo cuando el subtítulo es corto.
+             */
+
+            const generatedY = subtitleLines.length
+                ? subtitleY + (subtitleLines.length * 5) + 2
+                : 26;
+
+            const separatorY = generatedY + 4;
+
+            return {
+                subtitleLines,
+                subtitleY,
+                generatedY,
+                separatorY,
+                contentStartY: separatorY + 8
+            };
+
+        },
+
         drawReportHeaderFooter(doc, logoData) {
 
             const pageWidth = doc.internal.pageSize.getWidth();
             const pageHeight = doc.internal.pageSize.getHeight();
             const totalPages = doc.getNumberOfPages();
+            const headerLayout = this.getReportHeaderLayout(doc);
 
             const generatedDate = new Date().toLocaleDateString(
                 'es-PE',
@@ -319,21 +361,16 @@ const ExportPdfButton = {
                     }
                 );
 
-                if (this.reportSubtitle) {
+                if (headerLayout.subtitleLines.length) {
 
                     doc.setFont('helvetica', 'bold');
                     doc.setFontSize(12);
                     doc.setTextColor(48, 60, 55);
 
-                    const subtitleLines = doc.splitTextToSize(
-                        String(this.reportSubtitle).toUpperCase(),
-                        pageWidth - 65
-                    );
-
                     doc.text(
-                        subtitleLines.slice(0, 2),
+                        headerLayout.subtitleLines,
                         51,
-                        18
+                        headerLayout.subtitleY
                     );
 
                 }
@@ -345,12 +382,12 @@ const ExportPdfButton = {
                 doc.text(
                     `Generado: ${generatedDate}`,
                     51,
-                    30
+                    headerLayout.generatedY
                 );
 
                 doc.setDrawColor(160, 160, 160);
                 doc.setLineWidth(0.25);
-                doc.line(14, 34, pageWidth - 14, 34);
+                doc.line(14, headerLayout.separatorY, pageWidth - 14, headerLayout.separatorY);
 
                 doc.setDrawColor(190, 190, 190);
                 doc.line(14, pageHeight - 13, pageWidth - 14, pageHeight - 13);
@@ -476,12 +513,13 @@ const ExportPdfButton = {
                 const bottomLimit = pageHeight - 19;
                 const contentWidth = pageWidth - leftMargin - rightMargin;
 
-                let cursorY = 40;
+                const headerLayout = this.getReportHeaderLayout(doc);
+                let cursorY = headerLayout.contentStartY;
 
                 const startNewPage = () => {
 
                     doc.addPage();
-                    cursorY = 40;
+                    cursorY = headerLayout.contentStartY;
 
                 };
 
@@ -518,13 +556,13 @@ const ExportPdfButton = {
                     doc.setLineWidth(0.7);
                     doc.line(
                         leftMargin,
-                        cursorY + 4,
+                        cursorY + 1,
                         pageWidth - rightMargin,
-                        cursorY + 4
+                        cursorY + 1
                     );
 
-                    // Separación entre el título, la línea verde y el contenido.
-                    cursorY += 9;
+                    // Separación suficiente entre la línea verde y el contenido.
+                    cursorY += 10;
 
                     if (!rows.length) {
 
@@ -767,7 +805,7 @@ const ExportPdfButton = {
                             });
 
                             cursorY =
-                                doc.lastAutoTable.finalY + 4;
+                                doc.lastAutoTable.finalY + 7;
 
                         });
 
