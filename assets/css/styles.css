@@ -6,6 +6,10 @@ body {
     font-family: var(--gob-font-family);
 }
 
+.main-navbar-offset {
+    padding-top: 88px;
+}
+
 
 /* ==========================================================================
    LOADER
