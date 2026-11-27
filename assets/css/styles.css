@@ -237,7 +237,13 @@ body {
     padding: var(--gob-card-padding);
 
     background-color: var(--gob-gray-100);
-    border: 1px solid var(--gob-card-border-color);
+    border: 2px solid var(--gob-card-border-color);
+
+    transition: border-color 0.2s;
+}
+
+.card-default:hover {
+    border-color: #000;
 }
 
 .card-default-title {
@@ -1065,6 +1071,11 @@ body {
 }
 
 .clear-filters-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+
     min-height: 44px;
     padding: 0 16px;
 
@@ -1092,6 +1103,22 @@ body {
 .clear-filters-button:focus {
     outline: var(--gob-focus-outline-width) solid var(--gob-focus-color);
     outline-offset: 2px;
+}
+
+.clear-filters-button .material-symbols-outlined {
+    font-size: 20px;
+    line-height: 1;
+}
+
+/* ==========================================================================
+   BOTONES: HOVER COMÚN
+   ========================================================================== */
+
+.app-button:hover:not(:disabled),
+.clear-filters-button:hover:not(:disabled),
+.pagination-gob button:hover:not(:disabled) {
+    background-color: var(--gob-sky-500);
+    color: var(--gob-text-primary);
 }
 
 /* ==========================================================================
