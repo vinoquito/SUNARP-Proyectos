@@ -1076,7 +1076,8 @@ body {
     justify-content: center;
     gap: 8px;
 
-    min-height: 44px;
+    height: 48px;
+    box-sizing: border-box;
     padding: 0 16px;
 
     background: #fff;
