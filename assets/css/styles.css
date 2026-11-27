@@ -263,7 +263,7 @@ body {
 }
 
 .footer-gob-credits {
-    background-color: var(--gob-neutral-800);
+    background-color: color-mix(in srgb, var(--gob-bg-footer) 88%, #000 12%);
     color: #fff;
 
     font-size: var(--gob-badge-size);
