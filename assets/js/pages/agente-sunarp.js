@@ -114,8 +114,8 @@ const app = createBaseApp({
                 ...pageData,
                 image: heroImage
                     ? buildImageUrl(heroImage.image_id)
-                    : pageData?.image || '',
-                alt: heroImage?.image_name || pageData?.alt || ''
+                    : '',
+                alt: heroImage?.image_name || ''
             };
             this.navbarData = navbarData;
             this.footerData = footerData;
