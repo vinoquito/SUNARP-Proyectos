@@ -67,6 +67,20 @@ const FooterDefault = {
 
             </div>
 
+            <div
+                v-if="structure.left?.credits?.length"
+                class="footer-gob-credits">
+
+                <div
+                    v-for="(item,index) in structure.left.credits"
+                    :key="index">
+
+                    {{ item.text }}
+
+                </div>
+
+            </div>
+
         </div>
 
     </footer>
