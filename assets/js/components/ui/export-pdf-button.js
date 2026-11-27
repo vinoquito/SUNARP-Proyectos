@@ -1,5 +1,3 @@
-const exportPdfLogoCache = new Map();
-const exportPdfLogoRequests = new Map();
 const exportPdfLoadingStates = Vue.reactive({});
 
 const ExportPdfButton = {
@@ -69,8 +67,7 @@ const ExportPdfButton = {
 
             return [
                 this.filename || 'export',
-                this.reportTitle || '',
-                this.logo || ''
+                this.reportTitle || ''
             ].join('::');
 
         },
@@ -246,19 +243,9 @@ const ExportPdfButton = {
                 return null;
             }
 
-            const logoUrl = String(this.logo).trim();
+            try {
 
-            if (exportPdfLogoCache.has(logoUrl)) {
-                return exportPdfLogoCache.get(logoUrl);
-            }
-
-            if (exportPdfLogoRequests.has(logoUrl)) {
-                return exportPdfLogoRequests.get(logoUrl);
-            }
-
-            const logoRequest = (async () => {
-
-                const response = await fetch(logoUrl);
+                const response = await fetch(this.logo);
 
                 if (!response.ok) {
                     throw new Error(`No se pudo cargar el logo: ${response.status}`);
@@ -277,18 +264,6 @@ const ExportPdfButton = {
 
                 });
 
-            })();
-
-            exportPdfLogoRequests.set(logoUrl, logoRequest);
-
-            try {
-
-                const logoData = await logoRequest;
-
-                exportPdfLogoCache.set(logoUrl, logoData);
-
-                return logoData;
-
             } catch (error) {
 
                 console.warn(
@@ -297,10 +272,6 @@ const ExportPdfButton = {
                 );
 
                 return null;
-
-            } finally {
-
-                exportPdfLogoRequests.delete(logoUrl);
 
             }
 
