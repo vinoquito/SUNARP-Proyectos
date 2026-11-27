@@ -522,9 +522,9 @@ test('rechaza códigos UBIGEO ausentes, con longitud incorrecta o prefijo distin
 });
 
 test('la interfaz exige código UBIGEO al crear y lo vuelve inmutable al editar', () => {
-  assert.match(geoUiSource, /const codeField = geoField\\('Código UBIGEO'/);
-  assert.match(geoUiSource, /codeField\\.input\\.readOnly = true/);
+  assert.match(geoUiSource, /const codeField = geoField\('Código UBIGEO'/);
+  assert.match(geoUiSource, /codeField\.input\.readOnly = true/);
   assert.match(geoUiSource, /El sistema no inventa ni asigna códigos automáticamente/);
-  assert.match(geoUiSource, /id: editing \\? record\\.id : codeField\\.input\\.value\\.trim\\(\\)/);
+  assert.match(geoUiSource, /id: editing \? record\.id : codeField\.input\.value\.trim\(\)/);
 });
 
