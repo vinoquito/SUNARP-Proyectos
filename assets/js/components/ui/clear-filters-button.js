@@ -9,7 +9,16 @@ const ClearFiltersButton = {
             class="clear-filters-button"
             @click="$emit('clear')"
         >
-            Limpiar filtros
+            <span
+                class="material-symbols-outlined"
+                aria-hidden="true"
+            >
+                filter_alt_off
+            </span>
+
+            <span>
+                Limpiar filtros
+            </span>
         </button>
 
     `
