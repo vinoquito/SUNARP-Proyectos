@@ -49,7 +49,9 @@ const INTRANET_SOURCE_DEPENDENCIES = Object.freeze({
     tipos_estructura: Object.freeze([['MASTER_DATA', 'tipos_estructura']]),
     estructura_org: Object.freeze([['MASTER_DATA', 'estructura_org']]),
     estructura_local: Object.freeze([['MASTER_DATA', 'estructura_local']]),
-    cargos: Object.freeze([['MASTER_DATA', 'cargos']])
+    cargos: Object.freeze([['MASTER_DATA', 'cargos']]),
+    tipo_documento_identidad: Object.freeze([['MASTER_DATA', 'tipo_documento_identidad']]),
+    condicion_cargo: Object.freeze([['MASTER_DATA', 'condicion_cargo']])
   }),
   SECURITY: Object.freeze({
     Sedes: Object.freeze([['MASTER_DATA', 'sede']]),

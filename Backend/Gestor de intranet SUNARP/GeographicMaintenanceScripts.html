@@ -298,6 +298,23 @@
     const title = (editing ? 'Editar ' : 'Registrar ') + geoTabName(tab).replace(/^./, value => value.toUpperCase());
     const form = geoElement('form', 'sunarp-form-grid');
     form.addEventListener('submit', event => event.preventDefault());
+
+    const codeWidth = tab === 'departments' ? 2 : tab === 'provinces' ? 4 : 6;
+    const codeField = geoField('Código UBIGEO', record && record.id, 'text');
+    codeField.input.name = 'id';
+    codeField.input.inputMode = 'numeric';
+    codeField.input.maxLength = codeWidth;
+    codeField.input.pattern = '[0-9]{' + codeWidth + '}';
+    codeField.input.placeholder = codeWidth === 2 ? '01' : codeWidth === 4 ? '0101' : '010101';
+    codeField.input.title = 'Ingresa el código oficial de ' + codeWidth + ' dígitos.';
+    if (editing) {
+      codeField.input.readOnly = true;
+      geoAddHint(codeField.wrapper, 'El código UBIGEO es inmutable porque identifica la relación territorial y puede estar referenciado por otros módulos.');
+    } else {
+      geoAddHint(codeField.wrapper, 'Ingresa el código UBIGEO oficial. El sistema no inventa ni asigna códigos automáticamente.');
+    }
+    form.appendChild(codeField.wrapper);
+
     const name = geoField(tab === 'departments' ? 'Nombre del departamento' :
       tab === 'provinces' ? 'Nombre de la provincia' : 'Nombre del distrito',
       record && record.name, 'text');
@@ -349,7 +366,7 @@
         const payload = {
           entity: tab,
           action: editing ? 'edit' : 'create',
-          id: editing ? record.id : '',
+          id: editing ? record.id : codeField.input.value.trim(),
           name: name.input.value.trim()
         };
         if (parentField) payload[parentField] = parentSelect.value;

@@ -23,6 +23,10 @@ const accessSource = fs.readFileSync(
   path.join(root, 'Backend/Gestor de intranet SUNARP/AccessManagementService.js'),
   'utf8'
 );
+const appConfigSource = fs.readFileSync(
+  path.join(root, 'Backend/Gestor de intranet SUNARP/AppConfig.js'),
+  'utf8'
+);
 
 function makeGeoSandbox(options = {}) {
   const rows = {
@@ -43,9 +47,9 @@ function makeGeoSandbox(options = {}) {
   };
 
   const sheetNames = {
-    departments: 'departamentos',
-    provinces: 'provincias',
-    districts: 'distritos'
+    departments: 'departamento',
+    provinces: 'provincia',
+    districts: 'distrito'
   };
   const fields = {
     departments: ['id', 'name'],
@@ -247,6 +251,25 @@ test('la navegación agrega un único nodo y exactamente los cinco grupos acorda
   assert.ok(children.every(item => item.permissionCode === 'MANTENIMIENTOS_VER'));
 });
 
+test('los catálogos de personal del Directorio conservan dependencia de Global parameters', () => {
+  const sandbox = vm.createContext({});
+  vm.runInContext(appConfigSource, sandbox, { filename: 'AppConfig.js' });
+  const dependencies = JSON.parse(JSON.stringify(vm.runInContext('INTRANET_SOURCE_DEPENDENCIES.DIRECTORY', sandbox)));
+
+  assert.deepEqual(
+    dependencies.tipo_documento_identidad,
+    [['MASTER_DATA', 'tipo_documento_identidad']]
+  );
+  assert.deepEqual(
+    dependencies.condicion_cargo,
+    [['MASTER_DATA', 'condicion_cargo']]
+  );
+  assert.deepEqual(
+    dependencies.cargos,
+    [['MASTER_DATA', 'cargos']]
+  );
+});
+
 test('la pantalla geográfica solo contiene tres pestañas CRUD y los otros grupos no exponen acciones CRUD simuladas', () => {
   assert.match(geoUiSource, /const geoTabs = \[\s*\{ id: 'departments', label: 'Departamentos' \},\s*\{ id: 'provinces', label: 'Provincias' \},\s*\{ id: 'districts', label: 'Distritos' \}/);
   assert.match(geoUiSource, /function initializeStagedGroup\(route\)/);
@@ -257,7 +280,7 @@ test('la pantalla geográfica solo contiene tres pestañas CRUD y los otros grup
   assert.match(geoUiSource, /beginSectionLoading/);
 });
 
-test('la consulta usa los tres catálogos maestros plurales y conserva códigos con ceros iniciales', () => {
+test('la consulta usa las tres pestañas maestras singulares y conserva códigos con ceros iniciales', () => {
   const fixture = makeGeoSandbox();
   const data = fixture.call('getGeographicMaintenanceData()');
 
@@ -269,15 +292,15 @@ test('la consulta usa los tres catálogos maestros plurales y conserva códigos 
   assert.equal(data.districts[0].provincia_departamento, 'Lima — Lima');
   assert.deepEqual(
     fixture.sourceReads[0].sources,
-    ['departamentos', 'provincias', 'distritos']
+    ['departamento', 'provincia', 'distrito']
   );
   assert.equal(fixture.sourceReads[0].ttl, 300);
 });
 
-test('registrar provincia genera código con prefijo de departamento y escribe en la misma fuente maestra', () => {
+test('registrar provincia exige código UBIGEO oficial con prefijo de departamento y escribe en la fuente maestra', () => {
   const fixture = makeGeoSandbox();
   const result = fixture.call(
-    "saveGeographicCatalogRecord({entity:'provinces',action:'create',name:'Cañete',id_departamento:'01'})"
+    "saveGeographicCatalogRecord({entity:'provinces',action:'create',id:'0103',name:'Cañete',id_departamento:'01'})"
   );
 
   assert.equal(result.id, '0103');
@@ -287,14 +310,14 @@ test('registrar provincia genera código con prefijo de departamento y escribe e
     id_departamento: '01'
   });
   assert.equal(fixture.writes.at(-1).method, 'insertRecord');
-  assert.equal(fixture.writes.at(-1).sheet, 'provincias');
+  assert.equal(fixture.writes.at(-1).sheet, 'provincia');
   assert.ok(fixture.audit.some(event => event.accion === 'CREAR_CATALOGO_GEOGRAFICO'));
 });
 
-test('registrar distrito exige únicamente provincia y deriva el departamento por la relación', () => {
+test('registrar distrito exige código UBIGEO y únicamente provincia; deriva departamento por la relación', () => {
   const fixture = makeGeoSandbox();
   const result = fixture.call(
-    "saveGeographicCatalogRecord({entity:'districts',action:'create',name:'Chancay',id_provincia:'0102'})"
+    "saveGeographicCatalogRecord({entity:'districts',action:'create',id:'010202',name:'Chancay',id_provincia:'0102'})"
   );
 
   assert.equal(result.id, '010202');
@@ -304,21 +327,21 @@ test('registrar distrito exige únicamente provincia y deriva el departamento po
     id_provincia: '0102'
   });
   assert.equal(Object.hasOwn(fixture.rows.districts.at(-1), 'id_departamento'), false);
-  assert.equal(fixture.writes.at(-1).sheet, 'distritos');
+  assert.equal(fixture.writes.at(-1).sheet, 'distrito');
 });
 
 test('rechaza provincia o distrito sin padre existente', () => {
   const fixture = makeGeoSandbox();
   assert.throws(
-    () => fixture.call("saveGeographicCatalogRecord({entity:'provinces',action:'create',name:'Nueva'})"),
+    () => fixture.call("saveGeographicCatalogRecord({entity:'provinces',action:'create',id:'0103',name:'Nueva'})"),
     /Selecciona el departamento/
   );
   assert.throws(
-    () => fixture.call("saveGeographicCatalogRecord({entity:'provinces',action:'create',name:'Nueva',id_departamento:'99'})"),
+    () => fixture.call("saveGeographicCatalogRecord({entity:'provinces',action:'create',id:'9901',name:'Nueva',id_departamento:'99'})"),
     /departamento seleccionado no existe/
   );
   assert.throws(
-    () => fixture.call("saveGeographicCatalogRecord({entity:'districts',action:'create',name:'Nuevo',id_provincia:'9999'})"),
+    () => fixture.call("saveGeographicCatalogRecord({entity:'districts',action:'create',id:'999901',name:'Nuevo',id_provincia:'9999'})"),
     /provincia seleccionada no existe/
   );
   assert.equal(fixture.writes.length, 0);
@@ -341,11 +364,11 @@ test('editar provincia conserva el padre y rechaza cambios de jerarquía', () =>
 test('rechaza nombres duplicados dentro de un mismo padre sin afectar otros padres', () => {
   const fixture = makeGeoSandbox();
   assert.throws(
-    () => fixture.call("saveGeographicCatalogRecord({entity:'provinces',action:'create',name:'lima',id_departamento:'01'})"),
+    () => fixture.call("saveGeographicCatalogRecord({entity:'provinces',action:'create',id:'0103',name:'lima',id_departamento:'01'})"),
     /Ya existe un registro/
   );
   fixture.call(
-    "saveGeographicCatalogRecord({entity:'provinces',action:'create',name:'Lima',id_departamento:'02'})"
+    "saveGeographicCatalogRecord({entity:'provinces',action:'create',id:'0202',name:'Lima',id_departamento:'02'})"
   );
   assert.equal(fixture.rows.provinces.at(-1).id, '0202');
 });
@@ -394,7 +417,7 @@ test('rechaza catálogos existentes con relaciones huérfanas o identificadores 
   });
   assert.throws(
     () => duplicate.call('getGeographicMaintenanceData()'),
-    /está duplicado en la pestaña "departamentos"/
+    /está duplicado en la pestaña "departamento"/
   );
 });
 
@@ -479,5 +502,29 @@ test('normaliza códigos numéricos devueltos por SUNARP Core v16 sin perder cer
   assert.equal(data.provinces[0].id_departamento, '01');
   assert.equal(data.districts[0].id, '010101');
   assert.equal(data.districts[0].id_provincia, '0101');
+});
+
+test('rechaza códigos UBIGEO ausentes, con longitud incorrecta o prefijo distinto del padre', () => {
+  const fixture = makeGeoSandbox();
+  assert.throws(
+    () => fixture.call("saveGeographicCatalogRecord({entity:'departments',action:'create',name:'Tacna'})"),
+    /Ingresa el código UBIGEO/
+  );
+  assert.throws(
+    () => fixture.call("saveGeographicCatalogRecord({entity:'departments',action:'create',id:'9',name:'Tacna'})"),
+    /exactamente 2 dígitos/
+  );
+  assert.throws(
+    () => fixture.call("saveGeographicCatalogRecord({entity:'provinces',action:'create',id:'0202',name:'Nueva provincia',id_departamento:'01'})"),
+    /debe comenzar con el código de su departamento/
+  );
+  assert.equal(fixture.writes.length, 0);
+});
+
+test('la interfaz exige código UBIGEO al crear y lo vuelve inmutable al editar', () => {
+  assert.match(geoUiSource, /const codeField = geoField\\('Código UBIGEO'/);
+  assert.match(geoUiSource, /codeField\\.input\\.readOnly = true/);
+  assert.match(geoUiSource, /El sistema no inventa ni asigna códigos automáticamente/);
+  assert.match(geoUiSource, /id: editing \\? record\\.id : codeField\\.input\\.value\\.trim\\(\\)/);
 });
 

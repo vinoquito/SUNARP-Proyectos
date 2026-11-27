@@ -1,7 +1,7 @@
 /**
  * Mantenimiento centralizado de catálogos geográficos.
  *
- * Las fuentes maestras son las pestañas plurales de Global parameters.
+ * Las fuentes maestras son las pestañas singulares existentes de Global parameters.
  * Se leen sus valores visibles para conservar códigos UBIGEO con ceros
  * iniciales (01, 0101, 010101). Core administra las generaciones de caché
  * y ejecuta todas las escrituras.
@@ -10,9 +10,9 @@ const GEOGRAPHIC_MAINTENANCE_CONFIG = Object.freeze({
   sourceKey: 'MASTER_DATA',
   moduleCode: 'MANTENIMIENTOS',
   sheets: Object.freeze({
-    departments: 'departamentos',
-    provinces: 'provincias',
-    districts: 'distritos'
+    departments: 'departamento',
+    provinces: 'provincia',
+    districts: 'distrito'
   }),
   headers: Object.freeze({
     departments: Object.freeze(['id', 'name']),
@@ -180,7 +180,7 @@ function _geoLoadCatalogs_() {
         '" no tiene el formato geográfico de dos dígitos.');
     }
     if (departmentsById.has(id)) {
-      throw new Error('El identificador "' + id + '" está duplicado en la pestaña "departamentos".');
+      throw new Error('El identificador "' + id + '" está duplicado en la pestaña "departamento".');
     }
     departmentsById.set(id, record);
   });
@@ -192,7 +192,7 @@ function _geoLoadCatalogs_() {
       throw new Error('La provincia "' + id + '" no tiene un nombre válido.');
     }
     if (provincesById.has(id)) {
-      throw new Error('El identificador "' + id + '" está duplicado en la pestaña "provincias".');
+      throw new Error('El identificador "' + id + '" está duplicado en la pestaña "provincia".');
     }
     const parent = departmentsById.get(_geoText_(record.id_departamento));
     if (!parent) {
@@ -213,7 +213,7 @@ function _geoLoadCatalogs_() {
       throw new Error('El distrito "' + id + '" no tiene un nombre válido.');
     }
     if (districtsById.has(id)) {
-      throw new Error('El identificador "' + id + '" está duplicado en la pestaña "distritos".');
+      throw new Error('El identificador "' + id + '" está duplicado en la pestaña "distrito".');
     }
     const province = provincesById.get(_geoText_(record.id_provincia));
     if (!province) {
@@ -251,53 +251,33 @@ function _geoAssertUniqueName_(records, name, parentField, parentId, excludedId)
 }
 
 /**
- * Los identificadores geográficos siguen la longitud jerárquica consumida
- * por Agentes SUNARP: departamento (2), provincia (4), distrito (6).
- * Los dos últimos dígitos se asignan en secuencia dentro de su padre.
+ * Valida el código UBIGEO proporcionado por el usuario.
+ *
+ * No se generan códigos secuenciales: los identificadores geográficos son
+ * códigos oficiales y deben ingresarse con el valor asignado a la entidad.
  */
-function _geoGenerateId_(entity, catalogs, parentId) {
+function _geoValidateCode_(entity, rawCode, parentId) {
   const config = _geoGetEntityConfig_(entity);
-  const prefix = config.parentField ? _geoText_(parentId) : '';
-  const suffixWidth = config.idWidth - prefix.length;
+  const id = _geoText_(rawCode);
+  const expression = new RegExp('^[0-9]{' + config.idWidth + '}$');
 
-  if (config.parentField && (!prefix || prefix.length !== config.idWidth - 2 || !/^\d+$/.test(prefix))) {
-    throw new Error('La referencia seleccionada no tiene un código territorial válido.');
+  if (!id) {
+    throw new Error('Ingresa el código UBIGEO de ' + config.sheetName + '.');
   }
-
-  const records = catalogs[config.key] || [];
-  const validFormat = new RegExp('^\\d{' + config.idWidth + '}$');
-  let maximum = 0;
-
-  records.forEach(record => {
-    const id = _geoText_(record.id);
-    if (!validFormat.test(id)) {
-      throw new Error(
-        'No se puede generar un código seguro porque existen identificadores con formato distinto en "' +
-        config.sheetName + '". No se modificó ningún registro.'
-      );
-    }
-
-    if (config.parentField) {
-      const recordParentId = _geoText_(record[config.parentField]);
-      if (!recordParentId || id.slice(0, recordParentId.length) !== recordParentId ||
-          recordParentId.length !== config.idWidth - 2) {
-        throw new Error(
-          'La jerarquía de códigos de "' + config.sheetName +
-          '" contiene una referencia incompatible. No se modificó ningún registro.'
-        );
-      }
-      if (recordParentId !== prefix) return;
-    }
-
-    const suffix = prefix ? id.slice(prefix.length) : id;
-    maximum = Math.max(maximum, Number(suffix));
-  });
-
-  const next = maximum + 1;
-  if (next > Math.pow(10, suffixWidth) - 1) {
-    throw new Error('No quedan códigos disponibles dentro del rango territorial del registro seleccionado.');
+  if (!expression.test(id)) {
+    throw new Error(
+      'El código de ' + config.sheetName + ' debe tener exactamente ' +
+      config.idWidth + ' dígitos.'
+    );
   }
-  return prefix + String(next).padStart(suffixWidth, '0');
+  if (config.parentField && id.slice(0, config.idWidth - 2) !== _geoText_(parentId)) {
+    throw new Error(
+      'El código de ' + config.sheetName +
+      ' debe comenzar con el código de su ' +
+      (config.key === 'provinces' ? 'departamento' : 'provincia') + '.'
+    );
+  }
+  return id;
 }
 
 function _geoBuildResponse_(catalogs, auth, moduleId) {
@@ -429,8 +409,11 @@ function saveGeographicCatalogRecord(payload) {
   const uniqueFields = parentField ? ['name', parentField] : ['name'];
 
   if (action === 'create') {
+    const id = _geoValidateCode_(config.key, payload.id, parentId);
+    if (_geoFindById_(records, id)) {
+      throw new Error('Ya existe el código ' + id + ' en la pestaña "' + config.sheetName + '".');
+    }
     _geoAssertUniqueName_(records, name, parentField, parentId, '');
-    const id = _geoGenerateId_(config.key, catalogs, parentId);
     const record = { id: id, name: name };
     if (parentField) record[parentField] = parentId;
 
@@ -452,6 +435,7 @@ function saveGeographicCatalogRecord(payload) {
 
   const id = _geoText_(payload.id);
   if (!id) throw new Error('Debes indicar el identificador del registro que deseas modificar.');
+  _geoValidateCode_(config.key, id, parentId);
   const existing = _geoFindById_(records, id);
   if (!existing) throw new Error('No se encontró el registro geográfico que deseas modificar.');
 
