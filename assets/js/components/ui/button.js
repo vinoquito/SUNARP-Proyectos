@@ -57,6 +57,11 @@ const AppButton = {
             default: false
         },
 
+        loading: {
+            type: Boolean,
+            default: false
+        },
+
         tooltip: {
             type: String,
             default: ''
@@ -204,7 +209,7 @@ const AppButton = {
          */
         handleClick(event) {
 
-            if (this.disabled) {
+            if (this.disabled || this.loading) {
                 return;
             }
 
@@ -222,7 +227,8 @@ const AppButton = {
 
             <button
                 :type="type"
-                :disabled="disabled"
+                :disabled="disabled || loading"
+                :aria-busy="loading ? 'true' : 'false'"
                 @click="handleClick"
 
                 :class="[
@@ -244,6 +250,7 @@ const AppButton = {
                 <span
                     v-if="icon"
                     class="material-symbols-outlined"
+                    :class="{ 'animate-spin': loading }"
                 >
                     {{ icon }}
                 </span>
