@@ -109,7 +109,7 @@ body {
 .page-content {
     display: flex;
     flex-direction: column;
-    gap: var(--gob-space-xs);
+    gap: 0;
 }
 
 
@@ -118,6 +118,8 @@ body {
    ========================================================================== */
 
 .page-entity {
+    margin-bottom: 2rem;
+
     color: var(--gob-link-color);
 
     font-size: var(--gob-h5-size);
@@ -126,6 +128,8 @@ body {
 }
 
 .page-title {
+    margin: 0 0 0.75rem;
+
     color: var(--gob-text-primary);
 
     font-size: var(--gob-h1-desktop-size);
@@ -134,6 +138,8 @@ body {
 }
 
 .page-description {
+    margin: 0;
+
     color: var(--gob-text-secondary);
 
     font-size: var(--gob-paragraph-size);
