@@ -1250,6 +1250,21 @@ body {
    Única diferencia: proporción de columnas y tratamiento de la imagen.
    ========================================================================== */
 
+.page-header-feature-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 32px;
+}
+
+@media (min-width: 768px) {
+    .page-header-feature-grid {
+        grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+        column-gap: 50px;
+        row-gap: 0;
+    }
+}
+
+
 .page-header-feature-action {
     margin-top: 22px;
 }
