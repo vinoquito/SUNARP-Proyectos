@@ -15,6 +15,10 @@ const geoUiSource = fs.readFileSync(
   path.join(root, 'Backend/Gestor de intranet SUNARP/GeographicMaintenanceScripts.html'),
   'utf8'
 );
+const maintenanceViewSource = fs.readFileSync(
+  path.join(root, 'Backend/Gestor de intranet SUNARP/ViewMantenimientos.html'),
+  'utf8'
+);
 const navigationSource = fs.readFileSync(
   path.join(root, 'Backend/Gestor de intranet SUNARP/Código.js'),
   'utf8'
@@ -244,11 +248,60 @@ test('la navegación agrega un único nodo y exactamente los cinco grupos acorda
       'ubicacion-geografica',
       'sedes-locales',
       'organizacion-institucional',
-      'datos-de-personal',
+      'datos-personal',
       'directorio-telefonico'
     ]
   );
-  assert.ok(children.every(item => item.permissionCode === 'MANTENIMIENTOS_VER'));
+  assert.ok(children.every(item => item.permissionCode === ''));
+  assert.equal(parent[0].permissionCode, '');
+});
+
+test('el shell muestra los cinco mantenimientos aunque falten permisos de menú y conserva el filtro de otros módulos', () => {
+  const sandbox = vm.createContext({});
+  vm.runInContext(navigationSource, sandbox, { filename: 'Código.js' });
+
+  const sourceItems = [
+    { id: 'CONTENIDOS', parentId: '', label: 'Gestión de contenidos', route: '', order: 1, permissionCode: '' },
+    { id: 'INFORMACION_PERSONAL', parentId: 'CONTENIDOS', label: 'Información de personal', route: 'informacion-personal', order: 2, permissionCode: 'INFORMACION_PERSONAL_VER' },
+    { id: 'MANTENIMIENTOS', parentId: '', label: 'Módulos de mantenimiento', route: '', order: 25, permissionCode: '' },
+    { id: 'UBICACION_GEOGRAFICA', parentId: 'MANTENIMIENTOS', label: 'Ubicación geográfica', route: 'ubicacion-geografica', order: 26, permissionCode: '' },
+    { id: 'SEDES_LOCALES', parentId: 'MANTENIMIENTOS', label: 'Sedes y locales', route: 'sedes-locales', order: 27, permissionCode: '' },
+    { id: 'ORGANIZACION_INSTITUCIONAL', parentId: 'MANTENIMIENTOS', label: 'Organización institucional', route: 'organizacion-institucional', order: 28, permissionCode: '' },
+    { id: 'DATOS_PERSONAL', parentId: 'MANTENIMIENTOS', label: 'Datos de personal', route: 'datos-personal', order: 29, permissionCode: '' },
+    { id: 'DIRECTORIO_TELEFONICO', parentId: 'MANTENIMIENTOS', label: 'Directorio telefónico', route: 'directorio-telefonico', order: 30, permissionCode: '' }
+  ];
+
+  sandbox.getAuthContext_ = () => ({ authenticated: true });
+  sandbox.getNavigationItems_ = () => sourceItems.map(item => ({ ...item }));
+  sandbox._accessIsGlobalAdministrator_ = () => false;
+  sandbox.hasPermission_ = () => false;
+
+  const config = sandbox.getAppShellConfig();
+  const navigation = Array.from(config.navigation);
+  const maintenance = navigation.filter(item =>
+    item.id === 'MANTENIMIENTOS' || item.parentId === 'MANTENIMIENTOS'
+  );
+
+  assert.equal(maintenance.length, 6);
+  assert.deepEqual(
+    maintenance.filter(item => item.parentId === 'MANTENIMIENTOS').map(item => item.route),
+    [
+      'ubicacion-geografica',
+      'sedes-locales',
+      'organizacion-institucional',
+      'datos-personal',
+      'directorio-telefonico'
+    ]
+  );
+  assert.equal(navigation.some(item => item.id === 'INFORMACION_PERSONAL'), false);
+});
+
+test('la ruta datos-personal coincide entre Menu, el evento de navegación y la vista', () => {
+  assert.match(navigationSource, /route: 'datos-personal'/);
+  assert.match(geoUiSource, /'datos-personal': \{/);
+  assert.match(maintenanceViewSource, /data-app-view="datos-personal"/);
+  assert.doesNotMatch(geoUiSource, /datos-de-personal/);
+  assert.doesNotMatch(maintenanceViewSource, /datos-de-personal/);
 });
 
 test('los catálogos de personal del Directorio conservan dependencia de Global parameters', () => {
