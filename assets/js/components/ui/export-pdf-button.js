@@ -58,9 +58,16 @@ const ExportPdfButton = {
         logo: {
             type: String,
             default: ''
+        },
+
+        loading: {
+            type: Boolean,
+            default: false
         }
 
     },
+
+    emits: ['export-start', 'export-end'],
 
     data() {
 
@@ -471,11 +478,12 @@ const ExportPdfButton = {
 
         async handleExport() {
 
-            if (this.isExporting) {
+            if (this.isExporting || this.loading) {
                 return;
             }
 
             this.isExporting = true;
+            this.$emit('export-start');
 
             try {
 
@@ -915,6 +923,7 @@ const ExportPdfButton = {
             } finally {
 
                 this.isExporting = false;
+                this.$emit('export-end');
 
             }
 
@@ -924,11 +933,11 @@ const ExportPdfButton = {
 
     template: `
         <app-button
-            :label="isExporting ? 'Generando PDF...' : label"
-            :icon="isExporting ? 'progress_activity' : icon"
+            :label="(isExporting || loading) ? 'Generando PDF...' : label"
+            :icon="(isExporting || loading) ? 'progress_activity' : icon"
             :variant="variant"
-            :disabled="isExporting"
-            :loading="isExporting"
+            :disabled="isExporting || loading"
+            :loading="isExporting || loading"
             @click="handleExport"
         />
     `
