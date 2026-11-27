@@ -710,7 +710,7 @@ const ExportPdfButton = {
 
                                 }
 
-                                const organizationHeadingHeight =
+                                const organizationRenderedHeight =
                                     this.addWrappedHeading(
                                         doc,
                                         organization.title,
@@ -724,7 +724,7 @@ const ExportPdfButton = {
                                 // Mantiene el título prácticamente unido a la tabla siguiente.
                                 cursorY += Math.max(
                                     0,
-                                    organizationHeadingHeight - 4.5
+                                    organizationRenderedHeight - 4.5
                                 );
 
                             }
