@@ -542,27 +542,57 @@ const ExportPdfButton = {
                         startNewPage();
                     }
 
-                    cursorY += this.addWrappedHeading(
+                    const sectionHeadingText =
+                        `${sectionIndex + 1}. ${section.title || 'Sección'}`;
+
+                    doc.setFont('helvetica', 'bold');
+                    doc.setFontSize(14);
+
+                    const sectionHeadingLines = doc.splitTextToSize(
+                        sectionHeadingText,
+                        contentWidth
+                    );
+
+                    const sectionHeadingLineHeight = 14 * 0.42;
+
+                    if (
+                        cursorY +
+                        (sectionHeadingLines.length * sectionHeadingLineHeight) +
+                        8 >
+                        bottomLimit
+                    ) {
+                        startNewPage();
+                    }
+
+                    const sectionHeadingY = cursorY;
+
+                    this.addWrappedHeading(
                         doc,
-                        `${sectionIndex + 1}. ${section.title || 'Sección'}`,
+                        sectionHeadingText,
                         leftMargin,
-                        cursorY,
+                        sectionHeadingY,
                         contentWidth,
                         14,
                         [48, 60, 55]
                     );
 
+                    // La línea queda cerca de la última línea del título.
+                    const sectionLineY =
+                        sectionHeadingY +
+                        ((sectionHeadingLines.length - 1) * sectionHeadingLineHeight) +
+                        6;
+
                     doc.setDrawColor(142, 195, 33);
                     doc.setLineWidth(0.7);
                     doc.line(
                         leftMargin,
-                        cursorY + 1,
+                        sectionLineY,
                         pageWidth - rightMargin,
-                        cursorY + 1
+                        sectionLineY
                     );
 
-                    // Separación suficiente entre la línea verde y el contenido.
-                    cursorY += 10;
+                    // Espacio visual entre la línea verde y el contenido de la sección.
+                    cursorY = sectionLineY + 8;
 
                     if (!rows.length) {
 
