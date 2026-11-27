@@ -168,11 +168,15 @@
 
                     :show-export="true"
 
+                    :pdf-exporting="isExportingPdf"
+
                     item-label="contactos"
 
                     filename="directorio-telefonico"
 
                     @filters-change="onDirectoryFiltersChange"
+                    @pdf-export-start="onPdfExportStart"
+                    @pdf-export-end="onPdfExportEnd"
 
                 >
 
