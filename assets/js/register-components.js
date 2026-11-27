@@ -10,5 +10,7 @@ function registerGlobalComponents(app) {
 
     app.component('page-header-banner', PageHeaderBanner);
 
+    app.component('page-header-feature', PageHeaderFeature);
+
     app.component('footer-gob', FooterGob);
 }
