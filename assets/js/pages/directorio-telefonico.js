@@ -92,6 +92,9 @@ const app = createBaseApp({
 
             selectedDirectoryFilters: {},
 
+            // Estado de exportación conservado en la aplicación de la página.
+            isExportingPdf: false,
+
             /*
              * ========================================================
              * ELEMENTOS CONFIGURADOS PARA LA PÁGINA
@@ -1275,6 +1278,18 @@ const app = createBaseApp({
             this.selectedDirectoryFilters = {
                 ...filters
             };
+
+        },
+
+        onPdfExportStart() {
+
+            this.isExportingPdf = true;
+
+        },
+
+        onPdfExportEnd() {
+
+            this.isExportingPdf = false;
 
         },
 
