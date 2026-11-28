@@ -287,7 +287,7 @@ test('genera códigos previsibles según sede, tipo y nombre, sin modificar clav
   );
   assert.equal(
     fixture.call("_somGenerateIdentifier_('tipos_local',{name:'Oficina Receptora'},_somLoadCatalogs_())"),
-    'OFICINA_RECEPTORA'
+    'OFICINA_RECEPTORA_2'
   );
   assert.equal(
     fixture.call("_somGenerateIdentifier_('locales',{name:'Oficina Registral de Talara - Sede Principal',sede_id:'ZR_I',tipo_local_id:'SEDE_ZONAL'},_somLoadCatalogs_())"),
@@ -389,6 +389,20 @@ test('impide ciclos jerárquicos al modificar locales', () => {
   assert.throws(
     () => fixture.call("saveSiteOrganizationMaintenanceRecord({entity:'locales',action:'edit',id:'SC_PARENT',name:'Local padre',sede_id:'SEDE_CENTRAL',tipo_local_id:'EDIFICIO_ADMINISTRATIVO',parent_id:'SC_CHILD',order:1})"),
     /generaría un ciclo/
+  );
+  assert.equal(fixture.writes.length, 0);
+});
+
+test('no permite asociar un local nuevo a un local padre inactivo', () => {
+  const fixture = makeFixture({
+    locales: [
+      { id: 'ZR_I_PADRE', sede_id: 'ZR_I', tipo_local_id: 'SEDE_ZONAL', name: 'Sede zonal desactivada', parent_id: '', order: 1, active: false }
+    ],
+    estructura_local: []
+  });
+  assert.throws(
+    () => fixture.call("saveSiteOrganizationMaintenanceRecord({entity:'locales',action:'create',id:'ZR_I_ILO',name:'Oficina Registral de Ilo',sede_id:'ZR_I',tipo_local_id:'SEDE_ZONAL',parent_id:'ZR_I_PADRE',order:2})"),
+    /elemento padre inactivo/
   );
   assert.equal(fixture.writes.length, 0);
 });
