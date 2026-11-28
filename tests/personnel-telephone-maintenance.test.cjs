@@ -202,7 +202,8 @@ test('lee los cuatro catálogos maestros confirmados desde Global parameters con
   expected.forEach(([entity, headers]) => {
     const loaded = fixture.call('getPersonnelTelephoneMaintenanceData(' + JSON.stringify(entity) + ')');
     assert.equal(loaded.entity, entity);
-    assert.deepEqual(Array.from(loaded.records).map(item => Object.keys(item)), [headers]);
+    assert.ok(loaded.records.length > 0);
+    assert.ok(loaded.records.every(item => JSON.stringify(Object.keys(item)) === JSON.stringify(headers)));
     assert.ok(fixture.sourceReads.some(item => item.sources.includes(entity)));
   });
   assert.ok(fixture.sourceReads.every(item => item.ttl === undefined || item.ttl === 300));

@@ -39,6 +39,25 @@
       ]
     },
 
+    'datos-personal': {
+      tabsId: 'maintenancePersonalTabs',
+      panelId: 'maintenancePersonalPanel',
+      label: 'Datos de personal',
+      tabs: [
+        { id: 'cargos', label: 'Cargos' },
+        { id: 'condiciones-cargo', label: 'Condiciones de cargo' },
+        { id: 'tipos-documento', label: 'Tipos de documento de identidad' }
+      ]
+    },
+    'directorio-telefonico': {
+      tabsId: 'maintenanceTelefonicoTabs',
+      panelId: 'maintenanceTelefonicoPanel',
+      label: 'Directorio telefónico',
+      tabs: [
+        { id: 'tipos-telefono', label: 'Tipos de teléfono' },
+        { id: 'telefonos', label: 'Teléfonos' }
+      ]
+    },
   };
 
   function geoRpc(functionName, ...args) {
@@ -415,6 +434,7 @@
   }
 
   function initializeStagedGroup(route) {
+    if (route === 'datos-personal' || route === 'directorio-telefonico') return;
     const config = stagedGroups[route];
     if (!config) return;
 
