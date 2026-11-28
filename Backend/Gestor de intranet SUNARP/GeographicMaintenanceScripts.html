@@ -455,7 +455,8 @@
   }
 
   function initializeStagedGroup(route) {
-    if (route === 'datos-personal' || route === 'directorio-telefonico') return;
+    if (route === 'sedes-locales' || route === 'organizacion-institucional' ||
+        route === 'datos-personal' || route === 'directorio-telefonico') return;
     const config = stagedGroups[route];
     if (!config) return;
 
