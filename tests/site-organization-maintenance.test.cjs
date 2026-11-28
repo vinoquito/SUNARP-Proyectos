@@ -511,7 +511,7 @@ test('cambia active mediante operación independiente y no ofrece estado para se
   assert.equal(result.success, true);
   assert.equal(result.record.active, false);
   assert.equal(fixture.rows.locales.find(item => item.id === 'SC_PRIMAVERA').active, false);
-  assert.equal(fixture.audit[0].accion, 'CAMBIAR_CATALOGO_MANTENIMIENTO');
+  assert.equal(fixture.audit[0].accion, 'CAMBIAR_ESTADO_CATALOGO_MANTENIMIENTO');
   assert.equal(fixture.audit[0].tipo_entidad, 'LOCAL');
   assert.throws(
     () => fixture.call("setSiteOrganizationMaintenanceStatus('sede','SEDE_CENTRAL',false)"),
