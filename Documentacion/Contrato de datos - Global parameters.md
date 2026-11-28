@@ -214,6 +214,18 @@ Extracto proporcionado:
 
 La tabla es una relación, no una entidad de mantenimiento separada. Una estructura puede relacionarse con ubicaciones distintas y la columna \`referencia\` describe su ubicación física. El extracto contiene \`estructura_id\` que no aparecen en el extracto parcial de \`estructura_org\`; consultar la hoja completa y no borrar ni corregir esas referencias automáticamente.
 
+#### Convención de identificadores para nuevos registros
+
+Los identificadores existentes son claves maestras y no se recalculan ni modifican al editar. Para **nuevos** registros, el formulario propone un identificador derivado del nombre y, cuando corresponde, de su sede y tipo; el backend vuelve a calcularlo y valida colisiones antes de insertar:
+
+- Sedes: `Sede Central` genera `SEDE_CENTRAL`; `Zona Registral n.° I` genera `ZR_I`; otras sedes usan `SEDE_<NOMBRE_NORMALIZADO>`.
+- Tipos de local y tipos de estructura: nombre normalizado en mayúsculas, sin tildes y con separadores como guiones bajos.
+- Locales: prefijo `SC` para `SEDE_CENTRAL` o el código de la sede (por ejemplo, `ZR_I`), seguido del nombre normalizado del local. Se omite el prefijo descriptivo del tipo cuando está presente en el nombre y los sufijos convencionales `Sede principal` o `Sede Central`.
+- Estructura orgánica: prefijo de sede seguido del nombre normalizado; el comienzo `Unidad Funcional de` se abrevia como `UF_`.
+- Si el identificador propuesto ya existe, se agrega un sufijo numérico (`_2`, `_3`, etc.) para obtener una clave única.
+
+Esta convención solo propone claves para altas nuevas. No modifica los códigos actuales, no renombra registros existentes y no crea tipos o referencias faltantes.
+
 ### 3.3. Datos de personal
 
 #### Pestaña \`cargos\`
