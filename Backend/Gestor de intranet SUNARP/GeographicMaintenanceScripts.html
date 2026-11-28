@@ -8,8 +8,7 @@
     table: null,
     data: null,
     loadPromise: null,
-    activeTab: 'departments',
-    stagedTabs: {}
+    activeTab: 'departments'
   };
 
   const geoTabs = [
@@ -17,48 +16,6 @@
     { id: 'provinces', label: 'Provincias' },
     { id: 'districts', label: 'Distritos' }
   ];
-
-  const stagedGroups = {
-    'sedes-locales': {
-      tabsId: 'maintenanceSedesTabs',
-      panelId: 'maintenanceSedesPanel',
-      label: 'Sedes y locales',
-      tabs: [
-        { id: 'sedes', label: 'Sedes' },
-        { id: 'tipos-local', label: 'Tipos de local' },
-        { id: 'locales', label: 'Locales' }
-      ]
-    },
-    'organizacion-institucional': {
-      tabsId: 'maintenanceOrganizacionTabs',
-      panelId: 'maintenanceOrganizacionPanel',
-      label: 'Organización institucional',
-      tabs: [
-        { id: 'tipos-estructura', label: 'Tipos de estructura' },
-        { id: 'estructura-organica', label: 'Estructura orgánica' }
-      ]
-    },
-
-    'datos-personal': {
-      tabsId: 'maintenancePersonalTabs',
-      panelId: 'maintenancePersonalPanel',
-      label: 'Datos de personal',
-      tabs: [
-        { id: 'cargos', label: 'Cargos' },
-        { id: 'condiciones-cargo', label: 'Condiciones de cargo' },
-        { id: 'tipos-documento', label: 'Tipos de documento de identidad' }
-      ]
-    },
-    'directorio-telefonico': {
-      tabsId: 'maintenanceTelefonicoTabs',
-      panelId: 'maintenanceTelefonicoPanel',
-      label: 'Directorio telefónico',
-      tabs: [
-        { id: 'tipos-telefono', label: 'Tipos de teléfono' },
-        { id: 'telefonos', label: 'Teléfonos' }
-      ]
-    },
-  };
 
   function geoRpc(functionName, ...args) {
     return new Promise((resolve, reject) => {
@@ -454,44 +411,9 @@
     geoLoadData(false).catch(() => {});
   }
 
-  function initializeStagedGroup(route) {
-    if (route === 'sedes-locales' || route === 'organizacion-institucional' ||
-        route === 'datos-personal' || route === 'directorio-telefonico') return;
-    const config = stagedGroups[route];
-    if (!config) return;
-
-    const panel = document.getElementById(config.panelId);
-    if (!panel) return;
-
-    let instance = geoState.stagedTabs[route];
-    if (instance) {
-      panel.textContent = 'Este grupo está incorporado a la navegación. Sus mantenimientos se desarrollarán en una etapa posterior.';
-      return;
-    }
-
-    instance = SUNARPUI.createTabs({
-      containerId: config.tabsId,
-      panelId: config.panelId,
-      label: config.label,
-      tabs: config.tabs,
-      activeId: config.tabs[0].id,
-      onChange: function (tabId) {
-        panel.textContent = config.tabs.find(item => item.id === tabId).label +
-          ': este mantenimiento se desarrollará en una etapa posterior.';
-      }
-    });
-    geoState.stagedTabs[route] = instance;
-    panel.textContent = config.tabs[0].label +
-      ': este mantenimiento se desarrollará en una etapa posterior.';
-  }
-
   document.addEventListener('sunarp:navigate', event => {
     const route = event && event.detail && event.detail.route;
-    if (route === 'ubicacion-geografica') {
-      geoInitialize();
-      return;
-    }
-    initializeStagedGroup(route);
+    if (route === 'ubicacion-geografica') geoInitialize();
   });
 })();
 </script>
