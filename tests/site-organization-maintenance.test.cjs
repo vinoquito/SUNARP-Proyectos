@@ -242,8 +242,8 @@ test('carga los cinco catálogos y estructura_local en un solo lote cacheado de 
     'sede|tipos_local|locales|tipos_estructura|estructura_org'
   );
   assert.deepEqual(
-    fixture.batches[0].map(item => item.sheetName),
-    ['sede', 'tipos_local', 'locales', 'tipos_estructura', 'estructura_org', 'estructura_local']
+    fixture.batches[0].map(item => item.sheetName).join('|'),
+    'sede|tipos_local|locales|tipos_estructura|estructura_org|estructura_local'
   );
   assert.equal(fixture.batches.length, 1);
   assert.equal(fixture.cacheReads.length, 2);
