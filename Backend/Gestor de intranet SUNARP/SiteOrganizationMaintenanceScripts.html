@@ -574,13 +574,21 @@
   function parentOptions(entity, siteId, currentRecord) {
     const collection = records(entity);
     const blocked = currentRecord ? descendants(entity, currentRecord.id) : new Set();
-    return [{ value: '', label: 'Sin elemento padre (nivel superior)' }]
+    const options = [{ value: '', label: 'Sin elemento padre (nivel superior)' }]
       .concat(collection.filter(function (item) {
         return String(item.sede_id) === String(siteId) &&
           (!currentRecord || !blocked.has(String(item.id)));
       }).map(function (item) {
         return { value: item.id, label: item.name };
       }));
+    if (currentRecord && currentRecord.parent_id &&
+        !options.some(item => String(item.value) === String(currentRecord.parent_id))) {
+      options.push({
+        value: currentRecord.parent_id,
+        label: 'Referencia actual no disponible (' + currentRecord.parent_id + ')'
+      });
+    }
+    return options;
   }
 
   function openForm(route, entity, metadata, record) {
