@@ -20,13 +20,15 @@ const DIRECTORY_SERVICE_CONFIG = Object.freeze({
     personas: 'personas',
     asignaciones: 'asignaciones',
     datosPersonales: 'servidores datos personales',
+    documentTypes: 'tipo_documento_identidad',
     sedes: 'sede',
     tiposLocal: 'tipos_local',
     locales: 'locales',
     tiposEstructura: 'tipos_estructura',
     estructuraOrg: 'estructura_org',
     estructuraLocal: 'estructura_local',
-    cargos: 'cargos'
+    cargos: 'cargos',
+    condicionCargo: 'condicion_cargo'
   }),
 
   ids: Object.freeze({
@@ -35,11 +37,21 @@ const DIRECTORY_SERVICE_CONFIG = Object.freeze({
   })
 });
 
-const DIRECTORY_CACHE_KEY = 'gestor-intranet:directory-context:v2';
-const DIRECTORY_CACHE_TTL = 300;
+// Core invalida por generación las escrituras propias. Las hojas y fórmulas
+// editadas externamente (incluido IMPORTRANGE) no publican esa generación;
+// los TTL acotan la obsolescencia externa y permiten reutilizar sedes entre
+// cambios de filtro. Las escrituras Core invalidan estas entradas por fuente.
+const DIRECTORY_DATA_CACHE_TTL = 300;
+const DIRECTORY_CATALOG_CACHE_TTL = 300;
+const DIRECTORY_SITE_SNAPSHOT_CACHE_TTL = 600;
+const DIRECTORY_ASSIGNMENT_QUERY_CACHE_TTL = 300;
+const DIRECTORY_PERSON_DETAIL_CACHE_TTL = 120;
 
 const DIRECTORY_REQUIRED_HEADERS = Object.freeze({
-  personas: ['persona_id', 'nombres', 'apellidos'],
+  personas: ['persona_id', 'nombres', 'apellidos', 'correo_institucional'],
+  datosPersonales: ['servidor_id', 'tipo_documento', 'numero_documento', 'fecha_nacimiento', 'fecha_inicio_servicios', 'fecha_cese'],
+  documentTypes: ['id', 'name'],
+  condicionCargo: ['id', 'name', 'active'],
   asignaciones: [
     'asignacion_id',
     'persona_id',
@@ -111,6 +123,26 @@ function _directoryCreateMap_(records, keyField) {
   return map;
 }
 
+// Los mapas derivados se construyen una sola vez por contexto de datos.
+// Evita reconstruir mapas de cientos de elementos por cada asignación.
+const DIRECTORY_CONTEXT_MAPS = new WeakMap();
+
+function _directoryGetContextMaps_(context) {
+  let maps = DIRECTORY_CONTEXT_MAPS.get(context);
+  if (maps) return maps;
+
+  maps = {
+    estructuraLocal: _directoryCreateMap_(context.estructuraLocal),
+    locales: _directoryCreateMap_(context.locales),
+    estructuraOrg: _directoryCreateMap_(context.estructuraOrg),
+    cargos: _directoryCreateMap_(context.cargos),
+    sedes: _directoryCreateMap_(context.sedes)
+  };
+
+  DIRECTORY_CONTEXT_MAPS.set(context, maps);
+  return maps;
+}
+
 function _directoryAssertUnique_(records, field, label) {
   const seen = new Set();
   (records || []).forEach(record => {
@@ -121,37 +153,129 @@ function _directoryAssertUnique_(records, field, label) {
   });
 }
 
-function _directorySource_(sheetName) {
+function _directorySource_(sheetName, sourceKey) {
   return getIntranetDataSource(
-    DIRECTORY_SERVICE_CONFIG.sourceKey,
+    sourceKey || DIRECTORY_SERVICE_CONFIG.sourceKey,
     sheetName,
     1
   );
 }
 
+
+/**
+ * El catálogo de tipos de documento tiene una única fuente maestra:
+ * Global parameters. No se buscan copias alternativas en archivos
+ * consumidores, porque eso ocultaría errores de configuración y permitiría
+ * que cada aplicación termine usando catálogos divergentes.
+ */
+function _directoryResolveDocumentTypesSource_() {
+  const source = _directorySource_(
+    DIRECTORY_SERVICE_CONFIG.sheets.documentTypes,
+    'MASTER_DATA'
+  );
+  const info = SUNARPCore.getSourceInfoCached(source, DIRECTORY_CATALOG_CACHE_TTL);
+  const missing = DIRECTORY_REQUIRED_HEADERS.documentTypes.filter(header =>
+    !info.headers.includes(header)
+  );
+
+  if (missing.length) {
+    throw new Error(
+      'La fuente maestra Global parameters, pestaña "' +
+      DIRECTORY_SERVICE_CONFIG.sheets.documentTypes +
+      '", no contiene los encabezados requeridos: ' +
+      missing.join(', ') + '.'
+    );
+  }
+
+  return source;
+}
+
+function _directoryLoadAuthorizationCatalog_(auth) {
+  const moduleAccess = (auth && Array.isArray(auth.moduleAccess)
+    ? auth.moduleAccess
+    : []).find(item => item && item.modulo_id === 'MOD_INFO_PERSONAL');
+  const scopes = moduleAccess && Array.isArray(moduleAccess.scopes)
+    ? moduleAccess.scopes
+    : [];
+  const scopeTypes = new Set(scopes.map(scope =>
+    String(scope && scope.tipo_ambito_id || '').trim().toUpperCase()
+  ));
+
+  // TOTAL exclusivo no necesita catálogos de estructura/local para evaluar
+  // registros: Core aplica la autorización global antes de construir mapas.
+  const exclusiveTotal = scopes.length === 1 &&
+    scopeTypes.has('TOTAL') &&
+    !String(scopes[0].referencia_id || '').trim();
+  if (exclusiveTotal) {
+    return { estructuraOrg: [], locales: [] };
+  }
+
+  const requests = [];
+  if (scopeTypes.has('SEDE') || scopeTypes.has('ESTRUCTURA_ORG')) {
+    requests.push({
+      key: 'estructuraOrg',
+      source: getIntranetDataSource('SECURITY', 'EstructuraOrg', 1),
+      requiredHeaders: ['id', 'name', 'parent_id', 'sede_id']
+    });
+  }
+  if (
+    scopeTypes.has('SEDE') ||
+    scopeTypes.has('ESTRUCTURA_ORG') ||
+    scopeTypes.has('LOCAL')
+  ) {
+    requests.push({
+      key: 'locales',
+      source: _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.locales),
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.locales
+    });
+  }
+
+  // Sedes no participa en la evaluación de ámbito del Core: la sede de cada
+  // registro se deriva de estructura_org o locales, y el catálogo visible
+  // se obtiene desde Directorios telefónicos.sede en el flujo de la pantalla.
+  if (!requests.length) return { estructuraOrg: [], locales: [] };
+
+  const catalogs = SUNARPCore.listRecordsFromSourcesCached(
+    requests,
+    DIRECTORY_CATALOG_CACHE_TTL
+  );
+  return {
+    estructuraOrg: (catalogs.estructuraOrg || []).filter(_directoryIsActive_),
+    locales: (catalogs.locales || []).filter(_directoryIsActive_)
+  };
+}
+
+
 function _directoryAuthorizationContext_(permissionCode) {
-  const auth = requirePermission_(permissionCode || 'DIRECTORIOS_VER');
-  const catalog = _accessOrgCatalog_();
+  const moduleId = 'MOD_INFO_PERSONAL';
+  const requiredPermissionCode = permissionCode || 'INFORMACION_PERSONAL_VER';
+  const auth = requirePermission_(requiredPermissionCode, moduleId);
+  const catalog = _directoryLoadAuthorizationCatalog_(auth);
 
   return {
     auth: auth,
-    structures: catalog.estructuraOrg || []
+    moduleId: moduleId,
+    permissionCode: requiredPermissionCode,
+    structures: catalog.estructuraOrg || [],
+    locals: catalog.locales || []
   };
 }
+
 
 function _directoryAssertScope_(authorization, record, actionLabel) {
   const allowed = _accessRecordIsAllowed_(
     authorization.auth,
-    'DIRECTORIOS',
+    'MOD_INFO_PERSONAL',
     record,
-    authorization.structures
+    authorization.structures,
+    authorization.locals
   );
 
   if (allowed) return true;
 
   _accessWriteAudit_(authorization.auth, {
     accion: 'AUTORIZACION_DENEGADA',
-    modulo: 'DIRECTORIOS',
+    modulo: 'INFORMACION_PERSONAL',
     tipo_entidad: record && record.asignacion_id ? 'ASIGNACION' : 'REGISTRO',
     registro_id: _directoryKey_(
       record && (record.asignacion_id || record.persona_id || record.id)
@@ -167,42 +291,56 @@ function _directoryAssertScope_(authorization, record, actionLabel) {
   throw new Error('No tienes ámbito de acceso para operar sobre este registro.');
 }
 
-function _directoryAssertPersonMutationScope_(authorization, person, assignments, relationMap) {
-  const linked = (assignments || []).filter(item =>
-    _directoryKey_(item.persona_id) === _directoryKey_(person.persona_id)
-  );
-
+function _directoryAssertPersonMutationScope_(authorization, person, assignments, context) {
+  const linked = (assignments || []).filter(x => _directoryKey_(x.persona_id) === _directoryKey_(person.persona_id));
   if (!linked.length) {
-    // Sin asignaciones no existe una adscripción con la que comprobar
-    // un ámbito SEDE o ESTRUCTURA_ORG. Solo un ámbito TOTAL autoriza
-    // modificar una identidad que no tenga adscripción operativa.
-    _directoryAssertScope_(
-      authorization,
-      { persona_id: person.persona_id, nombres: person.nombres, apellidos: person.apellidos },
-      'La persona no tiene asignaciones para determinar su ámbito organizacional.'
-    );
+    _directoryAssertScope_(authorization, { persona_id: person.persona_id, nombres: person.nombres, apellidos: person.apellidos },
+      'La persona no tiene asignaciones para determinar su ámbito organizacional.');
     return true;
   }
-
   linked.forEach(assignment => {
-    const relation = relationMap.get(_directoryKey_(assignment.estructura_local_id));
-    if (!relation) {
-      throw new Error('Una asignación de la persona tiene una relación organizacional inexistente.');
-    }
-
-    _directoryAssertScope_(
-      authorization,
-      {
-        persona_id: person.persona_id,
-        asignacion_id: assignment.asignacion_id,
-        nombres: person.nombres,
-        apellidos: person.apellidos,
-        estructura_id: relation.estructura_id,
-        sede_id: relation.sede_id
-      },
-      'La modificación de la identidad afectaría una asignación fuera del ámbito autorizado.'
-    );
+    const location = _directoryResolveAssignmentLocation_(assignment, context, false);
+    _directoryAssertScope_(authorization, { persona_id: person.persona_id, asignacion_id: assignment.asignacion_id,
+      nombres: person.nombres, apellidos: person.apellidos, estructura_id: location.estructura_id, sede_id: location.sede_id, local_id: assignment.local_id },
+      'La modificación de la identidad afectaría una asignación fuera del ámbito autorizado.');
   });
+}
+function _directoryResolveAssignmentLocation_(assignment, context, onlyActive) {
+  const relationId = _directoryKey_(assignment && assignment.estructura_local_id);
+  const localId = _directoryKey_(assignment && assignment.local_id);
+  if (!relationId && !localId) throw new Error('La asignación debe estar vinculada a una unidad orgánica, a un local o a ambos.');
+  const maps = _directoryGetContextMaps_(context);
+  const relation = relationId ? maps.estructuraLocal.get(relationId) : null;
+  const local = localId ? maps.locales.get(localId) : null;
+  if (relationId && !relation) throw new Error('La relación estructura_local no existe.');
+  if (localId && !local) throw new Error('El local no existe.');
+  if (relationId && onlyActive && !_directoryIsActive_(relation)) throw new Error('La relación estructura-local no existe o está inactiva.');
+  if (localId && onlyActive && !_directoryIsActive_(local)) throw new Error('El local no existe o está inactivo.');
+  if (relation && local && _directoryKey_(relation.local_id) !== localId) throw new Error('El local seleccionado no corresponde a la relación estructura-local.');
+  const resolvedLocal = local || (relation ? maps.locales.get(_directoryKey_(relation.local_id)) : null);
+  const structure = relation ? maps.estructuraOrg.get(_directoryKey_(relation.estructura_id)) : null;
+  if (relation && (!structure || !resolvedLocal)) throw new Error('La relación estructura-local tiene referencias incompletas.');
+  if (relation && onlyActive && (!_directoryIsActive_(structure) || !_directoryIsActive_(resolvedLocal))) {
+    throw new Error('La estructura o el local de la relación no existe o está inactivo.');
+  }
+
+  // Una relación estructura_local solo define una adscripción válida cuando
+  // la estructura y el local pertenecen a la misma sede.
+  const structureSedeId = relation ? _directoryKey_(structure.sede_id) : '';
+  const localSedeId = resolvedLocal ? _directoryKey_(resolvedLocal.sede_id) : '';
+  if (!localSedeId) {
+    throw new Error('La adscripción no puede resolverse porque el local no tiene sede_id.');
+  }
+  if (relation && (!structureSedeId || structureSedeId !== localSedeId)) {
+    throw new Error(
+      'La relación estructura-local "' + relationId +
+      '" no es coherente: la estructura pertenece a la sede "' +
+      (structureSedeId || 'sin sede') +
+      '" y el local pertenece a la sede "' + localSedeId + '".'
+    );
+  }
+  return { relation, local: resolvedLocal, estructura_id: relation ? _directoryKey_(relation.estructura_id) : '',
+    sede_id: relation ? structureSedeId : localSedeId };
 }
 
 function _directoryGetStructurePath_(node, structureMap) {
@@ -282,6 +420,110 @@ function _directoryCompare_(a, b) {
 }
 
 /**
+ * Orden físico de locales. order es relativo a hermanos con igual
+ * sede_id y parent_id. Si el encabezado aún no existe, conserva el orden
+ * recibido solo como transición y comunica que la migración está pendiente.
+ */
+function _directorySortLocalCatalog_(locales) {
+  const items = Array.isArray(locales) ? locales.slice() : [];
+  const byId = new Map();
+  items.forEach(local => {
+    const id = _directoryKey_(local && local.id);
+    if (!id) throw new Error('La tabla locales contiene un registro sin id.');
+    if (byId.has(id)) throw new Error('La tabla locales contiene el id duplicado "' + id + '".');
+    byId.set(id, local);
+  });
+
+  items.forEach(local => {
+    const id = _directoryKey_(local.id);
+    const parentId = _directoryKey_(local.parent_id);
+    if (!parentId) return;
+    const parent = byId.get(parentId);
+    if (!parent) throw new Error('El local "' + id + '" referencia un parent_id inexistente: "' + parentId + '".');
+    if (_directoryKey_(parent.sede_id) !== _directoryKey_(local.sede_id)) {
+      throw new Error('El local "' + id + '" tiene un padre de otra sede.');
+    }
+    const visited = new Set([id]);
+    let current = parent;
+    while (current) {
+      const currentId = _directoryKey_(current.id);
+      if (visited.has(currentId)) throw new Error('Existe un ciclo en locales.parent_id que involucra "' + id + '".');
+      visited.add(currentId);
+      const nextParentId = _directoryKey_(current.parent_id);
+      current = nextParentId ? byId.get(nextParentId) : null;
+    }
+  });
+
+  // El encabezado order puede existir en la hoja aunque nadie haya
+  // cargado todavía sus valores. La falta total o parcial de órdenes nunca
+  // debe bloquear la consulta ni ocultar locales: se conserva el orden
+  // recibido hasta que TODOS los locales tengan un valor.
+  const configuredOrderCount = items.filter(local =>
+    _directoryText_(local && local.order) !== ''
+  ).length;
+  const orderConfigured = items.length > 0 && configuredOrderCount === items.length;
+  if (!orderConfigured) {
+    return {
+      records: items,
+      orderConfigured: false,
+      missingOrderCount: items.length - configuredOrderCount
+    };
+  }
+
+  const siblingOrders = new Map();
+  items.forEach(local => {
+    const id = _directoryKey_(local.id);
+    const normalized = _directoryText_(local.order);
+    const order = Number(local.order);
+    if (!normalized || !Number.isInteger(order) || order <= 0) {
+      throw new Error('El local "' + id + '" debe tener un order entero positivo.');
+    }
+    const group = JSON.stringify([_directoryKey_(local.sede_id), _directoryKey_(local.parent_id)]);
+    if (!siblingOrders.has(group)) siblingOrders.set(group, new Map());
+    const groupOrders = siblingOrders.get(group);
+    if (groupOrders.has(order)) {
+      throw new Error('Los locales "' + groupOrders.get(order) + '" y "' + id +
+        '" repiten order=' + order + ' dentro de la misma sede y parent_id.');
+    }
+    groupOrders.set(order, id);
+  });
+
+  const childrenByParent = new Map();
+  items.forEach(local => {
+    const parentId = _directoryKey_(local.parent_id);
+    if (!childrenByParent.has(parentId)) childrenByParent.set(parentId, []);
+    childrenByParent.get(parentId).push(local);
+  });
+  childrenByParent.forEach(children => children.sort((a, b) => Number(a.order) - Number(b.order)));
+
+  const ordered = [];
+  const visitedIds = new Set();
+  const visit = local => {
+    const id = _directoryKey_(local.id);
+    if (visitedIds.has(id)) return;
+    visitedIds.add(id);
+    ordered.push(local);
+    (childrenByParent.get(id) || []).forEach(visit);
+  };
+  const rootsBySite = new Map();
+  items.filter(local => !_directoryKey_(local.parent_id)).forEach(local => {
+    const siteId = _directoryKey_(local.sede_id);
+    if (!rootsBySite.has(siteId)) rootsBySite.set(siteId, []);
+    rootsBySite.get(siteId).push(local);
+  });
+  rootsBySite.forEach(roots => {
+    roots.sort((a, b) => Number(a.order) - Number(b.order));
+    roots.forEach(visit);
+  });
+  if (ordered.length !== items.length) {
+    const missing = items.filter(local => !visitedIds.has(_directoryKey_(local.id)))
+      .map(local => _directoryKey_(local.id));
+    throw new Error('No se pudo ordenar toda la jerarquía de locales: ' + missing.join(', ') + '.');
+  }
+  return { records: ordered, orderConfigured: true, missingOrderCount: 0 };
+}
+
+/**
  * Construye la relación estructura_local -> estructura_org + local
  * y añade las denominaciones de los catálogos.
  */
@@ -291,12 +533,25 @@ function _directoryBuildRelations_(context, onlyActive) {
   const sedeMap = _directoryCreateMap_(context.sedes);
   const structureTypeMap = _directoryCreateMap_(context.tiposEstructura);
   const localTypeMap = _directoryCreateMap_(context.tiposLocal);
+  const structurePathMap = new Map();
+  context.estructuraOrg.forEach(node => {
+    structurePathMap.set(
+      _directoryKey_(node.id),
+      _directoryGetStructurePath_(node, structureMap)
+    );
+  });
 
   return context.estructuraLocal.map(relation => {
     const structure = structureMap.get(_directoryKey_(relation.estructura_id));
     const local = localMap.get(_directoryKey_(relation.local_id));
 
     if (!structure || !local) return null;
+
+    const structureSedeId = _directoryKey_(structure.sede_id);
+    const localSedeId = _directoryKey_(local.sede_id);
+    if (!structureSedeId || !localSedeId || structureSedeId !== localSedeId) {
+      return null;
+    }
 
     const isActive =
       _directoryIsActive_(relation) &&
@@ -310,7 +565,7 @@ function _directoryBuildRelations_(context, onlyActive) {
     const structureType = structureTypeMap.get(_directoryKey_(structure.tipo_estructura_id));
     const localType = localTypeMap.get(_directoryKey_(local.tipo_local_id));
 
-    const structurePath = _directoryGetStructurePath_(structure, structureMap);
+    const structurePath = structurePathMap.get(_directoryKey_(structure.id)) || [];
     const reference = _directoryText_(relation.referencia);
     const locationLabel = [local.name, reference].filter(Boolean).join(' - ');
 
@@ -353,55 +608,51 @@ function _directoryValidateHeaders_(context) {
   });
 }
 
-function _directoryValidateSnapshot_(context) {
-  _directoryAssertUnique_(context.personas, 'persona_id', 'personas');
+function _directoryValidateSnapshot_(context, options) {
+  options = options || {};
+  _directoryAssertUnique_(context.personas || [], 'persona_id', 'personas');
   _directoryAssertUnique_(context.asignaciones, 'asignacion_id', 'asignaciones');
-
-  const peopleIds = new Set(context.personas.map(item => _directoryKey_(item.persona_id)));
-  const cargoIds = new Set(context.cargos.map(item => _directoryKey_(item.id)));
-  const localIds = new Set(context.locales.map(item => _directoryKey_(item.id)));
-  const structureIds = new Set(context.estructuraOrg.map(item => _directoryKey_(item.id)));
-  const relationMap = _directoryCreateMap_(context.estructuraLocal);
+  _directoryAssertUnique_(context.documentTypes || [], 'id', 'tipo_documento_identidad');
+  const peopleIds = options.includePeople === false
+    ? null
+    : new Set((context.personas || []).map(x => _directoryKey_(x.persona_id)));
+  const cargoIds = new Set(context.cargos.map(x => _directoryKey_(x.id)));
+  const localIds = new Set(context.locales.map(x => _directoryKey_(x.id)));
+  const structureIds = new Set(context.estructuraOrg.map(x => _directoryKey_(x.id)));
+  if (options.includePersonalData !== false) {
+    if (options.includePeople === false) {
+      throw new Error('No se puede validar la integridad de datos personales sin cargar personas.');
+    }
+    const personalIds = new Set(), documentKeys = new Set();
+    (context.datosPersonales || []).forEach(record => {
+      const id = _directoryKey_(record.servidor_id);
+      if (!id || !peopleIds.has(id)) throw new Error('La ficha de datos personales referencia una persona inexistente o carece de servidor_id.');
+      if (personalIds.has(id)) throw new Error('Existe más de una ficha de datos personales para ' + id + '.');
+      personalIds.add(id);
+      const type = _directoryText_(record.tipo_documento).replace(/\s+/g, '').toUpperCase();
+      const number = _directoryText_(record.numero_documento).replace(/\s+/g, '').toUpperCase();
+      if (type && number) { const key = JSON.stringify([type, number]); if (documentKeys.has(key)) throw new Error('Existe un documento de identidad duplicado en datos personales.'); documentKeys.add(key); }
+    });
+  }
   _directoryAssertUnique_(context.estructuraLocal, 'id', 'estructura_local');
-
   context.estructuraLocal.forEach(relation => {
-    if (!structureIds.has(_directoryKey_(relation.estructura_id))) {
-      throw new Error('La relación estructura_local ' + _directoryKey_(relation.id) + ' referencia una estructura orgánica inexistente.');
-    }
-    if (!localIds.has(_directoryKey_(relation.local_id))) {
-      throw new Error('La relación estructura_local ' + _directoryKey_(relation.id) + ' referencia un local inexistente.');
-    }
+    if (!structureIds.has(_directoryKey_(relation.estructura_id))) throw new Error('La relación estructura_local ' + _directoryKey_(relation.id) + ' referencia una estructura orgánica inexistente.');
+    if (!localIds.has(_directoryKey_(relation.local_id))) throw new Error('La relación estructura_local ' + _directoryKey_(relation.id) + ' referencia un local inexistente.');
   });
-
   context.asignaciones.forEach(assignment => {
-    const assignmentId = _directoryKey_(assignment.asignacion_id);
-
-    if (!peopleIds.has(_directoryKey_(assignment.persona_id))) {
-      throw new Error('La asignación ' + assignmentId + ' referencia una persona inexistente.');
-    }
-
-    if (!cargoIds.has(_directoryKey_(assignment.cargo_id))) {
-      throw new Error('La asignación ' + assignmentId + ' referencia un cargo inexistente.');
-    }
-
-    const relation = relationMap.get(_directoryKey_(assignment.estructura_local_id));
-    if (!relation) {
-      throw new Error('La asignación ' + assignmentId + ' referencia una relación estructura_local inexistente.');
-    }
-
-    if (!localIds.has(_directoryKey_(assignment.local_id))) {
-      throw new Error('La asignación ' + assignmentId + ' referencia un local inexistente.');
-    }
-
-    if (_directoryKey_(relation.local_id) !== _directoryKey_(assignment.local_id)) {
-      throw new Error('La asignación ' + assignmentId + ' tiene un local_id que no corresponde a su estructura_local_id.');
-    }
+    const id = _directoryKey_(assignment.asignacion_id);
+    if (peopleIds && !peopleIds.has(_directoryKey_(assignment.persona_id))) throw new Error('La asignación ' + id + ' referencia una persona inexistente.');
+    if (!cargoIds.has(_directoryKey_(assignment.cargo_id))) throw new Error('La asignación ' + id + ' referencia un cargo inexistente.');
+    try { _directoryResolveAssignmentLocation_(assignment, context, false); }
+    catch (error) { throw new Error('La asignación ' + id + ': ' + error.message); }
   });
 }
 
-function _directoryLoadContextFromSheets_() {
+function _directoryLoadContextFromSheets_(options) {
+  options = options || {};
   const sheetMap = [
     ['personas', 'personas'],
+    ['datosPersonales', 'servidores datos personales'],
     ['asignaciones', 'asignaciones'],
     ['sedes', 'sede'],
     ['tiposLocal', 'tipos_local'],
@@ -412,237 +663,314 @@ function _directoryLoadContextFromSheets_() {
     ['cargos', 'cargos']
   ];
 
-  const requests = sheetMap.map(item => ({
+  const selectedSheets = sheetMap.filter(item =>
+    !(options.includePersonalData === false && item[0] === 'datosPersonales') &&
+    !(options.includePeople === false && item[0] === 'personas') &&
+    !(options.includeAssignments === false && item[0] === 'asignaciones')
+  );
+  const requests = selectedSheets.map(item => ({
     key: item[0],
-    source: _directorySource_(item[1])
+    source: _directorySource_(item[1]),
+    requiredHeaders: DIRECTORY_REQUIRED_HEADERS[item[0]]
   }));
 
-  const context = SUNARPCore.listRecordsFromSources(requests);
+  if (options.includeDocumentTypes !== false) {
+    requests.push({
+      key: 'documentTypes',
+      source: _directoryResolveDocumentTypesSource_(),
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.documentTypes
+    });
+  }
 
-  _directoryValidateHeaders_(context);
-  _directoryValidateSnapshot_(context);
+  // Todas las fuentes de Directorios telefónicos comparten el mismo TTL y
+  // se agrupan en una sola llamada Core. Esto abre el archivo una vez y lee
+  // sus pestañas juntas, en lugar de abrirlo por separado para datos y
+  // catálogos aunque ambos TTL fueran idénticos.
+  const context = requests.length
+    ? SUNARPCore.listRecordsFromSourcesCached(requests, Math.min(
+        DIRECTORY_DATA_CACHE_TTL,
+        DIRECTORY_CATALOG_CACHE_TTL
+      ))
+    : {};
+
+  if (!Array.isArray(context.personas)) context.personas = [];
+  if (!Array.isArray(context.datosPersonales)) context.datosPersonales = [];
+  if (!Array.isArray(context.asignaciones)) context.asignaciones = [];
+
+  if (options.validateSnapshot !== false) _directoryValidateSnapshot_(context, options);
 
   return context;
 }
 
-function _directoryLoadContext_() {
-  try {
-    const cached = SUNARPCore.getCachedValue(DIRECTORY_CACHE_KEY);
-    if (cached !== null) return cached;
-  } catch (error) {
-    console.warn('[DirectoryService] Error al consultar caché:', error.message);
-  }
+function _directoryLoadContext_(options) {
+  options = options || {};
+  const started = Date.now();
+  const sheetMap = [
+    ['personas', 'personas'],
+    ['datosPersonales', 'servidores datos personales'],
+    ['asignaciones', 'asignaciones'],
+    ['sedes', 'sede'],
+    ['tiposLocal', 'tipos_local'],
+    ['locales', 'locales'],
+    ['tiposEstructura', 'tipos_estructura'],
+    ['estructuraOrg', 'estructura_org'],
+    ['estructuraLocal', 'estructura_local'],
+    ['cargos', 'cargos']
+  ];
+  const selectedSheets = sheetMap.filter(item =>
+    !(options.includePersonalData === false && item[0] === 'datosPersonales') &&
+    !(options.includePeople === false && item[0] === 'personas') &&
+    !(options.includeAssignments === false && item[0] === 'asignaciones')
+  );
+  const sources = selectedSheets.map(item => _directorySource_(item[1]));
+  const baseOptions = Object.assign({}, options, {
+    includeDocumentTypes: false,
+    validateSnapshot: false
+  });
+  const variant = [
+    options.includePersonalData === false ? 'no-personal' : 'personal',
+    options.includePeople === false ? 'no-people' : 'people',
+    options.includeAssignments === false ? 'no-assignments' : 'assignments'
+  ].join(':');
+  const cacheTtl = Math.min(DIRECTORY_DATA_CACHE_TTL, DIRECTORY_CATALOG_CACHE_TTL);
+  let context;
+  let cacheHit = false;
+  let sourceGenerationElapsed = 0;
 
-  const context = _directoryLoadContextFromSheets_();
-
-  try {
-    const result = SUNARPCore.putCachedValue(
-      DIRECTORY_CACHE_KEY,
-      context,
-      DIRECTORY_CACHE_TTL
+  if (typeof SUNARPCore.getOrBuildCachedValue === 'function') {
+    const cached = SUNARPCore.getOrBuildCachedValue(
+      'directory-context:v1:' + variant,
+      sources,
+      () => _directoryLoadContextFromSheets_(baseOptions),
+      cacheTtl
     );
-    console.log('[DirectoryService] Contexto almacenado en caché:', result.sizeBytes, 'bytes');
-  } catch (error) {
-    console.warn('[DirectoryService] No se pudo almacenar caché:', error.message);
+    context = cached && cached.value;
+    cacheHit = Boolean(cached && cached.cacheHit);
+    sourceGenerationElapsed = Number(cached && cached.sourceGenerationMs) || 0;
   }
 
+  if (!context) {
+    context = _directoryLoadContextFromSheets_(baseOptions);
+  }
+
+  // Tipos de documento se cargan aparte para que la carga de páginas y filtros
+  // comparta el mismo contexto de catálogos, sin arrastrar ese catálogo auxiliar.
+  if (options.includeDocumentTypes !== false) {
+    const documentTypes = SUNARPCore.listRecordsFromSourcesCached([{
+      key: 'documentTypes',
+      source: _directoryResolveDocumentTypesSource_(),
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.documentTypes
+    }], DIRECTORY_CATALOG_CACHE_TTL);
+    context = Object.assign({}, context, {
+      documentTypes: documentTypes.documentTypes || []
+    });
+  } else if (!Array.isArray(context.documentTypes)) {
+    context = Object.assign({}, context, { documentTypes: [] });
+  }
+
+  if (options.validateSnapshot !== false) {
+    _directoryValidateSnapshot_(context, options);
+  }
+
+  console.log('[DirectoryService] Contexto de catálogos:', JSON.stringify({
+    durationMs: Date.now() - started,
+    cacheHit,
+    sourceCount: sources.length,
+    sourceGenerationMs: sourceGenerationElapsed,
+    variant,
+    documentTypesLoaded: options.includeDocumentTypes !== false
+  }));
   return context;
 }
 
 function _directoryInvalidateCache_() {
-  SUNARPCore.removeCachedValue(DIRECTORY_CACHE_KEY);
+  const sheetNames = Object.values(DIRECTORY_SERVICE_CONFIG.sheets)
+    .filter(sheetName => sheetName !== DIRECTORY_SERVICE_CONFIG.sheets.documentTypes);
+  const sources = sheetNames.map(sheetName => _directorySource_(sheetName));
+  sources.push(_directoryResolveDocumentTypesSource_());
+  const results = sources.map(source => SUNARPCore.invalidateSourceCache(source));
+  return {
+    success: results.every(result => result && result.success !== false),
+    sources: results.length
+  };
 }
 
-/**
- * La hoja de datos personales es complementaria y no participa
- * en la carga ni en la caché ordinaria del directorio.
- *
- * Su relación es 1:1: servidores datos personales.servidor_id
- * contiene el mismo identificador que personas.persona_id.
- * No se crea una columna persona_id adicional ni una relación paralela.
- */
-function _directoryLoadPersonalDataLinks_(people) {
-  const source = _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales);
 
-  let info;
-  try {
-    info = SUNARPCore.getSourceInfo(source);
-  } catch (error) {
-    if (String(error.message || error).toLowerCase().includes('no existe la pestaña')) {
-      return [];
-    }
-    throw error;
-  }
-
-  const expectedHeaders = [
-    'servidor_id',
-    'tipo_documento',
-    'numero_documento',
-    'fecha_nacimiento',
-    'fecha_inicio_servicios',
-    'fecha_cese'
-  ];
-  const missing = expectedHeaders.filter(header => !info.headers.includes(header));
-  if (missing.length) {
-    throw new Error(
-      'La pestaña "' + DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales +
-      '" no contiene los encabezados requeridos: ' + missing.join(', ') + '.'
-    );
-  }
-
-  const records = SUNARPCore.listRecords(source, {}).records;
-
-  // Se descartan expresamente los datos personales: solo se conserva
-  // la clave necesaria para comprobar integridad referencial.
-  const ids = records.map(record => _directoryKey_(record.servidor_id)).filter(Boolean);
-  const knownPeople = new Set((people || []).map(person => _directoryKey_(person.persona_id)));
-  const seen = new Set();
-
-  ids.forEach(id => {
-    if (seen.has(id)) {
-      throw new Error('La ficha de datos personales contiene más de una fila para servidor_id ' + id + '.');
-    }
-    seen.add(id);
-
-    if (people && !knownPeople.has(id)) {
-      throw new Error('La ficha de datos personales referencia una persona inexistente: ' + id + '.');
-    }
-  });
-
-  return ids;
-}
-
-function _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap) {
-  const relation = relationMap.get(_directoryKey_(assignment.estructura_local_id));
+function _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap, resolvedLocation) {
+  const location = resolvedLocation || _directoryResolveAssignmentLocation_(assignment, context, false);
+  const maps = _directoryGetContextMaps_(context);
+  const relation = location.relation
+    ? relationMap.get(_directoryKey_(location.relation.id))
+    : null;
+  const local = location.local;
   const person = peopleMap.get(_directoryKey_(assignment.persona_id));
-  const cargo = context.cargos.find(item =>
-    _directoryKey_(item.id) === _directoryKey_(assignment.cargo_id)
-  );
+  const cargo = maps.cargos.get(_directoryKey_(assignment.cargo_id));
+  const sede = maps.sedes.get(_directoryKey_(location.sede_id));
 
   return Object.assign({}, assignment, {
     nombres: person ? person.nombres : '',
     apellidos: person ? person.apellidos : '',
+    correo_institucional: person ? person.correo_institucional : '',
     cargo_name: cargo ? cargo.name : '',
-    estructura_id: relation ? relation.estructura_id : '',
+    estructura_id: location.estructura_id,
     estructura_name: relation ? relation.estructura_name : '',
     estructura_path: relation ? relation.estructura_path : '',
-    sede_id: relation ? relation.sede_id : '',
-    sede_name: relation ? relation.sede_name : '',
-    local_name: relation ? relation.local_name : '',
+    sede_id: location.sede_id,
+    sede_name: relation ? relation.sede_name : (sede ? sede.name : ''),
+    local_name: local ? local.name : '',
     referencia: relation ? relation.referencia : '',
-    display_location: relation ? relation.display_name : ''
+    display_location: relation ? relation.display_name : (local ? local.name : ''),
+    // Campos normalizados exclusivamente para filtros de presentación.
+    // No sustituyen los identificadores físicos almacenados en asignaciones.
+    filter_sede_id: _directoryKey_(location.sede_id),
+    filter_local_id: local ? _directoryKey_(local.id) : _directoryKey_(assignment.local_id)
   });
 }
 
-function _directoryBuildView_(context, authorization) {
-  const relations = _directoryBuildRelations_(context, false);
-  const relationMap = _directoryCreateMap_(relations);
-  const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
 
-  const assignments = context.asignaciones.map(item =>
-    _directoryEnrichAssignment_(item, context, relationMap, peopleMap)
-  ).filter(record => {
-    const relation = relationMap.get(_directoryKey_(record.estructura_local_id));
-    return relation && _accessRecordIsAllowed_(
-      authorization.auth,
-      'DIRECTORIOS',
-      {
-        estructura_id: relation.estructura_id,
-        sede_id: relation.sede_id
-      },
-      authorization.structures
-    );
+function _directoryBuildFilterContract_(authorization, assignments, structures) {
+  const moduleAccess = (authorization.auth && authorization.auth.moduleAccess || [])
+    .find(item => _directoryKey_(item.modulo_id) === _directoryKey_(authorization.moduleId));
+  const scopes = (moduleAccess && moduleAccess.scopes || []).map(scope => ({
+    type: _directoryText_(scope.tipo_ambito_id).toUpperCase(),
+    referenceId: _directoryKey_(scope.referencia_id),
+    includeDescendants: _directoryNormalizeBoolean_(scope.incluir_descendientes === undefined ? false : scope.incluir_descendientes)
+  })).filter(scope => ['TOTAL', 'SEDE', 'ESTRUCTURA_ORG', 'LOCAL'].includes(scope.type));
+
+  const unique = field => Array.from(new Set((assignments || [])
+    .map(record => _directoryKey_(record[field])).filter(Boolean)));
+  const uniqueResolved = (resolvedField, fallbackField) => Array.from(new Set((assignments || [])
+    .map(record => _directoryKey_(record[resolvedField] || record[fallbackField])).filter(Boolean)));
+
+  const usedStructureIds = new Set(unique('estructura_id'));
+  const structureMap = _directoryCreateMap_(structures || []);
+  const contextStructureIds = new Set();
+  usedStructureIds.forEach(id => {
+    let current = structureMap.get(id);
+    const visited = new Set();
+    while (current) {
+      const parentId = _directoryKey_(current.parent_id);
+      if (!parentId || visited.has(parentId)) break;
+      visited.add(parentId);
+      if (!usedStructureIds.has(parentId)) contextStructureIds.add(parentId);
+      current = structureMap.get(parentId);
+    }
   });
 
-  const visiblePersonIds = new Set(assignments.map(item => _directoryKey_(item.persona_id)));
-  const hasTotalScope = _accessRecordIsAllowed_(
-    authorization.auth,
-    'DIRECTORIOS',
-    {},
-    authorization.structures
-  );
-  const people = context.personas.filter(person =>
-    hasTotalScope || visiblePersonIds.has(_directoryKey_(person.persona_id))
-  );
-
   return {
-    people: people,
-    assignments: assignments,
-    relations: relations,
-    relationMap: relationMap
+    scopes,
+    fixed: {
+      total: scopes.some(scope => scope.type === 'TOTAL'),
+      sedeIds: Array.from(new Set(scopes.filter(scope => scope.type === 'SEDE').map(scope => scope.referenceId).filter(Boolean))),
+      structureIds: Array.from(new Set(scopes.filter(scope => scope.type === 'ESTRUCTURA_ORG').map(scope => scope.referenceId).filter(Boolean))),
+      localIds: Array.from(new Set(scopes.filter(scope => scope.type === 'LOCAL').map(scope => scope.referenceId).filter(Boolean)))
+    },
+    selectable: {
+      sedeIds: uniqueResolved('filter_sede_id', 'sede_id'),
+      cargoIds: unique('cargo_id'),
+      structureIds: unique('estructura_id'),
+      localIds: uniqueResolved('filter_local_id', 'local_id')
+    },
+    contextStructureIds: Array.from(contextStructureIds)
   };
+}
+
+
+function _directoryBuildView_(context, authorization) {
+  const relations = _directoryBuildRelations_(context, false), relationMap = _directoryCreateMap_(relations);
+  const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
+  const assignments = [];
+
+  // Resolver primero la adscripción y comprobar el ámbito. Solo los registros
+  // autorizados pasan por el enriquecimiento destinado a la respuesta.
+  context.asignaciones.forEach(item => {
+    const location = _directoryResolveAssignmentLocation_(item, context, false);
+    const record = {
+      estructura_id: location.estructura_id,
+      sede_id: location.sede_id,
+      local_id: item.local_id
+    };
+    const allowed = _accessRecordIsAllowed_(
+      authorization.auth,
+      'MOD_INFO_PERSONAL',
+      record,
+      authorization.structures,
+      authorization.locals
+    );
+    if (!allowed) return;
+    assignments.push(_directoryEnrichAssignment_(item, context, relationMap, peopleMap, location));
+  });
+
+  const visiblePersonIds = new Set(assignments.map(x => _directoryKey_(x.persona_id)));
+  const hasTotalScope = _accessRecordIsAllowed_(authorization.auth, 'MOD_INFO_PERSONAL', {}, authorization.structures);
+  const people = context.personas.filter(x => hasTotalScope || visiblePersonIds.has(_directoryKey_(x.persona_id)));
+  return { people, assignments, relations, relationMap };
 }
 
 function _directorySortAssignments_(records, context) {
   const structureMap = _directoryCreateMap_(context.estructuraOrg);
-  const relations = _directoryBuildRelations_(context, false);
-  const relationMap = _directoryCreateMap_(relations);
   const sedeOrder = new Map();
-
   context.sedes.forEach((sede, index) => sedeOrder.set(_directoryKey_(sede.id), index));
-
+  const localOrderResult = _directorySortLocalCatalog_(context.locales || []);
+  const localOrder = new Map(localOrderResult.records.map((local, index) => [
+    _directoryKey_(local.id), index
+  ]));
   const pathMap = new Map();
-  context.estructuraOrg.forEach(node => {
-    pathMap.set(
-      _directoryKey_(node.id),
-      _directoryGetStructureOrderPath_(node.id, structureMap)
-    );
+  context.estructuraOrg.forEach(node => pathMap.set(
+    _directoryKey_(node.id), _directoryGetStructureOrderPath_(node.id, structureMap)
+  ));
+
+  // Resolver la adscripción una sola vez por registro, no en cada
+  // comparación del algoritmo de ordenamiento.
+  const sortable = records.map(record => {
+    const location = _directoryResolveAssignmentLocation_(record, context, false);
+    return {
+      record,
+      sedeOrder: sedeOrder.get(location.sede_id) ?? Number.MAX_SAFE_INTEGER,
+      localOrder: location.local
+        ? (localOrder.get(_directoryKey_(location.local.id)) ?? Number.MAX_SAFE_INTEGER)
+        : Number.MAX_SAFE_INTEGER,
+      structurePath: location.estructura_id
+        ? pathMap.get(location.estructura_id) || []
+        : [],
+      localName: location.local ? location.local.name : ''
+    };
   });
 
-  records.sort((a, b) => {
-    const relationA = relationMap.get(_directoryKey_(a.estructura_local_id));
-    const relationB = relationMap.get(_directoryKey_(b.estructura_local_id));
-
-    const sedeA = relationA ? (sedeOrder.get(_directoryKey_(relationA.sede_id)) ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER;
-    const sedeB = relationB ? (sedeOrder.get(_directoryKey_(relationB.sede_id)) ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER;
-    if (sedeA !== sedeB) return sedeA - sedeB;
-
-    const pathA = relationA ? pathMap.get(_directoryKey_(relationA.estructura_id)) || [] : [];
-    const pathB = relationB ? pathMap.get(_directoryKey_(relationB.estructura_id)) || [] : [];
-    const pathDifference = _directoryCompareStructurePaths_(pathA, pathB);
-    if (pathDifference !== 0) return pathDifference;
-
-    const orderDifference = _directoryCompare_(Number(a.order), Number(b.order));
-    if (orderDifference !== 0) return orderDifference;
-
-    return _directoryCompare_(a.apellidos, b.apellidos) ||
-      _directoryCompare_(a.nombres, b.nombres);
+  sortable.sort((a, b) => {
+    if (a.sedeOrder !== b.sedeOrder) return a.sedeOrder - b.sedeOrder;
+    if (a.localOrder !== b.localOrder) return a.localOrder - b.localOrder;
+    // Dentro de cada local, las adscripciones orgánicas siguen su ruta real.
+    // Las adscripciones solo a local, sin estructura declarada, quedan al final
+    // y nunca reciben una unidad orgánica artificial.
+    const hasStructureA = a.structurePath.length > 0;
+    const hasStructureB = b.structurePath.length > 0;
+    if (hasStructureA !== hasStructureB) return hasStructureA ? -1 : 1;
+    const pathDiff = _directoryCompareStructurePaths_(a.structurePath, b.structurePath);
+    if (pathDiff) return pathDiff;
+    // El orden explícito de las adscripciones prevalece dentro de cada unidad,
+    // aunque la unidad tenga relaciones con más de un local físico.
+    return _directoryCompare_(Number(a.record.order), Number(b.record.order)) ||
+      _directoryCompare_(a.record.asignacion_id, b.record.asignacion_id) ||
+      _directoryCompare_(a.localName, b.localName) ||
+      _directoryCompare_(a.record.apellidos, b.record.apellidos) ||
+      _directoryCompare_(a.record.nombres, b.record.nombres);
   });
 
-  return records;
+  return sortable.map(item => item.record);
 }
 
 function _directoryGetPersonSchema_() {
   return {
     persona_id: { label: 'Identificador de persona', required: true, type: 'string', maxLength: 30 },
     nombres: { label: 'Nombres', required: true, type: 'string', minLength: 2, maxLength: 100 },
-    apellidos: { label: 'Apellidos', required: true, type: 'string', minLength: 2, maxLength: 150 }
+    apellidos: { label: 'Apellidos', required: true, type: 'string', minLength: 2, maxLength: 150 },
+    correo_institucional: { label: 'Correo institucional', type: 'string', maxLength: 150 }
   };
 }
 
-/**
- * Aplica el mismo criterio de identidad utilizado en la migración:
- * coincidencia exacta de nombres + apellidos.
- *
- * No compara cargo, anexo, estructura ni local, porque esas diferencias
- * corresponden a asignaciones distintas de una misma persona.
- * No fusiona registros automáticamente.
- */
-function _directoryAssertNoDuplicatePerson_(record, people) {
-  const duplicate = (people || []).find(person =>
-    _directoryKey_(person.persona_id) !== _directoryKey_(record.persona_id) &&
-    _directoryText_(person.nombres) === _directoryText_(record.nombres) &&
-    _directoryText_(person.apellidos) === _directoryText_(record.apellidos)
-  );
 
-  if (duplicate) {
-    throw new Error(
-      'Ya existe una persona con exactamente los mismos nombres y apellidos ' +
-      '( ' + _directoryKey_(duplicate.persona_id) + ' ). ' +
-      'No se creó ni fusionó ningún registro. Revisa la identidad antes de continuar.'
-    );
-  }
-}
+function _directoryAssertNoDuplicatePerson_() { return true; }
 
 function _directoryGetAssignmentSchema_() {
   return {
@@ -651,39 +979,18 @@ function _directoryGetAssignmentSchema_() {
     cargo_id: { label: 'Cargo', required: true, type: 'string' },
     condicion_cargo: { label: 'Condición del cargo', type: 'string', maxLength: 150 },
     anexo: { label: 'Anexo', type: 'integer', min: 1, max: 99999 },
-    estructura_local_id: { label: 'Relación estructura-local', required: true, type: 'string' },
-    local_id: { label: 'Local', required: true, type: 'string' },
+    estructura_local_id: { label: 'Relación estructura-local', type: 'string' },
+    local_id: { label: 'Local', type: 'string' },
     observaciones: { label: 'Observaciones', type: 'string', maxLength: 1000 },
     active: { label: 'Estado', required: true, type: 'boolean' },
     order: { label: 'Orden', required: true, type: 'integer', min: 1 }
   };
 }
-
 function _directoryValidateAssignmentReferences_(record, context) {
-  const person = context.personas.find(item =>
-    _directoryKey_(item.persona_id) === _directoryKey_(record.persona_id)
-  );
-  if (!person) throw new Error('La persona seleccionada no existe.');
-
-  const cargo = context.cargos.find(item =>
-    _directoryKey_(item.id) === _directoryKey_(record.cargo_id)
-  );
-  if (!cargo || !_directoryIsActive_(cargo)) {
-    throw new Error('El cargo seleccionado no existe o está inactivo.');
-  }
-
-  const relation = _directoryBuildRelations_(context, true).find(item =>
-    _directoryKey_(item.id) === _directoryKey_(record.estructura_local_id)
-  );
-  if (!relation) {
-    throw new Error('La relación estructura-local no existe o está inactiva.');
-  }
-
-  if (_directoryKey_(relation.local_id) !== _directoryKey_(record.local_id)) {
-    throw new Error('El local seleccionado no corresponde a la relación estructura-local.');
-  }
-
-  return relation;
+  if (!context.personas.some(x => _directoryKey_(x.persona_id) === _directoryKey_(record.persona_id))) throw new Error('La persona seleccionada no existe.');
+  const cargo = context.cargos.find(x => _directoryKey_(x.id) === _directoryKey_(record.cargo_id));
+  if (!cargo || !_directoryIsActive_(cargo)) throw new Error('El cargo seleccionado no existe o está inactivo.');
+  return _directoryResolveAssignmentLocation_(record, context, true);
 }
 
 function _directoryGenerateId_(records, config) {
@@ -698,15 +1005,13 @@ function _directoryGenerateId_(records, config) {
   return config.prefix + String(maximum + 1).padStart(config.digits, '0');
 }
 
-function _directoryGetNextOrder_(assignments, structureLocalId) {
+function _directoryGetNextOrder_(assignments, structureLocalId, localId) {
   let maximum = 0;
-
   (assignments || []).forEach(record => {
-    if (_directoryKey_(record.estructura_local_id) !== _directoryKey_(structureLocalId)) return;
-    const order = Number(record.order);
-    if (Number.isInteger(order) && order > maximum) maximum = order;
+    if (_directoryKey_(record.estructura_local_id) !== _directoryKey_(structureLocalId) ||
+        _directoryKey_(record.local_id) !== _directoryKey_(localId)) return;
+    const order = Number(record.order); if (Number.isInteger(order) && order > maximum) maximum = order;
   });
-
   return maximum + 1;
 }
 
@@ -722,219 +1027,1929 @@ function _directoryAssertAllowedFields_(payload, allowedFields, label) {
  * Devuelve los catálogos autorizados y las dos colecciones operativas.
  * Las personas se devuelven una sola vez, aunque tengan varias asignaciones.
  */
-function getDirectoryInitialData() {
-  const authorization = _directoryAuthorizationContext_('DIRECTORIOS_VER');
-  const context = _directoryLoadContext_();
-  const view = _directoryBuildView_(context, authorization);
+function _directoryGetStructureIds_(structures, rootIds, includeDescendants) {
+  const roots = new Set(Array.from(rootIds || []).map(_directoryKey_).filter(Boolean));
+  const result = new Set(roots);
+  if (!includeDescendants || !roots.size) return result;
+  const structureMap = _directoryCreateMap_(structures || []);
+  (structures || []).forEach(node => {
+    let current = node;
+    const visited = new Set();
+    while (current) {
+      const id = _directoryKey_(current.id);
+      if (!id || visited.has(id)) break;
+      if (roots.has(id)) {
+        result.add(_directoryKey_(node.id));
+        break;
+      }
+      visited.add(id);
+      current = structureMap.get(_directoryKey_(current.parent_id));
+    }
+  });
+  return result;
+}
 
-  const activeStructure = context.estructuraOrg.filter(_directoryIsActive_).map(node => {
-    const structureMap = _directoryCreateMap_(context.estructuraOrg);
-    const type = context.tiposEstructura.find(item =>
-      _directoryKey_(item.id) === _directoryKey_(node.tipo_estructura_id)
+
+/**
+ * Construye filtros exactos a partir de los ámbitos efectivos.
+ * Las relaciones estructura-local y local se traducen a candidatos físicos;
+ * Core vuelve a comprobar el ámbito sobre los datos de relación declarados.
+ */
+function _directoryBuildAssignmentQuery_(context, authorization, options) {
+  options = options || {};
+  const relations = context.estructuraLocal || [];
+  const structures = context.estructuraOrg || [];
+  const locals = context.locales || [];
+  const structureMap = _directoryCreateMap_(structures);
+  const relationMap = _directoryCreateMap_(relations);
+  const localMap = _directoryCreateMap_(locals);
+  const consistentRelations = relations.filter(relation => {
+    const structure = structureMap.get(_directoryKey_(relation.estructura_id));
+    const local = localMap.get(_directoryKey_(relation.local_id));
+    const structureSedeId = _directoryKey_(structure && structure.sede_id);
+    const localSedeId = _directoryKey_(local && local.sede_id);
+    return Boolean(structure && local && structureSedeId &&
+      localSedeId && structureSedeId === localSedeId);
+  });
+  const moduleAccess = (authorization.auth.moduleAccess || []).find(item =>
+    _directoryKey_(item.modulo_id) === _directoryKey_(authorization.moduleId)
+  );
+  const scopes = moduleAccess && Array.isArray(moduleAccess.scopes)
+    ? moduleAccess.scopes
+    : [];
+
+  const selectedSiteId = _directoryKey_(options.sedeId);
+  const selectedStructureId = _directoryKey_(options.estructuraId);
+  const selectedStructureIds = selectedStructureId
+    ? _directoryGetStructureIds_(structures, [selectedStructureId], true)
+    : null;
+
+  const baseFilters = {};
+  if (options.personaId) baseFilters.persona_id = _directoryKey_(options.personaId);
+  if (Array.isArray(options.personaIds)) {
+    baseFilters.persona_id = Array.from(new Set(options.personaIds.map(_directoryKey_).filter(Boolean)));
+  }
+  if (options.asignacionId) baseFilters.asignacion_id = _directoryKey_(options.asignacionId);
+  if (options.estructuraLocalId) baseFilters.estructura_local_id = _directoryKey_(options.estructuraLocalId);
+  const selectedLocalId = _directoryKey_(options.localId);
+  if (options.cargoId) baseFilters.cargo_id = _directoryKey_(options.cargoId);
+
+  const activeFilter = options.active === undefined ? true : options.active;
+  if (activeFilter !== 'all') {
+    if (activeFilter === true || String(activeFilter).toLowerCase() === 'true') {
+      baseFilters.active = [true, 'true', 'TRUE', '', 1, '1', 'SI', 'SÍ', 'YES'];
+    } else if (activeFilter === false || String(activeFilter).toLowerCase() === 'false') {
+      baseFilters.active = [false, 'false', 'FALSE', 0, '0', 'NO', 'no', 'INACTIVO', 'inactivo'];
+    } else {
+      throw new Error('El filtro active debe ser true, false o "all".');
+    }
+  }
+
+  const groups = [];
+  const addScopeCandidates = (scope, type, referenceId, includeDescendants) => {
+    let relationIds = [];
+    let localIds = [];
+
+    if (type === 'TOTAL') {
+      relationIds = consistentRelations.map(item => _directoryKey_(item.id)).filter(Boolean);
+      localIds = locals.map(item => _directoryKey_(item.id)).filter(Boolean);
+    } else if (type === 'SEDE') {
+      relationIds = consistentRelations.filter(relation => {
+        const structure = structureMap.get(_directoryKey_(relation.estructura_id));
+        return structure && _directoryKey_(structure.sede_id) === referenceId;
+      }).map(item => _directoryKey_(item.id)).filter(Boolean);
+      localIds = locals.filter(local =>
+        _directoryKey_(local.sede_id) === referenceId
+      ).map(item => _directoryKey_(item.id)).filter(Boolean);
+    } else if (type === 'ESTRUCTURA_ORG') {
+      const allowedIds = _directoryGetStructureIds_(structures, [referenceId], includeDescendants);
+      relationIds = consistentRelations.filter(relation =>
+        allowedIds.has(_directoryKey_(relation.estructura_id))
+      ).map(item => _directoryKey_(item.id)).filter(Boolean);
+    } else if (type === 'LOCAL') {
+      // Un ámbito LOCAL autoriza las dos formas válidas de adscripción:
+      // asignaciones directas al local y asignaciones vinculadas mediante
+      // estructura_local. Core comprobará la localización efectiva usando
+      // el mapa scopeRecordLookups en ambos casos.
+      relationIds = consistentRelations.filter(relation =>
+        _directoryKey_(relation.local_id) === referenceId
+      ).map(item => _directoryKey_(item.id)).filter(Boolean);
+      localIds = [referenceId];
+    }
+
+    if (selectedLocalId) {
+      relationIds = relationIds.filter(id => {
+        const relation = relationMap.get(id);
+        return relation && _directoryKey_(relation.local_id) === selectedLocalId;
+      });
+      localIds = localIds.filter(id => id === selectedLocalId);
+    }
+
+    if (selectedSiteId) {
+      relationIds = relationIds.filter(id => {
+        const relation = relationMap.get(id);
+        const structure = relation && structureMap.get(_directoryKey_(relation.estructura_id));
+        const local = relation && localMap.get(_directoryKey_(relation.local_id));
+        return structure && local &&
+          _directoryKey_(structure.sede_id) === selectedSiteId &&
+          _directoryKey_(local.sede_id) === selectedSiteId;
+      });
+      localIds = localIds.filter(id => {
+        const local = localMap.get(id);
+        return local && _directoryKey_(local.sede_id) === selectedSiteId;
+      });
+    }
+
+    if (selectedStructureIds) {
+      relationIds = relationIds.filter(id => {
+        const relation = relationMap.get(id);
+        return relation && selectedStructureIds.has(_directoryKey_(relation.estructura_id));
+      });
+      // El filtro de unidad orgánica no incluye asignaciones directas a locales.
+      localIds = [];
+    }
+
+    if (relationIds.length) {
+      groups.push({ estructura_local_id: Array.from(new Set(relationIds)) });
+    }
+    if (localIds.length) {
+      groups.push({
+        local_id: Array.from(new Set(localIds)),
+        estructura_local_id: ''
+      });
+    }
+  };
+
+  scopes.forEach(scope => {
+    const type = _directoryText_(scope.tipo_ambito_id).toUpperCase();
+    const referenceId = _directoryKey_(scope.referencia_id);
+    const includeDescendants = _directoryNormalizeBoolean_(
+      scope.incluir_descendientes === undefined ? false : scope.incluir_descendientes
     );
-
-    return Object.assign({}, node, {
-      path: _directoryGetStructurePath_(node, structureMap),
-      tipo_estructura_name: type ? type.name : ''
-    });
+    if (type === 'TOTAL') addScopeCandidates(scope, type, '', false);
+    if (type === 'SEDE' && referenceId) addScopeCandidates(scope, type, referenceId, false);
+    if (type === 'ESTRUCTURA_ORG' && referenceId) addScopeCandidates(scope, type, referenceId, includeDescendants);
+    if (type === 'LOCAL' && referenceId) addScopeCandidates(scope, type, referenceId, false);
   });
 
-  const scopedStructures = activeStructure.filter(node =>
+  const relationValues = {};
+  consistentRelations.forEach(relation => {
+    const relationId = _directoryKey_(relation.id);
+    const structure = structureMap.get(_directoryKey_(relation.estructura_id));
+    const local = localMap.get(_directoryKey_(relation.local_id));
+    if (!relationId || !structure || !local) return;
+    relationValues[relationId] = {
+      estructura_id: _directoryKey_(relation.estructura_id),
+      local_id: _directoryKey_(relation.local_id),
+      sede_id: _directoryKey_(structure.sede_id)
+    };
+  });
+  const localValues = {};
+  locals.forEach(local => {
+    const id = _directoryKey_(local.id);
+    if (!id) return;
+    localValues[id] = {
+      local_id: id,
+      sede_id: _directoryKey_(local.sede_id)
+    };
+  });
+
+  const search = _directoryText_(options.search);
+  const searchAny = [];
+  const addSearchMatches = (field, values) => {
+    const ids = Array.from(new Set((values || []).map(_directoryKey_).filter(Boolean)));
+    if (ids.length) searchAny.push({ field, values: ids });
+  };
+  if (search) {
+    const peopleMatches = SUNARPCore.searchRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+      search,
+      ['nombres', 'apellidos', 'correo_institucional'],
+      { matchCase: false }
+    );
+    addSearchMatches('persona_id', (peopleMatches.records || []).map(item => item.persona_id));
+
+    const cargoMatches = SUNARPCore.searchRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.cargos),
+      search,
+      ['name'],
+      { matchCase: false }
+    );
+    addSearchMatches('cargo_id', (cargoMatches.records || []).map(item => item.id));
+
+    const localMatches = SUNARPCore.searchRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.locales),
+      search,
+      ['name'],
+      { matchCase: false }
+    );
+    const matchedLocalIds = new Set((localMatches.records || []).map(item => _directoryKey_(item.id)));
+    addSearchMatches('local_id', Array.from(matchedLocalIds));
+    addSearchMatches('estructura_local_id', consistentRelations.filter(item =>
+      matchedLocalIds.has(_directoryKey_(item.local_id))
+    ).map(item => item.id));
+
+    const structureMatches = SUNARPCore.searchRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.estructuraOrg),
+      search,
+      ['name'],
+      { matchCase: false }
+    );
+    const matchingStructureIds = _directoryGetStructureIds_(
+      structures,
+      (structureMatches.records || []).map(item => item.id),
+      true
+    );
+    addSearchMatches('estructura_local_id', consistentRelations.filter(item =>
+      matchingStructureIds.has(_directoryKey_(item.estructura_id))
+    ).map(item => item.id));
+
+    const siteMatches = SUNARPCore.searchRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.sedes),
+      search,
+      ['name'],
+      { matchCase: false }
+    );
+    const matchingSiteIds = new Set((siteMatches.records || []).map(item => _directoryKey_(item.id)));
+    addSearchMatches('estructura_local_id', consistentRelations.filter(item => {
+      const structure = structureMap.get(_directoryKey_(item.estructura_id));
+      return structure && matchingSiteIds.has(_directoryKey_(structure.sede_id));
+    }).map(item => item.id));
+    addSearchMatches('local_id', locals.filter(item =>
+      matchingSiteIds.has(_directoryKey_(item.sede_id))
+    ).map(item => item.id));
+
+    if (relations.some(item => Object.prototype.hasOwnProperty.call(item, 'referencia'))) {
+      const referenceMatches = SUNARPCore.searchRecordsByFields(
+        _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.estructuraLocal),
+        search,
+        ['referencia'],
+        { matchCase: false }
+      );
+      addSearchMatches('estructura_local_id', (referenceMatches.records || []).map(item => item.id));
+    }
+  }
+
+  const authorizationForQuery = {
+    context: authorization.auth,
+    moduleId: authorization.moduleId,
+    permissionCode: authorization.permissionCode || 'INFORMACION_PERSONAL_VER',
+    structures: authorization.structures || [],
+    locals: authorization.locals || [],
+    scopeRecordLookups: [
+      {
+        recordField: 'estructura_local_id',
+        values: relationValues,
+        required: true,
+        requireEqualFields: ['local_id']
+      },
+      {
+        recordField: 'local_id',
+        values: localValues,
+        required: true
+      }
+    ],
+    catalogSources: [
+      getIntranetDataSource('SECURITY', 'Sedes', 1),
+      getIntranetDataSource('SECURITY', 'EstructuraOrg', 1),
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.sedes),
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.locales),
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.estructuraOrg),
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.estructuraLocal),
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.cargos)
+    ]
+  };
+
+  return {
+    source: _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones),
+    queryOptions: {
+      filters: baseFilters,
+      anyOf: groups,
+      search,
+      searchFields: search ? ['condicion_cargo', 'anexo', 'observaciones'] : [],
+      searchAny,
+      authorization: authorizationForQuery,
+      cacheSeconds: DIRECTORY_ASSIGNMENT_QUERY_CACHE_TTL,
+      candidateCacheSeconds: DIRECTORY_ASSIGNMENT_QUERY_CACHE_TTL,
+      schemaVersion: 'directory-assignment-query-v1',
+      sortBy: options.sortBy || 'order',
+      sortDirection: options.sortDirection || 'asc'
+    }
+  };
+}
+
+
+/**
+ * Ejecuta la consulta central de Core y enriquece solo la página devuelta.
+ * idField puede cambiarse para obtener conjuntos distintos (cargos, locales,
+ * personas) sin volver a cargar la tabla completa al servicio consumidor.
+ */
+function _directoryExecuteAssignmentQuery_(context, authorization, options, idField, offset, limit, enrich, distinctBy, distinctFields, distinctCountFields, preparedDescriptor) {
+  const descriptor = preparedDescriptor || _directoryBuildAssignmentQuery_(context, authorization, options);
+  const pageOffset = Number.isInteger(offset) && offset >= 0 ? offset : 0;
+  const pageLimit = Number.isInteger(limit) && limit >= 1 ? limit : 10;
+  if (!descriptor.queryOptions.anyOf.length) {
+    return {
+      records: [], total: 0, offset: pageOffset, limit: pageLimit,
+      hasMore: false, cacheHit: false
+    };
+  }
+  if (typeof SUNARPCore.queryRecords !== 'function') {
+    throw new Error('Esta operación requiere SUNARP Core v10 con consultas autorizadas y paginadas. No se debe sustituir por una lectura completa.');
+  }
+
+  const result = SUNARPCore.queryRecords(
+    descriptor.source,
+    Object.assign({}, descriptor.queryOptions, {
+      idField: idField || 'asignacion_id',
+      distinctBy: distinctBy || '',
+      distinctFields: Array.isArray(distinctFields) ? distinctFields : [],
+      distinctCountFields: Array.isArray(distinctCountFields) ? distinctCountFields : [],
+      offset: pageOffset,
+      limit: pageLimit
+    })
+  );
+  if (!enrich) return result;
+
+  const assignments = result.records || [];
+  return Object.assign({}, result, {
+    records: _directoryEnrichAssignmentRecords_(assignments, context)
+  });
+}
+
+/**
+ * Normaliza las métricas que SUNARP Core devuelve para cada página.
+ * No realiza consultas ni lecturas adicionales: conserva el desglose generado
+ * durante la misma ejecución de queryRecords().
+ */
+function _directoryBuildCorePageDiagnostics_(
+  page, pageNumber, fallbackOffset, fallbackLimit, recordsReturned
+) {
+  const source = page || {};
+  const numberOr = (value, fallback) => {
+    if (value === null || value === undefined || value === '') return fallback;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+
+  return {
+    page: numberOr(pageNumber, 1),
+    offset: numberOr(source.offset, fallbackOffset),
+    limit: numberOr(source.limit, fallbackLimit),
+    recordsReturned: numberOr(recordsReturned, 0),
+    total: numberOr(source.total, 0),
+    durationMs: numberOr(source.durationMs, 0),
+    counts: {
+      candidateCount: numberOr(source.candidateCount, 0),
+      authorizedCount: numberOr(source.authorizedCount, 0),
+      retainedForPage: numberOr(source.retainedForPage, 0),
+      projectedFieldCount: numberOr(source.projectedFieldCount, 0),
+      hydratedRowCount: numberOr(source.hydratedRowCount, 0)
+    },
+    cache: {
+      resultCacheHit: source.cacheHit === true,
+      candidateCacheHit: source.candidateCacheHit === true,
+      authorizedSnapshotCacheHit: source.authorizedSnapshotCacheHit === true,
+      authorizedSnapshotSessionHit: source.authorizedSnapshotSessionHit === true,
+      authorizedSnapshotCacheEligible: source.authorizedSnapshotCacheEligible === true,
+      authorizedSnapshotCacheDisabledReason: String(source.authorizedSnapshotCacheDisabledReason || ''),
+      catalogGenerationMissingSource: String(source.catalogGenerationMissingSource || '')
+    },
+    stages: {
+      authorizedSnapshotLookupMs: numberOr(source.authorizedSnapshotLookupMs, 0),
+      candidateCacheLookupMs: numberOr(source.candidateCacheLookupMs, 0),
+      candidateLoadMs: numberOr(source.candidateLoadMs, 0),
+      candidateCacheStoreMs: numberOr(source.candidateCacheStoreMs, 0),
+      candidateEvaluationMs: numberOr(source.candidateEvaluationMs, 0),
+      pageHydrationMs: numberOr(source.pageHydrationMs, 0),
+      sourceGenerationMs: numberOr(source.sourceGenerationMs, 0),
+      authorizedSnapshotStoreMs: numberOr(source.authorizedSnapshotStoreMs, 0)
+    }
+  };
+}
+
+
+/**
+ * Enriquece un lote completo de asignaciones con una sola búsqueda masiva
+ * de personas y un único mapa de relaciones. La consulta de personas proyecta
+ * únicamente las columnas de presentación necesarias para la tabla principal.
+ */
+function _directoryEnrichAssignmentRecords_(assignments, context, relationMap, diagnostics) {
+  const records = Array.isArray(assignments) ? assignments : [];
+  if (!records.length) {
+    if (diagnostics) Object.assign(diagnostics, {
+      peopleSource: 'none', uniquePeople: 0, peopleRowsLoaded: 0
+    });
+    return [];
+  }
+  const personaIds = Array.from(new Set(records.map(item =>
+    _directoryKey_(item.persona_id)
+  ).filter(Boolean)));
+  const preloadedPeople = Array.isArray(context.personas) ? context.personas : [];
+  const preloadedPeopleMap = _directoryCreateMap_(preloadedPeople, 'persona_id');
+  const canUsePreloadedPeople = personaIds.every(id => preloadedPeopleMap.has(id));
+
+  let peopleMap;
+  let peopleSource;
+  if (canUsePreloadedPeople) {
+    if (preloadedPeopleMap.size !== preloadedPeople.length) {
+      throw new Error('La tabla personas contiene identificadores duplicados o incompletos.');
+    }
+    peopleMap = preloadedPeopleMap;
+    peopleSource = 'grouped-context';
+  } else {
+    // Compatibilidad para consultas puntuales que no cargan el catálogo de
+    // personas completo: una única búsqueda proyectada, nunca una búsqueda
+    // por asignación.
+    const peopleResult = personaIds.length
+      ? SUNARPCore.findRecordsByFields(
+          _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+          { persona_id: personaIds },
+          {
+            searchField: 'persona_id',
+            requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas,
+            projectionFields: DIRECTORY_REQUIRED_HEADERS.personas
+          }
+        )
+      : { records: [], total: 0 };
+    const people = peopleResult.records || [];
+    if (Number(peopleResult.total) !== personaIds.length || people.length !== personaIds.length) {
+      throw new Error('Una o más asignaciones visibles no tienen una persona válida en el directorio.');
+    }
+    peopleMap = _directoryCreateMap_(people, 'persona_id');
+    if (peopleMap.size !== personaIds.length) {
+      throw new Error('El conjunto de personas contiene identificadores duplicados o incompletos.');
+    }
+    peopleSource = 'projected-batch';
+  }
+
+  if (diagnostics) Object.assign(diagnostics, {
+    peopleSource,
+    uniquePeople: personaIds.length,
+    peopleRowsLoaded: preloadedPeople.length
+  });
+  const resolvedRelationMap = relationMap ||
+    _directoryCreateMap_(_directoryBuildRelations_(context, false));
+  return records.map(item => {
+    const location = _directoryResolveAssignmentLocation_(item, context, false);
+    return _directoryEnrichAssignment_(item, context, resolvedRelationMap, peopleMap, location);
+  });
+}
+
+
+function _directoryFindAuthorizedAssignmentById_(context, authorization, asignacionId) {
+  const id = _directoryKey_(asignacionId);
+  if (!id) throw new Error('Debes proporcionar el identificador de la asignación.');
+  const result = _directoryExecuteAssignmentQuery_(
+    context,
+    authorization,
+    { asignacionId: id, active: 'all' },
+    'asignacion_id',
+    0,
+    2,
+    false
+  );
+  if (Number(result.total) > 1) {
+    throw new Error('El identificador de asignación está duplicado.');
+  }
+  return (result.records || [])[0] || null;
+}
+
+
+function _directoryGetNextOrderForLocation_(context, authorization, structureLocalId, localId) {
+  const queryOptions = { active: 'all' };
+  if (_directoryKey_(structureLocalId)) {
+    queryOptions.estructuraLocalId = _directoryKey_(structureLocalId);
+  } else {
+    queryOptions.localId = _directoryKey_(localId);
+  }
+
+  const result = _directoryExecuteAssignmentQuery_(
+    context,
+    authorization,
+    queryOptions,
+    'asignacion_id',
+    0,
+    1000,
+    false
+  );
+  const records = result.records || [];
+  if (Number(result.total) > records.length) {
+    throw new Error('Hay demasiadas asignaciones en la adscripción de destino para calcular el siguiente orden de forma segura.');
+  }
+  const matching = records.filter(item =>
+    _directoryKey_(item.estructura_local_id) === _directoryKey_(structureLocalId) &&
+    _directoryKey_(item.local_id) === _directoryKey_(localId)
+  );
+  return _directoryGetNextOrder_(matching, structureLocalId, localId);
+}
+
+
+function _directoryBuildInitialAssignmentPage_(view, context) {
+  const sorted = view.assignments.slice().sort((a, b) =>
+    _directoryCompare_(a.order, b.order) ||
+    _directoryCompare_(a.asignacion_id, b.asignacion_id)
+  );
+  const total = sorted.length;
+  const pageSize = 10;
+  const assignments = sorted.slice(0, pageSize);
+  const personaIds = Array.from(new Set(
+    assignments.map(item => _directoryKey_(item.persona_id)).filter(Boolean)
+  ));
+  const peopleResult = personaIds.length
+    ? SUNARPCore.findRecordsByFields(
+        _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+        { persona_id: personaIds },
+        {
+          searchField: 'persona_id',
+          requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas
+        }
+      )
+    : { records: [], total: 0 };
+  if (peopleResult.total !== personaIds.length) {
+    throw new Error('Una o más asignaciones visibles no tienen una persona válida en el directorio.');
+  }
+  const peopleById = _directoryCreateMap_(peopleResult.records, 'persona_id');
+  return {
+    records: assignments.map(item => {
+      const person = peopleById.get(_directoryKey_(item.persona_id));
+      return Object.assign({}, item, {
+        nombres: person ? person.nombres : '',
+        apellidos: person ? person.apellidos : '',
+        correo_institucional: person ? person.correo_institucional : ''
+      });
+    }),
+    total,
+    page: 1,
+    pageSize
+  };
+}
+
+function _directoryGetAuthorizedSedeIds_(authorization, sedes) {
+  const moduleAccess = (authorization.auth && authorization.auth.moduleAccess || [])
+    .find(item => _directoryKey_(item.modulo_id) === _directoryKey_(authorization.moduleId));
+  const scopes = moduleAccess && Array.isArray(moduleAccess.scopes)
+    ? moduleAccess.scopes
+    : [];
+  const availableSedeIds = new Set((sedes || [])
+    .filter(_directoryIsActive_)
+    .map(item => _directoryKey_(item.id))
+    .filter(Boolean));
+  const allowedSedeIds = new Set();
+
+  if (!scopes.length) return allowedSedeIds;
+
+  const totalScopes = scopes.filter(scope =>
+    _directoryText_(scope.tipo_ambito_id).toUpperCase() === 'TOTAL'
+  );
+  if (totalScopes.length) {
+    // Core considera TOTAL exclusivo. No se amplía un conjunto inconsistente.
+    if (scopes.length === 1 && !_directoryKey_(totalScopes[0].referencia_id)) {
+      return availableSedeIds;
+    }
+    return allowedSedeIds;
+  }
+
+  const structures = authorization.structures || [];
+  const locals = authorization.locals || [];
+
+  scopes.forEach(scope => {
+    const type = _directoryText_(scope.tipo_ambito_id).toUpperCase();
+    const referenceId = _directoryKey_(scope.referencia_id);
+    if (!referenceId) return;
+
+    if (type === 'SEDE') {
+      allowedSedeIds.add(referenceId);
+      return;
+    }
+
+    if (type === 'ESTRUCTURA_ORG') {
+      const includeDescendants = _directoryNormalizeBoolean_(
+        scope.incluir_descendientes === undefined ? false : scope.incluir_descendientes
+      );
+      const structureIds = _directoryGetStructureIds_(
+        structures, [referenceId], includeDescendants
+      );
+      structures.forEach(node => {
+        if (structureIds.has(_directoryKey_(node.id))) {
+          const sedeId = _directoryKey_(node.sede_id);
+          if (sedeId) allowedSedeIds.add(sedeId);
+        }
+      });
+      return;
+    }
+
+    if (type === 'LOCAL') {
+      const local = locals.find(item => _directoryKey_(item.id) === referenceId);
+      const sedeId = local ? _directoryKey_(local.sede_id) : '';
+      if (sedeId) allowedSedeIds.add(sedeId);
+    }
+  });
+
+  return new Set(Array.from(allowedSedeIds).filter(id => availableSedeIds.has(id)));
+}
+
+
+/**
+ * Catálogos y ámbitos efectivos para crear/editar servidores.
+ * Se consultan al abrir el formulario, no al entrar a la pantalla.
+ */
+/**
+ * Construye los catálogos compartidos del formulario. La lista de catálogos
+ * operativos se reutiliza desde SUNARP Core; documentos y condiciones se
+ * agrupan en una sola consulta complementaria.
+ */
+function _directoryBuildFormCatalogPayload_(auth, requestStartedAt, authorizationMs) {
+  const contextStartedAt = Date.now();
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: true,
+    includeAssignments: false,
+    includeDocumentTypes: false,
+    validateSnapshot: false
+  });
+  const contextElapsed = Date.now() - contextStartedAt;
+
+  const catalogStartedAt = Date.now();
+  const conditionCatalog = SUNARPCore.listRecordsFromSourcesCached([
+    {
+      key: 'documentTypes',
+      source: _directoryResolveDocumentTypesSource_(),
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.documentTypes
+    },
+    {
+      key: 'conditionCargo',
+      source: _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.condicionCargo),
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.condicionCargo
+    }
+  ], DIRECTORY_CATALOG_CACHE_TTL);
+  const supplementalCatalogElapsed = Date.now() - catalogStartedAt;
+
+  const mappingStartedAt = Date.now();
+  const moduleId = 'MOD_INFO_PERSONAL';
+  const moduleAccess = (auth.moduleAccess || []).find(item =>
+    _directoryKey_(item.modulo_id) === moduleId
+  );
+  const canCreate = SUNARPCore.authorizationHasPermission(auth, 'INFORMACION_PERSONAL_CREAR', moduleId) === true;
+  const canEdit = SUNARPCore.authorizationHasPermission(auth, 'INFORMACION_PERSONAL_EDITAR', moduleId) === true;
+  const canDeleteAssignments = _accessHasPermission_(
+    auth,
+    'INFORMACION_PERSONAL_ELIMINAR',
+    moduleId
+  );
+  const result = {
+    catalogs: {
+      sedes: (context.sedes || []).filter(_directoryIsActive_).map(x => ({
+        id: _directoryKey_(x.id), name: _directoryText_(x.name), active: true
+      })),
+      locales: (context.locales || []).filter(_directoryIsActive_).map(x => ({
+        id: _directoryKey_(x.id), name: _directoryText_(x.name),
+        sede_id: _directoryKey_(x.sede_id), active: true
+      })),
+      tiposEstructura: (context.tiposEstructura || []).filter(_directoryIsActive_),
+      estructuraOrg: (context.estructuraOrg || []).filter(_directoryIsActive_),
+      estructuraLocal: (context.estructuraLocal || []).filter(_directoryIsActive_),
+      cargos: (context.cargos || []).filter(_directoryIsActive_),
+      condicionCargo: (conditionCatalog.conditionCargo || []).filter(_directoryIsActive_).map(x => ({
+        id: _directoryKey_(x.id), name: _directoryText_(x.name)
+      })).filter(x => x.id && x.name),
+      documentTypes: (conditionCatalog.documentTypes || []).filter(_directoryIsActive_).map(x => ({
+        id: _directoryKey_(x.id), name: _directoryText_(x.name)
+      })).filter(x => x.id && x.name)
+    },
+    capabilities: {
+      canCreate,
+      canEdit,
+      deleteAssignments: canDeleteAssignments === true
+    },
+    scopes: (moduleAccess && moduleAccess.scopes || []).filter(_directoryIsActive_).map(scope => ({
+      type: _directoryText_(scope.tipo_ambito_id).toUpperCase(),
+      referenceId: _directoryKey_(scope.referencia_id),
+      includeDescendants: _directoryNormalizeBoolean_(scope.incluir_descendientes === undefined ? false : scope.incluir_descendientes)
+    }))
+  };
+  const mappingElapsed = Date.now() - mappingStartedAt;
+  const diagnostics = {
+    serverMs: Date.now() - requestStartedAt,
+    stages: {
+      authorizationMs: authorizationMs,
+      contextMs: contextElapsed,
+      supplementalCatalogMs: supplementalCatalogElapsed,
+      responseMappingMs: mappingElapsed
+    }
+  };
+  result.diagnostics = diagnostics;
+  console.log('[DirectoryService] Form catalog timing:', JSON.stringify(diagnostics));
+  return result;
+}
+
+/**
+ * Precarga de solo lectura para el formulario. Requiere acceso al módulo y
+ * al menos una capacidad de alta o edición; las escrituras vuelven a validar
+ * el permiso y el ámbito en sus propios endpoints.
+ */
+function getDirectoryFormBootstrap() {
+  const requestStartedAt = Date.now();
+  const authorizationStartedAt = Date.now();
+  const moduleId = 'MOD_INFO_PERSONAL';
+  const auth = requirePermission_('INFORMACION_PERSONAL_VER', moduleId);
+  const authorizationMs = Date.now() - authorizationStartedAt;
+  const canCreate = SUNARPCore.authorizationHasPermission(auth, 'INFORMACION_PERSONAL_CREAR', moduleId) === true;
+  const canEdit = SUNARPCore.authorizationHasPermission(auth, 'INFORMACION_PERSONAL_EDITAR', moduleId) === true;
+  if (!canCreate && !canEdit) {
+    throw new Error('No tienes permiso para crear ni editar servidores.');
+  }
+  return _directoryBuildFormCatalogPayload_(auth, requestStartedAt, authorizationMs);
+}
+
+/**
+ * Endpoint compatible para clientes que solicitan explícitamente una
+ * operación. La precarga de pantalla usa getDirectoryFormBootstrap().
+ */
+function getDirectoryFormData(permissionCode) {
+  const requestedPermission = _directoryText_(permissionCode).toUpperCase();
+  const allowedPermissions = ['INFORMACION_PERSONAL_CREAR', 'INFORMACION_PERSONAL_EDITAR'];
+  if (!allowedPermissions.includes(requestedPermission)) throw new Error('Operación de formulario no válida.');
+  const requestStartedAt = Date.now();
+  const authorizationStartedAt = Date.now();
+  const auth = requirePermission_(requestedPermission, 'MOD_INFO_PERSONAL');
+  const authorizationMs = Date.now() - authorizationStartedAt;
+  return _directoryBuildFormCatalogPayload_(auth, requestStartedAt, authorizationMs);
+}
+
+/** Busca el documento antes de permitir el alta y evita duplicar personas. */
+function searchDirectoryPersonByDocument(payload) {
+  _directoryAuthorizationContext_('INFORMACION_PERSONAL_CREAR');
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('Debes indicar el tipo y número de documento.');
+  }
+  const documentType = _directoryNormalizeDocument_(payload.tipo_documento, 'Tipo de documento');
+  const documentNumber = _directoryNormalizeDocument_(payload.numero_documento, 'Número de documento');
+
+  const catalogResult = SUNARPCore.listRecordsFromSourcesCached([{
+    key: 'documentTypes',
+    source: _directoryResolveDocumentTypesSource_(),
+    requiredHeaders: DIRECTORY_REQUIRED_HEADERS.documentTypes
+  }], DIRECTORY_CATALOG_CACHE_TTL);
+  const documentTypes = catalogResult.documentTypes || [];
+  const validType = documentTypes.some(item =>
+    _directoryNormalizeDocument_(item.id, 'Tipo de documento') === documentType &&
+    _directoryIsActive_(item)
+  );
+  if (!validType) {
+    throw new Error('Selecciona un tipo de documento válido del catálogo tipo_documento_identidad.');
+  }
+
+  const lookup = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
+    { numero_documento: documentNumber },
+    {
+      searchField: 'numero_documento',
+      matchCase: false,
+      ignoreWhitespace: true,
+      requiredHeaders: ['servidor_id', 'tipo_documento', 'numero_documento'],
+      projectionFields: ['servidor_id', 'tipo_documento', 'numero_documento']
+    }
+  );
+  const matches = (lookup.records || []).filter(item =>
+    _directoryNormalizeDocument_(item.tipo_documento, 'Tipo de documento') === documentType &&
+    _directoryNormalizeDocument_(item.numero_documento, 'Número de documento') === documentNumber
+  );
+  if (!matches.length) {
+    return { found: false, message: 'No se encontró una persona con ese tipo y número de documento.' };
+  }
+  if (matches.length > 1) {
+    throw new Error('El documento aparece asociado a más de un registro. Debe corregirse la duplicidad antes de continuar.');
+  }
+
+  const personaId = _directoryText_(matches[0].servidor_id);
+  const person = _directoryFindPersonById_(personaId);
+  if (!person) {
+    throw new Error('El documento está registrado, pero no se pudo resolver la persona en el directorio.');
+  }
+  return {
+    found: true,
+    message: 'El documento ya está registrado.',
+    person: {
+      persona_id: personaId,
+      nombres: _directoryText_(person.nombres),
+      apellidos: _directoryText_(person.apellidos)
+    }
+  };
+}
+
+function getDirectoryInitialData() {
+  const startedAt = Date.now();
+  const authorizationStartedAt = Date.now();
+  const moduleId = 'MOD_INFO_PERSONAL';
+  const auth = requirePermission_('INFORMACION_PERSONAL_VER', moduleId);
+  const authorizationElapsed = Date.now() - authorizationStartedAt;
+
+  // El ingreso solo necesita las sedes disponibles para la identidad actual.
+  // EstructuraOrg o locales solo se leen cuando un ámbito requiere resolver
+  // una referencia de ese tipo. Para SEDE y TOTAL basta el catálogo de sedes.
+  const moduleAccess = (auth.moduleAccess || []).find(item =>
+    _directoryKey_(item.modulo_id) === moduleId
+  );
+  const scopes = moduleAccess && Array.isArray(moduleAccess.scopes)
+    ? moduleAccess.scopes
+    : [];
+  const scopeTypes = new Set(scopes.map(scope =>
+    _directoryText_(scope.tipo_ambito_id).toUpperCase()
+  ));
+  const catalogRequests = [{
+    key: 'sedes',
+    source: _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.sedes),
+    requiredHeaders: ['id', 'name']
+  }];
+
+  if (scopeTypes.has('ESTRUCTURA_ORG')) {
+    catalogRequests.push({
+      key: 'structures',
+      source: getIntranetDataSource('SECURITY', 'EstructuraOrg', 1),
+      requiredHeaders: ['id', 'parent_id', 'sede_id']
+    });
+  }
+  if (scopeTypes.has('LOCAL')) {
+    catalogRequests.push({
+      key: 'locals',
+      source: _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.locales),
+      requiredHeaders: ['id', 'sede_id']
+    });
+  }
+
+  const catalogStartedAt = Date.now();
+  const catalogs = SUNARPCore.listRecordsFromSourcesCached(
+    catalogRequests,
+    DIRECTORY_CATALOG_CACHE_TTL
+  );
+  const authorization = {
+    auth,
+    moduleId,
+    structures: catalogs.structures || [],
+    locals: catalogs.locals || []
+  };
+  const allSedes = catalogs.sedes || [];
+  const authorizedSedeIds = _directoryGetAuthorizedSedeIds_(authorization, allSedes);
+  const sedes = allSedes
+    .filter(item => _directoryIsActive_(item) && authorizedSedeIds.has(_directoryKey_(item.id)))
+    .map(item => ({
+      id: _directoryKey_(item.id),
+      name: _directoryText_(item.name),
+      active: _directoryIsActive_(item)
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  const hasTotalScope = scopes.length === 1 &&
+    _directoryText_(scopes[0].tipo_ambito_id).toUpperCase() === 'TOTAL' &&
+    !_directoryKey_(scopes[0].referencia_id);
+  const catalogElapsed = Date.now() - catalogStartedAt;
+
+  const serverElapsed = Date.now() - startedAt;
+  const diagnostics = {
+    serverMs: serverElapsed,
+    stages: {
+      authorizationMs: authorizationElapsed,
+      siteCatalogMs: catalogElapsed
+    }
+  };
+  console.log('[DirectoryService] Initial site selector ms:', JSON.stringify({
+    authorization: authorizationElapsed,
+    siteCatalog: catalogElapsed,
+    total: serverElapsed,
+    authorizedSites: sedes.length,
+    authorizationCatalogs: catalogRequests.map(item => item.key),
+    assignmentsLoaded: 0
+  }));
+
+  return {
+    catalogs: { sedes },
+    capabilities: {
+      canCreate: SUNARPCore.authorizationHasPermission(auth, 'INFORMACION_PERSONAL_CREAR', moduleId) === true,
+      canEdit: SUNARPCore.authorizationHasPermission(auth, 'INFORMACION_PERSONAL_EDITAR', moduleId) === true
+    },
+    scopeSummary: {
+      total: hasTotalScope,
+      types: Array.from(scopeTypes)
+    },
+    records: [],
+    summary: { people: 0, assignments: 0 },
+    diagnostics
+  };
+}
+
+
+
+
+
+/**
+ * Precalienta el contexto común de Información de personal en segundo plano.
+ * La respuesta contiene únicamente tiempos y conteos; nunca devuelve datos
+ * personales ni asignaciones. La autorización se vuelve a comprobar aquí.
+ */
+/**
+ * Carga una vez todas las asignaciones autorizadas de la sede seleccionada.
+ * Los filtros, la búsqueda y la paginación posteriores se ejecutan en el
+ * navegador sobre esta instantánea; este endpoint no recibe filtros de tabla.
+ */
+function _directoryGetSiteDataCacheSources_() {
+  const directorySheetKeys = [
+    'personas', 'asignaciones', 'sedes', 'tiposLocal', 'locales',
+    'tiposEstructura', 'estructuraOrg', 'estructuraLocal', 'cargos'
+  ];
+  const sources = directorySheetKeys.map(key =>
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets[key])
+  );
+  [
+    'Sedes', 'EstructuraOrg', 'Usuarios', 'Modulos', 'Roles',
+    'UsuarioRol', 'Permisos', 'RolPermiso', 'AmbitosAcceso'
+  ].forEach(sheetName => {
+    sources.push(getIntranetDataSource('SECURITY', sheetName, 1));
+  });
+  return sources;
+}
+
+
+function _directoryAuthorizationCacheFingerprint_(authorization) {
+  const auth = authorization && authorization.auth || {};
+  const moduleId = _directoryKey_(authorization && authorization.moduleId);
+  const access = (auth.moduleAccess || []).find(item =>
+    _directoryKey_(item.modulo_id) === moduleId
+  );
+  const scopes = (access && access.scopes || []).map(scope => ({
+    tipo_ambito_id: _directoryKey_(scope.tipo_ambito_id),
+    referencia_id: _directoryKey_(scope.referencia_id),
+    incluir_descendientes: scope.incluir_descendientes,
+    active: scope.active
+  })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  const snapshot = {
+    personaId: _directoryKey_(auth.personaId),
+    moduleId,
+    permissionCode: _directoryKey_(authorization && authorization.permissionCode),
+    permissionCodes: (access && access.permissionCodes || []).slice().sort(),
+    scopes,
+    structures: (authorization && authorization.structures || []).map(item => ({
+      id: _directoryKey_(item.id),
+      parent_id: _directoryKey_(item.parent_id),
+      sede_id: _directoryKey_(item.sede_id),
+      active: item.active
+    })).sort((a, b) => a.id.localeCompare(b.id)),
+    locals: (authorization && authorization.locals || []).map(item => ({
+      id: _directoryKey_(item.id),
+      sede_id: _directoryKey_(item.sede_id),
+      active: item.active
+    })).sort((a, b) => a.id.localeCompare(b.id))
+  };
+  const digest = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    JSON.stringify(snapshot)
+  );
+  return Utilities.base64EncodeWebSafe(digest).replace(/=+$/g, '');
+}
+
+
+function getDirectorySiteData(sedeId) {
+  const startedAt = Date.now();
+  const selectedSedeId = _directoryKey_(sedeId);
+  if (!selectedSedeId) throw new Error('Debes seleccionar una sede.');
+
+  const authorizationStartedAt = Date.now();
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
+  const authorizationElapsed = Date.now() - authorizationStartedAt;
+  const siteContextOptions = {
+    includePersonalData: false,
+    includePeople: true,
+    includeAssignments: false,
+    includeDocumentTypes: false,
+    validateSnapshot: false
+  };
+
+  let siteValidationElapsed = 0;
+  if (typeof SUNARPCore !== 'undefined' &&
+      typeof SUNARPCore.listRecordsFromSourcesCached === 'function') {
+    const validationStartedAt = Date.now();
+    const siteCatalog = SUNARPCore.listRecordsFromSourcesCached([{
+      key: 'sedes',
+      source: _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.sedes),
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.sedes
+    }], DIRECTORY_CATALOG_CACHE_TTL);
+    const allowedSiteIds = _directoryGetAuthorizedSedeIds_(
+      authorization, siteCatalog.sedes || []
+    );
+    const activeSite = (siteCatalog.sedes || []).some(item =>
+      _directoryKey_(item.id) === selectedSedeId &&
+      allowedSiteIds.has(selectedSedeId) &&
+      _directoryIsActive_(item)
+    );
+    if (!activeSite) {
+      throw new Error('No tienes permiso para consultar la sede seleccionada o la sede ya no está activa.');
+    }
+    siteValidationElapsed = Date.now() - validationStartedAt;
+  }
+
+  let result = null;
+  let siteSnapshotCacheHit = false;
+  let siteSnapshotCacheStored = false;
+  let snapshotCacheLookupElapsed = 0;
+  let snapshotSourceGenerationElapsed = 0;
+  if (typeof SUNARPCore !== 'undefined' &&
+      typeof SUNARPCore.getOrBuildCachedValue === 'function' &&
+      _directoryKey_(authorization.auth && authorization.auth.personaId)) {
+    const authorizationFingerprint = _directoryAuthorizationCacheFingerprint_(authorization);
+    const cacheKey = 'directory-site-snapshot:v5:' +
+      _directoryKey_(authorization.auth.personaId) + ':' +
+      selectedSedeId + ':' + authorizationFingerprint;
+    const cacheLookupStartedAt = Date.now();
+    const cached = SUNARPCore.getOrBuildCachedValue(
+      cacheKey,
+      _directoryGetSiteDataCacheSources_(),
+      () => _directoryBuildSiteData_(
+        selectedSedeId, authorization, startedAt, authorizationElapsed,
+        siteContextOptions
+      ),
+      DIRECTORY_SITE_SNAPSHOT_CACHE_TTL
+    );
+    snapshotCacheLookupElapsed = Date.now() - cacheLookupStartedAt;
+    siteSnapshotCacheHit = Boolean(cached && cached.cacheHit);
+    siteSnapshotCacheStored = Boolean(cached && cached.cacheStored);
+    snapshotSourceGenerationElapsed = Number(cached && cached.sourceGenerationMs) || 0;
+    console.log('[DirectoryService] Site snapshot cache:', JSON.stringify({
+      cacheHit: siteSnapshotCacheHit,
+      cacheStored: siteSnapshotCacheStored,
+      cacheReason: cached && cached.cacheReason || '',
+      sourceGenerationMs: snapshotSourceGenerationElapsed,
+      selectedSedeId,
+      durationMs: snapshotCacheLookupElapsed
+    }));
+    if (cached && cached.value) result = cached.value;
+  }
+
+  if (!result) {
+    result = _directoryBuildSiteData_(
+      selectedSedeId, authorization, startedAt, authorizationElapsed,
+      siteContextOptions
+    );
+  }
+  const requestServerMs = Date.now() - startedAt;
+  const previousDiagnostics = result.diagnostics || {};
+  const diagnostics = Object.assign({}, previousDiagnostics, {
+    snapshotBuildMs: Number.isFinite(Number(previousDiagnostics.serverMs))
+      ? Number(previousDiagnostics.serverMs)
+      : null,
+    serverMs: requestServerMs,
+    requestServerMs,
+    stages: Object.assign({}, previousDiagnostics.stages || {}, {
+      authorizationMs: authorizationElapsed,
+      siteValidationMs: siteValidationElapsed,
+      snapshotSourceGenerationMs: snapshotSourceGenerationElapsed,
+      snapshotCacheLookupMs: snapshotCacheLookupElapsed
+    }),
+    cache: Object.assign({}, previousDiagnostics.cache || {}, {
+      siteSnapshotCacheHit,
+      siteSnapshotCacheStored
+    })
+  });
+  console.log('[DirectoryService] Site request timing:', JSON.stringify({
+    selectedSedeId,
+    serverMs: requestServerMs,
+    siteSnapshotCacheHit,
+    siteValidationMs: siteValidationElapsed,
+    snapshotSourceGenerationMs: snapshotSourceGenerationElapsed,
+    snapshotCacheLookupMs: snapshotCacheLookupElapsed
+  }));
+  return Object.assign({}, result, { diagnostics });
+}
+
+
+function getDirectoryAuthorizedData() {
+  const startedAt = Date.now();
+  const authorizationStartedAt = Date.now();
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
+  const authorizationElapsed = Date.now() - authorizationStartedAt;
+  const moduleAccess = (authorization.auth.moduleAccess || []).find(item =>
+    _directoryKey_(item.modulo_id) === _directoryKey_(authorization.moduleId)
+  );
+  const scopes = moduleAccess && Array.isArray(moduleAccess.scopes)
+    ? moduleAccess.scopes
+    : [];
+  const hasExclusiveTotalScope = scopes.length === 1 &&
+    _directoryText_(scopes[0].tipo_ambito_id).toUpperCase() === 'TOTAL' &&
+    !_directoryKey_(scopes[0].referencia_id);
+  if (!hasExclusiveTotalScope) {
+    throw new Error('La carga de todas las sedes requiere un ámbito TOTAL exclusivo en Información de personal.');
+  }
+
+  const siteContextOptions = {
+    includePersonalData: false,
+    includePeople: true,
+    includeAssignments: false,
+    includeDocumentTypes: false,
+    validateSnapshot: false
+  };
+  const authorizationFingerprint = _directoryAuthorizationCacheFingerprint_(authorization);
+  const cacheKey = 'directory-authorized-snapshot:v1:' +
+    _directoryKey_(authorization.auth && authorization.auth.personaId) + ':' +
+    authorizationFingerprint;
+  const cacheStartedAt = Date.now();
+  const cached = SUNARPCore.getOrBuildCachedValue(
+    cacheKey,
+    _directoryGetSiteDataCacheSources_(),
+    () => _directoryBuildSiteData_(
+      '', authorization, startedAt, authorizationElapsed, siteContextOptions
+    ),
+    DIRECTORY_SITE_SNAPSHOT_CACHE_TTL
+  );
+  if (!cached || !cached.value || !Array.isArray(cached.value.records) ||
+      !cached.value.catalogs || !Array.isArray(cached.value.catalogs.sedes)) {
+    throw new Error('SUNARP Core no devolvió una instantánea completa de los ámbitos autorizados.');
+  }
+  const diagnostics = Object.assign({}, cached.value.diagnostics || {}, {
+    serverMs: Date.now() - startedAt,
+    stages: Object.assign({}, cached.value.diagnostics && cached.value.diagnostics.stages || {}, {
+      authorizationMs: authorizationElapsed,
+      snapshotCacheLookupMs: Date.now() - cacheStartedAt
+    }),
+    cache: Object.assign({}, cached.value.diagnostics && cached.value.diagnostics.cache || {}, {
+      authorizedSnapshotCacheHit: cached.cacheHit === true,
+      authorizedSnapshotCacheStored: cached.cacheStored === true
+    })
+  });
+  console.log('[DirectoryService] Authorized all-sites snapshot:', JSON.stringify({
+    cacheHit: cached.cacheHit === true,
+    cacheStored: cached.cacheStored === true,
+    records: cached.value.records.length,
+    authorizedSedes: cached.value.catalogs.sedes.length,
+    totalMs: Date.now() - startedAt
+  }));
+  return Object.assign({}, cached.value, { diagnostics });
+}
+
+function _directoryBuildSiteData_(
+  selectedSedeId, authorization, startedAt, authorizationElapsed, siteContextOptions
+) {
+  const contextStartedAt = Date.now();
+  const context = _directoryLoadContext_(siteContextOptions || {
+    includePersonalData: false,
+    includePeople: false,
+    includeAssignments: false,
+    validateSnapshot: false
+  });
+  const contextElapsed = Date.now() - contextStartedAt;
+
+  const authorizedSedeIds = _directoryGetAuthorizedSedeIds_(authorization, context.sedes || []);
+  const allAuthorizedSites = !selectedSedeId;
+  if (allAuthorizedSites) {
+    const moduleAccess = (authorization.auth.moduleAccess || []).find(item =>
+      _directoryKey_(item.modulo_id) === _directoryKey_(authorization.moduleId)
+    );
+    const scopes = moduleAccess && Array.isArray(moduleAccess.scopes) ? moduleAccess.scopes : [];
+    const hasExclusiveTotalScope = scopes.length === 1 &&
+      _directoryText_(scopes[0].tipo_ambito_id).toUpperCase() === 'TOTAL' &&
+      !_directoryKey_(scopes[0].referencia_id);
+    if (!hasExclusiveTotalScope) {
+      throw new Error('La consulta agregada requiere un ámbito TOTAL exclusivo.');
+    }
+  } else if (!authorizedSedeIds.has(selectedSedeId)) {
+    throw new Error('No tienes permiso para consultar la sede seleccionada.');
+  }
+  const selectedSede = allAuthorizedSites ? null : (context.sedes || []).find(item =>
+    _directoryKey_(item.id) === selectedSedeId && _directoryIsActive_(item)
+  );
+  if (!allAuthorizedSites && !selectedSede) throw new Error('La sede seleccionada no existe o está inactiva.');
+
+  const queryDescriptorStartedAt = Date.now();
+  const assignmentQueryOptions = allAuthorizedSites
+    ? { active: 'all' }
+    : { active: 'all', sedeId: selectedSedeId };
+  const assignmentQueryDescriptor = _directoryBuildAssignmentQuery_(
+    context, authorization, assignmentQueryOptions
+  );
+  // Las páginas internas comparten solo la instantánea autorizada de esta
+  // ejecución; Core vuelve a validar autorización y huella en cada página.
+  assignmentQueryDescriptor.queryOptions.querySession = Object.create(null);
+  const queryDescriptorElapsed = Date.now() - queryDescriptorStartedAt;
+
+  const queryStartedAt = Date.now();
+  let coreQueryElapsed = 0;
+  let candidateCacheHits = 0;
+  let authorizedSnapshotCacheHits = 0;
+  let authorizedSnapshotSessionHits = 0;
+  const corePageDiagnostics = [];
+  const pageSize = 1000;
+  const records = [];
+  let offset = 0;
+  let expectedTotal = null;
+  let hasMore = true;
+  let pageCount = 0;
+
+  while (hasMore) {
+    // La consulta de Core pagina asignaciones autorizadas sin repetir su
+    // enriquecimiento por cada página interna. Las personas se recuperan
+    // juntas después de completar el conjunto de la sede.
+    const page = _directoryExecuteAssignmentQuery_(
+      context,
+      authorization,
+      assignmentQueryOptions,
+      'asignacion_id',
+      offset,
+      pageSize,
+      false,
+      '',
+      [],
+      [],
+      assignmentQueryDescriptor
+    );
+    coreQueryElapsed += Number(page.durationMs) || 0;
+    if (page.candidateCacheHit) candidateCacheHits++;
+    if (page.authorizedSnapshotCacheHit) authorizedSnapshotCacheHits++;
+    if (page.authorizedSnapshotSessionHit) authorizedSnapshotSessionHits++;
+    if (expectedTotal === null) expectedTotal = Number(page.total) || 0;
+    const pageRecords = page.records || [];
+    records.push.apply(records, pageRecords);
+    hasMore = Boolean(page.hasMore);
+    pageCount++;
+    corePageDiagnostics.push(_directoryBuildCorePageDiagnostics_(
+      page, pageCount, offset, pageSize, pageRecords.length
+    ));
+
+    if (!hasMore) break;
+    if (!pageRecords.length || pageCount > 10) {
+      throw new Error('No se pudo completar la carga de asignaciones de la sede. No se mostrarán resultados parciales.');
+    }
+    offset += pageRecords.length;
+  }
+
+  if (records.length !== (expectedTotal || 0)) {
+    throw new Error('La carga de asignaciones de la sede quedó incompleta. No se mostrarán resultados parciales.');
+  }
+  const queryElapsed = Date.now() - queryStartedAt;
+  const relationIndexStartedAt = Date.now();
+  const relations = _directoryBuildRelations_(context, false);
+  const relationMap = _directoryCreateMap_(relations);
+  const relationIndexElapsed = Date.now() - relationIndexStartedAt;
+
+  const peopleEnrichmentStartedAt = Date.now();
+  const peopleEnrichmentDiagnostics = {};
+  const enrichedRecords = _directoryEnrichAssignmentRecords_(
+    records, context, relationMap, peopleEnrichmentDiagnostics
+  );
+  records.length = 0;
+  enrichedRecords.forEach(record => records.push(record));
+  const peopleEnrichmentElapsed = Date.now() - peopleEnrichmentStartedAt;
+
+  // La consulta base ordena por el campo order, pero ese orden es local a cada
+  // adscripción. Aplicar una única ordenación por ruta orgánica asegura que la
+  // unidad padre aparezca antes que sus dependencias y conserva order dentro
+  // de cada unidad, con asignacion_id como desempate estable.
+  const hierarchySortStartedAt = Date.now();
+  const hierarchyOrderedRecords = _directorySortAssignments_(records, context);
+  records.length = 0;
+  hierarchyOrderedRecords.forEach(record => records.push(record));
+  const hierarchySortElapsed = Date.now() - hierarchySortStartedAt;
+
+  const recordsOutsideSelectedSite = records.filter(record => {
+    const recordSedeId = _directoryKey_(record.filter_sede_id || record.sede_id);
+    return allAuthorizedSites
+      ? (!recordSedeId || !authorizedSedeIds.has(recordSedeId))
+      : recordSedeId !== selectedSedeId;
+  });
+  if (recordsOutsideSelectedSite.length) {
+    console.error('[DirectoryService] Consulta por sede con adscripciones resueltas fuera de la sede:', JSON.stringify({
+      selectedSedeId,
+      count: recordsOutsideSelectedSite.length,
+      sample: recordsOutsideSelectedSite.slice(0, 10).map(record => ({
+        asignacion_id: _directoryKey_(record.asignacion_id),
+        estructura_local_id: _directoryKey_(record.estructura_local_id),
+        local_id: _directoryKey_(record.local_id),
+        resolvedSedeId: _directoryKey_(record.filter_sede_id || record.sede_id),
+        resolvedLocalId: _directoryKey_(record.filter_local_id || record.local_id)
+      }))
+    }));
+    throw new Error('La consulta de la sede seleccionada devolvió asignaciones cuya adscripción se resuelve en otra sede. No se mostrarán resultados inconsistentes.');
+  }
+  const catalogAssemblyStartedAt = Date.now();
+  const structureMap = _directoryCreateMap_(context.estructuraOrg);
+  const structureTypeMap = _directoryCreateMap_(context.tiposEstructura);
+  const activeStructure = (context.estructuraOrg || [])
+    .filter(_directoryIsActive_)
+    .map(node => {
+      const type = structureTypeMap.get(_directoryKey_(node.tipo_estructura_id));
+      return Object.assign({}, node, {
+        path: _directoryGetStructurePath_(node, structureMap),
+        tipo_estructura_name: type ? type.name : ''
+      });
+    });
+
+  // La autorización consulta la réplica del libro Seguridad; la vista y sus
+  // catálogos continúan utilizando la réplica de Directorios telefónicos.
+  // Los catálogos de esta respuesta pertenecen exclusivamente a la sede
+  // seleccionada, incluso cuando los ámbitos del usuario incluyen TOTAL.
+  const siteActiveStructure = activeStructure.filter(node => {
+    const nodeSedeId = _directoryKey_(node.sede_id);
+    return allAuthorizedSites ? authorizedSedeIds.has(nodeSedeId) : nodeSedeId === selectedSedeId;
+  });
+  const permittedStructures = siteActiveStructure.filter(node =>
     _accessRecordIsAllowed_(
       authorization.auth,
-      'DIRECTORIOS',
+      'MOD_INFO_PERSONAL',
       { estructura_id: node.id, sede_id: node.sede_id },
       authorization.structures
     )
   );
-
-  const allowedStructureIds = new Set(scopedStructures.map(item => _directoryKey_(item.id)));
-  const scopedRelations = view.relations.filter(item =>
-    item.active && allowedStructureIds.has(_directoryKey_(item.estructura_id))
+  const allowedStructureIds = new Set(
+    permittedStructures.map(item => _directoryKey_(item.id))
+  );
+  const hierarchyDisplayIds = new Set(allowedStructureIds);
+  // Los registros ya fueron autorizados. Sus estructuras y ancestros
+  // orgánicos reales permiten navegar también en ámbitos LOCAL, sin ampliar
+  // el conjunto de asignaciones ni heredar ubicación física a los padres.
+  records.forEach(record => {
+    const recordSiteId = _directoryKey_(record.filter_sede_id || record.sede_id);
+    if (!recordSiteId || (allAuthorizedSites
+      ? !authorizedSedeIds.has(recordSiteId)
+      : recordSiteId !== selectedSedeId)) return;
+    let current = structureMap.get(_directoryKey_(record.estructura_id));
+    const visited = new Set();
+    while (current && _directoryKey_(current.sede_id) === recordSiteId) {
+      const id = _directoryKey_(current.id);
+      if (!id || visited.has(id)) break;
+      hierarchyDisplayIds.add(id);
+      visited.add(id);
+      const parentId = _directoryKey_(current.parent_id);
+      current = parentId ? structureMap.get(parentId) || null : null;
+    }
+  });
+  permittedStructures.forEach(node => {
+    let current = structureMap.get(_directoryKey_(node.parent_id));
+    const visited = new Set();
+    while (current && (allAuthorizedSites
+      ? authorizedSedeIds.has(_directoryKey_(current.sede_id))
+      : _directoryKey_(current.sede_id) === selectedSedeId)) {
+      const id = _directoryKey_(current.id);
+      if (!id || visited.has(id)) break;
+      hierarchyDisplayIds.add(id);
+      visited.add(id);
+      current = structureMap.get(_directoryKey_(current.parent_id));
+    }
+  });
+  const scopedStructures = siteActiveStructure.filter(node =>
+    hierarchyDisplayIds.has(_directoryKey_(node.id))
   );
 
-  const allowedLocalIds = new Set(scopedRelations.map(item => _directoryKey_(item.local_id)));
-  const allowedSedeIds = new Set(scopedStructures.map(item => _directoryKey_(item.sede_id)));
+  const scopedRelations = relations.filter(item => {
+    const relationSedeId = _directoryKey_(item.sede_id);
+    const localSedeId = _directoryKey_(item.local_sede_id);
+    const siteAllowed = allAuthorizedSites
+      ? authorizedSedeIds.has(relationSedeId)
+      : relationSedeId === selectedSedeId;
+    const relationAuthorized = _accessRecordIsAllowed_(
+      authorization.auth,
+      'MOD_INFO_PERSONAL',
+      {
+        estructura_id: _directoryKey_(item.estructura_id),
+        sede_id: relationSedeId,
+        local_id: _directoryKey_(item.local_id)
+      },
+      authorization.structures,
+      authorization.locals
+    );
+    return item.active && siteAllowed && localSedeId === relationSedeId && relationAuthorized;
+  });
+  const scopedLocals = (context.locales || []).filter(local =>
+    _directoryIsActive_(local) &&
+    (allAuthorizedSites
+      ? authorizedSedeIds.has(_directoryKey_(local.sede_id))
+      : _directoryKey_(local.sede_id) === selectedSedeId) &&
+    _accessRecordIsAllowed_(
+      authorization.auth,
+      'MOD_INFO_PERSONAL',
+      { sede_id: _directoryKey_(local.sede_id), local_id: _directoryKey_(local.id) },
+      authorization.structures,
+      authorization.locals
+    )
+  );
+  const relationLocalIds = new Set(
+    scopedRelations.map(item => _directoryKey_(item.local_id))
+  );
+  const scopedLocalIds = new Set(
+    scopedLocals.map(item => _directoryKey_(item.id))
+  );
+  const localOrderResult = _directorySortLocalCatalog_(context.locales || []);
+  if (!localOrderResult.orderConfigured) {
+    console.warn('[DirectoryService] locales.order no está configurado; se conserva temporalmente el orden recibido hasta completar la migración del catálogo.');
+  }
+  const catalogLocals = localOrderResult.records.filter(local =>
+    _directoryIsActive_(local) &&
+    (allAuthorizedSites
+      ? authorizedSedeIds.has(_directoryKey_(local.sede_id))
+      : _directoryKey_(local.sede_id) === selectedSedeId) &&
+    (relationLocalIds.has(_directoryKey_(local.id)) ||
+      scopedLocalIds.has(_directoryKey_(local.id)))
+  );
   const allowedLocalTypes = new Set(
-    context.locales.filter(item => allowedLocalIds.has(_directoryKey_(item.id)))
-      .map(item => _directoryKey_(item.tipo_local_id))
+    catalogLocals.map(item => _directoryKey_(item.tipo_local_id))
   );
   const allowedStructureTypes = new Set(
     scopedStructures.map(item => _directoryKey_(item.tipo_estructura_id))
   );
 
-  const assignments = _directorySortAssignments_(view.assignments.slice(), context);
+  const filterContractStartedAt = Date.now();
+  const filterContract = _directoryBuildFilterContract_(
+    authorization, records, scopedStructures
+  );
+  const filterContractElapsed = Date.now() - filterContractStartedAt;
+  const selectable = filterContract.selectable || {};
+  const usedCargoIds = new Set(selectable.cargoIds || []);
+  const usedStructureIds = new Set(selectable.structureIds || []);
+  const usedLocalIds = new Set(selectable.localIds || []);
+  const scopedSedes = (context.sedes || []).filter(item =>
+    _directoryIsActive_(item) &&
+    authorizedSedeIds.has(_directoryKey_(item.id)) &&
+    (allAuthorizedSites || _directoryKey_(item.id) === selectedSedeId)
+  );
+  const scopedCargos = (context.cargos || []).filter(_directoryIsActive_);
+
+  const structureCatalogMap = _directoryCreateMap_(context.estructuraOrg);
+  const localCatalogMap = _directoryCreateMap_(context.locales);
+  const relationIntegrity = {
+    total: (context.estructuraLocal || []).length,
+    missingStructure: 0,
+    missingLocal: 0,
+    missingSite: 0,
+    crossSite: 0,
+    sample: []
+  };
+  (context.estructuraLocal || []).forEach(relation => {
+    const structure = structureCatalogMap.get(_directoryKey_(relation.estructura_id));
+    const local = localCatalogMap.get(_directoryKey_(relation.local_id));
+    if (!structure) relationIntegrity.missingStructure++;
+    if (!local) relationIntegrity.missingLocal++;
+    if (!structure || !local) return;
+    const structureSedeId = _directoryKey_(structure.sede_id);
+    const localSedeId = _directoryKey_(local.sede_id);
+    if (!structureSedeId || !localSedeId) relationIntegrity.missingSite++;
+    else if (structureSedeId !== localSedeId) {
+      relationIntegrity.crossSite++;
+      if (relationIntegrity.sample.length < 10) relationIntegrity.sample.push({
+        estructura_local_id: _directoryKey_(relation.id),
+        estructura_id: _directoryKey_(relation.estructura_id),
+        estructura_sede_id: structureSedeId,
+        local_id: _directoryKey_(relation.local_id),
+        local_sede_id: localSedeId
+      });
+    }
+  });
+
+  const catalogAndFilterContractElapsed = Date.now() - catalogAssemblyStartedAt;
+  const serverElapsed = Date.now() - startedAt;
+  const diagnostics = {
+    serverMs: serverElapsed,
+    stages: {
+      authorizationMs: authorizationElapsed,
+      contextMs: contextElapsed,
+      queryDescriptorMs: queryDescriptorElapsed,
+      assignmentQueryWallMs: queryElapsed,
+      coreQueryMs: coreQueryElapsed,
+      relationResolutionMs: relationIndexElapsed,
+      peopleEnrichmentMs: peopleEnrichmentElapsed,
+      peopleSource: peopleEnrichmentDiagnostics.peopleSource || 'unknown',
+      uniquePeople: peopleEnrichmentDiagnostics.uniquePeople || 0,
+      peopleRowsLoaded: peopleEnrichmentDiagnostics.peopleRowsLoaded || 0,
+      hierarchySortingMs: hierarchySortElapsed,
+      filterContractMs: filterContractElapsed,
+      catalogAndFilterContractMs: catalogAndFilterContractElapsed
+    },
+    counts: {
+      assignmentQueryPages: pageCount,
+      assignments: records.length,
+      expectedAssignments: expectedTotal || 0,
+      candidateCacheHits,
+      authorizedSnapshotCacheHits,
+      authorizedSnapshotSessionHits
+    },
+    corePages: corePageDiagnostics
+  };
+  console.log('[DirectoryService] Site data ms:', JSON.stringify({
+    authorization: authorizationElapsed,
+    context: contextElapsed,
+    queryDescriptor: queryDescriptorElapsed,
+    assignmentQueryWall: queryElapsed,
+    coreQuery: coreQueryElapsed,
+    relationResolution: relationIndexElapsed,
+    peopleEnrichment: peopleEnrichmentElapsed,
+    peopleSource: peopleEnrichmentDiagnostics.peopleSource || 'unknown',
+    uniquePeople: peopleEnrichmentDiagnostics.uniquePeople || 0,
+    peopleRowsLoaded: peopleEnrichmentDiagnostics.peopleRowsLoaded || 0,
+    hierarchySort: hierarchySortElapsed,
+    filterContract: filterContractElapsed,
+    catalogAndFilterContract: catalogAndFilterContractElapsed,
+    total: serverElapsed,
+    selectedSedeId: allAuthorizedSites ? 'ALL_AUTHORIZED' : selectedSedeId,
+    candidatePages: pageCount,
+    candidateCacheHits,
+    authorizedSnapshotCacheHits,
+    authorizedSnapshotSessionHits,
+    corePages: corePageDiagnostics,
+    records: records.length,
+    totalAssignments: expectedTotal || 0,
+    siteCatalogsRestricted: true,
+    allAuthorizedSites,
+    localOrderConfigured: localOrderResult.orderConfigured,
+    localOrderMissingCount: localOrderResult.missingOrderCount,
+    relationIntegrity
+  }));
 
   return {
     catalogs: {
-      sedes: context.sedes.filter(item => _directoryIsActive_(item) && allowedSedeIds.has(_directoryKey_(item.id))),
-      tiposLocal: context.tiposLocal.filter(item => _directoryIsActive_(item) && allowedLocalTypes.has(_directoryKey_(item.id))),
-      locales: context.locales.filter(item => _directoryIsActive_(item) && allowedLocalIds.has(_directoryKey_(item.id))),
-      tiposEstructura: context.tiposEstructura.filter(item => _directoryIsActive_(item) && allowedStructureTypes.has(_directoryKey_(item.id))),
+      sedes: scopedSedes,
+      tiposLocal: (context.tiposLocal || []).filter(item =>
+        _directoryIsActive_(item) && allowedLocalTypes.has(_directoryKey_(item.id))
+      ),
+      locales: catalogLocals,
+      tiposEstructura: (context.tiposEstructura || []).filter(item =>
+        _directoryIsActive_(item) && allowedStructureTypes.has(_directoryKey_(item.id))
+      ),
+      tiposDocumento: (context.documentTypes || [])
+        .filter(_directoryIsActive_)
+        .map(item => ({ id: _directoryKey_(item.id), name: _directoryText_(item.name) })),
       estructuraOrg: scopedStructures,
       estructuraLocal: scopedRelations,
-      cargos: context.cargos.filter(_directoryIsActive_)
+      cargos: scopedCargos,
+      filterContract,
+      filterVisibility: {
+        sede: allAuthorizedSites && scopedSedes.length > 1,
+        local: usedLocalIds.size > 0,
+        cargo: usedCargoIds.size > 1,
+        hierarchy: usedStructureIds.size > 0
+      },
+      localOrder: {
+        configured: localOrderResult.orderConfigured,
+        missingOrderCount: localOrderResult.missingOrderCount,
+        semantics: 'order entero positivo y único por sede_id y parent_id'
+      }
     },
-    people: view.people,
-    assignments: assignments,
+    records,
     summary: {
-      people: view.people.length,
-      assignments: assignments.length
-    }
+      people: new Set(records.map(item => _directoryKey_(item.persona_id)).filter(Boolean)).size,
+      assignments: records.length
+    },
+    diagnostics
   };
 }
 
+
 function listDirectoryPeople(options) {
   options = options || {};
-  const authorization = _directoryAuthorizationContext_('DIRECTORIOS_VER');
-  const context = _directoryLoadContext_();
-  const view = _directoryBuildView_(context, authorization);
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeAssignments: false,
+    includeDocumentTypes: false,
+    validateSnapshot: false
+  });
 
   const activeFilter = options.active === undefined ? true : options.active;
   if (activeFilter !== 'all' && typeof activeFilter !== 'boolean') {
     throw new Error('El filtro active debe ser true, false o "all".');
   }
 
-  const assignmentByPerson = new Map();
-  view.assignments.forEach(item => {
-    const key = _directoryKey_(item.persona_id);
-    if (!assignmentByPerson.has(key)) assignmentByPerson.set(key, []);
-    assignmentByPerson.get(key).push(item);
+  const offset = options.offset === undefined ? 0 : Number(options.offset);
+  if (!Number.isInteger(offset) || offset < 0) throw new Error('offset no es válido.');
+  const limit = options.limit === undefined || options.limit === null
+    ? 25
+    : Number(options.limit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new Error('limit debe estar entre 1 y 100.');
+  }
+
+  // La primera consulta aplica filtros y ámbito sobre las asignaciones y
+  // colapsa por persona. persona_id es también la clave de orden estable.
+  const peoplePage = _directoryExecuteAssignmentQuery_(
+    context,
+    authorization,
+    {
+      active: activeFilter,
+      search: options.search,
+      sortBy: 'persona_id',
+      sortDirection: 'asc'
+    },
+    'asignacion_id',
+    offset,
+    limit,
+    false,
+    'persona_id'
+  );
+
+  const pageAssignments = peoplePage.records || [];
+  const personaIds = Array.from(new Set(pageAssignments.map(item =>
+    _directoryKey_(item.persona_id)
+  ).filter(Boolean)));
+  if (!personaIds.length) {
+    return {
+      records: [],
+      total: Number(peoplePage.total) || 0,
+      offset,
+      limit,
+      hasMore: Boolean(peoplePage.hasMore)
+    };
+  }
+
+  // La identidad solo se consulta para las personas que aparecerán en la página.
+  const peopleResult = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+    { persona_id: personaIds },
+    {
+      searchField: 'persona_id',
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas
+    }
+  );
+  const people = peopleResult.records || [];
+  const peopleMap = _directoryCreateMap_(people, 'persona_id');
+  if (people.length !== personaIds.length || peopleMap.size !== personaIds.length) {
+    throw new Error('Una o más asignaciones autorizadas no tienen una identidad válida en el directorio.');
+  }
+
+  // La segunda consulta recupera todas las asignaciones visibles solo de la
+  // página actual, sin repetir el filtro de búsqueda/estado de selección.
+  const assignmentPage = _directoryExecuteAssignmentQuery_(
+    context,
+    authorization,
+    {
+      personaIds,
+      active: 'all',
+      sortBy: 'order',
+      sortDirection: 'asc'
+    },
+    'asignacion_id',
+    0,
+    1000,
+    false
+  );
+  if (Number(assignmentPage.total) > (assignmentPage.records || []).length) {
+    throw new Error('Las personas de la página superan el límite de asignaciones recuperables en una sola consulta.');
+  }
+
+  const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
+  const assignmentsByPerson = new Map();
+  (assignmentPage.records || []).forEach(item => {
+    const personaId = _directoryKey_(item.persona_id);
+    const person = peopleMap.get(personaId);
+    if (!person) throw new Error('Una asignación visible no tiene una persona válida.');
+    const location = _directoryResolveAssignmentLocation_(item, context, false);
+    const enriched = _directoryEnrichAssignment_(
+      item,
+      context,
+      relationMap,
+      peopleMap,
+      location
+    );
+    if (!assignmentsByPerson.has(personaId)) assignmentsByPerson.set(personaId, []);
+    assignmentsByPerson.get(personaId).push(enriched);
   });
 
-  let records = view.people.map(person => Object.assign({}, person, {
-    assignments: assignmentByPerson.get(_directoryKey_(person.persona_id)) || []
-  }));
-
-  if (activeFilter !== 'all') {
-    records = records.filter(person =>
-      person.assignments.some(item => _directoryIsActive_(item) === activeFilter)
-    );
-  }
-
-  const search = _directoryText_(options.search).toLocaleLowerCase();
-  if (search) {
-    records = records.filter(person =>
-      [person.nombres, person.apellidos].some(value =>
-        _directoryText_(value).toLocaleLowerCase().includes(search)
-      )
-    );
-  }
-
-  records.sort((a, b) =>
-    _directoryCompare_(a.apellidos, b.apellidos) ||
-    _directoryCompare_(a.nombres, b.nombres)
-  );
-
-  const total = records.length;
-  const offset = options.offset === undefined ? 0 : Number(options.offset);
-  if (!Number.isInteger(offset) || offset < 0) throw new Error('offset no es válido.');
-
-  let limit = null;
-  if (options.limit !== undefined && options.limit !== null) {
-    limit = Number(options.limit);
-    if (!Number.isInteger(limit) || limit < 0) throw new Error('limit no es válido.');
-    records = records.slice(offset, offset + limit);
-  } else {
-    records = records.slice(offset);
-  }
-
-  return { records: records, total: total, offset: offset, limit: limit };
-}
-
-function listDirectoryAssignments(options) {
-  options = options || {};
-  const authorization = _directoryAuthorizationContext_('DIRECTORIOS_VER');
-  const context = _directoryLoadContext_();
-  const view = _directoryBuildView_(context, authorization);
-
-  const activeFilter = options.active === undefined ? true : options.active;
-  if (activeFilter !== 'all') {
-    if (typeof activeFilter !== 'boolean') throw new Error('El filtro active debe ser true, false o "all".');
-    view.assignments = view.assignments.filter(item =>
-      _directoryIsActive_(item) === activeFilter
-    );
-  }
-
-  if (options.personaId) {
-    view.assignments = view.assignments.filter(item =>
-      _directoryKey_(item.persona_id) === _directoryKey_(options.personaId)
-    );
-  }
-
-  if (options.estructuraLocalId) {
-    view.assignments = view.assignments.filter(item =>
-      _directoryKey_(item.estructura_local_id) === _directoryKey_(options.estructuraLocalId)
-    );
-  }
-
-  const search = _directoryText_(options.search).toLocaleLowerCase();
-  if (search) {
-    const fields = [
-      'nombres', 'apellidos', 'cargo_name', 'condicion_cargo',
-      'anexo', 'estructura_name', 'estructura_path', 'local_name',
-      'sede_name', 'referencia', 'observaciones'
-    ];
-
-    view.assignments = view.assignments.filter(record =>
-      fields.some(field => _directoryText_(record[field]).toLocaleLowerCase().includes(search))
-    );
-  }
-
-  const sortBy = options.sortBy || 'order';
-  const directionValue = _directoryText_(options.sortDirection || 'asc').toLowerCase();
-  if (!['asc', 'desc'].includes(directionValue)) throw new Error('sortDirection debe ser "asc" o "desc".');
-
-  const direction = directionValue === 'desc' ? -1 : 1;
-  view.assignments.sort((a, b) =>
-    _directoryCompare_(a[sortBy], b[sortBy]) * direction ||
-    _directoryCompare_(a.apellidos, b.apellidos) ||
-    _directoryCompare_(a.nombres, b.nombres)
-  );
-
-  const total = view.assignments.length;
-  const offset = options.offset === undefined ? 0 : Number(options.offset);
-  if (!Number.isInteger(offset) || offset < 0) throw new Error('offset no es válido.');
-
-  let limit = null;
-  if (options.limit !== undefined && options.limit !== null) {
-    limit = Number(options.limit);
-    if (!Number.isInteger(limit) || limit < 0) throw new Error('limit no es válido.');
-    view.assignments = view.assignments.slice(offset, offset + limit);
-  } else {
-    view.assignments = view.assignments.slice(offset);
-  }
+  const records = personaIds.map(personaId => {
+    const person = peopleMap.get(personaId);
+    return Object.assign({}, person, {
+      assignments: assignmentsByPerson.get(personaId) || []
+    });
+  });
 
   return {
-    records: view.assignments,
-    total: total,
-    offset: offset,
-    limit: limit
+    records,
+    total: Number(peoplePage.total) || 0,
+    offset,
+    limit,
+    hasMore: Boolean(peoplePage.hasMore)
   };
 }
 
-function getDirectoryPersonById(personaId) {
-  const authorization = _directoryAuthorizationContext_('DIRECTORIOS_VER');
-  const context = _directoryLoadContext_();
-  const person = context.personas.find(item =>
-    _directoryKey_(item.persona_id) === _directoryKey_(personaId)
-  );
-  if (!person) return null;
+function listDirectoryAssignments(options) {
+  const totalStartedAt = Date.now();
+  options = options || {};
+  const authStartedAt = Date.now();
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
+  const authElapsed = Date.now() - authStartedAt;
+  const contextStartedAt = Date.now();
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeAssignments: false,
+    includeDocumentTypes: false,
+    validateSnapshot: false
+  });
+  const contextElapsed = Date.now() - contextStartedAt;
 
-  const view = _directoryBuildView_(context, authorization);
-  const assignments = view.assignments.filter(item =>
-    _directoryKey_(item.persona_id) === _directoryKey_(personaId)
-  );
-
-  if (!assignments.length && context.asignaciones.some(item =>
-    _directoryKey_(item.persona_id) === _directoryKey_(personaId)
-  )) {
-    throw new Error('No tienes ámbito de acceso para consultar esta persona.');
+  let offset;
+  let limit;
+  let page = null;
+  let pageSize = null;
+  if (options.page !== undefined || options.pageSize !== undefined) {
+    page = Math.max(1, Number.parseInt(options.page, 10) || 1);
+    pageSize = Number.parseInt(options.pageSize, 10) || 10;
+    if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+      throw new Error('pageSize debe estar entre 1 y 100.');
+    }
+    offset = (page - 1) * pageSize;
+    limit = pageSize;
+  } else {
+    offset = options.offset === undefined ? 0 : Number(options.offset);
+    if (!Number.isInteger(offset) || offset < 0) throw new Error('offset no es válido.');
+    limit = options.limit === undefined || options.limit === null ? 1000 : Number(options.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+      throw new Error('limit debe estar entre 1 y 1000.');
+    }
   }
 
-  if (!assignments.length) return null;
+  const queryStartedAt = Date.now();
+  const includeCargoOptions = options.includeCargoOptions === true;
+  const result = _directoryExecuteAssignmentQuery_(
+    context,
+    authorization,
+    options,
+    'asignacion_id',
+    offset,
+    limit,
+    true,
+    '',
+    includeCargoOptions ? ['cargo_id'] : [],
+    []
+  );
+  const availableCargoIds = new Set(
+    result.distinctValues && result.distinctValues.cargo_id || []
+  );
+  const cargoOptions = includeCargoOptions
+    ? (context.cargos || [])
+        .filter(item => _directoryIsActive_(item) &&
+          availableCargoIds.has(_directoryKey_(item.id)))
+        .map(item => ({ id: _directoryKey_(item.id), name: _directoryText_(item.name) }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'es'))
+    : null;
+  console.log('[DirectoryService] Assignment page ms:', JSON.stringify({
+    authorization: authElapsed,
+    context: contextElapsed,
+    queryAndHydration: Date.now() - queryStartedAt,
+    total: Date.now() - totalStartedAt,
+    page: page || 1,
+    pageSize: limit,
+    cargoOptions: includeCargoOptions,
+    rows: (result.records || []).length,
+    totalRows: Number(result.total) || 0
+  }));
+  return {
+    records: result.records || [],
+    total: Number(result.total) || 0,
+    offset,
+    limit,
+    page,
+    pageSize,
+    ...(includeCargoOptions ? { cargoOptions } : {})
+  };
+}
 
-  return Object.assign({}, person, { assignments: assignments });
+
+function _directoryBuildPersonDetail_(id, authorization) {
+  const contextStartedAt = Date.now();
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    // Reutiliza el contexto compartido que precalientan la pantalla y los
+    // catálogos del formulario. No carga datos personales ni asignaciones completas.
+    includePeople: true,
+    includeAssignments: false,
+    includeDocumentTypes: false,
+    validateSnapshot: false
+  });
+  const contextMs = Date.now() - contextStartedAt;
+
+  const assignmentStartedAt = Date.now();
+  const assignmentResult = _directoryExecuteAssignmentQuery_(
+    context,
+    authorization,
+    { personaId: id, active: 'all', sortBy: 'order' },
+    'asignacion_id',
+    0,
+    1000,
+    false
+  );
+  const assignmentQueryMs = Date.now() - assignmentStartedAt;
+  const assignments = assignmentResult.records || [];
+  if (!assignments.length) return null;
+  if (Number(assignmentResult.total) > assignments.length) {
+    throw new Error('La persona supera el límite de asignaciones recuperables en una sola consulta.');
+  }
+
+  // El contexto ya contiene la identidad desde el precalentamiento compartido.
+  // Evita una segunda lectura puntual de personas al abrir repetidamente Editar.
+  const personLookupStartedAt = Date.now();
+  const matchingPeople = (context.personas || []).filter(item =>
+    _directoryKey_(item.persona_id) === id
+  );
+  const personLookupMs = Date.now() - personLookupStartedAt;
+  if (matchingPeople.length > 1) {
+    throw new Error('El identificador de persona está duplicado en el directorio.');
+  }
+  const person = matchingPeople[0] || null;
+  if (!person) {
+    throw new Error('Las asignaciones autorizadas no tienen una identidad válida en el directorio.');
+  }
+
+  const personalDataLookupStartedAt = Date.now();
+  const personalDataResult = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
+    { servidor_id: id },
+    {
+      searchField: 'servidor_id',
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.datosPersonales
+    }
+  );
+  const personalDataLookupMs = Date.now() - personalDataLookupStartedAt;
+  if (personalDataResult.total > 1) {
+    throw new Error('La ficha de datos personales está duplicada para la persona solicitada.');
+  }
+
+  const mappingStartedAt = Date.now();
+  const enrichedAssignments = assignments.map(item => Object.assign({}, item, {
+    nombres: person.nombres,
+    apellidos: person.apellidos,
+    correo_institucional: person.correo_institucional
+  }));
+  const mappingMs = Date.now() - mappingStartedAt;
+  const diagnostics = {
+    stages: {
+      contextMs,
+      assignmentQueryMs,
+      personLookupMs,
+      personalDataLookupMs,
+      responseMappingMs: mappingMs
+    },
+    assignments: assignments.length
+  };
+
+  return Object.assign({}, person, {
+    assignments: enrichedAssignments,
+    personalData: personalDataResult.records[0] || null,
+    diagnostics
+  });
+}
+
+
+function getDirectoryPersonById(personaId) {
+  const startedAt = Date.now();
+  const id = _directoryKey_(personaId);
+  if (!id) throw new Error('Debes proporcionar persona_id.');
+
+  // La autorización se vuelve a resolver en cada apertura. El usuario y la
+  // huella de permisos/ámbitos forman parte de la clave; los cambios de fuentes
+  // invalidan el valor por generación en SUNARP Core.
+  const authorizationStartedAt = Date.now();
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_EDITAR');
+  const authorizationMs = Date.now() - authorizationStartedAt;
+  const userId = _directoryKey_(authorization.auth && authorization.auth.personaId);
+  if (!userId) {
+    throw new Error('No se pudo identificar al usuario autorizado para recuperar la ficha.');
+  }
+  const authorizationFingerprint = _directoryAuthorizationCacheFingerprint_(authorization);
+  const cacheKey = 'directory-person-detail:v1:' + userId + ':' +
+    authorizationFingerprint + ':' + id;
+  const cacheSources = _directoryGetSiteDataCacheSources_().slice();
+  cacheSources.push(_directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales));
+
+  const cacheStartedAt = Date.now();
+  const cached = typeof SUNARPCore.getOrBuildCachedValue === 'function'
+    ? SUNARPCore.getOrBuildCachedValue(
+        cacheKey,
+        cacheSources,
+        () => _directoryBuildPersonDetail_(id, authorization),
+        DIRECTORY_PERSON_DETAIL_CACHE_TTL
+      )
+    : {
+        value: _directoryBuildPersonDetail_(id, authorization),
+        cacheHit: false,
+        cacheStored: false
+      };
+  if (!cached || !cached.value) return null;
+
+  const cachedDiagnostics = cached.value.diagnostics || {};
+  const diagnostics = Object.assign({}, cachedDiagnostics, {
+    serverMs: Date.now() - startedAt,
+    stages: Object.assign({}, cachedDiagnostics.stages || {}, {
+      authorizationMs,
+      cacheLookupMs: Date.now() - cacheStartedAt
+    }),
+    cache: {
+      hit: cached.cacheHit === true,
+      stored: cached.cacheStored === true
+    }
+  });
+  console.log('[DirectoryService] Person detail timing:', JSON.stringify({
+    serverMs: diagnostics.serverMs,
+    authorizationMs,
+    cacheLookupMs: diagnostics.stages.cacheLookupMs,
+    cacheHit: diagnostics.cache.hit,
+    cacheStored: diagnostics.cache.stored,
+    assignments: cached.value.assignments.length
+  }));
+
+  return Object.assign({}, cached.value, { diagnostics });
 }
 
 function getDirectoryAssignmentsByPersonId(personaId, options) {
@@ -943,92 +2958,121 @@ function getDirectoryAssignmentsByPersonId(personaId, options) {
 }
 
 function getDirectoryAssignmentById(asignacionId) {
-  const authorization = _directoryAuthorizationContext_('DIRECTORIOS_VER');
-  const context = _directoryLoadContext_();
-  const assignment = context.asignaciones.find(item =>
-    _directoryKey_(item.asignacion_id) === _directoryKey_(asignacionId)
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeAssignments: false,
+    includeDocumentTypes: false,
+    validateSnapshot: false
+  });
+  const assignment = _directoryFindAuthorizedAssignmentById_(
+    context, authorization, asignacionId
   );
   if (!assignment) return null;
 
+  const personResult = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+    { persona_id: _directoryKey_(assignment.persona_id) },
+    { searchField: 'persona_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas }
+  );
+  if (personResult.total !== 1) {
+    throw new Error('No se pudo resolver la identidad de la persona asignada.');
+  }
+  context.personas = personResult.records;
+  const location = _directoryResolveAssignmentLocation_(assignment, context, false);
   const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
   const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
-  const enriched = _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap);
-
-  const relation = relationMap.get(_directoryKey_(assignment.estructura_local_id));
-  _directoryAssertScope_(
-    authorization,
-    Object.assign({}, enriched, {
-      estructura_id: relation ? relation.estructura_id : '',
-      sede_id: relation ? relation.sede_id : ''
-    }),
-    'Consulta de una asignación fuera del ámbito asignado.'
-  );
-
-  return enriched;
+  return _directoryEnrichAssignment_(assignment, context, relationMap, peopleMap, location);
 }
 
-/**
- * Crea o actualiza exclusivamente la identidad de una persona.
- * No se fusionan personas por coincidencia de nombres o apellidos:
- * esos campos no permiten distinguir homónimos.
- */
-function saveDirectoryPerson(payload) {
+function _saveDirectoryPerson_(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('Debes proporcionar los datos de la persona.');
   }
 
   _directoryAssertAllowedFields_(
     payload,
-    ['persona_id', 'nombres', 'apellidos'],
+    ['persona_id', 'nombres', 'apellidos', 'correo_institucional'],
     'personas'
   );
 
   const personaId = _directoryText_(payload.persona_id);
   const isUpdate = Boolean(personaId);
   const authorization = _directoryAuthorizationContext_(
-    isUpdate ? 'DIRECTORIOS_EDITAR' : 'DIRECTORIOS_CREAR'
+    isUpdate ? 'INFORMACION_PERSONAL_EDITAR' : 'INFORMACION_PERSONAL_CREAR'
   );
-  const context = _directoryLoadContext_();
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeAssignments: false,
+    includeDocumentTypes: false
+  });
 
-  const existing = isUpdate
-    ? context.personas.find(item => _directoryKey_(item.persona_id) === personaId)
-    : null;
-
-  if (isUpdate && !existing) {
-    throw new Error('No se encontró la persona "' + personaId + '".');
+  const existing = isUpdate ? _directoryFindPersonById_(personaId) : null;
+  if (isUpdate && !existing) throw new Error('No se encontró la persona "' + personaId + '".');
+  if (isUpdate) {
+    const linkedResult = SUNARPCore.findRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones),
+      { persona_id: personaId },
+      {
+        searchField: 'persona_id',
+        requiredHeaders: DIRECTORY_REQUIRED_HEADERS.asignaciones
+      }
+    );
+    _directoryAssertPersonMutationScope_(authorization, existing, linkedResult.records, context);
   }
 
-  if (isUpdate) {
-    const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
-    _directoryAssertPersonMutationScope_(
-      authorization,
-      existing,
-      context.asignaciones,
-      relationMap
+  const email = _directoryText_(
+    payload.correo_institucional !== undefined
+      ? payload.correo_institucional
+      : existing && existing.correo_institucional
+  ).toLowerCase();
+
+  if (email) {
+    _accessValidateEmail_(email);
+    const matches = SUNARPCore.searchRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+      email,
+      ['correo_institucional'],
+      { matchCase: false }
     );
+    const duplicateEmail = matches.records.some(item =>
+      _directoryKey_(item.persona_id) !== _directoryKey_(personaId) &&
+      _directoryText_(item.correo_institucional).toLowerCase() === email
+    );
+    if (duplicateEmail) {
+      throw new Error('El correo institucional ya está asociado a otra persona.');
+    }
+  }
+
+  let peopleForId = [];
+  if (!isUpdate) {
+    const peopleResult = SUNARPCore.listRecordsFromSourcesCached([{
+      key: 'people',
+      source: _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas
+    }], DIRECTORY_DATA_CACHE_TTL);
+    peopleForId = peopleResult.people || [];
   }
 
   const record = {
     persona_id: isUpdate
       ? personaId
-      : _directoryGenerateId_(context.personas, DIRECTORY_SERVICE_CONFIG.ids.persona),
-    nombres: _directoryText_(
-      payload.nombres !== undefined ? payload.nombres : existing && existing.nombres
-    ),
-    apellidos: _directoryText_(
-      payload.apellidos !== undefined ? payload.apellidos : existing && existing.apellidos
-    )
+      : _directoryGenerateId_(peopleForId, DIRECTORY_SERVICE_CONFIG.ids.persona),
+    nombres: _directoryText_(payload.nombres !== undefined ? payload.nombres : existing && existing.nombres),
+    apellidos: _directoryText_(payload.apellidos !== undefined ? payload.apellidos : existing && existing.apellidos),
+    correo_institucional: email
   };
 
   const schema = _directoryGetPersonSchema_();
   SUNARPCore.assertValidRecord(record, schema);
-  _directoryAssertNoDuplicatePerson_(record, context.personas);
 
   const source = _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas);
   const event = {
     accion: isUpdate ? 'EDITAR_PERSONA_DIRECTORIO' : 'CREAR_PERSONA_DIRECTORIO',
-    modulo: 'DIRECTORIOS',
-    tipo_entidad: 'PERSONA',
+    modulo: 'INFORMACION_PERSONAL',
+    tipo_entidad: 'SERVIDOR',
     registro_id: record.persona_id,
     registro_nombre: [record.nombres, record.apellidos].filter(Boolean).join(' '),
     detalle: isUpdate ? 'Actualización de identidad de una persona.' : 'Registro de una persona.',
@@ -1039,15 +3083,13 @@ function saveDirectoryPerson(payload) {
     const result = isUpdate
       ? SUNARPCore.updateRecord(source, 'persona_id', record.persona_id, {
           nombres: record.nombres,
-          apellidos: record.apellidos
-        }, { schema: schema, uniqueFields: ['nombres', 'apellidos'] })
+          apellidos: record.apellidos,
+          correo_institucional: record.correo_institucional
+        }, { schema: schema })
       : SUNARPCore.insertRecord(source, record, {
           idField: 'persona_id',
-          uniqueFields: ['nombres', 'apellidos'],
           schema: schema
         });
-
-    _directoryInvalidateCache_();
 
     return {
       value: Object.assign({}, result, { person: record }),
@@ -1055,84 +3097,677 @@ function saveDirectoryPerson(payload) {
     };
   });
 }
+function _directoryNormalizeDocument_(value, label) {
+  const normalized = _directoryText_(value).replace(/\s+/g, '').toUpperCase();
+  if (!normalized) throw new Error(label + ' es obligatorio.');
+  if (normalized.length > 30) throw new Error(label + ' no puede superar 30 caracteres.');
+  return normalized;
+}
+
+function _directoryNormalizeDateInput_(value, label) {
+  if (value === null || value === undefined || value === '') return '';
+
+  let normalized = '';
+  if (value instanceof Date) {
+    if (isNaN(value.getTime())) throw new Error(label + ' no es una fecha válida.');
+    normalized = Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  } else {
+    normalized = _directoryText_(value);
+  }
+
+  const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) throw new Error(label + ' debe tener el formato AAAA-MM-DD.');
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    throw new Error(label + ' no corresponde a una fecha del calendario.');
+  }
+
+  return normalized;
+}
+
+function _directoryFindPersonById_(personaId) {
+  const result = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+    { persona_id: _directoryKey_(personaId) },
+    { searchField: 'persona_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas }
+  );
+  if (result.total > 1) throw new Error('El identificador de persona está duplicado en el directorio.');
+  return result.records[0] || null;
+}
+
+
+function _directoryFindPersonalDataById_(personaId) {
+  const result = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
+    { servidor_id: _directoryKey_(personaId) },
+    { searchField: 'servidor_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.datosPersonales }
+  );
+  if (result.total > 1) throw new Error('La ficha de datos personales está duplicada para la persona solicitada.');
+  return result.records[0] || null;
+}
+
+
+function _directoryCreatePersonalDataMap_(records) {
+  const byPerson = new Map();
+  (records || []).forEach(record => {
+    const personaId = _directoryKey_(record.servidor_id);
+    if (personaId) byPerson.set(personaId, record);
+  });
+  return byPerson;
+}
+
+function _directoryAssertDocumentAvailable_(type, number, records, excludedPersonaId) {
+  const normalizedType = _directoryNormalizeDocument_(type, 'Tipo de documento');
+  const normalizedNumber = _directoryNormalizeDocument_(number, 'Número de documento');
+  const matches = Array.isArray(records)
+    ? { records: records }
+    : SUNARPCore.findRecordsByFields(
+        _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
+        { numero_documento: normalizedNumber },
+        {
+          searchField: 'numero_documento',
+          requiredHeaders: DIRECTORY_REQUIRED_HEADERS.datosPersonales,
+          matchCase: false,
+          ignoreWhitespace: true
+        }
+      );
+  const duplicate = matches.records.find(item =>
+    _directoryKey_(item.servidor_id) !== _directoryKey_(excludedPersonaId) &&
+    _directoryText_(item.tipo_documento).replace(/\s+/g, '').toUpperCase() === normalizedType &&
+    _directoryText_(item.numero_documento).replace(/\s+/g, '').toUpperCase() === normalizedNumber
+  );
+  if (duplicate) {
+    throw new Error('El documento ya está registrado para otra persona.');
+  }
+  return { tipo_documento: normalizedType, numero_documento: normalizedNumber };
+}
+function _directoryFormatDateInput_(value) {
+  if (value === null || value === undefined || value === '') return '';
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  }
+  const text = _directoryText_(value);
+  const iso = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (iso) return iso[1];
+  return text;
+}
+
+function saveDirectoryPersonalData(payload) {
+  return _saveDirectoryPersonalData_(payload, false);
+}
 
 /**
- * Crea o actualiza una asignación. La identidad nunca se actualiza aquí.
- * local_id se obtiene de estructura_local y se valida contra el valor recibido.
+ * Rutina interna. allowUnassigned solo puede activarse desde el flujo
+ * coordinado de alta; nunca se acepta como dato enviado por el navegador.
  */
+function _saveDirectoryPersonalData_(payload, allowUnassigned) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('Debes proporcionar los datos personales.');
+  }
+  _directoryAssertAllowedFields_(payload, [
+    'servidor_id', 'tipo_documento', 'numero_documento',
+    'fecha_nacimiento', 'fecha_inicio_servicios', 'fecha_cese'
+  ], 'datos personales');
+
+  const personaId = _directoryText_(payload.servidor_id);
+  if (!personaId) throw new Error('La persona vinculada es obligatoria.');
+
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeAssignments: false,
+    includeDocumentTypes: true
+  });
+  const personResult = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+    { persona_id: personaId },
+    { searchField: 'persona_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas }
+  );
+  if (personResult.total !== 1) {
+    throw new Error('No existe una identidad única para la ficha de datos personales.');
+  }
+  const person = personResult.records[0];
+  const assignmentsResult = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones),
+    { persona_id: personaId },
+    {
+      searchField: 'persona_id',
+      requiredHeaders: DIRECTORY_REQUIRED_HEADERS.asignaciones
+    }
+  );
+  const linkedAssignments = assignmentsResult.records || [];
+  const createWithoutAssignment = allowUnassigned === true && !linkedAssignments.length;
+  const authorization = _directoryAuthorizationContext_(
+    createWithoutAssignment ? 'INFORMACION_PERSONAL_CREAR' : 'INFORMACION_PERSONAL_EDITAR'
+  );
+  if (!createWithoutAssignment) {
+    _directoryAssertPersonMutationScope_(authorization, person, linkedAssignments, context);
+  }
+
+  const normalizedDocument = _directoryAssertDocumentAvailable_(
+    payload.tipo_documento,
+    payload.numero_documento,
+    null,
+    personaId
+  );
+  const record = {
+    servidor_id: personaId,
+    tipo_documento: normalizedDocument.tipo_documento,
+    numero_documento: normalizedDocument.numero_documento,
+    fecha_nacimiento: _directoryNormalizeDateInput_(payload.fecha_nacimiento, 'Fecha de nacimiento'),
+    fecha_inicio_servicios: _directoryNormalizeDateInput_(payload.fecha_inicio_servicios, 'Fecha de inicio de servicios'),
+    fecha_cese: _directoryNormalizeDateInput_(payload.fecha_cese, 'Fecha de cese')
+  };
+  const source = _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales);
+  const existingResult = SUNARPCore.findRecordsByFields(
+    source,
+    { servidor_id: personaId },
+    { searchField: 'servidor_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.datosPersonales }
+  );
+  if (existingResult.total > 1) {
+    throw new Error('La ficha de datos personales está duplicada para la persona solicitada.');
+  }
+  const existing = existingResult.records[0] || null;
+  const event = {
+    accion: existing ? 'EDITAR_DATOS_PERSONALES_DIRECTORIO' : 'CREAR_DATOS_PERSONALES_DIRECTORIO',
+    modulo: 'INFORMACION_PERSONAL',
+    tipo_entidad: 'SERVIDOR',
+    registro_id: personaId,
+    registro_nombre: [person.nombres, person.apellidos].filter(Boolean).join(' '),
+    detalle: 'Registro de datos personales y validación única del documento de identidad.',
+    datos_antes: existing
+  };
+
+  return _accessRunAudited_(authorization.auth, event, () => {
+    const result = existing
+      ? SUNARPCore.updateRecord(source, 'servidor_id', personaId, {
+          tipo_documento: record.tipo_documento,
+          numero_documento: record.numero_documento,
+          fecha_nacimiento: record.fecha_nacimiento,
+          fecha_inicio_servicios: record.fecha_inicio_servicios,
+          fecha_cese: record.fecha_cese
+        }, { uniqueFields: ['tipo_documento', 'numero_documento'] })
+      : SUNARPCore.insertRecord(source, record, {
+          idField: 'servidor_id',
+          uniqueFields: ['tipo_documento', 'numero_documento']
+        });
+
+    return { value: Object.assign({}, result, { personalData: record }), auditAfter: record };
+  });
+}
+function saveDirectoryEntry(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('Debes proporcionar los datos del registro.');
+  }
+  if (!Array.isArray(payload.assignments)) {
+    return _saveDirectoryEntrySingle_(payload);
+  }
+  if (!payload.assignments.length) throw new Error('Debes registrar al menos una asignación.');
+
+  const assignments = payload.assignments;
+  const assignmentIds = assignments.map(item => _directoryText_(item && item.asignacion_id)).filter(Boolean);
+  if (new Set(assignmentIds).size !== assignmentIds.length) {
+    throw new Error('El formulario contiene asignaciones duplicadas.');
+  }
+  if (payload.removedAssignmentIds !== undefined && !Array.isArray(payload.removedAssignmentIds)) {
+    throw new Error('La lista de asignaciones retiradas no tiene un formato válido.');
+  }
+  const removedAssignmentIds = Array.from(new Set(
+    (payload.removedAssignmentIds || []).map(_directoryText_).filter(Boolean)
+  ));
+  if (removedAssignmentIds.length !== (payload.removedAssignmentIds || []).filter(Boolean).length) {
+    throw new Error('La lista de asignaciones retiradas contiene identificadores duplicados.');
+  }
+
+  const personaId = _directoryText_(payload.persona_id);
+  const isNewPerson = !personaId;
+  if (isNewPerson && removedAssignmentIds.length) {
+    throw new Error('No se pueden retirar asignaciones de una persona que todavía no está registrada.');
+  }
+  if (assignmentIds.some(id => removedAssignmentIds.includes(id))) {
+    throw new Error('Una asignación no puede conservarse y retirarse al mismo tiempo.');
+  }
+
+  let previousPerson = null;
+  let previousPersonalData = null;
+  let previousAssignments = [];
+  if (!isNewPerson) {
+    previousPerson = _directoryFindPersonById_(personaId);
+    if (!previousPerson) throw new Error('No se encontró la persona que se intenta editar.');
+    previousPersonalData = _directoryFindPersonalDataById_(personaId);
+    const previousResult = SUNARPCore.findRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones),
+      { persona_id: personaId },
+      { searchField: 'persona_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.asignaciones }
+    );
+    previousAssignments = previousResult.records || [];
+    const previousById = new Map(previousAssignments.map(item => [
+      _directoryText_(item.asignacion_id), item
+    ]));
+    assignmentIds.forEach(id => {
+      if (!previousById.has(id)) {
+        throw new Error('La asignación ' + id + ' no pertenece a la persona que se está editando.');
+      }
+    });
+    removedAssignmentIds.forEach(id => {
+      if (!previousById.has(id)) {
+        throw new Error('La asignación ' + id + ' no pertenece a la persona que se está editando.');
+      }
+    });
+  }
+
+  let resolvedPersonaId = personaId;
+  const savedAssignmentIds = [];
+  const deletedAssignmentIds = [];
+  try {
+    const firstPayload = Object.assign({}, payload, assignments[0]);
+    delete firstPayload.assignments;
+    delete firstPayload.removedAssignmentIds;
+    const firstResult = _saveDirectoryEntrySingle_(firstPayload);
+    resolvedPersonaId = resolvedPersonaId ||
+      _directoryText_(firstResult.person && firstResult.person.persona_id) ||
+      _directoryText_(firstResult.person && firstResult.person.person && firstResult.person.person.persona_id);
+    if (!resolvedPersonaId) throw new Error('No se pudo resolver el identificador del servidor creado.');
+    const firstAssignment = firstResult.assignment && firstResult.assignment.assignment
+      ? firstResult.assignment.assignment
+      : firstResult.assignment;
+    if (firstAssignment && firstAssignment.asignacion_id) {
+      savedAssignmentIds.push(_directoryText_(firstAssignment.asignacion_id));
+    }
+
+    const savedAssignments = firstAssignment ? [firstAssignment] : [];
+    for (let index = 1; index < assignments.length; index++) {
+      const item = assignments[index];
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        throw new Error('La asignación ' + (index + 1) + ' no tiene un formato válido.');
+      }
+      const result = saveDirectoryAssignment(Object.assign({}, item, {
+        persona_id: resolvedPersonaId
+      }));
+      const assignment = result.assignment || result;
+      if (assignment && assignment.asignacion_id) {
+        savedAssignmentIds.push(_directoryText_(assignment.asignacion_id));
+      }
+      savedAssignments.push(assignment);
+    }
+
+    // La tabla de asignaciones trabaja como un borrador: retirar una fila no
+    // borra datos hasta confirmar el formulario completo. Las bajas se aplican
+    // al final, una vez guardadas todas las filas que se mantienen.
+    removedAssignmentIds.forEach(id => {
+      deleteDirectoryAssignment(id);
+      deletedAssignmentIds.push(id);
+    });
+
+    return Object.assign({}, firstResult, {
+      success: true,
+      assignments: savedAssignments,
+      message: isNewPerson
+        ? 'El servidor y sus ' + savedAssignments.length + ' asignación(es) se registraron correctamente.'
+        : 'Los datos del servidor y sus ' + savedAssignments.length + ' asignación(es) se actualizaron correctamente.'
+    });
+  } catch (error) {
+    const rollbackErrors = [];
+    if (isNewPerson && resolvedPersonaId) {
+      try {
+        deleteDirectoryPerson(resolvedPersonaId);
+      } catch (rollbackError) {
+        rollbackErrors.push('servidor recién creado: ' + rollbackError.message);
+      }
+    } else if (resolvedPersonaId) {
+      try {
+        _saveDirectoryPerson_({
+          persona_id: resolvedPersonaId,
+          nombres: previousPerson.nombres,
+          apellidos: previousPerson.apellidos,
+          correo_institucional: previousPerson.correo_institucional
+        });
+      } catch (rollbackError) {
+        rollbackErrors.push('identidad: ' + rollbackError.message);
+      }
+
+      try {
+        if (previousPersonalData) {
+          _saveDirectoryPersonalData_({
+            servidor_id: resolvedPersonaId,
+            tipo_documento: previousPersonalData.tipo_documento,
+            numero_documento: previousPersonalData.numero_documento,
+            fecha_nacimiento: _directoryFormatDateInput_(previousPersonalData.fecha_nacimiento),
+            fecha_inicio_servicios: _directoryFormatDateInput_(previousPersonalData.fecha_inicio_servicios),
+            fecha_cese: _directoryFormatDateInput_(previousPersonalData.fecha_cese)
+          }, false);
+        } else if (_directoryFindPersonalDataById_(resolvedPersonaId)) {
+          SUNARPCore.deleteRecord(
+            _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
+            'servidor_id',
+            resolvedPersonaId
+          );
+        }
+      } catch (rollbackError) {
+        rollbackErrors.push('datos personales: ' + rollbackError.message);
+      }
+
+      const previousIds = new Set(previousAssignments.map(item => _directoryText_(item.asignacion_id)));
+      savedAssignmentIds.filter(id => !previousIds.has(id)).forEach(id => {
+        try {
+          SUNARPCore.deleteRecord(
+            _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones),
+            'asignacion_id',
+            id
+          );
+        } catch (rollbackError) {
+          rollbackErrors.push('nueva asignación ' + id + ': ' + rollbackError.message);
+        }
+      });
+      const deletedSet = new Set(deletedAssignmentIds);
+      previousAssignments.forEach(item => {
+        try {
+          if (deletedSet.has(_directoryText_(item.asignacion_id))) {
+            SUNARPCore.insertRecord(
+              _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones),
+              item,
+              {
+                idField: 'asignacion_id',
+                schema: _directoryGetAssignmentSchema_()
+              }
+            );
+          } else {
+            saveDirectoryAssignment({
+              asignacion_id: item.asignacion_id,
+              persona_id: item.persona_id,
+              cargo_id: item.cargo_id,
+              condicion_cargo: item.condicion_cargo,
+              anexo: item.anexo,
+              estructura_local_id: item.estructura_local_id,
+              local_id: item.local_id,
+              observaciones: item.observaciones,
+              active: _directoryNormalizeBoolean_(item.active),
+              order: item.order
+            });
+          }
+        } catch (rollbackError) {
+          rollbackErrors.push('asignación ' + item.asignacion_id + ': ' + rollbackError.message);
+        }
+      });
+    }
+    if (rollbackErrors.length) {
+      throw new Error(error.message + ' La reversión de asignaciones requiere revisión: ' + rollbackErrors.join(' | '));
+    }
+    throw error;
+  }
+}
+
+function _saveDirectoryEntrySingle_(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('Debes proporcionar los datos del registro.');
+  }
+  _directoryAssertAllowedFields_(payload, [
+    'persona_id', 'asignacion_id', 'nombres', 'apellidos', 'correo_institucional',
+    'tipo_documento', 'numero_documento', 'fecha_nacimiento',
+    'fecha_inicio_servicios', 'fecha_cese', 'cargo_id',
+    'condicion_cargo', 'anexo', 'estructura_local_id',
+    'observaciones', 'local_id'
+  ], 'registro del directorio');
+
+  const personaId = _directoryText_(payload.persona_id);
+  const assignmentId = _directoryText_(payload.asignacion_id);
+  const isNewPerson = !personaId;
+  const isNewAssignment = !assignmentId;
+
+  if (isNewPerson && !isNewAssignment) {
+    throw new Error('No se puede actualizar una asignación sin identificar a su persona.');
+  }
+
+  if (!isNewPerson && isNewAssignment) {
+    throw new Error('Las asignaciones adicionales deben enviarse juntas desde el formulario del servidor.');
+  }
+
+  const personPayload = {
+    nombres: payload.nombres,
+    apellidos: payload.apellidos,
+    correo_institucional: payload.correo_institucional
+  };
+  if (personaId) personPayload.persona_id = personaId;
+
+  if (!isNewPerson && !isNewAssignment) {
+    const assignmentAuthorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_EDITAR');
+    const snapshot = _directoryLoadContext_({
+      includePersonalData: false,
+      includePeople: false,
+      includeAssignments: false,
+      includeDocumentTypes: false,
+      validateSnapshot: false
+    });
+    const previousPersonResult = SUNARPCore.findRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+      { persona_id: personaId },
+      { searchField: 'persona_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.personas }
+    );
+    if (previousPersonResult.total !== 1) throw new Error('No se encontró una identidad única para la persona.');
+    const previousPerson = previousPersonResult.records[0];
+    const previousPersonalResult = SUNARPCore.findRecordsByFields(
+      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
+      { servidor_id: personaId },
+      { searchField: 'servidor_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.datosPersonales }
+    );
+    if (previousPersonalResult.total > 1) throw new Error('La ficha de datos personales está duplicada.');
+    const previousPersonalData = previousPersonalResult.records[0] || null;
+    const previousAssignment = _directoryFindAuthorizedAssignmentById_(
+      snapshot,
+      assignmentAuthorization,
+      assignmentId
+    );
+    if (!previousPerson || !previousAssignment) throw new Error('No se encontró la persona o asignación que se intenta editar.');
+    if (_directoryKey_(previousAssignment.persona_id) !== personaId) {
+      throw new Error('La asignación seleccionada no pertenece a la persona indicada.');
+    }
+    const normalizedDocument = _directoryAssertDocumentAvailable_(
+      payload.tipo_documento,
+      payload.numero_documento,
+      null,
+      personaId
+    );
+
+    let personUpdated = false;
+    let personalDataUpdated = false;
+    let assignmentUpdated = false;
+    try {
+      const person = _saveDirectoryPerson_(personPayload);
+      personUpdated = true;
+      const personalData = saveDirectoryPersonalData({
+        servidor_id: personaId,
+        tipo_documento: normalizedDocument.tipo_documento,
+        numero_documento: normalizedDocument.numero_documento,
+        fecha_nacimiento: payload.fecha_nacimiento,
+        fecha_inicio_servicios: payload.fecha_inicio_servicios,
+        fecha_cese: payload.fecha_cese
+      });
+      personalDataUpdated = true;
+      const assignment = saveDirectoryAssignment({
+        asignacion_id: assignmentId,
+        persona_id: personaId,
+        cargo_id: payload.cargo_id,
+        condicion_cargo: payload.condicion_cargo,
+        anexo: payload.anexo,
+        estructura_local_id: payload.estructura_local_id,
+        local_id: payload.local_id,
+        observaciones: payload.observaciones
+      });
+      assignmentUpdated = true;
+      return { success: true, message: 'Persona, datos personales y asignación actualizados.', person, personalData, assignment };
+    } catch (error) {
+      const rollbackErrors = [];
+      if (assignmentUpdated) {
+        try {
+          saveDirectoryAssignment({
+            asignacion_id: assignmentId,
+            persona_id: previousAssignment.persona_id,
+            cargo_id: previousAssignment.cargo_id,
+            condicion_cargo: previousAssignment.condicion_cargo,
+            anexo: previousAssignment.anexo,
+            estructura_local_id: previousAssignment.estructura_local_id,
+            local_id: previousAssignment.local_id,
+            observaciones: previousAssignment.observaciones,
+            active: _directoryNormalizeBoolean_(previousAssignment.active),
+            order: previousAssignment.order
+          });
+        } catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
+      }
+      if (personalDataUpdated) {
+        try {
+          if (previousPersonalData) {
+            saveDirectoryPersonalData({
+              servidor_id: personaId,
+              tipo_documento: previousPersonalData.tipo_documento,
+              numero_documento: previousPersonalData.numero_documento,
+              fecha_nacimiento: _directoryFormatDateInput_(previousPersonalData.fecha_nacimiento),
+              fecha_inicio_servicios: _directoryFormatDateInput_(previousPersonalData.fecha_inicio_servicios),
+              fecha_cese: _directoryFormatDateInput_(previousPersonalData.fecha_cese)
+            });
+          } else {
+            SUNARPCore.deleteRecord(_directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales), 'servidor_id', personaId);
+          }
+        } catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
+      }
+      if (personUpdated) {
+        try { _saveDirectoryPerson_({ persona_id: personaId, nombres: previousPerson.nombres, apellidos: previousPerson.apellidos, correo_institucional: previousPerson.correo_institucional }); }
+        catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
+      }
+
+      if (rollbackErrors.length) {
+        throw new Error(error.message + ' La reversión requiere revisión: ' + rollbackErrors.join(' | '));
+      }
+      throw error;
+    }
+  }
+
+  const normalizedNewDocument = _directoryAssertDocumentAvailable_(
+    payload.tipo_documento,
+    payload.numero_documento,
+    null,
+    ''
+  );
+
+  let createdPersonId = '';
+  let personalCreated = false;
+  let assignmentCreated = false;
+  let createdAssignmentId = '';
+  try {
+    const person = _saveDirectoryPerson_(personPayload);
+    createdPersonId = person.person.persona_id;
+    const personalData = _saveDirectoryPersonalData_({
+      servidor_id: createdPersonId,
+      tipo_documento: normalizedNewDocument.tipo_documento,
+      numero_documento: normalizedNewDocument.numero_documento,
+      fecha_nacimiento: payload.fecha_nacimiento,
+      fecha_inicio_servicios: payload.fecha_inicio_servicios,
+      fecha_cese: payload.fecha_cese
+    }, true);
+    personalCreated = true;
+    const assignment = saveDirectoryAssignment({
+      persona_id: createdPersonId,
+      cargo_id: payload.cargo_id,
+      condicion_cargo: payload.condicion_cargo,
+      anexo: payload.anexo,
+      estructura_local_id: payload.estructura_local_id,
+      local_id: payload.local_id,
+      observaciones: payload.observaciones
+    });
+    createdAssignmentId = assignment.assignment.asignacion_id;
+    assignmentCreated = true;
+    return {
+      success: true,
+      message: 'La persona, sus datos personales y su primera asignación se registraron correctamente.',
+      person: person.person,
+      personalData: personalData.personalData,
+      assignment: assignment.assignment
+    };
+  } catch (error) {
+    const rollbackErrors = [];
+    try {
+      if (assignmentCreated && createdAssignmentId) {
+        SUNARPCore.deleteRecord(_directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones), 'asignacion_id', createdAssignmentId);
+      }
+    } catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
+    try {
+      if (personalCreated && createdPersonId) {
+        SUNARPCore.deleteRecord(_directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales), 'servidor_id', createdPersonId);
+      }
+    } catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
+    try {
+      if (createdPersonId) {
+        SUNARPCore.deleteRecord(_directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas), 'persona_id', createdPersonId);
+      }
+    } catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
+
+    if (rollbackErrors.length) {
+      throw new Error(error.message + ' Además, la compensación requiere revisión: ' + rollbackErrors.join(' | '));
+    }
+    throw error;
+  }
+}
+
 function saveDirectoryAssignment(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('Debes proporcionar los datos de la asignación.');
   }
 
   const allowedFields = [
-    'asignacion_id',
-    'persona_id',
-    'cargo_id',
-    'condicion_cargo',
-    'anexo',
-    'estructura_local_id',
-    'local_id',
-    'observaciones',
-    'active',
-    'order'
+    'asignacion_id', 'persona_id', 'cargo_id', 'condicion_cargo',
+    'anexo', 'estructura_local_id', 'local_id', 'observaciones',
+    'active', 'order'
   ];
   _directoryAssertAllowedFields_(payload, allowedFields, 'asignaciones');
 
   const assignmentId = _directoryText_(payload.asignacion_id);
   const isUpdate = Boolean(assignmentId);
   const authorization = _directoryAuthorizationContext_(
-    isUpdate ? 'DIRECTORIOS_EDITAR' : 'DIRECTORIOS_CREAR'
+    isUpdate ? 'INFORMACION_PERSONAL_EDITAR' : 'INFORMACION_PERSONAL_CREAR'
   );
-  const context = _directoryLoadContext_();
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeAssignments: !isUpdate,
+    includeDocumentTypes: false,
+    validateSnapshot: !isUpdate
+  });
 
   const existing = isUpdate
-    ? context.asignaciones.find(item => _directoryKey_(item.asignacion_id) === assignmentId)
+    ? _directoryFindAuthorizedAssignmentById_(context, authorization, assignmentId)
     : null;
-
   if (isUpdate && !existing) {
     throw new Error('No se encontró la asignación "' + assignmentId + '".');
   }
 
   const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
-  const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
-
   if (isUpdate) {
-    const oldRelation = relationMap.get(_directoryKey_(existing.estructura_local_id));
-    if (!oldRelation) throw new Error('La asignación actual tiene una relación organizacional inexistente.');
-
+    const oldLocation = _directoryResolveAssignmentLocation_(existing, context, false);
     _directoryAssertScope_(
       authorization,
-      Object.assign(
-        _directoryEnrichAssignment_(existing, context, relationMap, peopleMap),
-        {
-          estructura_id: oldRelation.estructura_id,
-          sede_id: oldRelation.sede_id
-        }
-      ),
+      Object.assign({}, existing, {
+        estructura_id: oldLocation.estructura_id,
+        sede_id: oldLocation.sede_id
+      }),
       'Edición de una asignación fuera del ámbito asignado.'
     );
   }
 
-  const targetRelationId = _directoryText_(
-    payload.estructura_local_id !== undefined
-      ? payload.estructura_local_id
-      : existing && existing.estructura_local_id
+  const targetRelationId = _directoryText_(payload.estructura_local_id !== undefined
+    ? payload.estructura_local_id : (existing && existing.estructura_local_id));
+  const targetLocalId = _directoryText_(payload.local_id !== undefined
+    ? payload.local_id : (existing && existing.local_id));
+  const targetLocation = _directoryResolveAssignmentLocation_(
+    { estructura_local_id: targetRelationId, local_id: targetLocalId }, context, true
   );
-  const targetRelation = relationMap.get(targetRelationId);
-  if (!targetRelation || !targetRelation.active) {
-    throw new Error('La relación estructura-local seleccionada no existe o está inactiva.');
-  }
-
-  const requestedLocalId = _directoryText_(
-    payload.local_id !== undefined
-      ? payload.local_id
-      : existing && existing.local_id
-  );
-
-  if (requestedLocalId && requestedLocalId !== _directoryKey_(targetRelation.local_id)) {
-    throw new Error('El local seleccionado no corresponde a la relación estructura-local.');
-  }
 
   const record = {
     asignacion_id: isUpdate
@@ -1153,7 +3788,7 @@ function saveDirectoryAssignment(payload) {
       true
     ),
     estructura_local_id: targetRelationId,
-    local_id: _directoryKey_(targetRelation.local_id),
+    local_id: targetLocalId,
     observaciones: _directoryText_(
       payload.observaciones !== undefined ? payload.observaciones : existing && existing.observaciones
     ),
@@ -1165,42 +3800,58 @@ function saveDirectoryAssignment(payload) {
     order: 1
   };
 
-  const locationChanged = isUpdate &&
-    _directoryKey_(existing.estructura_local_id) !== _directoryKey_(record.estructura_local_id);
-
+  const locationChanged = isUpdate && (
+    _directoryKey_(existing.estructura_local_id) !== _directoryKey_(record.estructura_local_id) ||
+    _directoryKey_(existing.local_id) !== _directoryKey_(record.local_id)
+  );
   if (payload.order !== undefined) {
     record.order = _directoryNormalizeInteger_(payload.order, 'Orden', false);
   } else if (isUpdate && !locationChanged) {
     record.order = _directoryNormalizeInteger_(existing.order, 'Orden', false);
   } else {
-    record.order = _directoryGetNextOrder_(context.asignaciones, record.estructura_local_id);
+    record.order = isUpdate
+      ? _directoryGetNextOrderForLocation_(
+          context,
+          authorization,
+          record.estructura_local_id,
+          record.local_id
+        )
+      : _directoryGetNextOrder_(
+          context.asignaciones,
+          record.estructura_local_id,
+          record.local_id
+        );
   }
-
-  const schema = _directoryGetAssignmentSchema_();
-  SUNARPCore.assertValidRecord(record, schema);
-  _directoryValidateAssignmentReferences_(record, context);
 
   _directoryAssertScope_(
     authorization,
     {
       asignacion_id: record.asignacion_id,
       persona_id: record.persona_id,
-      nombres: (peopleMap.get(record.persona_id) || {}).nombres,
-      apellidos: (peopleMap.get(record.persona_id) || {}).apellidos,
-      estructura_id: targetRelation.estructura_id,
-      sede_id: targetRelation.sede_id
+      estructura_id: targetLocation.estructura_id,
+      sede_id: targetLocation.sede_id,
+      local_id: record.local_id
     },
     'La unidad orgánica de destino se encuentra fuera de tus ámbitos de acceso.'
   );
 
+  // La identidad solo se recupera después de autorizar el destino.
+  const person = _directoryFindPersonById_(record.persona_id);
+  if (!person) throw new Error('La persona seleccionada no existe.');
+  context.personas = [person];
+  const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
+
+  const schema = _directoryGetAssignmentSchema_();
+  SUNARPCore.assertValidRecord(record, schema);
+  _directoryValidateAssignmentReferences_(record, context);
+
   const source = _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones);
-  const person = peopleMap.get(record.persona_id);
   const event = {
     accion: isUpdate ? 'EDITAR_ASIGNACION_DIRECTORIO' : 'CREAR_ASIGNACION_DIRECTORIO',
-    modulo: 'DIRECTORIOS',
-    tipo_entidad: 'ASIGNACION',
-    registro_id: record.asignacion_id,
-    registro_nombre: [person && person.nombres, person && person.apellidos].filter(Boolean).join(' '),
+    modulo: 'INFORMACION_PERSONAL',
+    tipo_entidad: 'SERVIDOR',
+    registro_id: record.persona_id,
+    registro_nombre: [person.nombres, person.apellidos].filter(Boolean).join(' '),
     detalle: isUpdate ? 'Actualización de una asignación.' : 'Alta de una asignación.',
     datos_antes: existing || null
   };
@@ -1223,8 +3874,6 @@ function saveDirectoryAssignment(payload) {
           schema: schema
         });
 
-    _directoryInvalidateCache_();
-
     return {
       value: Object.assign({}, result, {
         assignment: _directoryEnrichAssignment_(record, context, relationMap, peopleMap)
@@ -1239,38 +3888,41 @@ function setDirectoryAssignmentActive(asignacionId, active) {
     throw new Error('El nuevo estado debe ser true o false.');
   }
 
-  const authorization = _directoryAuthorizationContext_('DIRECTORIOS_CAMBIAR_ESTADO');
-  const context = _directoryLoadContext_();
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_CAMBIAR_ESTADO');
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeAssignments: false,
+    includeDocumentTypes: false,
+    validateSnapshot: false
+  });
   const id = _directoryText_(asignacionId);
-
-  const existing = context.asignaciones.find(item =>
-    _directoryKey_(item.asignacion_id) === id
-  );
+  const existing = _directoryFindAuthorizedAssignmentById_(context, authorization, id);
   if (!existing) throw new Error('No se encontró la asignación "' + id + '".');
 
-  const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
-  const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
-  const relation = relationMap.get(_directoryKey_(existing.estructura_local_id));
-  if (!relation) throw new Error('La asignación no tiene una relación organizacional válida.');
-
-  const enriched = _directoryEnrichAssignment_(existing, context, relationMap, peopleMap);
+  const location = _directoryResolveAssignmentLocation_(existing, context, false);
   _directoryAssertScope_(
     authorization,
-    Object.assign({}, enriched, {
-      estructura_id: relation.estructura_id,
-      sede_id: relation.sede_id
+    Object.assign({}, existing, {
+      estructura_id: location.estructura_id,
+      sede_id: location.sede_id
     }),
     'Cambio de estado de una asignación fuera del ámbito asignado.'
   );
 
-  const person = peopleMap.get(_directoryKey_(existing.persona_id));
+  const person = _directoryFindPersonById_(existing.persona_id);
+  if (!person) throw new Error('La asignación no tiene una identidad válida.');
+  context.personas = [person];
+  const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
+  const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
+  const enriched = _directoryEnrichAssignment_(existing, context, relationMap, peopleMap);
 
   return _accessRunAudited_(authorization.auth, {
     accion: active ? 'ACTIVAR_ASIGNACION_DIRECTORIO' : 'DESACTIVAR_ASIGNACION_DIRECTORIO',
-    modulo: 'DIRECTORIOS',
-    tipo_entidad: 'ASIGNACION',
-    registro_id: id,
-    registro_nombre: [person && person.nombres, person && person.apellidos].filter(Boolean).join(' '),
+    modulo: 'INFORMACION_PERSONAL',
+    tipo_entidad: 'SERVIDOR',
+    registro_id: existing.persona_id,
+    registro_nombre: [person.nombres, person.apellidos].filter(Boolean).join(' '),
     detalle: 'Cambio de estado de una asignación.',
     datos_antes: existing
   }, () => {
@@ -1281,9 +3933,6 @@ function setDirectoryAssignmentActive(asignacionId, active) {
       'active',
       active
     );
-
-    _directoryInvalidateCache_();
-
     return {
       value: Object.assign({}, result, {
         assignment: Object.assign({}, enriched, { active: active })
@@ -1297,37 +3946,36 @@ function deleteDirectoryAssignment(asignacionId) {
   const id = _directoryText_(asignacionId);
   if (!id) throw new Error('Debes proporcionar el identificador de la asignación.');
 
-  const authorization = _directoryAuthorizationContext_('DIRECTORIOS_ELIMINAR');
-  const context = _directoryLoadContext_();
-
-  const existing = context.asignaciones.find(item =>
-    _directoryKey_(item.asignacion_id) === id
-  );
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_ELIMINAR');
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeAssignments: false,
+    includeDocumentTypes: false,
+    validateSnapshot: false
+  });
+  const existing = _directoryFindAuthorizedAssignmentById_(context, authorization, id);
   if (!existing) throw new Error('No se encontró la asignación "' + id + '".');
 
-  const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
-  const peopleMap = _directoryCreateMap_(context.personas, 'persona_id');
-  const relation = relationMap.get(_directoryKey_(existing.estructura_local_id));
-  if (!relation) throw new Error('La asignación no tiene una relación organizacional válida.');
-
-  const enriched = _directoryEnrichAssignment_(existing, context, relationMap, peopleMap);
+  const location = _directoryResolveAssignmentLocation_(existing, context, false);
   _directoryAssertScope_(
     authorization,
-    Object.assign({}, enriched, {
-      estructura_id: relation.estructura_id,
-      sede_id: relation.sede_id
+    Object.assign({}, existing, {
+      estructura_id: location.estructura_id,
+      sede_id: location.sede_id
     }),
     'Eliminación de una asignación fuera del ámbito asignado.'
   );
 
-  const person = peopleMap.get(_directoryKey_(existing.persona_id));
+  const person = _directoryFindPersonById_(existing.persona_id);
+  if (!person) throw new Error('La asignación no tiene una identidad válida.');
 
   return _accessRunAudited_(authorization.auth, {
     accion: 'ELIMINAR_ASIGNACION_DIRECTORIO',
-    modulo: 'DIRECTORIOS',
-    tipo_entidad: 'ASIGNACION',
-    registro_id: id,
-    registro_nombre: [person && person.nombres, person && person.apellidos].filter(Boolean).join(' '),
+    modulo: 'INFORMACION_PERSONAL',
+    tipo_entidad: 'SERVIDOR',
+    registro_id: existing.persona_id,
+    registro_nombre: [person.nombres, person.apellidos].filter(Boolean).join(' '),
     detalle: 'Eliminación física de una asignación. La persona se conserva.',
     datos_antes: existing
   }, () => {
@@ -1336,9 +3984,6 @@ function deleteDirectoryAssignment(asignacionId) {
       'asignacion_id',
       id
     );
-
-    _directoryInvalidateCache_();
-
     return {
       value: Object.assign({}, result, {
         success: true,
@@ -1350,88 +3995,177 @@ function deleteDirectoryAssignment(asignacionId) {
   });
 }
 
-/**
- * Elimina una persona solo cuando no tiene asignaciones ni
- * una ficha complementaria de datos personales vinculada.
- */
 function deleteDirectoryPerson(personaId) {
   const id = _directoryText_(personaId);
   if (!id) throw new Error('Debes proporcionar el identificador de la persona.');
 
-  const authorization = _directoryAuthorizationContext_('DIRECTORIOS_ELIMINAR');
-  const context = _directoryLoadContext_();
-
-  const person = context.personas.find(item =>
-    _directoryKey_(item.persona_id) === id
-  );
+  const authorization = _directoryAuthorizationContext_('INFORMACION_PERSONAL_ELIMINAR');
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: false,
+    includeAssignments: false,
+    includeDocumentTypes: false,
+    validateSnapshot: false
+  });
+  const person = _directoryFindPersonById_(id);
   if (!person) throw new Error('No se encontró la persona "' + id + '".');
 
-  const linkedAssignments = context.asignaciones.filter(item =>
-    _directoryKey_(item.persona_id) === id
+  const linkedResult = SUNARPCore.findRecordsByFields(
+    _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones),
+    { persona_id: id },
+    { searchField: 'persona_id', requiredHeaders: DIRECTORY_REQUIRED_HEADERS.asignaciones }
   );
-  const relationMap = _directoryCreateMap_(_directoryBuildRelations_(context, false));
+  const linkedAssignments = linkedResult.records || [];
+  _directoryAssertPersonMutationScope_(authorization, person, linkedAssignments, context);
+  const personalData = _directoryFindPersonalDataById_(id);
 
-  // Primero se comprueba el ámbito de todas las adscripciones para no
-  // revelar relaciones ni operar sobre identidades fuera del alcance.
-  _directoryAssertPersonMutationScope_(
-    authorization,
-    person,
-    context.asignaciones,
-    relationMap
-  );
-
-  if (linkedAssignments.length) {
-    throw new Error(
-      'No se puede eliminar la persona porque tiene ' +
-      linkedAssignments.length +
-      ' asignación(es) vinculada(s). Elimina o reasigna primero esas asignaciones.'
+  // La auditoría común conserva la trazabilidad de operaciones realizadas
+  // sobre el servidor y sobre cualquiera de sus asignaciones.
+  const auditSource = _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.audit);
+  const relatedIds = [id].concat(linkedAssignments.map(item => _directoryText_(item.asignacion_id))).filter(Boolean);
+  const auditRows = [];
+  relatedIds.forEach(relatedId => {
+    const found = SUNARPCore.searchRecordsByFields(
+      auditSource, relatedId, ['registro_id'], { matchCase: false }
     );
-  }
-
-  const personalDataLinks = _directoryLoadPersonalDataLinks_(context.personas);
-  if (personalDataLinks.includes(id)) {
+    (found.records || []).forEach(row => {
+      if (_directoryText_(row.registro_id) === relatedId) auditRows.push(row);
+    });
+  });
+  const ownCrudActions = new Set([
+    'CREAR_PERSONA_DIRECTORIO',
+    'EDITAR_PERSONA_DIRECTORIO',
+    'CREAR_DATOS_PERSONALES_DIRECTORIO',
+    'EDITAR_DATOS_PERSONALES_DIRECTORIO',
+    'CREAR_ASIGNACION_DIRECTORIO',
+    'EDITAR_ASIGNACION_DIRECTORIO',
+    'ACTIVAR_ASIGNACION_DIRECTORIO',
+    'DESACTIVAR_ASIGNACION_DIRECTORIO',
+    'ELIMINAR_ASIGNACION_DIRECTORIO',
+    'ELIMINAR_PERSONA_DIRECTORIO',
+    'ELIMINAR_SERVIDOR_DIRECTORIO'
+  ]);
+  const operationalEvents = auditRows.filter(row => {
+    const outcome = _directoryText_(row.resultado).toUpperCase();
+    const successful = !outcome || outcome === 'OK' || outcome === 'SUCCESS';
+    return successful && (
+      _directoryText_(row.modulo).toUpperCase() !== 'INFORMACION_PERSONAL' ||
+      !ownCrudActions.has(_directoryText_(row.accion).toUpperCase())
+    );
+  });
+  if (operationalEvents.length) {
     throw new Error(
-      'No se puede eliminar la persona porque tiene una ficha de datos personales vinculada.'
+      'No se puede eliminar el servidor porque tiene ' + operationalEvents.length +
+      ' acciones registradas en el entorno. Se debe conservar su trazabilidad.'
     );
   }
 
   return _accessRunAudited_(authorization.auth, {
-    accion: 'ELIMINAR_PERSONA_DIRECTORIO',
-    modulo: 'DIRECTORIOS',
-    tipo_entidad: 'PERSONA',
+    accion: 'ELIMINAR_SERVIDOR_DIRECTORIO',
+    modulo: 'INFORMACION_PERSONAL',
+    tipo_entidad: 'SERVIDOR',
     registro_id: id,
     registro_nombre: [person.nombres, person.apellidos].filter(Boolean).join(' '),
-    detalle: 'Eliminación física de una persona sin asignaciones ni ficha personal vinculada.',
-    datos_antes: person
+    detalle: 'Eliminación del servidor y sus registros relacionados al no existir acciones operativas vinculadas.',
+    datos_antes: { person, personalData, assignments: linkedAssignments }
   }, () => {
-    const result = SUNARPCore.deleteRecord(
-      _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
-      'persona_id',
-      id
-    );
-
-    _directoryInvalidateCache_();
-
+    const deletedAssignments = [];
+    let deletedPersonalData = false;
+    let deletedPerson = false;
+    try {
+      linkedAssignments.forEach(assignment => {
+        SUNARPCore.deleteRecord(
+          _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones),
+          'asignacion_id',
+          assignment.asignacion_id
+        );
+        deletedAssignments.push(assignment);
+      });
+      if (personalData) {
+        SUNARPCore.deleteRecord(
+          _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales),
+          'servidor_id',
+          id
+        );
+        deletedPersonalData = true;
+      }
+      SUNARPCore.deleteRecord(
+        _directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas),
+        'persona_id',
+        id
+      );
+      deletedPerson = true;
+    } catch (error) {
+      const rollbackErrors = [];
+      if (deletedPerson) {
+        try { SUNARPCore.insertRecord(_directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.personas), person, { idField: 'persona_id' }); }
+        catch (rollbackError) { rollbackErrors.push('persona: ' + rollbackError.message); }
+      }
+      if (deletedPersonalData && personalData) {
+        try { SUNARPCore.insertRecord(_directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.datosPersonales), personalData, { idField: 'servidor_id' }); }
+        catch (rollbackError) { rollbackErrors.push('datos personales: ' + rollbackError.message); }
+      }
+      deletedAssignments.reverse().forEach(assignment => {
+        try { SUNARPCore.insertRecord(_directorySource_(DIRECTORY_SERVICE_CONFIG.sheets.asignaciones), assignment, { idField: 'asignacion_id' }); }
+        catch (rollbackError) { rollbackErrors.push('asignación ' + assignment.asignacion_id + ': ' + rollbackError.message); }
+      });
+      if (rollbackErrors.length) {
+        throw new Error(error.message + ' La reversión quedó incompleta: ' + rollbackErrors.join(' | '));
+      }
+      throw error;
+    }
     return {
-      value: Object.assign({}, result, {
+      value: {
         success: true,
-        message: 'La persona se eliminó correctamente.',
+        message: 'El servidor y sus registros relacionados se eliminaron correctamente.',
         persona_id: id
-      }),
+      },
       auditAfter: null
     };
   });
 }
 
-/**
- * Invalida manualmente la caché del directorio.
- */
 function clearDirectoryCache() {
-  requirePermission_('DIRECTORIOS_VER');
-  _directoryInvalidateCache_();
-
+  requirePermission_('INFORMACION_PERSONAL_VER', 'MOD_INFO_PERSONAL');
+  const result = _directoryInvalidateCache_();
   return {
-    success: true,
-    message: 'Caché del directorio eliminada correctamente.'
+    success: result.success,
+    message: result.success
+      ? 'Caché de las fuentes del directorio invalidada correctamente.'
+      : 'No se pudo invalidar una o más fuentes del directorio.',
+    sources: result.sources
   };
+}
+
+
+function warmDirectoryContextCache() {
+  const startedAt = Date.now();
+  const authorizationStartedAt = Date.now();
+  _directoryAuthorizationContext_('INFORMACION_PERSONAL_VER');
+  const authorizationElapsed = Date.now() - authorizationStartedAt;
+
+  const contextStartedAt = Date.now();
+  const context = _directoryLoadContext_({
+    includePersonalData: false,
+    includePeople: true,
+    includeAssignments: false,
+    includeDocumentTypes: false,
+    validateSnapshot: false
+  });
+  const contextElapsed = Date.now() - contextStartedAt;
+  const result = {
+    warmed: true,
+    serverMs: Date.now() - startedAt,
+    authorizationMs: authorizationElapsed,
+    contextMs: contextElapsed,
+    peopleRowsLoaded: (context.personas || []).length,
+    catalogCounts: {
+      sites: (context.sedes || []).length,
+      locals: (context.locales || []).length,
+      structures: (context.estructuraOrg || []).length,
+      structureLocalRelations: (context.estructuraLocal || []).length
+    }
+  };
+  console.log('[DirectoryService] Context cache warmup:', JSON.stringify(result));
+  return result;
 }

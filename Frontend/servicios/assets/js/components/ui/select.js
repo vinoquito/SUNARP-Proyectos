@@ -9,7 +9,7 @@ const SelectGob = {
     emits: ['update:modelValue'],
 
     template: `
-        <label class="filter-group">
+        <div class="filter-group">
             <span class="filter-label">{{ label }}</span>
 
             <select
@@ -29,7 +29,7 @@ const SelectGob = {
                 </option>
 
             </select>
-        </label>
+        </div>
     `,
 
     mounted() {

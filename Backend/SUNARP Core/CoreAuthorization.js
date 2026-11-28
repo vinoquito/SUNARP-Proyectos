@@ -1,254 +1,738 @@
 /**
  * SUNARP Core - Authorization
- * Motor genérico de autorización reutilizable por aplicaciones SUNARP.
- * No contiene nombres de hojas ni identificadores de archivos concretos.
+ *
+ * Motor genérico de autorización para aplicaciones SUNARP.
+ * No conoce hojas de cálculo, archivos, correos de usuarios ni reglas
+ * administrativas particulares de una aplicación.
+ *
+ * CONTRATO ÚNICO DE DATOS
+ *
+ * resolveAuthorizationContext({
+ *   personaId: 'PER_117',
+ *   users: [{ persona_id, active }],
+ *   modules: [{ modulo_id, codigo, nombre, active }],
+ *   roles: [{ rol_id, nombre, active }],
+ *   userRoles: [{ persona_id, modulo_id, rol_id, active }],
+ *   permissions: [{ permiso_id, codigo, modulo_id, active }],
+ *   rolePermissions: [{ rol_id, permiso_id, active }],
+ *   scopes: [{
+ *     persona_id, modulo_id, tipo_ambito_id, referencia_id,
+ *     incluir_descendientes, active
+ *   }]
+ * });
+ *
+ * Reglas:
+ * - La identidad de autorización es exclusivamente persona_id.
+ * - Una persona tiene como máximo un rol activo por módulo.
+ * - Los permisos se conceden por la relación rol-permiso, siempre que
+ *   el permiso pertenezca al mismo módulo al que está asignado el rol.
+ * - Los ámbitos pertenecen a una persona y a un módulo determinados.
+ * - Los ámbitos de módulos distintos nunca se acumulan ni se transfieren.
+ * - Los registros activos utilizan active: true; los inactivos, false.
  */
 
+/**
+ * Obtiene el correo de la sesión. Es una utilidad de identidad para que
+ * la aplicación consumidora pueda resolver persona_id en su propio modelo.
+ * El correo no interviene en la autorización de este módulo.
+ */
 function getCurrentUserEmail() {
   const email = Session.getActiveUser().getEmail();
   return String(email || '').trim().toLowerCase();
+}
+
+/**
+ * Resuelve identidad institucional mediante una búsqueda exacta declarada
+ * por el consumidor. Core no presupone nombres de hojas ni columnas.
+ */
+function resolveIdentity(source, email, options) {
+  options = options || {};
+  const emailField = String(options.emailField || '').trim();
+  const idField = String(options.idField || '').trim();
+  const normalizedEmail = String(email === null || email === undefined ? '' : email)
+    .trim()
+    .toLocaleLowerCase();
+  if (!emailField || !idField) {
+    throw new Error('SUNARP Core: resolveIdentity requiere emailField e idField.');
+  }
+  if (!normalizedEmail) return { records: [], total: 0 };
+  const requiredHeaders = Array.isArray(options.requiredHeaders)
+    ? options.requiredHeaders
+    : [];
+  if (options.projectionFields !== undefined &&
+      (!Array.isArray(options.projectionFields) ||
+       options.projectionFields.some(field => typeof field !== 'string' || !field.trim()))) {
+    throw new Error('SUNARP Core: resolveIdentity requiere projectionFields como arreglo de nombres de columna.');
+  }
+  const queryOptions = {
+    searchField: emailField,
+    matchCase: false,
+    requiredHeaders: Array.from(new Set(requiredHeaders.concat([emailField, idField])))
+  };
+  if (Array.isArray(options.projectionFields)) {
+    queryOptions.projectionFields = Array.from(new Set(
+      options.projectionFields.concat([emailField, idField])
+    ));
+  }
+  const result = findRecordsByFields(source, { [emailField]: normalizedEmail }, queryOptions);
+  const records = (result.records || []).filter(record =>
+    String(record[emailField] === null || record[emailField] === undefined ? '' : record[emailField])
+      .trim()
+      .toLocaleLowerCase() === normalizedEmail &&
+    String(record[idField] === null || record[idField] === undefined ? '' : record[idField]).trim()
+  );
+  return { records, total: records.length };
 }
 
 function _coreAuthText_(value) {
   return String(value === null || value === undefined ? '' : value).trim();
 }
 
-function _coreAuthActive_(value) {
-  const normalized = _coreAuthText_(value).toUpperCase();
-  return ['ACTIVO', 'ACTIVE', 'TRUE', 'VERDADERO', '1', 'SI', 'SÍ'].includes(normalized);
+function _coreAuthUpper_(value) {
+  return _coreAuthText_(value).toUpperCase();
 }
 
 /**
- * Construye un contexto de autorización a partir de registros entregados
- * por la aplicación consumidora.
- *
- * data: { email, users, roles, permissions, rolePermissions, scopes }
- * fields: permite mapear esquemas distintos al esquema predeterminado.
+ * Interpreta exclusivamente la convención active TRUE/FALSE.
+ * Los textos TRUE/FALSE se admiten por si el adaptador de datos devuelve
+ * valores de hoja como texto; estados ACTIVO/INACTIVO no son válidos aquí.
  */
-function resolveAuthorizationContext(data, fields) {
-  data = data || {};
-  fields = fields || {};
+function _coreAuthIsActive_(value) {
+  if (value === true) return true;
+  if (value === false || value === null || value === undefined) return false;
 
-  const f = Object.assign({
-    userEmail: 'correo_institucional',
-    userStatus: 'estado',
-    userRoleId: 'rol_id',
-    roleId: 'rol_id',
-    roleStatus: 'estado',
-    permissionId: 'permiso_id',
-    permissionCode: 'codigo',
-    permissionStatus: 'estado',
-    assignmentRoleId: 'rol_id',
-    assignmentPermissionId: 'permiso_id',
-    assignmentStatus: 'estado',
-    scopeEmail: 'correo_institucional',
-    scopeModule: 'modulo',
-    scopeType: 'tipo_ambito',
-    scopeReferenceId: 'referencia_id',
-    scopeStatus: 'estado'
-  }, fields);
+  return _coreAuthUpper_(value) === 'TRUE';
+}
 
-  const email = _coreAuthText_(data.email || getCurrentUserEmail()).toLowerCase();
+function _coreAuthCatalogIsActive_(record) {
+  if (!record || typeof record !== 'object') return false;
 
-  if (!email) {
-    return {
-      authenticated: false,
-      email: '',
-      user: null,
-      role: null,
-      permissions: [],
-      permissionCodes: [],
-      scopes: []
-    };
+  if (!Object.prototype.hasOwnProperty.call(record, 'active')) {
+    return true;
   }
+
+  return _coreAuthIsActive_(record.active);
+}
+
+function _coreAuthScopeType_(scope) {
+  const typeId = _coreAuthUpper_(scope && (scope.tipo_ambito_id || scope.tipo_ambito));
+  const entity = _coreAuthUpper_(scope && (
+    scope.entidad_referencia || scope._tipo_ambito_entidad || scope.tipo_ambito_entidad
+  ));
+  const essentialEntities = {
+    TOTAL: 'NINGUNA',
+    SEDE: 'SEDE',
+    ESTRUCTURA_ORG: 'ESTRUCTURA_ORG',
+    LOCAL: 'LOCAL'
+  };
+  if (Object.prototype.hasOwnProperty.call(essentialEntities, typeId)) {
+    return entity
+      ? (entity === essentialEntities[typeId]
+        ? (entity === 'NINGUNA' ? 'TOTAL' : entity)
+        : '')
+      : typeId;
+  }
+  if (entity === 'SEDE' || entity === 'ESTRUCTURA_ORG' || entity === 'LOCAL') return entity;
+  return '';
+}
+
+
+// Reutiliza los índices de catálogos durante una misma ejecución.
+// Las referencias de arrays son nuevas por solicitud; por eso el índice
+// nunca se comparte entre snapshots distintos ni entre usuarios.
+const _CORE_AUTH_SCOPE_CATALOG_CACHE_ = new WeakMap();
+const _CORE_AUTH_EMPTY_SCOPE_CATALOG_ = Object.freeze([]);
+
+function _coreAuthGetScopeCatalogMaps_(structures, locals, fields) {
+  const nodes = Array.isArray(structures)
+    ? structures
+    : _CORE_AUTH_EMPTY_SCOPE_CATALOG_;
+  const localNodes = Array.isArray(locals)
+    ? locals
+    : _CORE_AUTH_EMPTY_SCOPE_CATALOG_;
+  const f = Object.assign({
+    structureId: 'id',
+    structureParentId: 'parent_id',
+    structureSiteId: 'sede_id',
+    localId: 'id',
+    localSiteId: 'sede_id'
+  }, fields || {});
+
+  const fieldsKey = [
+    f.structureId,
+    f.structureParentId,
+    f.structureSiteId,
+    f.localId,
+    f.localSiteId
+  ].map(value => String(value || '')).join('\\u001f');
+
+  let byLocalCatalog = _CORE_AUTH_SCOPE_CATALOG_CACHE_.get(nodes);
+  if (!byLocalCatalog) {
+    byLocalCatalog = new Map();
+    _CORE_AUTH_SCOPE_CATALOG_CACHE_.set(nodes, byLocalCatalog);
+  }
+
+  let byFields = byLocalCatalog.get(localNodes);
+  if (!byFields) {
+    byFields = new Map();
+    byLocalCatalog.set(localNodes, byFields);
+  }
+
+  if (byFields.has(fieldsKey)) return byFields.get(fieldsKey);
+
+  const structureMap = new Map();
+  const localMap = new Map();
+
+  nodes.forEach(node => {
+    if (!_coreAuthCatalogIsActive_(node)) return;
+    const id = _coreAuthText_(node[f.structureId]);
+    if (!id) return;
+    if (structureMap.has(id)) {
+      throw new Error(
+        'SUNARP Core: identificador duplicado en el catálogo organizacional: ' +
+        id + '.'
+      );
+    }
+    structureMap.set(id, node);
+  });
+
+  localNodes.forEach(local => {
+    if (!_coreAuthCatalogIsActive_(local)) return;
+    const id = _coreAuthText_(local[f.localId]);
+    if (!id) return;
+    if (localMap.has(id)) {
+      throw new Error(
+        'SUNARP Core: identificador duplicado en el catálogo de locales: ' +
+        id + '.'
+      );
+    }
+    localMap.set(id, local);
+  });
+
+  const index = { structureMap, localMap };
+  byFields.set(fieldsKey, index);
+  return index;
+}
+
+function _coreAuthIsTruthy_(value) {
+  if (value === true) return true;
+  if (value === false || value === null || value === undefined) return false;
+
+  return ['TRUE', 'SI', 'SÍ', 'YES', '1'].includes(
+    _coreAuthUpper_(value)
+  );
+}
+
+function _coreAuthAssertUniqueActiveIds_(records, idField, label) {
+  const ids = new Set();
+
+  (records || []).forEach(record => {
+    if (!_coreAuthIsActive_(record.active)) return;
+
+    const id = _coreAuthText_(record[idField]);
+
+    if (!id) {
+      throw new Error(
+        'SUNARP Core: existe un registro activo sin identificador en ' + label + '.'
+      );
+    }
+
+    if (ids.has(id)) {
+      throw new Error(
+        'SUNARP Core: identificador activo duplicado en ' + label + ': ' + id + '.'
+      );
+    }
+
+    ids.add(id);
+  });
+}
+
+function _coreAuthBuildActiveMap_(records, idField, label) {
+  _coreAuthAssertUniqueActiveIds_(records, idField, label);
+
+  const map = new Map();
+
+  (records || []).forEach(record => {
+    if (!_coreAuthIsActive_(record.active)) return;
+
+    map.set(_coreAuthText_(record[idField]), record);
+  });
+
+  return map;
+}
+
+function _coreAuthAssertUniqueActiveCodes_(records, label) {
+  const codes = new Set();
+
+  (records || []).forEach(record => {
+    if (!_coreAuthIsActive_(record.active)) return;
+
+    const code = _coreAuthUpper_(record.codigo);
+
+    if (!code) {
+      throw new Error(
+        'SUNARP Core: existe un registro activo sin código en ' + label + '.'
+      );
+    }
+
+    if (codes.has(code)) {
+      throw new Error(
+        'SUNARP Core: código activo duplicado en ' + label + ': ' + code + '.'
+      );
+    }
+
+    codes.add(code);
+  });
+}
+
+function _coreAuthAssertUniqueActivePairs_(
+  records,
+  firstField,
+  secondField,
+  label
+) {
+  const pairs = new Set();
+
+  (records || []).forEach(record => {
+    if (!_coreAuthIsActive_(record.active)) return;
+
+    const first = _coreAuthText_(record[firstField]);
+    const second = _coreAuthText_(record[secondField]);
+
+    if (!first || !second) {
+      throw new Error(
+        'SUNARP Core: existe una relación activa incompleta en ' + label + '.'
+      );
+    }
+
+    const key = first + '\u0000' + second;
+
+    if (pairs.has(key)) {
+      throw new Error(
+        'SUNARP Core: relación activa duplicada en ' + label + '.'
+      );
+    }
+
+    pairs.add(key);
+  });
+}
+
+/**
+ * Construye el contexto de autorización para una persona.
+ *
+ * La función no consulta Session ni busca usuarios por correo. La aplicación
+ * consumidora resuelve la identidad y entrega personaId, junto con los
+ * registros de seguridad ya leídos.
+ *
+ * Retorna:
+ * {
+ *   authenticated: boolean,
+ *   personaId: string,
+ *   user: Object|null,
+ *   moduleAccess: [{
+ *     modulo_id: string,
+ *     module: Object,
+ *     rol_id: string,
+ *     role: Object,
+ *     permissions: Object[],
+ *     permissionCodes: string[],
+ *     scopes: Object[]
+ *   }]
+ * }
+ */
+function resolveAuthorizationContext(data) {
+  data = data || {};
+
+  const personaId = _coreAuthText_(data.personaId);
+
+  const emptyContext = {
+    authenticated: false,
+    personaId,
+    user: null,
+    moduleAccess: []
+  };
+
+  if (!personaId) return emptyContext;
 
   const users = Array.isArray(data.users) ? data.users : [];
+  const modules = Array.isArray(data.modules) ? data.modules : [];
   const roles = Array.isArray(data.roles) ? data.roles : [];
+  const userRoles = Array.isArray(data.userRoles) ? data.userRoles : [];
   const permissions = Array.isArray(data.permissions) ? data.permissions : [];
-  const assignments = Array.isArray(data.rolePermissions) ? data.rolePermissions : [];
+  const rolePermissions = Array.isArray(data.rolePermissions)
+    ? data.rolePermissions
+    : [];
   const scopes = Array.isArray(data.scopes) ? data.scopes : [];
 
-  const user = users.find(item =>
-    _coreAuthText_(item[f.userEmail]).toLowerCase() === email &&
-    _coreAuthActive_(item[f.userStatus])
-  ) || null;
-
-  if (!user) {
-    return {
-      authenticated: false,
-      email,
-      user: null,
-      role: null,
-      permissions: [],
-      permissionCodes: [],
-      scopes: []
-    };
-  }
-
-  const roleId = _coreAuthText_(user[f.userRoleId]);
-
-  const role = roles.find(item =>
-    _coreAuthText_(item[f.roleId]) === roleId &&
-    _coreAuthActive_(item[f.roleStatus])
-  ) || null;
-
-  if (!role) {
-    return {
-      authenticated: false,
-      email,
-      user,
-      role: null,
-      permissions: [],
-      permissionCodes: [],
-      scopes: []
-    };
-  }
-
-  const permissionMap = new Map();
-
-  permissions.forEach(item => {
-    if (!_coreAuthActive_(item[f.permissionStatus])) return;
-
-    const id = _coreAuthText_(item[f.permissionId]);
-    const code = _coreAuthText_(item[f.permissionCode]).toUpperCase();
-
-    if (id && code) {
-      permissionMap.set(id, item);
-    }
-  });
-
-  const permissionByCode = new Map();
-
-  assignments.forEach(item => {
-    if (!_coreAuthActive_(item[f.assignmentStatus])) return;
-    if (_coreAuthText_(item[f.assignmentRoleId]) !== roleId) return;
-
-    const permission = permissionMap.get(
-      _coreAuthText_(item[f.assignmentPermissionId])
-    );
-
-    if (!permission) return;
-
-    const code = _coreAuthText_(permission[f.permissionCode]).toUpperCase();
-
-    if (code) {
-      permissionByCode.set(code, permission);
-    }
-  });
-
-  const userScopes = scopes.filter(item =>
-    _coreAuthText_(item[f.scopeEmail]).toLowerCase() === email &&
-    _coreAuthActive_(item[f.scopeStatus])
+  const activeUsers = users.filter(user =>
+    _coreAuthText_(user.persona_id) === personaId &&
+    _coreAuthIsActive_(user.active)
   );
+
+  if (activeUsers.length > 1) {
+    throw new Error(
+      'SUNARP Core: existe más de un usuario activo para la persona ' +
+      personaId + '.'
+    );
+  }
+
+  const user = activeUsers[0] || null;
+
+  if (!user) return emptyContext;
+
+  const moduleById = _coreAuthBuildActiveMap_(
+    modules,
+    'modulo_id',
+    'Modulos.modulo_id'
+  );
+  _coreAuthAssertUniqueActiveCodes_(modules, 'Modulos.codigo');
+
+  const roleById = _coreAuthBuildActiveMap_(
+    roles,
+    'rol_id',
+    'Roles.rol_id'
+  );
+
+  const permissionById = _coreAuthBuildActiveMap_(
+    permissions,
+    'permiso_id',
+    'Permisos.permiso_id'
+  );
+  _coreAuthAssertUniqueActiveCodes_(permissions, 'Permisos.codigo');
+
+  const activeUserRoleRows = userRoles.filter(item =>
+    _coreAuthText_(item.persona_id) === personaId &&
+    _coreAuthIsActive_(item.active)
+  );
+
+  const activeAssignmentByModule = new Map();
+
+  activeUserRoleRows.forEach(item => {
+    const moduloId = _coreAuthText_(item.modulo_id);
+    const rolId = _coreAuthText_(item.rol_id);
+
+    if (!moduloId || !rolId) {
+      throw new Error(
+        'SUNARP Core: existe una asignación activa UsuarioRol incompleta ' +
+        'para la persona ' + personaId + '.'
+      );
+    }
+
+    if (!moduleById.has(moduloId)) {
+      // Una asignación a un módulo inexistente o inactivo no concede acceso.
+      return;
+    }
+
+    if (activeAssignmentByModule.has(moduloId)) {
+      throw new Error(
+        'SUNARP Core: la persona ' + personaId +
+        ' tiene más de un rol activo en el módulo ' + moduloId + '.'
+      );
+    }
+
+    activeAssignmentByModule.set(moduloId, item);
+  });
+
+  _coreAuthAssertUniqueActivePairs_(
+    rolePermissions,
+    'rol_id',
+    'permiso_id',
+    'RolPermiso'
+  );
+
+
+  const rolePermissionIdsByRole = new Map();
+
+  rolePermissions.forEach(item => {
+    if (!_coreAuthIsActive_(item.active)) return;
+
+    const rolId = _coreAuthText_(item.rol_id);
+    const permisoId = _coreAuthText_(item.permiso_id);
+
+    if (!rolId || !permisoId) return;
+
+    if (!rolePermissionIdsByRole.has(rolId)) {
+      rolePermissionIdsByRole.set(rolId, new Set());
+    }
+
+    rolePermissionIdsByRole.get(rolId).add(permisoId);
+  });
+
+  const scopesByModule = new Map();
+
+  scopes.forEach(scope => {
+    if (
+      !_coreAuthIsActive_(scope.active) ||
+      _coreAuthText_(scope.persona_id) !== personaId
+    ) {
+      return;
+    }
+
+    const moduloId = _coreAuthText_(scope.modulo_id);
+
+    // Solo se consideran ámbitos de módulos activos donde la persona
+    // también dispone de una asignación activa de rol.
+    if (
+      !moduloId ||
+      !moduleById.has(moduloId) ||
+      !activeAssignmentByModule.has(moduloId)
+    ) {
+      return;
+    }
+
+    if (!scopesByModule.has(moduloId)) {
+      scopesByModule.set(moduloId, []);
+    }
+
+    scopesByModule.get(moduloId).push(scope);
+  });
+
+  const moduleAccess = [];
+
+  activeAssignmentByModule.forEach((assignment, moduloId) => {
+    const rolId = _coreAuthText_(assignment.rol_id);
+    const role = roleById.get(rolId);
+
+    // Un rol inactivo o inexistente no produce acceso al módulo.
+    if (!role) return;
+
+    const assignedPermissionIds =
+      rolePermissionIdsByRole.get(rolId) || new Set();
+
+    const modulePermissions = [];
+
+    assignedPermissionIds.forEach(permisoId => {
+      const permission = permissionById.get(permisoId);
+
+      if (!permission) return;
+
+      // Aislamiento modular: el permiso debe pertenecer al módulo
+      // de la asignación persona-rol que se está resolviendo.
+      if (_coreAuthText_(permission.modulo_id) !== moduloId) return;
+
+      const code = _coreAuthUpper_(permission.codigo);
+
+      if (!code) return;
+
+      modulePermissions.push(permission);
+    });
+
+    const permissionCodes = Array.from(new Set(
+      modulePermissions.map(permission =>
+        _coreAuthUpper_(permission.codigo)
+      )
+    ));
+
+    moduleAccess.push({
+      modulo_id: moduloId,
+      module: moduleById.get(moduloId),
+      rol_id: rolId,
+      role,
+      permissions: modulePermissions,
+      permissionCodes,
+      scopes: scopesByModule.get(moduloId) || []
+    });
+  });
 
   return {
     authenticated: true,
-    email,
+    personaId,
     user,
-    role,
-    permissions: Array.from(permissionByCode.values()),
-    permissionCodes: Array.from(permissionByCode.keys()),
-    scopes: userScopes
+    moduleAccess
   };
 }
 
 /**
- * Comprueba si el contexto contiene un permiso activo.
+ * Devuelve el acceso de la persona a un módulo, identificado exclusivamente
+ * por modulo_id. Nunca acepta el código o nombre del módulo como sustituto.
  */
-function authorizationHasPermission(context, permissionCode) {
-  if (!context || context.authenticated !== true) return false;
+function _coreAuthGetModuleAccess_(context, moduloId) {
+  if (!context || context.authenticated !== true) return null;
 
-  const expected = _coreAuthText_(permissionCode).toUpperCase();
+  const expectedModuleId = _coreAuthText_(moduloId);
 
-  return Boolean(expected) &&
-    Array.isArray(context.permissionCodes) &&
-    context.permissionCodes.includes(expected);
+  if (!expectedModuleId) return null;
+
+  return (context.moduleAccess || []).find(item =>
+    item.modulo_id === expectedModuleId
+  ) || null;
+}
+
+/**
+ * Comprueba un permiso dentro de un módulo concreto.
+ * moduloId es obligatorio: no existe una comprobación global por código.
+ */
+function authorizationHasPermission(context, permissionCode, moduloId) {
+  const moduleAccess = _coreAuthGetModuleAccess_(context, moduloId);
+
+  if (!moduleAccess) return false;
+
+  const expectedCode = _coreAuthUpper_(permissionCode);
+
+  if (!expectedCode) return false;
+
+  return moduleAccess.permissionCodes.includes(expectedCode);
 }
 
 /**
  * Comprueba si un registro pertenece a alguno de los ámbitos activos
- * del usuario para el módulo indicado. Los ámbitos se interpretan como unión.
+ * de la persona para el modulo_id indicado.
  *
- * record admite sede_id y estructura_org_id/estructura_id.
- * structures contiene nodos {id, parent_id, sede_id}.
+ * La entidad de referencia identifica cómo interpretar el tipo de ámbito:
+ * - NINGUNA -> TOTAL (sin referencia)
+ * - SEDE -> referencia de sede
+ * - ESTRUCTURA_ORG -> referencia orgánica y jerarquía opcional
+ * - LOCAL -> referencia de local directo
+ * Cuando no se adjunta entidad_referencia, se conserva compatibilidad con
+ * los cuatro identificadores históricos. Cualquier entidad desconocida deniega.
+ *
+ * La lista structures contiene nodos del catálogo organizacional:
+ * { id, parent_id, sede_id }.
+ * locals contiene nodos del catálogo de locales: { id, sede_id }.
+ *
+ * Cuando un registro tiene local_id, Core exige el catálogo de locales y
+ * deriva la sede desde él; no confía en record.sede_id.
+ *
+ * fields permite adaptar los campos del registro de negocio y de ambos
+ * catálogos, sin alterar el contrato de seguridad.
  */
-function authorizationIsRecordInScope(context, moduleCode, record, structures) {
-  if (!context || context.authenticated !== true) return false;
+/**
+ * Construye un evaluador de ámbito reutilizable para una consulta.
+ * Los mapas de catálogos y el módulo se resuelven una sola vez por lote,
+ * no una vez por cada registro candidato.
+ */
+function _coreAuthCreateRecordScopeChecker_(
+  context,
+  moduloId,
+  structures,
+  fields,
+  locals
+) {
+  const moduleAccess = _coreAuthGetModuleAccess_(context, moduloId);
+  if (!moduleAccess || !moduleAccess.scopes.length) return () => false;
 
-  const module = _coreAuthText_(moduleCode).toUpperCase();
-
-  const scopes = (context.scopes || []).filter(item =>
-    _coreAuthText_(item.modulo).toUpperCase() === module
+  const activeScopes = moduleAccess.scopes;
+  const totalScopes = activeScopes.filter(scope =>
+    _coreAuthScopeType_(scope) === 'TOTAL'
   );
-
-  if (!scopes.length) return false;
-
-  if (scopes.some(item =>
-    _coreAuthText_(item.tipo_ambito).toUpperCase() === 'TOTAL'
-  )) {
-    return true;
+  if (totalScopes.length) {
+    // TOTAL es exclusivo dentro del módulo. Una mezcla de TOTAL y ámbitos
+    // específicos es inconsistente y debe denegarse, nunca ampliar permisos.
+    const allowed = activeScopes.length === 1 &&
+      totalScopes.length === 1 &&
+      !_coreAuthText_(totalScopes[0].referencia_id);
+    return () => allowed;
   }
 
-  record = record || {};
+  fields = fields || {};
+  const f = Object.assign({
+    recordOrganizationStructureId: 'estructura_org_id',
+    recordStructureId: 'estructura_id',
+    recordLocalId: 'local_id',
+    recordSiteId: 'sede_id',
+    structureId: 'id',
+    structureParentId: 'parent_id',
+    structureSiteId: 'sede_id',
+    localId: 'id',
+    localSiteId: 'sede_id'
+  }, fields);
 
-  const nodes = Array.isArray(structures) ? structures : [];
-
-  const structureMap = new Map(nodes.map(node => [
-    _coreAuthText_(node.id),
-    node
-  ]));
-
-  const structureId = _coreAuthText_(
-    record.estructura_org_id ||
-    record.estructura_id ||
-    record.structureId
+  const catalogMaps = _coreAuthGetScopeCatalogMaps_(
+    structures,
+    locals,
+    f
   );
+  const structureMap = catalogMaps.structureMap;
+  const localMap = catalogMaps.localMap;
 
-  // Si existe una estructura orgánica conocida, la sede se deriva
-  // del catálogo maestro y no de un sede_id enviado en el registro.
-  let sedeId = structureId && structureMap.has(structureId)
-    ? _coreAuthText_(structureMap.get(structureId).sede_id)
-    : _coreAuthText_(record.sede_id || record.sedeId);
+  return function isRecordInScope(record) {
+    record = record || {};
+    const structureId = _coreAuthText_(
+      record[f.recordOrganizationStructureId] ||
+      record[f.recordStructureId]
+    );
+    const localId = _coreAuthText_(record[f.recordLocalId]);
+    const local = localId ? localMap.get(localId) : null;
 
-  return scopes.some(scope => {
-    const type = _coreAuthText_(scope.tipo_ambito).toUpperCase();
-    const referenceId = _coreAuthText_(scope.referencia_id);
+    // Cualquier local_id declarado debe existir en el catálogo maestro.
+    // Así se evita confiar en sede_id suministrado por el registro.
+    if (localId && !local) return false;
 
-    if (type === 'SEDE') {
-      return Boolean(referenceId && sedeId && referenceId === sedeId);
-    }
-
-    if (type === 'ESTRUCTURA_ORG') {
-      if (!referenceId || !structureId) return false;
-      if (referenceId === structureId) return true;
-
-      const includeDescendants = [
-        'SI', 'SÍ', 'TRUE', 'VERDADERO', '1', 'YES'
-      ].includes(
-        _coreAuthText_(scope.incluir_descendientes).toUpperCase()
-      );
-
-      if (!includeDescendants) return false;
-
-      const visited = new Set();
-      let currentId = structureId;
-
-      while (currentId && !visited.has(currentId)) {
-        visited.add(currentId);
-
-        const current = structureMap.get(currentId);
-
-        if (!current) return false;
-
-        const parentId = _coreAuthText_(current.parent_id);
-
-        if (!parentId) return false;
-        if (parentId === referenceId) return true;
-
-        currentId = parentId;
+    let siteId = '';
+    if (structureId) {
+      const structure = structureMap.get(structureId);
+      if (!structure) return false;
+      siteId = _coreAuthText_(structure[f.structureSiteId]);
+      const localSiteId = local
+        ? _coreAuthText_(local[f.localSiteId])
+        : '';
+      if (local && localSiteId && siteId && localSiteId !== siteId) {
+        return false;
       }
+    } else if (local) {
+      siteId = _coreAuthText_(local[f.localSiteId]);
+    } else {
+      siteId = _coreAuthText_(record[f.recordSiteId]);
     }
 
-    return false;
-  });
+    return activeScopes.some(scope => {
+      const type = _coreAuthScopeType_(scope);
+      const referenceId = _coreAuthText_(scope.referencia_id);
+
+      if (type === 'SEDE') {
+        return Boolean(referenceId && siteId && referenceId === siteId);
+      }
+
+      if (type === 'LOCAL') {
+        // LOCAL cubre únicamente registros adscritos directamente al local,
+        // sin estructura orgánica.
+        return Boolean(
+          referenceId &&
+          local &&
+          localId &&
+          referenceId === localId &&
+          !structureId
+        );
+      }
+
+      if (type === 'ESTRUCTURA_ORG') {
+        if (!referenceId || !structureId) return false;
+        if (!structureMap.has(referenceId)) return false;
+        if (!structureMap.has(structureId)) return false;
+        if (referenceId === structureId) return true;
+        if (!_coreAuthIsTruthy_(scope.incluir_descendientes)) return false;
+
+        const visited = new Set();
+        let currentId = structureId;
+        while (currentId && !visited.has(currentId)) {
+          visited.add(currentId);
+          const current = structureMap.get(currentId);
+          if (!current) return false;
+          const parentId = _coreAuthText_(current[f.structureParentId]);
+          if (!parentId) return false;
+          if (parentId === referenceId) return true;
+          currentId = parentId;
+        }
+      }
+      return false;
+    });
+  };
+}
+
+/**
+ * Comprueba un registro mediante el contrato público de autorización.
+ * Para una comprobación aislada conserva la misma semántica; las consultas
+ * por lotes deben reutilizar _coreAuthCreateRecordScopeChecker_.
+ */
+function authorizationIsRecordInScope(
+  context,
+  moduloId,
+  record,
+  structures,
+  fields,
+  locals
+) {
+  return _coreAuthCreateRecordScopeChecker_(
+    context, moduloId, structures, fields, locals
+  )(record);
 }

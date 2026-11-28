@@ -19,6 +19,7 @@
   // ============================================================
 
   let pendingLoads = 0;
+  let pendingTranslucentLoads = 0;
   let shellInitialized = false;
   let resourcesLoaded = document.readyState === 'complete';
   let loaderHideTimer = null;
@@ -77,12 +78,41 @@
   }
 
   /**
+   * Sincroniza la apariencia del loader con todas las cargas pendientes.
+   * El fondo translúcido solo se aplica cuando todas las cargas activas
+   * solicitaron expresamente ese modo.
+   */
+  function syncLoaderBackdrop() {
+    const loader = $('#sunarpLoader');
+    if (!loader) return;
+
+    loader.classList.toggle(
+      'is-translucent',
+      pendingLoads > 0 && pendingTranslucentLoads === pendingLoads
+    );
+  }
+
+  /**
    * Registra una operación asíncrona.
    * Devuelve una función para indicar que terminó.
+   *
+   * Opciones:
+   * beginLoading()
+   * beginLoading({ backdrop: 'translucent' })
+   *
+   * El modo predeterminado conserva el fondo blanco.
    */
-  function beginLoading() {
+  function beginLoading(options = {}) {
+    const translucent = options.backdrop === 'translucent';
+
     pendingLoads++;
+
+    if (translucent) {
+      pendingTranslucentLoads++;
+    }
+
     showLoader();
+    syncLoaderBackdrop();
 
     let finished = false;
 
@@ -92,7 +122,89 @@
       finished = true;
       pendingLoads = Math.max(0, pendingLoads - 1);
 
+      if (translucent) {
+        pendingTranslucentLoads = Math.max(
+          0,
+          pendingTranslucentLoads - 1
+        );
+      }
+
+      syncLoaderBackdrop();
       updateLoaderVisibility();
+    };
+  }
+
+  /**
+   * Loader localizado para una operación dentro de un contenedor.
+   * A diferencia de beginLoading(), no cubre ni bloquea toda la página.
+   * Devuelve una función idempotente para retirar únicamente su overlay.
+   */
+  const sectionLoadingStates = new WeakMap();
+
+  function beginSectionLoading(target, options = {}) {
+    const host = typeof target === 'string' ? $(target) : target;
+    if (!host || typeof host.appendChild !== 'function') {
+      return function finishMissingSectionLoading() {};
+    }
+
+    let hostState = sectionLoadingStates.get(host);
+    if (!hostState) {
+      hostState = {
+        count: 0,
+        hadHostClass: host.classList.contains('sunarp-section-loading-host'),
+        previousAriaBusy: host.getAttribute('aria-busy')
+      };
+      sectionLoadingStates.set(host, hostState);
+      host.classList.add('sunarp-section-loading-host');
+      host.setAttribute('aria-busy', 'true');
+    }
+    hostState.count += 1;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'sunarp-section-loader';
+    overlay.setAttribute('role', 'status');
+    overlay.setAttribute('aria-live', 'polite');
+
+    const content = document.createElement('div');
+    content.className = 'sunarp-section-loader-content';
+
+    const spinner = document.createElement('span');
+    spinner.className = 'sunarp-loader-spinner';
+    spinner.setAttribute('aria-hidden', 'true');
+    content.appendChild(spinner);
+
+    const message = String(options.message || '').trim();
+    if (message) {
+      const label = document.createElement('p');
+      label.className = 'sunarp-section-loader-message';
+      label.textContent = message;
+      content.appendChild(label);
+    }
+
+    overlay.appendChild(content);
+    host.appendChild(overlay);
+
+    let finished = false;
+    return function finishSectionLoading() {
+      if (finished) return;
+      finished = true;
+
+      overlay.remove();
+      const currentState = sectionLoadingStates.get(host);
+      if (!currentState) return;
+
+      currentState.count = Math.max(0, currentState.count - 1);
+      if (currentState.count > 0) return;
+
+      if (!currentState.hadHostClass) {
+        host.classList.remove('sunarp-section-loading-host');
+      }
+      if (currentState.previousAriaBusy === null) {
+        host.removeAttribute('aria-busy');
+      } else {
+        host.setAttribute('aria-busy', currentState.previousAriaBusy);
+      }
+      sectionLoadingStates.delete(host);
     };
   }
 
@@ -455,6 +567,7 @@
    *   containerId: 'alertsContainer',
    *   type: 'success' | 'error' | 'warning' | 'info',
    *   title: 'Operación completada',
+   *   details: ['Identidad principal', 'Dato complementario'],
    *   message: 'El registro se guardó correctamente.',
    *   dismissible: true,
    *   replace: false
@@ -523,6 +636,28 @@
       title.textContent = String(options.title);
 
       content.appendChild(title);
+    }
+
+    if (Array.isArray(options.details) && options.details.length) {
+      const details = document.createElement('div');
+      details.className = 'sunarp-alert-details';
+
+      options.details
+        .map(value => String(value ?? '').trim())
+        .filter(Boolean)
+        .forEach((value, index) => {
+          const line = document.createElement(
+            index === 0 ? 'strong' : 'span'
+          );
+
+          line.className = 'sunarp-alert-detail';
+          line.textContent = value;
+          details.appendChild(line);
+        });
+
+      if (details.childNodes.length) {
+        content.appendChild(details);
+      }
     }
 
     if (options.message) {
@@ -1156,6 +1291,7 @@
     openModal,
     closeModal,
     beginLoading,
+    beginSectionLoading,
     navigate,
     setPageActions,
     clearPageActions,

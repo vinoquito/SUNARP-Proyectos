@@ -847,30 +847,34 @@ const CLAVE_FIRMA_AGENTES_SUNARP = 'FIRMA_AGENTES_SUNARP_ORIGEN';
 
 function obtenerFirmaOrigenAgentesSunarp_(ss) {
 
-  const hoja = ss.getSheetByName(
-    AGENTES_SUNARP_CONFIG.HOJA_ORIGEN
-  );
+  const sheetNames = Array.from(new Set([
+    AGENTES_SUNARP_CONFIG.HOJA_ORIGEN,
+    ...(AGENTES_SUNARP_CONFIG.HOJAS_OBSERVADAS || [])
+  ]));
 
-  if (!hoja) {
-    throw new Error(
-      'No se encontró la hoja Agentes Sunarp.'
-    );
-  }
+  const contentBySheet = sheetNames.map(name => {
+    const sheet = ss.getSheetByName(name);
+    if (!sheet) {
+      throw new Error(
+        'No se encontró la hoja observada "' + name +
+        '" al calcular la firma de origen de Agentes SUNARP.'
+      );
+    }
 
-  const valores = hoja
-    .getDataRange()
-    .getDisplayValues();
+    return {
+      sheet: name,
+      values: sheet.getDataRange().getDisplayValues()
+    };
+  });
 
-  const contenido = JSON.stringify(valores);
-
+  const content = JSON.stringify(contentBySheet);
   const digest = Utilities.computeDigest(
     Utilities.DigestAlgorithm.SHA_256,
-    contenido,
+    content,
     Utilities.Charset.UTF_8
   );
 
   return Utilities.base64Encode(digest);
-
 }
 
 

@@ -79,24 +79,38 @@ window.SUNARPUIDataTable = function (options = {}, helpers = {}) {
     pageSizeOptions.push(10, 25, 50);
   }
 
-  const requestedPageSize = Number(options.pageSize || 10);
+  const initialState = options.initialState && typeof options.initialState === 'object'
+    ? options.initialState
+    : {};
+  const requestedPageSize = Number(initialState.pageSize || options.pageSize || 10);
 
   const state = {
-    page: 1,
+    page: Math.max(1, Number.parseInt(initialState.page, 10) || 1),
     pageSize: pageSizeOptions.includes(requestedPageSize)
       ? requestedPageSize
       : pageSizeOptions[0],
-    search: '',
+    search: String(initialState.search || ''),
     filters: Object.fromEntries(
-      filters.map(filter => [filter.key, ''])
+      filters.map(filter => [
+        filter.key,
+        String(initialState.filters && initialState.filters[filter.key] || '')
+      ])
     )
   };
 
+  const hasInitialServerData = mode === 'server' && options.initialData &&
+    Array.isArray(options.initialData.items) &&
+    Number.isFinite(Number(options.initialData.total));
+
   let data = mode === 'client' && Array.isArray(options.data)
     ? [...options.data]
-    : [];
+    : hasInitialServerData
+      ? [...options.initialData.items]
+      : [];
 
-  let serverTotal = 0;
+  let serverTotal = hasInitialServerData
+    ? Math.max(0, Number(options.initialData.total))
+    : 0;
   let loading = false;
   let lastError = null;
   let requestId = 0;
@@ -123,6 +137,7 @@ window.SUNARPUIDataTable = function (options = {}, helpers = {}) {
                 placeholder="${escapeHtml(
                   options.searchPlaceholder || 'Buscar registros...'
                 )}"
+                value="${escapeHtml(state.search)}"
                 autocomplete="off">
             </label>
           `
@@ -136,7 +151,9 @@ window.SUNARPUIDataTable = function (options = {}, helpers = {}) {
             <option value="">${escapeHtml(filter.allLabel)}</option>
 
             ${filter.options.map(option => `
-              <option value="${escapeHtml(option.value)}">
+              <option
+                value="${escapeHtml(option.value)}"
+                ${option.value === state.filters[filter.key] ? 'selected' : ''}>
                 ${escapeHtml(option.label)}
               </option>
             `).join('')}
@@ -965,7 +982,7 @@ window.SUNARPUIDataTable = function (options = {}, helpers = {}) {
 
   render();
 
-  if (mode === 'server') {
+  if (mode === 'server' && !hasInitialServerData) {
     loadServerData();
   }
 

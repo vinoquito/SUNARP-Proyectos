@@ -38,15 +38,7 @@ function include(fileName) {
  */
 function getAppShellConfig() {
   const auth = getAuthContext_();
-  const sourceItems = getNavigationItems_();
-
-  const accessManagementCodes = [
-    'USUARIOS_ADMINISTRAR',
-    'ROLES_ADMINISTRAR',
-    'PERMISOS_ADMINISTRAR',
-    'AMBITOS_ACCESO_ADMINISTRAR',
-    'AUDITORIA_VER'
-  ];
+  const sourceItems = _mergeMaintenanceNavigationItems_(getNavigationItems_());
 
   const allowedItems = sourceItems.filter(item => {
     const requiredCode = String(item.permissionCode || '')
@@ -57,21 +49,28 @@ function getAppShellConfig() {
       .trim()
       .toLowerCase();
 
+    if (route === 'seguridad') {
+      return _accessIsGlobalAdministrator_(auth);
+    }
+
     if (!requiredCode) return true;
+
+    if (!route && requiredCode === 'MANTENIMIENTOS_VER') {
+      return hasPermission_(auth, requiredCode) ||
+        _accessIsGlobalAdministrator_(auth);
+    }
 
     if (
       requiredCode === 'ACCESOS_ADMINISTRAR' ||
       route === 'accesos'
     ) {
-      return accessManagementCodes.some(code =>
-        SUNARPCore.authorizationHasPermission(auth, code)
+      return (
+        _accessIsGlobalAdministrator_(auth) ||
+        hasPermission_(auth, 'AUDITORIA_VER')
       );
     }
 
-    return SUNARPCore.authorizationHasPermission(
-      auth,
-      requiredCode
-    );
+    return hasPermission_(auth, requiredCode);
   });
 
   const allowedIds = new Set(
@@ -90,42 +89,139 @@ function getAppShellConfig() {
 }
 
 /**
+ * Incorpora los cinco grupos de mantenimiento al árbol del shell.
+ * Las rutas se mantienen bajo un único nodo padre. Los permisos se verifican
+ * al construir el menú y de nuevo en cada servicio del backend.
+ */
+function _mergeMaintenanceNavigationItems_(sourceItems) {
+  const items = (sourceItems || []).map(item => Object.assign({}, item));
+  const normalize = value => String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+
+  let parent = items.find(item =>
+    normalize(item.label) === 'modulos de mantenimiento'
+  );
+
+  const usedIds = new Set(items.map(item => String(item.id || '').toUpperCase()));
+  if (!parent) {
+    let id = 'MANTENIMIENTOS';
+    let suffix = 2;
+    while (usedIds.has(id)) id = 'MANTENIMIENTOS_' + suffix++;
+    parent = {
+      id: id,
+      parentId: '',
+      label: 'Módulos de mantenimiento',
+      description: 'Administración centralizada de catálogos institucionales.',
+      icon: 'settings',
+      route: '',
+      order: 80,
+      permissionCode: 'MANTENIMIENTOS_VER'
+    };
+    items.push(parent);
+    usedIds.add(id);
+  } else {
+    parent.parentId = '';
+    parent.label = 'Módulos de mantenimiento';
+    parent.description = 'Administración centralizada de catálogos institucionales.';
+    parent.icon = parent.icon || 'settings';
+    parent.route = '';
+    parent.permissionCode = 'MANTENIMIENTOS_VER';
+  }
+
+  const parentId = String(parent.id);
+  const groups = [
+    {
+      id: 'MANT_UBICACION_GEOGRAFICA',
+      label: 'Ubicación geográfica',
+      route: 'ubicacion-geografica',
+      description: 'Administra departamentos, provincias y distritos.',
+      icon: 'public',
+      order: 1
+    },
+    {
+      id: 'MANT_SEDES_LOCALES',
+      label: 'Sedes y locales',
+      route: 'sedes-locales',
+      description: 'Administra sedes, tipos de local y locales.',
+      icon: 'location_city',
+      order: 2
+    },
+    {
+      id: 'MANT_ORGANIZACION_INSTITUCIONAL',
+      label: 'Organización institucional',
+      route: 'organizacion-institucional',
+      description: 'Administra tipos de estructura y estructura orgánica.',
+      icon: 'account_tree',
+      order: 3
+    },
+    {
+      id: 'MANT_DATOS_PERSONAL',
+      label: 'Datos de personal',
+      route: 'datos-personal',
+      description: 'Administra cargos, condiciones de cargo y tipos de documento de identidad.',
+      icon: 'badge',
+      order: 4
+    },
+    {
+      id: 'MANT_DIRECTORIO_TELEFONICO',
+      label: 'Directorio telefónico',
+      route: 'directorio-telefonico',
+      description: 'Administra tipos de teléfono y teléfonos.',
+      icon: 'phone',
+      order: 5
+    },
+    {
+      id: 'MANT_SEGURIDAD',
+      label: 'Seguridad',
+      route: 'seguridad',
+      description: 'Administra los catálogos centrales de autorización del sistema.',
+      icon: 'shield',
+      order: 6
+    }
+  ];
+
+  groups.forEach(group => {
+    let item = items.find(candidate =>
+      String(candidate.route || '').trim().toLowerCase() === group.route
+    );
+
+    if (!item) {
+      let id = group.id;
+      let suffix = 2;
+      while (usedIds.has(id.toUpperCase())) id = group.id + '_' + suffix++;
+      item = {
+        id: id,
+        parentId: parentId,
+        label: group.label,
+        description: group.description,
+        icon: group.icon,
+        route: group.route,
+        order: group.order,
+        permissionCode: 'MANTENIMIENTOS_VER'
+      };
+      items.push(item);
+      usedIds.add(id.toUpperCase());
+    } else {
+      item.parentId = parentId;
+      item.label = group.label;
+      item.description = group.description;
+      item.icon = item.icon || group.icon;
+      item.permissionCode = 'MANTENIMIENTOS_VER';
+      item.order = group.order;
+    }
+  });
+
+  return items.sort((a, b) => Number(a.order || 9999) - Number(b.order || 9999));
+}
+
+
+/**
  * Lee y valida la configuración del menú.
  */
 function getNavigationItems_() {
-  const spreadsheetId = INTRANET_CONFIG.DATA_SPREADSHEET_ID;
-
-  if (
-    !spreadsheetId ||
-    spreadsheetId === 'PEGAR_AQUI_EL_ID_DE_LA_HOJA'
-  ) {
-    throw new Error(
-      'Configura DATA_SPREADSHEET_ID en Code.gs.'
-    );
-  }
-
-  const spreadsheet = SpreadsheetApp.openById(spreadsheetId);
-
-  const sheet = spreadsheet.getSheetByName(
-    INTRANET_CONFIG.NAVIGATION_SHEET_NAME
-  );
-
-  if (!sheet) {
-    throw new Error(
-      `No existe la pestaña "${INTRANET_CONFIG.NAVIGATION_SHEET_NAME}".`
-    );
-  }
-
-  const values = sheet.getDataRange().getDisplayValues();
-
-  if (!values.length || !values[0].some(value => value.trim())) {
-    throw new Error('La hoja Menu no tiene encabezados.');
-  }
-
-  const headers = values[0].map(value =>
-    String(value).trim().toLowerCase()
-  );
-
   const requiredHeaders = [
     'id',
     'parent_id',
@@ -138,30 +234,22 @@ function getNavigationItems_() {
     'active'
   ];
 
-  const missingHeaders = requiredHeaders.filter(
-    name => !headers.includes(name)
-  );
+  const result = SUNARPCore.listRecordsFromSourcesCached([{
+    key: 'menu',
+    source: getIntranetDataSource(
+      'APP_DATA',
+      INTRANET_CONFIG.NAVIGATION_SHEET_NAME,
+      1
+    ),
+    requiredHeaders
+  }], 300);
 
-  if (missingHeaders.length) {
-    throw new Error(
-      `Faltan encabezados en Menu: ${missingHeaders.join(', ')}.`
-    );
-  }
-
-  const column = {};
-  requiredHeaders.forEach(name => {
-    column[name] = headers.indexOf(name);
-  });
-
-  const rows = values.slice(1);
+  const rows = result.menu || [];
   const seenIds = new Set();
   const items = [];
 
   rows.forEach((row, index) => {
-    if (!row.some(value => String(value).trim())) return;
-
-    const get = name =>
-      String(row[column[name]] ?? '').trim();
+    const get = name => String(row[name] === null || row[name] === undefined ? '' : row[name]).trim();
 
     const id = get('id');
     const label = get('label');
@@ -183,7 +271,6 @@ function getNavigationItems_() {
     seenIds.add(normalizedId);
 
     const activeValue = get('active').toUpperCase();
-
     const active = [
       'TRUE',
       'VERDADERO',

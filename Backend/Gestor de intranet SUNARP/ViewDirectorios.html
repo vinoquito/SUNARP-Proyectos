@@ -1,4 +1,46 @@
-<section data-app-view="directorios-telefonicos" hidden>
+<section data-app-view="informacion-personal" hidden>
+
+  <style>
+  .directory-form{display:flex;flex-direction:column;align-items:stretch;gap:22px;width:100%;min-width:0}
+  .directory-form-loading-placeholder{min-height:190px}
+  .directory-form-section{display:flex;flex-direction:column;gap:14px;width:100%;min-width:0;padding-bottom:20px;border-bottom:1px solid var(--ui-border)}
+  .directory-form-section:last-of-type{padding-bottom:0;border-bottom:0}
+  .directory-form-section-heading{display:flex;flex-direction:column;gap:4px;width:100%}
+  .directory-form-section-heading h3{margin:0;color:var(--ui-ink);font-size:15px;font-weight:700}
+  .directory-form-section-heading p{margin:0;color:var(--ui-muted);font-size:12px;line-height:1.5}
+  .directory-form-section-heading--actions{flex-direction:row;align-items:center;justify-content:space-between;gap:14px}
+  .directory-form-validation{padding:16px;border:1px solid var(--ui-border);border-radius:9px;background:var(--ui-background)}
+  .directory-form-document-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px;width:100%}
+  .directory-form-document-fields .sunarp-form-field{width:100%;min-width:0}
+  .directory-form-document-fields .sunarp-select,.directory-form-document-fields .sunarp-input{width:100%;box-sizing:border-box}
+  .directory-form-document-actions{display:flex;justify-content:flex-start;align-items:center;flex-wrap:wrap;gap:8px;margin-top:2px}
+  .directory-form-dates-grid{display:grid;grid-column:1/-1;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 16px;width:100%}
+  .directory-form-dates-grid .sunarp-form-field{min-width:0}
+  .directory-form-field-full{grid-column:1/-1;width:100%;min-width:0}
+  .directory-form .sunarp-input,.directory-form .sunarp-select,.directory-assignment-editor-panel .sunarp-input,.directory-assignment-editor-panel .sunarp-select{width:100%;max-width:100%;box-sizing:border-box}
+  .directory-form-fieldset{display:block;width:100%;min-width:0;margin:0;padding:0;border:0}.directory-form-personal-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:14px 16px;width:100%}.directory-form-personal-grid>.directory-form-document-fields{grid-column:1/-1}
+  .directory-form-fieldset:disabled{opacity:.58}
+  .directory-form-actions,.directory-assignment-editor-actions{display:flex;justify-content:flex-end;align-items:center;flex-wrap:wrap;gap:8px;width:100%;padding-top:2px}
+  .directory-assignment-editor-panel{display:flex;flex-direction:column;gap:14px;width:100%;min-width:0;margin:4px 0 16px;padding:16px;border:1px solid var(--ui-border);border-radius:8px;background:var(--ui-background)}
+  .directory-assignment-editor-heading h4{margin:0 0 3px;color:var(--ui-ink);font-size:14px}
+  .directory-assignment-editor-heading p{margin:0;color:var(--ui-muted);font-size:12px;line-height:1.45}
+  .directory-assignment-editor-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:end;gap:12px 16px;width:100%}
+  .directory-assignment-location-editor{display:flex;flex-direction:column;gap:12px;width:100%;padding-top:14px;border-top:1px solid var(--ui-border)}
+  .directory-assignment-location-editor h5{margin:0;color:var(--ui-ink);font-size:13px;font-weight:700}
+  .directory-form-hierarchy{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px;width:100%}
+  .directory-form-hierarchy:empty{display:none}
+  .directory-form-hierarchy-level,.directory-form-hierarchy-level .sunarp-form-field{min-width:0;width:100%}
+  .directory-assignment-table-host{width:100%;overflow-x:auto;border:1px solid var(--ui-border);border-radius:7px;background:#fff}
+  .directory-assignment-table{width:100%;min-width:920px;border-collapse:collapse;color:var(--ui-ink);font-size:12px}
+  .directory-assignment-table th,.directory-assignment-table td{padding:10px 11px;border-bottom:1px solid var(--ui-border);text-align:left;vertical-align:middle;line-height:1.45}
+  .directory-assignment-table th{background:var(--ui-background);font-size:11px;font-weight:700;white-space:nowrap}
+  .directory-assignment-table tbody tr:last-child td{border-bottom:0}
+  .directory-assignment-actions{display:flex;align-items:center;gap:6px;white-space:nowrap}
+  .directory-small-button{min-height:30px;padding:5px 9px;font-size:11px}
+  .directory-assignment-empty{margin:0;padding:14px;color:var(--ui-muted);font-size:12px}
+  .directory-assignment-table--editing{opacity:.72}
+  @media(max-width:720px){.directory-form-personal-grid,.directory-form-document-fields,.directory-form-dates-grid,.directory-assignment-editor-grid,.directory-form-hierarchy{grid-template-columns:minmax(0,1fr)}.directory-form-dates-grid{grid-column:1/-1}.directory-form-section-heading--actions{align-items:flex-start;flex-direction:column}}
+</style>
 
   <div class="directory-page">
 
@@ -8,19 +50,27 @@
       <div class="sunarp-filter">
         <label for="directorySedeFilter">Sede</label>
         <select id="directorySedeFilter" class="sunarp-select">
-          <option value="">Todas las sedes</option>
+          <option value="">Selecciona una sede</option>
+        </select>
+      </div>
+
+      <div class="sunarp-filter" hidden>
+        <label for="directoryLocalFilter">Local</label>
+        <select id="directoryLocalFilter" class="sunarp-select" disabled>
+          <option value="">Selecciona un local</option>
         </select>
       </div>
 
       <div
         id="directoryHierarchyFilters"
-        class="sunarp-filter-collection">
+        class="sunarp-filter-collection"
+        hidden>
       </div>
 
       <div class="sunarp-filter">
         <label for="directoryCargoFilter">Cargo</label>
-        <select id="directoryCargoFilter" class="sunarp-select">
-          <option value="">Todos los cargos</option>
+        <select id="directoryCargoFilter" class="sunarp-select" disabled>
+          <option value="">Cargos de la información autorizada</option>
         </select>
       </div>
 
