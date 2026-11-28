@@ -170,7 +170,7 @@ test('carga los cuatro catálogos desde SECURITY en una sola consulta agrupada y
   const fixture = makeSandbox();
   const data = fixture.sandbox.getSecurityMaintenanceData();
   assert.equal(fixture.reads.length, 1);
-  assert.deepEqual(fixture.reads[0], ['Roles', 'Modulos', 'TiposAmbito', 'Operaciones']);
+  assert.equal(fixture.reads[0].join(','), 'Roles,Modulos,TiposAmbito,Operaciones');
   assert.deepEqual(Object.keys(data), ['roles', 'modules', 'scopeTypes', 'operations', 'capabilities']);
   assert.deepEqual(Object.keys(data.operations[0]), ['operacion_id', 'nombre']);
   assert.equal(data.operations.some(row => 'active' in row || 'descripcion' in row), false);
@@ -334,7 +334,7 @@ test('Core resuelve IDs dinámicos solo cuando entidad_referencia pertenece a su
   const context = sandbox.resolveAuthorizationContext({
     personaId: 'PER_TEST',
     users: [{ persona_id: 'PER_TEST', active: true }],
-    modules: [{ modulo_id: 'MOD_TEST', active: true }],
+    modules: [{ modulo_id: 'MOD_TEST', codigo: 'TEST', active: true }],
     roles: [{ rol_id: 'ROL_TEST', active: true }],
     userRoles: [{ persona_id: 'PER_TEST', modulo_id: 'MOD_TEST', rol_id: 'ROL_TEST', active: true }],
     permissions: [],
@@ -354,7 +354,7 @@ test('Core resuelve IDs dinámicos solo cuando entidad_referencia pertenece a su
   const unknown = sandbox.resolveAuthorizationContext({
     personaId: 'PER_TEST',
     users: [{ persona_id: 'PER_TEST', active: true }],
-    modules: [{ modulo_id: 'MOD_TEST', active: true }],
+    modules: [{ modulo_id: 'MOD_TEST', codigo: 'TEST', active: true }],
     roles: [{ rol_id: 'ROL_TEST', active: true }],
     userRoles: [{ persona_id: 'PER_TEST', modulo_id: 'MOD_TEST', rol_id: 'ROL_TEST', active: true }],
     permissions: [],

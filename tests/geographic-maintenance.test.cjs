@@ -228,7 +228,7 @@ function makeGeoSandbox(options = {}) {
   };
 }
 
-test('la navegación agrega un único nodo y exactamente los cinco grupos acordados', () => {
+test('la navegación agrega un único nodo y los seis grupos de mantenimiento acordados', () => {
   const sandbox = vm.createContext({});
   vm.runInContext(navigationSource, sandbox, { filename: 'Código.js' });
   const items = Array.from(sandbox._mergeMaintenanceNavigationItems_([]));
@@ -243,7 +243,8 @@ test('la navegación agrega un único nodo y exactamente los cinco grupos acorda
       'Sedes y locales',
       'Organización institucional',
       'Datos de personal',
-      'Directorio telefónico'
+      'Directorio telefónico',
+      'Seguridad'
     ]
   );
   assert.deepEqual(
@@ -253,7 +254,8 @@ test('la navegación agrega un único nodo y exactamente los cinco grupos acorda
       'sedes-locales',
       'organizacion-institucional',
       'datos-personal',
-      'directorio-telefonico'
+      'directorio-telefonico',
+      'seguridad'
     ]
   );
   assert.ok(children.every(item => item.permissionCode === 'MANTENIMIENTOS_VER'));

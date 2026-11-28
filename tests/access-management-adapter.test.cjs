@@ -1498,7 +1498,7 @@ test('la configuración del editor consulta solo las relaciones de la persona se
     scopeCall.projectionFields.join(','),
     'persona_id,modulo_id,tipo_ambito_id,referencia_id,incluir_descendientes,active'
   );
-  assert.deepEqual(listReads, ['Modulos']);
+  assert.deepEqual(listReads, ['TiposAmbito', 'Modulos']);
 });
 
 test('la validación del snapshot rechaza dos roles activos de la misma persona y módulo', () => {
@@ -1765,7 +1765,7 @@ test('TiposAmbito admite IDs adicionales solo con entidades y reglas interpretab
       : item
     )
   });
-  assert.throws(() => sandbox._accessValidateSnapshot_(alteredSemantics), /no coincide con el modelo admitido/i);
+  assert.throws(() => sandbox._accessValidateSnapshot_(alteredSemantics), /semántica admitida/i);
 });
 
 test('Permisos valida operacion_id contra el catálogo Operaciones', () => {
@@ -2468,7 +2468,7 @@ test('el bootstrap de Administración reutiliza catálogos mientras no cambie su
   const first = sandbox.getAccessManagementData();
   const firstReadCount = readCounts.length;
   const second = sandbox.getAccessManagementData();
-  assert.equal(firstReadCount, 2, 'Una lectura para identidad y otra para catálogos iniciales');
+  assert.equal(firstReadCount, 3, 'Una lectura para identidad, una para TiposAmbito por ámbitos activos y otra para catálogos iniciales');
   assert.equal(readCounts.length, firstReadCount, 'La segunda entrada no debe volver a leer catálogos.');
   assert.ok(cache.has('access-auth-context:v1:prueba@sunarp.gob.pe'));
   assert.ok(cache.has('access-management-bootstrap:v1'));
@@ -2711,6 +2711,7 @@ test('refreshCurrentUserAuthorizationCache invalida fuentes y reconstruye el con
       'Permisos',
       'RolPermiso',
       'AmbitosAcceso',
+      'TiposAmbito',
       'Menu'
     ]
   );

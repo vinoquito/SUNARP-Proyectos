@@ -60,8 +60,10 @@ function _securityMaintenanceSource_(sheetName) {
 }
 
 function _securityMaintenanceEntity_(entity) {
-  const key = _securityMaintenanceText_(entity).toLowerCase();
-  if (!Object.prototype.hasOwnProperty.call(SECURITY_MAINTENANCE_CONFIG.sheets, key)) {
+  const requested = _securityMaintenanceText_(entity).toLowerCase();
+  const key = Object.keys(SECURITY_MAINTENANCE_CONFIG.sheets)
+    .find(candidate => candidate.toLowerCase() === requested) || '';
+  if (!key) {
     throw new Error('El catálogo de seguridad solicitado no existe.');
   }
   return {
