@@ -3423,14 +3423,18 @@ window.SUNARPAccessHistory = Object.freeze({
 
   // Los cambios centralizados de catálogos invalidan la instantánea local.
   // La siguiente entrada recupera referencias según las generaciones de Core.
-  document.addEventListener('sunarp:security-catalogs-changed', () => {
+  document.addEventListener('sunarp:security-catalogs-changed', event => {
+    const entity = event && event.detail && event.detail.entity;
     state.loaded = false;
     state.data = null;
     state.documentTypesPromise = null;
     state.tabDataLoaded = { permissions: false, assignments: false, operations: false };
     state.tabLoadPromises = {};
-    invalidateAccessUserPageCache();
-    invalidateAccessAuditPageCache();
+    // El índice de usuarios muestra roles/módulos; Operaciones y TiposAmbito
+    // no cambian su contenido. Auditoría tampoco depende de estos catálogos.
+    if (entity === 'roles' || entity === 'modules') {
+      invalidateAccessUserPageCache();
+    }
   });
 
 

@@ -396,6 +396,11 @@ test('la extracción elimina interfaces administrativas antiguas, conserva refer
   assert.match(securityUiSource, /rpc\('deleteSecurityCatalogRecord'/);
   assert.match(securityUiSource, /sunarp:security-catalogs-changed/);
   assert.match(accessUiSource, /sunarp:security-catalogs-changed/);
+  const cacheEventStart = accessUiSource.indexOf("document.addEventListener('sunarp:security-catalogs-changed'");
+  const cacheEventEnd = accessUiSource.indexOf('// Cada pestaña administra su propio botón de actualización.', cacheEventStart);
+  const cacheEvent = accessUiSource.slice(cacheEventStart, cacheEventEnd);
+  assert.match(cacheEvent, /entity === 'roles' \|\| entity === 'modules'/);
+  assert.doesNotMatch(cacheEvent, /invalidateAccessAuditPageCache/);
   assert.match(maintenanceViewSource, /data-app-view="seguridad"/);
   assert.match(indexSource, /include\('SecurityMaintenanceScripts'\)/);
   const coreDependency = appManifest.dependencies.libraries.find(item => item.userSymbol === 'SUNARPCore');
