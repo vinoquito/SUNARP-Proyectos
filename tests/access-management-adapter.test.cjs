@@ -1538,7 +1538,7 @@ test('la interfaz administra roles y ámbitos mediante persona_id y modulo_id', 
   assert.match(accessUiSource, /rpc\('saveAccessUserConfiguration',\s*\{/s);
   assert.match(accessUiSource, /ambitos:\s*\(item\.ambitos \|\| \[\]\)\.map/);
   assert.match(accessUiSource, /scopeTypeOptions = \(state\.data\.scopeTypes \|\| \[\]\)\.map/);
-  assert.match(accessUiSource, /type === 'LOCAL'/);
+  assert.match(accessUiSource, /referenceEntity === 'LOCAL'/);
   assert.match(appSource, /_accessIsGlobalAdministrator_\(auth\)\s*\|\|\s*hasPermission_\(auth, 'AUDITORIA_VER'\)/);
   assert.doesNotMatch(accessUiSource, /row\.estado|item\.estado|correo_original|estructura_org_id/);
 });
@@ -1548,7 +1548,7 @@ test('Agregar acceso incorpora directamente el ámbito seleccionado sin acción 
   assert.match(accessUiSource, /Selecciona un ámbito \(opcional\)/);
   assert.match(accessUiSource, /let collectScopes = \(\) =>/);
   assert.match(accessUiSource, /collectScopes = function \(\)/);
-  assert.match(accessUiSource, /nextScopes\.push\(\{[\s\S]*?tipo_ambito_id: type,[\s\S]*?referencia_id: referenceId/);
+  assert.match(accessUiSource, /nextScopes\.push\(\{[\s\S]*?tipo_ambito_id: typeId,[\s\S]*?referencia_id: referenceId/);
   assert.match(accessUiSource, /const scopeResult = collectScopes\(\);/);
   assert.match(accessUiSource, /ambitos: scopeResult\.scopes/);
   assert.match(accessUiSource, /editorHost\.replaceChildren\(\);[\s\S]*?refreshModulePicker\(\);[\s\S]*?renderTable\(\);/);
@@ -1612,19 +1612,19 @@ test('la cascada de ámbitos parte del local y recorre solo la jerarquía vincul
   const referenceEnd = accessUiSource.indexOf('function paintScopes()', referenceStart);
   assert.ok(referenceStart >= 0 && referenceEnd > referenceStart);
   const referenceOptions = accessUiSource.slice(referenceStart, referenceEnd);
-  assert.ok(referenceOptions.includes("if (!['SEDE', 'LOCAL', 'ESTRUCTURA_ORG'].includes(type))"));
+  assert.ok(referenceOptions.includes("if (!requiresReference || !['SEDE', 'LOCAL', 'ESTRUCTURA_ORG'].includes(referenceEntity))"));
   assert.ok(referenceOptions.includes('String(item.sede_id) === siteId'));
-  assert.ok(referenceOptions.includes("selectedReferenceId = type === 'SEDE'"));
-  assert.ok(referenceOptions.includes("else if (type === 'LOCAL')"));
+  assert.ok(referenceOptions.includes("selectedReferenceId = referenceEntity === 'SEDE'"));
+  assert.ok(referenceOptions.includes("else if (referenceEntity === 'LOCAL')"));
   assert.ok(referenceOptions.includes('selectedReferenceId = localId;'));
-  assert.ok(referenceOptions.includes('renderStructureLevels(localId, levelsHost, selectedChain, type)'));
+  assert.ok(referenceOptions.includes('renderStructureLevels(localId, levelsHost, selectedChain, referenceEntity)'));
   const levelsStart = accessUiSource.indexOf('function renderStructureLevels(');
   const levelsEnd = accessUiSource.indexOf('function updateReferenceOptions()', levelsStart);
   assert.ok(levelsStart >= 0 && levelsEnd > levelsStart);
   const hierarchyLevels = accessUiSource.slice(levelsStart, levelsEnd);
-  assert.ok(hierarchyLevels.includes("if (type === 'SEDE')"));
+  assert.ok(hierarchyLevels.includes("if (referenceEntity === 'SEDE')"));
   assert.ok(hierarchyLevels.includes('selectedReferenceId = selectedSiteReferenceId;'));
-  assert.ok(hierarchyLevels.includes("else if (type === 'LOCAL')"));
+  assert.ok(hierarchyLevels.includes("else if (referenceEntity === 'LOCAL')"));
   assert.ok(hierarchyLevels.includes('selectedReferenceId = String(localId);'));
   assert.ok(hierarchyLevels.includes('selectedReferenceId = selectedChain.length'));
   assert.match(accessUiSource, /String\(item\.parent_id \|\| ''\) === String\(selectedId\)/);
@@ -2551,10 +2551,10 @@ test('los ámbitos recorren Sede -> Local -> Unidad orgánica filtrando cada niv
   assert.ok(implementation.includes('String(item.sede_id) === siteId'));
   assert.ok(implementation.includes("siteSelect.addEventListener('change'"));
   assert.ok(implementation.includes("localSelect.addEventListener('change'"));
-  assert.ok(implementation.includes('renderStructureLevels(localId, levelsHost, selectedChain, type)'));
-  assert.ok(implementation.includes("localSelect.required = type !== 'SEDE'"));
-  assert.ok(implementation.includes("!['SEDE', 'LOCAL', 'ESTRUCTURA_ORG'].includes(type)"));
-  assert.ok(accessUiSource.includes("levelSelect.required = type === 'ESTRUCTURA_ORG'"));
+  assert.ok(implementation.includes('renderStructureLevels(localId, levelsHost, selectedChain, referenceEntity)'));
+  assert.ok(implementation.includes("localSelect.required = referenceEntity !== 'SEDE'"));
+  assert.ok(implementation.includes("!['SEDE', 'LOCAL', 'ESTRUCTURA_ORG'].includes(referenceEntity)"));
+  assert.ok(accessUiSource.includes("levelSelect.required = referenceEntity === 'ESTRUCTURA_ORG'"));
 });
 
 test('los botones de Administración de accesos notifican errores sincrónicos y asíncronos', () => {
