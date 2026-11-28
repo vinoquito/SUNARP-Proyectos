@@ -268,12 +268,24 @@ function _somFindSitePrefix_(siteId, catalogs) {
 
 function _somLocalNameToken_(name, tipoLocalId, catalogs) {
   let token = _somToken_(name);
-  const type = _somFindById_(catalogs.tipos_local || [], tipoLocalId);
-  const typeToken = _somToken_(type && type.name);
-  if (typeToken && token.indexOf(typeToken + '_') === 0) {
-    token = token.slice(typeToken.length + 1);
-  } else if (typeToken && token === typeToken) {
-    token = '';
+  const selectedType = _somFindById_(catalogs.tipos_local || [], tipoLocalId);
+  const candidates = (catalogs.tipos_local || []).slice().sort(function (left, right) {
+    return _somToken_(right.name).length - _somToken_(left.name).length;
+  });
+  if (selectedType) candidates.unshift(selectedType);
+  const seen = new Set();
+  for (let index = 0; index < candidates.length; index++) {
+    const typeToken = _somToken_(candidates[index].name);
+    if (!typeToken || seen.has(typeToken)) continue;
+    seen.add(typeToken);
+    if (token.indexOf(typeToken + '_') === 0) {
+      token = token.slice(typeToken.length + 1);
+      break;
+    }
+    if (token === typeToken) {
+      token = '';
+      break;
+    }
   }
   token = token
     .replace(/^DE_/, '')
@@ -316,6 +328,7 @@ function _somGenerateIdentifier_(entity, payload, catalogs) {
   let base = '';
   if (config.idKind === 'sede') {
     const lowered = _somNameKey_(name);
+    if (lowered === 'sede central') return 'SEDE_CENTRAL';
     if (lowered.indexOf('zona registral') === 0) {
       let tail = _somToken_(name.replace(/^zona\s+registral\s*/i, '')).replace(/^N_?/, '');
       base = 'ZR_' + tail;
