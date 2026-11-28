@@ -3025,7 +3025,9 @@ function getAccessManagementData() {
     source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.roles),
     requiredHeaders: ACCESS_MANAGEMENT_FIELDS.roles
   });
-  if (capabilities.scopes) bootstrapRequests.push({
+  // TiposAmbito también se necesita para describir los ámbitos existentes
+  // cuando se administra roles por módulo sin permiso para modificarlos.
+  if (capabilities.scopes || capabilities.userRoles) bootstrapRequests.push({
     key: 'scopeTypes',
     source: _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.scopeTypes),
     requiredHeaders: ACCESS_MANAGEMENT_FIELDS.scopeTypes

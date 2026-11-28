@@ -371,6 +371,16 @@ test('Core resuelve IDs dinámicos solo cuando entidad_referencia pertenece a su
   assert.equal(sandbox.authorizationIsRecordInScope(unknown, 'MOD_TEST', {}, []), false);
 });
 
+test('el editor de ámbitos resuelve referencias y descendientes desde la semántica del catálogo', () => {
+  assert.match(accessUiSource, /function getScopeTypeEntity\(typeId\)/);
+  assert.match(accessUiSource, /selectedScopeType\.entidad_referencia/);
+  assert.match(accessUiSource, /const isTotal = referenceEntity === 'NINGUNA'/);
+  assert.match(accessUiSource, /allowsDescendants && descendants\.checked/);
+  assert.doesNotMatch(accessUiSource, /scope\.tipo_ambito_id === 'TOTAL'/);
+  assert.doesNotMatch(accessUiSource, /type === 'ESTRUCTURA_ORG'/);
+  assert.match(accessSource, /if \(capabilities\.scopes \|\| capabilities\.userRoles\) bootstrapRequests\.push/);
+});
+
 test('la extracción elimina interfaces administrativas antiguas, conserva referencias y registra la ruta global', () => {
   assert.doesNotMatch(accessSource, /function saveAccessRole\(|function setAccessRoleStatus\(/);
   assert.doesNotMatch(accessSource, /tab === 'roles'|tab === 'operations'|tab === 'scopetypes'/);
