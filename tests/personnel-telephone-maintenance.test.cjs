@@ -378,7 +378,9 @@ test('la navegación conserva tres pestañas de Datos de personal y dos de Direc
   assert.match(uiSource, /id: 'tipo_telefono', label: 'Tipos de teléfono'/);
   assert.match(uiSource, /id: 'telefonos', label: 'Teléfonos'/);
   assert.match(indexSource, /include\('PersonnelTelephoneMaintenanceScripts'\)/);
-  assert.doesNotMatch(stagedUiSource, /'datos-personal': \{|\'directorio-telefonico\': \{/);
+  assert.match(stagedUiSource, /'datos-personal': \{/);
+  assert.match(stagedUiSource, /'directorio-telefonico': \{/);
+  assert.match(stagedUiSource, /if \(route === 'datos-personal' \|\| route === 'directorio-telefonico'\) return;/);
 });
 
 test('el formulario y la tabla usan búsqueda local, estado booleano y los controles de SUNARP UI', () => {
