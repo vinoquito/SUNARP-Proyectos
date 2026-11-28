@@ -39,6 +39,10 @@ const indexSource = fs.readFileSync(
   path.join(root, 'Backend/Gestor de intranet SUNARP/Index.html'),
   'utf8'
 );
+const appManifest = JSON.parse(fs.readFileSync(
+  path.join(root, 'Backend/Gestor de intranet SUNARP/appsscript.json'),
+  'utf8'
+));
 
 const scopeTypes = [
   { tipo_ambito_id: 'TOTAL', nombre: 'Total', descripcion: 'Global', entidad_referencia: 'NINGUNA', requiere_referencia: 'NO', permite_descendientes: 'NO', active: true },
@@ -384,6 +388,9 @@ test('la extracción elimina interfaces administrativas antiguas, conserva refer
   assert.match(accessUiSource, /sunarp:security-catalogs-changed/);
   assert.match(maintenanceViewSource, /data-app-view="seguridad"/);
   assert.match(indexSource, /include\('SecurityMaintenanceScripts'\)/);
+  const coreDependency = appManifest.dependencies.libraries.find(item => item.userSymbol === 'SUNARPCore');
+  assert.ok(coreDependency, 'El Gestor debe declarar su dependencia SUNARPCore.');
+  assert.equal(coreDependency.developmentMode, true, 'La rama de prueba debe consumir el HEAD actualizado del Core sin crear una versión nueva.');
   assert.match(navigationSource, /route === 'seguridad'[\s\S]*?_accessIsGlobalAdministrator_\(auth\)/);
   assert.match(securitySource, /SUNARPCore\.getOrBuildCachedValue/);
   assert.match(securitySource, /SUNARPCore\.listRecordsFromSourcesCached/);

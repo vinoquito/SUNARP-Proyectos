@@ -608,7 +608,11 @@ No se actualizó ningún despliegue productivo. Core v11 permanece publicada; Co
 `getOrBuildCachedValue` está incluida en la biblioteca SUNARP Core v11, ya publicada. Core v12 conserva ese contrato y añade lecturas proyectadas por bloques más amplios; el manifiesto del Gestor en esta rama referencia la versión 12, pendiente de publicar. Resta sincronizar ambos proyectos Apps Script y validar la integración en el despliegue de pruebas. No se debe modificar el despliegue productivo.
 
 
-### 10.5 Mantenimiento centralizado de Seguridad
+### 10.5 Consumo de SUNARP Core en el entorno de prueba
+
+El manifiesto del Gestor en esta rama configura `SUNARPCore` con `developmentMode: true`. El proyecto consumidor usa así el código HEAD de la biblioteca e ignora el número de versión fijado en el manifiesto; por tanto, para probar cambios de autorización se debe ejecutar `clasp push` primero en `Backend/SUNARP Core` y después en `Backend/Gestor de intranet SUNARP`. Este modo requiere acceso de editor al proyecto de la biblioteca. Se limita al proyecto de prueba de esta rama: antes de incorporar el cambio a un entorno productivo debe restablecerse una versión inmutable aprobada y `developmentMode: false`. No se crea ni publica una versión de Core en este flujo.
+
+### 10.6 Mantenimiento centralizado de Seguridad
 
 El módulo `Seguridad` de Módulos de mantenimiento es el único propietario de los CRUD de `Roles`, `Modulos`, `TiposAmbito` y `Operaciones`. Administración de accesos conserva únicamente su consumo como catálogos de referencia para permisos, asignaciones y configuración de ámbitos.
 
