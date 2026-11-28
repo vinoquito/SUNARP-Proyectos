@@ -1612,7 +1612,7 @@ test('la cascada de ámbitos parte del local y recorre solo la jerarquía vincul
   const referenceEnd = accessUiSource.indexOf('function paintScopes()', referenceStart);
   assert.ok(referenceStart >= 0 && referenceEnd > referenceStart);
   const referenceOptions = accessUiSource.slice(referenceStart, referenceEnd);
-  assert.ok(referenceOptions.includes("if (!requiresReference || !['SEDE', 'LOCAL', 'ESTRUCTURA_ORG'].includes(referenceEntity))"));
+  assert.match(referenceOptions, /if \(!requiresReference \|\|\s*!\['SEDE', 'LOCAL', 'ESTRUCTURA_ORG'\]\.includes\(referenceEntity\)\)/);
   assert.ok(referenceOptions.includes('String(item.sede_id) === siteId'));
   assert.ok(referenceOptions.includes("selectedReferenceId = referenceEntity === 'SEDE'"));
   assert.ok(referenceOptions.includes("else if (referenceEntity === 'LOCAL')"));
