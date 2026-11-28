@@ -587,7 +587,7 @@ function initializeMaintenanceAccessCatalog() {
 
     summary.moduleId = _accessText_(module.modulo_id);
 
-    const operationIds = ['VER', 'CREAR', 'EDITAR', 'ELIMINAR'];
+    const operationIds = ['VER', 'CREAR', 'EDITAR', 'CAMBIAR_ESTADO', 'ELIMINAR'];
     const operationRows = _accessFindSecurityRecords_(
       sheets.operations,
       'operacion_id',
@@ -602,7 +602,7 @@ function initializeMaintenanceAccessCatalog() {
 
     const roleAssignments = {
       ROL_ADMIN: operationIds,
-      ROL_EDITOR: ['VER', 'CREAR', 'EDITAR'],
+      ROL_EDITOR: ['VER', 'CREAR', 'EDITAR', 'CAMBIAR_ESTADO'],
       ROL_CONSULTA: ['VER']
     };
     const roleIds = Object.keys(roleAssignments);

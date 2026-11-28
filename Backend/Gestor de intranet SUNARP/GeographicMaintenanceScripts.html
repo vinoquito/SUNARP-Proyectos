@@ -196,14 +196,35 @@
       });
     }
 
-    if (capabilities.canDelete &&
-        (tab !== 'districts' || capabilities.canDeleteDistricts === true)) {
+    if (capabilities.canDelete) {
+      const districtDeletionBlocked = tab === 'districts' &&
+        capabilities.canDeleteDistricts !== true;
       actions.push({
         label: 'Eliminar',
         icon: 'delete',
         variant: 'danger',
-        title: 'Eliminar ' + geoTabName(tab),
-        onClick: record => geoDeleteRecord(tab, record)
+        title: districtDeletionBlocked
+          ? 'La eliminación está protegida hasta verificar sus referencias externas.'
+          : 'Eliminar ' + geoTabName(tab),
+        disabled: districtDeletionBlocked,
+        onClick: record => {
+          if (!districtDeletionBlocked) geoDeleteRecord(tab, record);
+        }
+      });
+    }
+
+    if (window.SUNARPAccessHistory &&
+        typeof window.SUNARPAccessHistory.open === 'function') {
+      actions.push({
+        label: 'Historial',
+        icon: 'history',
+        variant: 'outline',
+        title: 'Consultar historial de ' + geoTabName(tab),
+        onClick: record => window.SUNARPAccessHistory.open(
+          'GEOGRAFICO',
+          record.id,
+          record.name
+        )
       });
     }
 

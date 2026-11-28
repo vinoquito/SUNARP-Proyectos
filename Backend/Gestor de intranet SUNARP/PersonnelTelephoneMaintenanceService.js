@@ -1,14 +1,28 @@
 /**
- * CRUD de catálogos de Datos de personal y Directorio telefónico.
+ * Mantenimientos de Datos de personal y Directorio telefónico.
  *
- * Los cuatro catálogos con contrato físico confirmado se mantienen en
- * Global parameters. Las hojas operativas del Directorio se consultan
- * exclusivamente para proteger referencias; nunca se escriben desde aquí.
+ * La pantalla carga cada grupo como una instantánea única, cacheada por
+ * generaciones de SUNARP Core. El navegador conserva esa instantánea al
+ * navegar entre pantallas y pestañas; las mutaciones actualizan el estado
+ * local y Core invalida la caché de la fuente escrita.
+ *
+ * Las operaciones de hoja, caché e invalidación se delegan a SUNARP Core.
+ * La interfaz utiliza los componentes compartidos de SUNARP UI.
  */
 const PERSONNEL_TELEPHONE_MAINTENANCE_CONFIG = Object.freeze({
   sourceKey: 'MASTER_DATA',
   moduleCode: 'MANTENIMIENTOS',
   cacheTtlSeconds: 300,
+  groups: Object.freeze({
+    'datos-personal': Object.freeze([
+      'cargos',
+      'condicion_cargo',
+      'tipo_documento_identidad'
+    ]),
+    'directorio-telefonico': Object.freeze([
+      'tipo_telefono'
+    ])
+  }),
   entities: Object.freeze({
     cargos: Object.freeze({
       sheetName: 'cargos',
@@ -18,6 +32,7 @@ const PERSONNEL_TELEPHONE_MAINTENANCE_CONFIG = Object.freeze({
       nameLabel: 'Nombre del cargo',
       headers: Object.freeze(['id', 'name', 'active']),
       hasActive: true,
+      idPrefix: 'CARGO_',
       deletionSupported: true,
       reference: Object.freeze({
         sourceKey: 'DIRECTORY',
@@ -35,6 +50,7 @@ const PERSONNEL_TELEPHONE_MAINTENANCE_CONFIG = Object.freeze({
       nameLabel: 'Nombre de la condición',
       headers: Object.freeze(['id', 'name', 'active']),
       hasActive: true,
+      idPrefix: 'CONDICION_',
       deletionSupported: true,
       reference: Object.freeze({
         sourceKey: 'DIRECTORY',
@@ -52,6 +68,7 @@ const PERSONNEL_TELEPHONE_MAINTENANCE_CONFIG = Object.freeze({
       nameLabel: 'Nombre del tipo de documento',
       headers: Object.freeze(['id', 'name']),
       hasActive: false,
+      idStrategy: 'sequential-document-type',
       deletionSupported: true,
       reference: Object.freeze({
         sourceKey: 'DIRECTORY',
@@ -69,8 +86,10 @@ const PERSONNEL_TELEPHONE_MAINTENANCE_CONFIG = Object.freeze({
       nameLabel: 'Nombre del tipo de teléfono',
       headers: Object.freeze(['id', 'nombre', 'active']),
       hasActive: true,
-      // No se habilita borrado físico hasta conocer la tabla y columna
-      // exactas que contienen las referencias a tipos de teléfono.
+      idPrefix: '',
+      stripPhonePrefix: true,
+      // El contrato de telefonos y su campo de referencia todavía no están
+      // documentados; no se habilita la eliminación hasta verificarlo.
       deletionSupported: false,
       reference: null
     })
@@ -82,7 +101,19 @@ function _ptmText_(value) {
 }
 
 function _ptmNormalizeKey_(value) {
-  return _ptmText_(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
+  return _ptmText_(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase();
+}
+
+function _ptmIdentifierToken_(value) {
+  return _ptmText_(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
 }
 
 function _ptmGetEntityConfig_(entity) {
@@ -94,13 +125,20 @@ function _ptmGetEntityConfig_(entity) {
   return { key: key, value: config };
 }
 
+function _ptmGetGroupEntities_(group) {
+  const key = _ptmText_(group).toLowerCase();
+  const entities = PERSONNEL_TELEPHONE_MAINTENANCE_CONFIG.groups[key];
+  if (!entities) throw new Error('El grupo de mantenimiento solicitado no está disponible.');
+  return { key: key, entities: Array.from(entities) };
+}
+
 function _ptmSource_(sourceKey, sheetName) {
   return getIntranetDataSource(sourceKey, sheetName, 1);
 }
 
 /**
- * Todos los mantenimientos del módulo comparten su ámbito global exclusivo.
- * La comprobación se repite en backend en lectura, alta, edición y eliminación.
+ * Todos los mantenimientos del módulo son catálogos institucionales
+ * compartidos: exigen permiso efectivo y ámbito TOTAL exclusivo.
  */
 function _ptmRequirePermission_(operation) {
   const code = 'MANTENIMIENTOS_' + _ptmText_(operation).toUpperCase();
@@ -130,29 +168,17 @@ function _ptmRequirePermission_(operation) {
   return { auth: auth, moduleId: moduleId };
 }
 
-function _ptmLoadCatalog_(entity) {
-  const definition = _ptmGetEntityConfig_(entity);
-  const config = definition.value;
-  const source = _ptmSource_(PERSONNEL_TELEPHONE_MAINTENANCE_CONFIG.sourceKey, config.sheetName);
-  const request = {
-    key: definition.key,
-    source: source,
-    requiredHeaders: config.headers
-  };
-  const cached = SUNARPCore.getOrBuildCachedValue(
-    'personnel-telephone-maintenance:v1:' + definition.key,
-    [source],
-    function () {
-      return SUNARPCore.listRecordsFromSources([request]);
-    },
-    PERSONNEL_TELEPHONE_MAINTENANCE_CONFIG.cacheTtlSeconds
-  );
+function _ptmIsActive_(value) {
+  if (value === true) return true;
+  if (value === false || value === null || value === undefined) return false;
+  return ['TRUE', '1', 'SI', 'SÍ', 'YES'].includes(_ptmText_(value).toUpperCase());
+}
 
-  if (!cached || !cached.value || !Array.isArray(cached.value[definition.key])) {
-    throw new Error('No se pudo consultar el catálogo "' + config.sheetName + '".');
-  }
+function _ptmNormalizeRecords_(entity, records) {
+  const config = _ptmGetEntityConfig_(entity).value;
+  const ids = new Set();
 
-  const records = cached.value[definition.key].map(function (record) {
+  return (records || []).map(function (record) {
     const normalized = {};
     config.headers.forEach(function (field) {
       if (field === 'id' || field === config.nameField) {
@@ -161,29 +187,60 @@ function _ptmLoadCatalog_(entity) {
         normalized[field] = _ptmIsActive_(record[field]);
       }
     });
+
+    if (!normalized.id) {
+      throw new Error('El catálogo "' + config.sheetName + '" contiene un registro sin identificador.');
+    }
+    if (!normalized[config.nameField]) {
+      throw new Error('El registro "' + normalized.id + '" del catálogo "' + config.sheetName + '" no tiene nombre.');
+    }
+    if (ids.has(normalized.id)) {
+      throw new Error('El identificador "' + normalized.id + '" está duplicado en la pestaña "' + config.sheetName + '".');
+    }
+    ids.add(normalized.id);
     return normalized;
   });
-
-  const ids = new Set();
-  records.forEach(function (record) {
-    if (!record.id) throw new Error('El catálogo "' + config.sheetName + '" contiene un registro sin identificador.');
-    if (!record[config.nameField]) {
-      throw new Error('El registro "' + record.id + '" del catálogo "' + config.sheetName + '" no tiene nombre.');
-    }
-    if (ids.has(record.id)) {
-      throw new Error('El identificador "' + record.id + '" está duplicado en la pestaña "' + config.sheetName + '".');
-    }
-    ids.add(record.id);
-  });
-
-  return { config: config, source: source, records: records };
 }
 
-function _ptmIsActive_(value) {
-  if (value === true) return true;
-  if (value === false) return false;
-  const normalized = _ptmText_(value).toLowerCase();
-  return normalized === 'true' || normalized === '1' || normalized === 'si' || normalized === 'sí';
+/**
+ * Una sola llamada de Core carga todos los catálogos de la pantalla.
+ * Cada caché depende de las generaciones de sus fuentes maestras.
+ */
+function _ptmLoadGroup_(group) {
+  const definition = _ptmGetGroupEntities_(group);
+  const requests = definition.entities.map(function (entity) {
+    const config = _ptmGetEntityConfig_(entity).value;
+    return {
+      key: entity,
+      source: _ptmSource_(PERSONNEL_TELEPHONE_MAINTENANCE_CONFIG.sourceKey, config.sheetName),
+      requiredHeaders: config.headers,
+      valueMode: 'display'
+    };
+  });
+  const sources = requests.map(function (request) { return request.source; });
+  const cacheKey = 'personnel-telephone-maintenance:display:v2:' + definition.key;
+  const cached = SUNARPCore.getOrBuildCachedValue(
+    cacheKey,
+    sources,
+    function () {
+      return SUNARPCore.listRecordsFromSources(requests);
+    },
+    PERSONNEL_TELEPHONE_MAINTENANCE_CONFIG.cacheTtlSeconds
+  );
+
+  if (!cached || !cached.value) {
+    throw new Error('No se pudieron consultar los catálogos del grupo "' + definition.key + '".');
+  }
+
+  const catalogs = {};
+  definition.entities.forEach(function (entity) {
+    const sourceResult = cached.value[entity];
+    if (!Array.isArray(sourceResult)) {
+      throw new Error('SUNARP Core no devolvió el catálogo "' + entity + '".');
+    }
+    catalogs[entity] = _ptmNormalizeRecords_(entity, sourceResult);
+  });
+  return catalogs;
 }
 
 function _ptmBuildCapabilities_(auth, moduleId, config) {
@@ -197,53 +254,63 @@ function _ptmBuildCapabilities_(auth, moduleId, config) {
   return {
     canCreate: has('CREAR'),
     canEdit: has('EDITAR'),
+    canChangeStatus: config.hasActive && has('CAMBIAR_ESTADO'),
+    canDeletePermission: has('ELIMINAR'),
     canDelete: config.deletionSupported && has('ELIMINAR'),
+    canViewHistory: has('VER'),
     deleteUnavailableReason: config.deletionSupported
       ? ''
-      : 'La eliminación está protegida porque aún no está documentada la tabla que contiene sus referencias.'
+      : 'La eliminación está protegida porque todavía no se ha documentado la tabla que contiene las referencias de este catálogo.'
   };
 }
 
-/** Consulta autorizada de uno de los cuatro catálogos físicos confirmados. */
-function getPersonnelTelephoneMaintenanceData(entity) {
-  const definition = _ptmGetEntityConfig_(entity);
+/** Consulta autorizada de todos los catálogos de una pantalla en una sola carga. */
+function getPersonnelTelephoneMaintenanceData(group) {
   const authorization = _ptmRequirePermission_('VER');
-  const loaded = _ptmLoadCatalog_(definition.key);
-  return {
-    entity: definition.key,
-    label: loaded.config.label,
-    nameField: loaded.config.nameField,
-    nameLabel: loaded.config.nameLabel,
-    hasActive: loaded.config.hasActive,
-    records: loaded.records,
-    capabilities: _ptmBuildCapabilities_(
-      authorization.auth,
-      authorization.moduleId,
-      loaded.config
-    )
+  const definition = _ptmGetGroupEntities_(group);
+  const catalogs = _ptmLoadGroup_(definition.key);
+  const result = {
+    group: definition.key,
+    entities: {}
   };
+
+  definition.entities.forEach(function (entity) {
+    const config = _ptmGetEntityConfig_(entity).value;
+    result.entities[entity] = {
+      entity: entity,
+      label: config.label,
+      nameField: config.nameField,
+      nameLabel: config.nameLabel,
+      hasActive: config.hasActive,
+      records: catalogs[entity],
+      capabilities: _ptmBuildCapabilities_(
+        authorization.auth,
+        authorization.moduleId,
+        config
+      )
+    };
+  });
+  return result;
 }
 
-function _ptmBuildAuditEvent_(action, entity, config, record) {
+function _ptmBuildAuditEvent_(action, config, record) {
   return {
     accion: action + '_CATALOGO_MANTENIMIENTO',
     modulo: PERSONNEL_TELEPHONE_MAINTENANCE_CONFIG.moduleCode,
-    tipo_entidad: config.sheetName.toUpperCase(),
+    tipo_entidad: 'CATALOGO_MANTENIMIENTO',
     registro_id: _ptmText_(record && record.id),
     registro_nombre: _ptmText_(record && record[config.nameField]),
     detalle: action === 'CREAR'
-      ? 'Registro de ' + config.label + '.'
+      ? 'Registro de ' + config.label + ' (' + config.sheetName + ').'
       : action === 'EDITAR'
-        ? 'Actualización de ' + config.label + '.'
-        : 'Eliminación física de ' + config.label + '.',
+        ? 'Actualización de ' + config.label + ' (' + config.sheetName + ').'
+        : action === 'CAMBIAR_ESTADO'
+          ? 'Cambio de estado de ' + config.label + ' (' + config.sheetName + ').'
+          : 'Eliminación física de ' + config.label + ' (' + config.sheetName + ').',
     datos_antes: action === 'CREAR' ? null : record || null
   };
 }
 
-/**
- * Busca referencias exactas en hojas operativas del Directorio.
- * Core consulta únicamente las filas candidatas de la columna conductora.
- */
 function _ptmFindReferences_(config, record) {
   const reference = config.reference;
   if (!reference) return { records: [], total: 0 };
@@ -280,6 +347,49 @@ function _ptmAssertNotReferenced_(config, record) {
   }
 }
 
+function _ptmGenerateIdentifier_(entity, name, records) {
+  const definition = _ptmGetEntityConfig_(entity);
+  const config = definition.value;
+  const currentRecords = records || [];
+
+  if (config.idStrategy === 'sequential-document-type') {
+    let maximum = 0;
+    currentRecords.forEach(function (record) {
+      const match = _ptmText_(record.id).match(/^TD_(\d+)$/i);
+      if (match) maximum = Math.max(maximum, Number(match[1]));
+    });
+    return 'TD_' + String(maximum + 1).padStart(3, '0');
+  }
+
+  let token = _ptmIdentifierToken_(name);
+  if (config.stripPhonePrefix) token = token.replace(/^TELEFONO_/, '');
+  if (!token) throw new Error('Ingresa un nombre válido para generar el código.');
+
+  const prefix = config.idPrefix || '';
+  const maximumLength = 80;
+  const base = (prefix + token).slice(0, maximumLength);
+  const used = new Set(currentRecords.map(function (record) {
+    return _ptmText_(record.id).toUpperCase();
+  }));
+  if (!used.has(base.toUpperCase())) return base;
+
+  for (let suffixNumber = 2; suffixNumber < 10000; suffixNumber++) {
+    const suffix = '_' + suffixNumber;
+    const candidate = base.slice(0, maximumLength - suffix.length) + suffix;
+    if (!used.has(candidate.toUpperCase())) return candidate;
+  }
+  throw new Error('No se pudo generar un código único para el registro.');
+}
+
+function _ptmAssertUniqueName_(records, name, nameField, excludedId) {
+  const expected = _ptmNormalizeKey_(name);
+  const duplicate = (records || []).some(function (record) {
+    if (_ptmText_(record.id) === _ptmText_(excludedId)) return false;
+    return _ptmNormalizeKey_(record[nameField]) === expected;
+  });
+  if (duplicate) throw new Error('Ya existe un registro con ese nombre en el catálogo.');
+}
+
 function savePersonnelTelephoneMaintenanceRecord(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('No se recibieron los datos del mantenimiento.');
@@ -293,35 +403,31 @@ function savePersonnelTelephoneMaintenanceRecord(payload) {
   }
 
   const authorization = _ptmRequirePermission_(action === 'create' ? 'CREAR' : 'EDITAR');
-  const loaded = _ptmLoadCatalog_(definition.key);
+  const catalogs = _ptmLoadGroup_(
+    definition.key === 'tipo_telefono' ? 'directorio-telefonico' : 'datos-personal'
+  );
+  const records = catalogs[definition.key] || [];
   const id = _ptmText_(payload.id);
   const name = _ptmText_(payload[config.nameField]);
 
-  if (!id) throw new Error('Ingresa el código del registro.');
-  if (id.length > 80) throw new Error('El código no puede superar 80 caracteres.');
   if (!name) throw new Error('Ingresa ' + config.nameLabel.toLowerCase() + '.');
   if (name.length > 150) throw new Error('El nombre no puede superar 150 caracteres.');
 
-  const current = loaded.records.find(function (record) { return record.id === id; }) || null;
-  if (action === 'create' && current) {
-    throw new Error('Ya existe el código "' + id + '" en el catálogo "' + config.sheetName + '".');
-  }
-  if (action === 'edit' && !current) {
-    throw new Error('No se encontró el registro que deseas modificar.');
-  }
-
-  const next = { id: action === 'edit' ? current.id : id };
-  next[config.nameField] = name;
-
-  if (config.hasActive) {
-    if (typeof payload.active !== 'boolean') {
-      throw new Error('El estado del registro debe ser verdadero o falso.');
+  const current = records.find(function (record) { return record.id === id; }) || null;
+  if (action === 'create') {
+    const expectedId = _ptmGenerateIdentifier_(definition.key, name, records);
+    if (!id || id !== expectedId) {
+      throw new Error('El código generado cambió o no corresponde al nombre. Actualiza el nombre y vuelve a guardar.');
     }
-    next.active = payload.active;
+    if (records.some(function (record) { return record.id === id; })) {
+      throw new Error('Ya existe el código "' + id + '" en el catálogo "' + config.sheetName + '".');
+    }
+    _ptmAssertUniqueName_(records, name, config.nameField, '');
+  } else {
+    if (!id || !current) throw new Error('No se encontró el registro que deseas modificar.');
+    _ptmAssertUniqueName_(records, name, config.nameField, id);
   }
 
-  // condicion_cargo se almacena en asignaciones como texto funcional.
-  // No se renombra mientras alguna asignación conserve el valor anterior.
   if (action === 'edit' &&
       definition.key === 'condicion_cargo' &&
       _ptmNormalizeKey_(current.name) !== _ptmNormalizeKey_(name)) {
@@ -331,8 +437,14 @@ function savePersonnelTelephoneMaintenanceRecord(payload) {
     }
   }
 
-  const event = _ptmBuildAuditEvent_(action === 'create' ? 'CREAR' : 'EDITAR', definition.key, config, current || next);
+  const next = { id: action === 'edit' ? current.id : id };
+  next[config.nameField] = name;
+  if (config.hasActive) {
+    // Los registros nuevos nacen activos. El estado se cambia desde la celda.
+    next.active = action === 'create' ? true : current.active === true;
+  }
 
+  const event = _ptmBuildAuditEvent_(action === 'create' ? 'CREAR' : 'EDITAR', config, current || next);
   return _accessRunAudited_(
     authorization.auth,
     event,
@@ -340,16 +452,15 @@ function savePersonnelTelephoneMaintenanceRecord(payload) {
       let result;
       if (action === 'create') {
         result = SUNARPCore.insertRecord(
-          loaded.source,
+          _ptmSource_(PERSONNEL_TELEPHONE_MAINTENANCE_CONFIG.sourceKey, config.sheetName),
           next,
           { idField: 'id' }
         );
       } else {
         const updates = {};
         updates[config.nameField] = name;
-        if (config.hasActive) updates.active = next.active;
         result = SUNARPCore.updateRecord(
-          loaded.source,
+          _ptmSource_(PERSONNEL_TELEPHONE_MAINTENANCE_CONFIG.sourceKey, config.sheetName),
           'id',
           current.id,
           updates
@@ -357,6 +468,48 @@ function savePersonnelTelephoneMaintenanceRecord(payload) {
       }
       return {
         value: Object.assign({}, result, { record: next }),
+        auditAfter: next
+      };
+    }
+  );
+}
+
+function setPersonnelTelephoneMaintenanceStatus(entity, id, active) {
+  const definition = _ptmGetEntityConfig_(entity);
+  const config = definition.value;
+  const identifier = _ptmText_(id);
+  if (!identifier) throw new Error('Debes indicar el código del registro.');
+  if (!config.hasActive) throw new Error('Este catálogo no tiene un campo de estado.');
+  if (typeof active !== 'boolean') throw new Error('El estado debe ser verdadero o falso.');
+
+  const authorization = _ptmRequirePermission_('CAMBIAR_ESTADO');
+  const group = definition.key === 'tipo_telefono' ? 'directorio-telefonico' : 'datos-personal';
+  const catalogs = _ptmLoadGroup_(group);
+  const record = (catalogs[definition.key] || []).find(function (item) {
+    return item.id === identifier;
+  }) || null;
+  if (!record) throw new Error('No se encontró el registro cuyo estado deseas cambiar.');
+  if (record.active === active) {
+    return { success: true, unchanged: true, record: record, message: 'El registro ya tiene ese estado.' };
+  }
+
+  const next = Object.assign({}, record, { active: active });
+  return _accessRunAudited_(
+    authorization.auth,
+    _ptmBuildAuditEvent_('CAMBIAR_ESTADO', config, record),
+    function () {
+      const result = SUNARPCore.updateRecord(
+        _ptmSource_(PERSONNEL_TELEPHONE_MAINTENANCE_CONFIG.sourceKey, config.sheetName),
+        'id',
+        identifier,
+        { active: active }
+      );
+      return {
+        value: Object.assign({}, result, {
+          success: true,
+          record: next,
+          message: active ? 'El registro se activó correctamente.' : 'El registro se desactivó correctamente.'
+        }),
         auditAfter: next
       };
     }
@@ -373,17 +526,24 @@ function deletePersonnelTelephoneMaintenanceRecord(entity, id) {
   }
 
   const authorization = _ptmRequirePermission_('ELIMINAR');
-  const loaded = _ptmLoadCatalog_(definition.key);
-  const record = loaded.records.find(function (item) { return item.id === identifier; }) || null;
+  const group = definition.key === 'tipo_telefono' ? 'directorio-telefonico' : 'datos-personal';
+  const catalogs = _ptmLoadGroup_(group);
+  const record = (catalogs[definition.key] || []).find(function (item) {
+    return item.id === identifier;
+  }) || null;
   if (!record) throw new Error('No se encontró el registro que deseas eliminar.');
 
   _ptmAssertNotReferenced_(config, record);
 
   return _accessRunAudited_(
     authorization.auth,
-    _ptmBuildAuditEvent_('ELIMINAR', definition.key, config, record),
+    _ptmBuildAuditEvent_('ELIMINAR', config, record),
     function () {
-      const result = SUNARPCore.deleteRecord(loaded.source, 'id', identifier);
+      const result = SUNARPCore.deleteRecord(
+        _ptmSource_(PERSONNEL_TELEPHONE_MAINTENANCE_CONFIG.sourceKey, config.sheetName),
+        'id',
+        identifier
+      );
       return {
         value: Object.assign({}, result, {
           success: true,

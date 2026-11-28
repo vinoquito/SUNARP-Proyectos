@@ -4026,6 +4026,10 @@ function _accessBuildEntityHistoryIndex_(source, entityType, recordId, relatedTy
         entityType === 'SERVIDOR' &&
         !['DIRECTORIOS', 'INFORMACION_PERSONAL'].includes(eventModule)
       ) return;
+      if (
+        ['MANTENIMIENTO', 'GEOGRAFICO'].includes(entityType) &&
+        eventModule !== 'MANTENIMIENTOS'
+      ) return;
 
       let matches = relatedTypes[entityType].includes(eventType) &&
         eventRecordId === recordId;
@@ -4069,9 +4073,33 @@ function _accessBuildEntityHistoryIndex_(source, entityType, recordId, relatedTy
  * Tipos contemplados: USUARIO, ROL, PERMISO y SERVIDOR.
  * Requiere AUDITORIA_VER.
  */
-function getAccessEntityHistory(payload) {
-  _accessRequirePermission_('AUDITORIA_VER');
+function _accessRequireMaintenanceHistoryPermission_() {
+  const auth = _accessRequirePermission_('MANTENIMIENTOS_VER', 'MANTENIMIENTOS');
+  const moduleId = _accessResolveModuleId_(auth, 'MANTENIMIENTOS');
+  const moduleAccess = _accessGetModuleAccess_(auth, moduleId);
+  const scopes = moduleAccess && Array.isArray(moduleAccess.scopes)
+    ? moduleAccess.scopes
+    : [];
+  const exclusiveTotal = scopes.length === 1 &&
+    _accessUpper_(scopes[0].tipo_ambito_id || scopes[0].tipo_ambito) === 'TOTAL' &&
+    !_accessText_(scopes[0].referencia_id);
+  if (!exclusiveTotal ||
+      !SUNARPCore.authorizationIsRecordInScope(auth, moduleId, {}, [])) {
+    _accessWriteAudit_(auth, {
+      accion: 'AUTORIZACION_DENEGADA',
+      modulo: 'MANTENIMIENTOS',
+      tipo_entidad: 'HISTORIAL',
+      registro_id: 'MANTENIMIENTOS_VER',
+      registro_nombre: 'HISTORIAL DE MANTENIMIENTOS',
+      resultado: 'DENEGADO',
+      detalle: 'La consulta del historial de mantenimientos requiere un ámbito TOTAL exclusivo.'
+    });
+    throw new Error('No tienes un ámbito TOTAL autorizado para consultar el historial de mantenimientos.');
+  }
+  return auth;
+}
 
+function getAccessEntityHistory(payload) {
   payload = payload || {};
   const entityType = _accessUpper_(
     payload.tipo_entidad || payload.entityType
@@ -4087,10 +4115,24 @@ function getAccessEntityHistory(payload) {
     USUARIO: ['USUARIO', 'USUARIO_ROL', 'AMBITO_ACCESO'],
     ROL: ['ROL', 'ROL_PERMISO'],
     PERMISO: ['PERMISO', 'ROL_PERMISO'],
-    SERVIDOR: ['SERVIDOR']
+    SERVIDOR: ['SERVIDOR'],
+    MANTENIMIENTO: [
+      'CATALOGO_MANTENIMIENTO',
+      'CARGOS',
+      'CONDICION_CARGO',
+      'TIPO_DOCUMENTO_IDENTIDAD',
+      'TIPO_TELEFONO'
+    ],
+    GEOGRAFICO: ['DEPARTAMENTO', 'PROVINCIA', 'DISTRITO']
   };
   if (!relatedTypes[entityType]) {
     throw new Error('No está habilitada la consulta de historial para ' + entityType + '.');
+  }
+
+  if (entityType === 'MANTENIMIENTO' || entityType === 'GEOGRAFICO') {
+    _accessRequireMaintenanceHistoryPermission_();
+  } else {
+    _accessRequirePermission_('AUDITORIA_VER');
   }
 
   const source = _accessSecuritySource_(ACCESS_MANAGEMENT_CONFIG.sheets.audit);
