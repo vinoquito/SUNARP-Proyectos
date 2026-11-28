@@ -328,8 +328,9 @@ function _somGenerateIdentifier_(entity, payload, catalogs) {
   let base = '';
   if (config.idKind === 'sede') {
     const lowered = _somNameKey_(name);
-    if (lowered === 'sede central') base = 'SEDE_CENTRAL';
-    if (lowered.indexOf('zona registral') === 0) {
+    if (lowered === 'sede central') {
+      base = 'SEDE_CENTRAL';
+    } else if (lowered.indexOf('zona registral') === 0) {
       let tail = _somToken_(name.replace(/^zona\s+registral\s*/i, '')).replace(/^N_?/, '');
       base = 'ZR_' + tail;
     } else {
