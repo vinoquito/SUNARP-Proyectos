@@ -234,9 +234,9 @@ test('carga de una sola vez los tres catálogos de Datos de personal en una cons
   const first = fixture.call("getPersonnelTelephoneMaintenanceData('datos-personal')");
   const second = fixture.call("getPersonnelTelephoneMaintenanceData('datos-personal')");
 
-  assert.deepEqual(
-    Object.keys(first.entities),
-    ['cargos', 'condicion_cargo', 'tipo_documento_identidad']
+  assert.equal(
+    Object.keys(first.entities).join('|'),
+    'cargos|condicion_cargo|tipo_documento_identidad'
   );
   assert.equal(Object.keys(second.entities).join('|'), Object.keys(first.entities).join('|'));
   assert.equal(fixture.batches.length, 1);
