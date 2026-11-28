@@ -49,7 +49,16 @@ function getAppShellConfig() {
       .trim()
       .toLowerCase();
 
+    if (route === 'seguridad') {
+      return _accessIsGlobalAdministrator_(auth);
+    }
+
     if (!requiredCode) return true;
+
+    if (!route && requiredCode === 'MANTENIMIENTOS_VER') {
+      return hasPermission_(auth, requiredCode) ||
+        _accessIsGlobalAdministrator_(auth);
+    }
 
     if (
       requiredCode === 'ACCESOS_ADMINISTRAR' ||
@@ -163,6 +172,14 @@ function _mergeMaintenanceNavigationItems_(sourceItems) {
       description: 'Administra tipos de teléfono y teléfonos.',
       icon: 'phone',
       order: 5
+    },
+    {
+      id: 'MANT_SEGURIDAD',
+      label: 'Seguridad',
+      route: 'seguridad',
+      description: 'Administra los catálogos centrales de autorización del sistema.',
+      icon: 'shield',
+      order: 6
     }
   ];
 

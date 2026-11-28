@@ -192,7 +192,16 @@ La tabla compartida define estos cuatro tipos:
 | ESTRUCTURA_ORG | Unidad orgánica | ESTRUCTURA_ORG | SÍ | SÍ |
 | LOCAL | Local directamente asignado | LOCAL | SÍ | NO |
 
-Los cuatro tipos están activos. El código valida este catálogo como un conjunto cerrado: no acepta tipos adicionales ni una configuración distinta de estas reglas.
+Los cuatro tipos base deben mantenerse activos y conservar exactamente esta semántica. El catálogo ya no se limita a esos cuatro identificadores: puede incluir tipos adicionales únicamente cuando declaren una entidad que SUNARP Core sabe resolver. El Gestor entrega a Core la entidad resuelta en cada ámbito y valida la configuración antes de guardar.
+
+Reglas de interpretación admitidas:
+
+- `NINGUNA` se reserva exclusivamente para `TOTAL`, sin referencia ni descendientes.
+- `SEDE` requiere una referencia de sede y no admite descendientes.
+- `ESTRUCTURA_ORG` requiere una referencia de estructura orgánica; puede permitir o no descendientes. El registro de ámbito concreta `incluir_descendientes`, y la validación impide marcarlo cuando el tipo no lo permite.
+- `LOCAL` requiere una referencia de local y no admite descendientes.
+- No se aceptan entidades distintas de `NINGUNA`, `SEDE`, `ESTRUCTURA_ORG` y `LOCAL`. Los nuevos tipos no incorporan nuevas formas de resolver referencias.
+- Los tipos base `TOTAL`, `SEDE`, `ESTRUCTURA_ORG` y `LOCAL` no pueden desactivarse, eliminarse ni cambiar su semántica. Cualquier tipo con referencias en `AmbitosAcceso` tampoco puede desactivarse ni eliminarse.
 
 ### 3.2. AmbitoAcceso
 
@@ -305,10 +314,11 @@ El tiempo de vida configurado es de **3600 segundos**. Las ocho fuentes declarad
 6. `SECURITY.Permisos`
 7. `SECURITY.RolPermiso`
 8. `SECURITY.AmbitosAcceso` (nombre literal configurado actualmente en código)
+9. `SECURITY.TiposAmbito` (dependencia de la semántica de ámbitos cacheada en el contexto)
 
 Por tanto, un cambio en cualquiera de esas fuentes debe afectar la validez del contexto cacheado según el mecanismo de dependencias de SUNARP Core.
 
-En el constructor normal del contexto, `Operaciones` y `TiposAmbito` no se cargan en cada autenticación: se devuelven como listas vacías en ese flujo. Se utilizan en operaciones de administración/validación del modelo. No confundir el conjunto de fuentes de invalidación del contexto de autorización con todas las pestañas que existen en el libro Seguridad.
+El constructor normal no carga `Operaciones`. Carga `TiposAmbito` solo cuando la persona tiene ámbitos activos, para añadir a cada ámbito la entidad de referencia que el Core debe interpretar. La generación de `TiposAmbito` forma parte de las dependencias del contexto: cambiar su semántica invalida el contexto cacheado. No se cargan las nueve tablas de seguridad completas en cada autenticación.
 
 En un análisis de tiempos, `cacheLookupMs` puede incluir el constructor completo cuando hay un miss; no debe interpretarse como tiempo puro de consulta de caché. El log `Authorization data stages` desglosa las lecturas de usuarios, asignaciones, ámbitos, roles, relaciones rol-permiso, permisos y módulos.
 

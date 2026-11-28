@@ -115,7 +115,25 @@ function _coreAuthCatalogIsActive_(record) {
 }
 
 function _coreAuthScopeType_(scope) {
-  return _coreAuthUpper_(scope && (scope.tipo_ambito_id || scope.tipo_ambito));
+  const typeId = _coreAuthUpper_(scope && (scope.tipo_ambito_id || scope.tipo_ambito));
+  const entity = _coreAuthUpper_(scope && (
+    scope.entidad_referencia || scope._tipo_ambito_entidad || scope.tipo_ambito_entidad
+  ));
+  const essentialEntities = {
+    TOTAL: 'NINGUNA',
+    SEDE: 'SEDE',
+    ESTRUCTURA_ORG: 'ESTRUCTURA_ORG',
+    LOCAL: 'LOCAL'
+  };
+  if (Object.prototype.hasOwnProperty.call(essentialEntities, typeId)) {
+    return entity
+      ? (entity === essentialEntities[typeId]
+        ? (entity === 'NINGUNA' ? 'TOTAL' : entity)
+        : '')
+      : typeId;
+  }
+  if (entity === 'SEDE' || entity === 'ESTRUCTURA_ORG' || entity === 'LOCAL') return entity;
+  return '';
 }
 
 
@@ -560,11 +578,13 @@ function authorizationHasPermission(context, permissionCode, moduloId) {
  * Comprueba si un registro pertenece a alguno de los ámbitos activos
  * de la persona para el modulo_id indicado.
  *
- * Tipos admitidos:
- * - TOTAL
- * - SEDE
- * - ESTRUCTURA_ORG
- * - LOCAL
+ * La entidad de referencia identifica cómo interpretar el tipo de ámbito:
+ * - NINGUNA -> TOTAL (sin referencia)
+ * - SEDE -> referencia de sede
+ * - ESTRUCTURA_ORG -> referencia orgánica y jerarquía opcional
+ * - LOCAL -> referencia de local directo
+ * Cuando no se adjunta entidad_referencia, se conserva compatibilidad con
+ * los cuatro identificadores históricos. Cualquier entidad desconocida deniega.
  *
  * La lista structures contiene nodos del catálogo organizacional:
  * { id, parent_id, sede_id }.

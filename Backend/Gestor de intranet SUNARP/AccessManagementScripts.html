@@ -125,7 +125,6 @@
       'getAccessAuditHistory',
       'getAccessEntityHistory',
       'setAccessUserStatus',
-      'setAccessRoleStatus',
       'setAccessPermissionStatus',
       'saveRolePermissions',
       'saveAccessScopes',
@@ -2251,97 +2250,6 @@ function createAccessStatusCell(row, method, id, entityLabel) {
   }
 
 
-  function renderRoles(host) {
-    const canManage = state.data.capabilities.roles;
-    const section = makeTabPanel(
-      'Roles',
-      'Define perfiles funcionales reutilizables. Su asignación se realiza por módulo.',
-      canManage ? 'Nuevo rol' : '',
-      canManage ? () => openRoleModal(null) : null
-    );
-    host.appendChild(section);
-    renderTable(host, {
-      data: state.data.roles || [],
-      columns: [
-        { key: 'nombre', label: 'Nombre' },
-        { key: 'descripcion', label: 'Descripción' },
-        {
-          key: 'active',
-          label: 'Estado',
-          align: 'center',
-          render: (value, row) => createAccessStatusCell(row, 'setAccessRoleStatus', row.rol_id, 'el rol')
-        }
-      ],
-      rowActions: [
-        ...(canManage ? [{
-          label: 'Editar rol',
-          icon: 'edit',
-          variant: 'outline',
-          onClick: row => openRoleModal(row)
-        }] : []),
-        ...(state.data.capabilities.audit ? [{
-          label: 'Historial',
-          icon: 'history',
-          variant: 'outline',
-          onClick: row => openEntityHistory('ROL', row.rol_id, row.nombre)
-        }] : [])
-      ],
-      searchPlaceholder: 'Buscar por nombre o descripción...',
-      emptyMessage: 'No hay roles registrados.'
-    });
-  }
-
-
-  function openRoleModal(row) {
-    const editing = Boolean(row);
-    const form = document.createElement('form');
-    form.className = 'access-form';
-    form.addEventListener('submit', event => event.preventDefault());
-    const grid = createFormGrid();
-
-    const id = createInput('text', row && row.rol_id, {
-      required: true,
-      maxlength: 50,
-      readOnly: true
-    });
-    const name = createInput('text', row && row.nombre, {
-      required: true,
-      maxlength: 100
-    });
-    const description = createTextarea(row && row.descripcion, 3);
-
-    function updateRoleIdPreview() {
-      id.value = editing
-        ? row.rol_id
-        : previewIdentifier('ROL_', name.value, 50);
-    }
-
-    if (!editing) name.addEventListener('input', updateRoleIdPreview);
-    updateRoleIdPreview();
-
-    grid.append(
-      createField('ID generado automáticamente', id, 'Se construye a partir del nombre del rol y no puede editarse.'),
-      createField('Nombre', name),
-      createField('Descripción', description)
-    );
-    form.appendChild(grid);
-
-    openFormModal(
-      editing ? 'Editar rol' : 'Crear rol',
-      form,
-      () => rpc('saveAccessRole', {
-        action: editing ? 'edit' : 'create',
-        rol_id: id.value,
-        rol_id_original: editing ? row.rol_id : '',
-        nombre: name.value.trim(),
-        descripcion: description.value.trim(),
-        active: editing ? row.active : true
-      }),
-      editing ? 'Guardar cambios' : 'Crear rol'
-    );
-  }
-
-
   function renderPermissions(host) {
     const canManage = state.data.capabilities.permissions;
     const section = makeTabPanel(
@@ -2406,48 +2314,6 @@ function createAccessStatusCell(row, method, id, entityLabel) {
     renderPermissionTable();
   }
 
-
-  function renderOperations(host) {
-    const section = makeTabPanel(
-      'Operaciones',
-      'Catálogo controlado de operaciones disponibles para construir permisos sin variaciones de escritura.'
-    );
-    host.appendChild(section);
-
-    renderTable(host, {
-      data: state.data.operations || [],
-      columns: [
-        { key: 'operacion_id', label: 'ID de operación' },
-        { key: 'nombre', label: 'Nombre' },
-        { key: 'descripcion', label: 'Descripción' },
-        { key: 'active', label: 'Estado', render: value => value ? 'Activa' : 'Inactiva' }
-      ],
-      searchPlaceholder: 'Buscar operación...',
-      emptyMessage: 'No hay operaciones registradas.'
-    });
-  }
-
-
-  function renderScopeTypes(host) {
-    const section = makeTabPanel(
-      'Tipos de ámbito',
-      'Catálogo cerrado de los cuatro tipos admitidos. Define la referencia y si permite incluir unidades orgánicas descendientes; esta pantalla es de solo lectura.'
-    );
-    host.appendChild(section);
-    renderTable(host, {
-      data: state.data.scopeTypes || [],
-      columns: [
-        { key: 'tipo_ambito_id', label: 'ID' },
-        { key: 'nombre', label: 'Nombre' },
-        { key: 'descripcion', label: 'Descripción' },
-        { key: 'entidad_referencia', label: 'Referencia' },
-        { key: 'requiere_referencia', label: 'Requiere referencia', render: value => value ? 'Sí' : 'No' },
-        { key: 'permite_descendientes', label: 'Permite descendientes', render: value => value ? 'Sí' : 'No' }
-      ],
-      searchPlaceholder: 'Buscar tipo de ámbito...',
-      emptyMessage: 'No hay tipos de ámbito registrados.'
-    });
-  }
 
   function openPermissionModal(row) {
     const editing = Boolean(row);
@@ -3247,21 +3113,10 @@ window.SUNARPAccessHistory = Object.freeze({
       });
     }
 
-    if (caps.roles) {
-      tabs.push({
-        id: 'roles',
-        label: 'Roles'
-      });
-    }
-
     if (caps.permissions) {
       tabs.push({
         id: 'permissions',
         label: 'Permisos'
-      });
-      tabs.push({
-        id: 'operations',
-        label: 'Operaciones'
       });
     }
 
@@ -3270,10 +3125,6 @@ window.SUNARPAccessHistory = Object.freeze({
         id: 'assignments',
         label: 'Asignación de permisos'
       });
-    }
-
-    if (caps.scopes) {
-      tabs.push({ id: 'scopeTypes', label: 'Tipos de ámbito' });
     }
 
     if (caps.audit) {
@@ -3298,8 +3149,7 @@ window.SUNARPAccessHistory = Object.freeze({
     destroyTable();
     panel.replaceChildren();
     const renderers = {
-      users: renderUsers, roles: renderRoles, permissions: renderPermissions,
-      operations: renderOperations, scopeTypes: renderScopeTypes,
+      users: renderUsers, permissions: renderPermissions,
       assignments: renderAssignments, audit: renderAudit
     };
     const renderer = renderers[tabId];
@@ -3321,10 +3171,6 @@ window.SUNARPAccessHistory = Object.freeze({
         state.data.permissions = result.permissions || [];
         state.data.rolePermissions = result.rolePermissions || [];
       },
-      operations: async () => {
-        const result = await rpc('getAccessManagementTabData', 'operations');
-        state.data.operations = result.operations || [];
-      }
     };
     const loader = tabLoaders[tabId];
     if (loader && state.tabDataLoaded[tabId] !== true) {
@@ -3424,10 +3270,6 @@ window.SUNARPAccessHistory = Object.freeze({
         if (state.userListController) {
           await state.userListController.refresh();
         }
-      } else if (tab === 'roles') {
-        const result = await rpc('getAccessManagementTabData', 'roles');
-        state.data.roles = result.roles || [];
-        renderActiveTab('roles');
       } else if (tab === 'permissions') {
         const result = await rpc('getAccessManagementTabData', 'permissions');
         state.data.modules = result.modules || [];
@@ -3436,15 +3278,6 @@ window.SUNARPAccessHistory = Object.freeze({
         state.data.permissions = result.permissions || [];
         state.tabDataLoaded.permissions = true;
         renderActiveTab('permissions');
-      } else if (tab === 'operations') {
-        const result = await rpc('getAccessManagementTabData', 'operations');
-        state.data.operations = result.operations || [];
-        state.tabDataLoaded.operations = true;
-        renderActiveTab('operations');
-      } else if (tab === 'scopeTypes') {
-        const result = await rpc('getAccessManagementTabData', 'scopeTypes');
-        state.data.scopeTypes = result.scopeTypes || [];
-        renderActiveTab('scopeTypes');
       } else if (tab === 'assignments') {
         const result = await rpc('getAccessManagementTabData', 'assignments');
         state.data.roles = result.roles || [];
@@ -3544,6 +3377,18 @@ window.SUNARPAccessHistory = Object.freeze({
         renderPage();
       }
     }
+  });
+
+  // Los cambios centralizados de catálogos invalidan la instantánea local.
+  // La siguiente entrada recupera referencias según las generaciones de Core.
+  document.addEventListener('sunarp:security-catalogs-changed', () => {
+    state.loaded = false;
+    state.data = null;
+    state.documentTypesPromise = null;
+    state.tabDataLoaded = { permissions: false, assignments: false, operations: false };
+    state.tabLoadPromises = {};
+    invalidateAccessUserPageCache();
+    invalidateAccessAuditPageCache();
   });
 
 

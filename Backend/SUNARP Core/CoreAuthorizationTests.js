@@ -1008,6 +1008,62 @@ function runAuthorizationSelfTests_() {
     'Mantiene índices separados cuando cambia la configuración de campos del catálogo.'
   );
 
+  const dynamicScopeContext = resolveAuthorizationContext({
+    personaId: 'PER_DYNAMIC_SCOPE',
+    users: [{ persona_id: 'PER_DYNAMIC_SCOPE', active: true }],
+    modules: [{ modulo_id: 'MOD_DYNAMIC', codigo: 'DYNAMIC', active: true }],
+    roles: [{ rol_id: 'ROL_DYNAMIC', active: true }],
+    userRoles: [{
+      persona_id: 'PER_DYNAMIC_SCOPE',
+      modulo_id: 'MOD_DYNAMIC',
+      rol_id: 'ROL_DYNAMIC',
+      active: true
+    }],
+    permissions: [],
+    rolePermissions: [],
+    scopes: [{
+      persona_id: 'PER_DYNAMIC_SCOPE',
+      modulo_id: 'MOD_DYNAMIC',
+      tipo_ambito_id: 'UNIDAD_REGIONAL',
+      entidad_referencia: 'ESTRUCTURA_ORG',
+      referencia_id: 'DYN_ROOT',
+      incluir_descendientes: true,
+      active: true
+    }]
+  });
+  assert(
+    authorizationIsRecordInScope(
+      dynamicScopeContext,
+      'MOD_DYNAMIC',
+      { estructura_id: 'DYN_CHILD' },
+      [
+        { id: 'DYN_ROOT', parent_id: '', sede_id: 'SITE_A', active: true },
+        { id: 'DYN_CHILD', parent_id: 'DYN_ROOT', sede_id: 'SITE_A', active: true }
+      ]
+    ),
+    'Interpreta IDs de tipo de ámbito adicionales mediante entidad_referencia admitida.'
+  );
+  assert(
+    !authorizationIsRecordInScope(
+      {
+        authenticated: true,
+        moduleAccess: [{
+          modulo_id: 'MOD_DYNAMIC',
+          scopes: [{
+            tipo_ambito_id: 'TOTAL',
+            entidad_referencia: 'PERSONA',
+            referencia_id: 'PER_1',
+            active: true
+          }]
+        }]
+      },
+      'MOD_DYNAMIC',
+      {},
+      []
+    ),
+    'Deniega tipos cuyo tipo de entidad no está implementado por Core.'
+  );
+
   console.log(results.join('\n'));
 
   return {

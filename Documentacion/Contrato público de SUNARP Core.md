@@ -115,8 +115,8 @@ Recibe los registros de seguridad ya recuperados por el consumidor. Core no cons
   permissions: [{ permiso_id, codigo, modulo_id, active }],
   rolePermissions: [{ rol_id, permiso_id, active }],
   scopes: [{
-    persona_id, modulo_id, tipo_ambito_id, referencia_id,
-    incluir_descendientes, active
+    persona_id, modulo_id, tipo_ambito_id, entidad_referencia,
+    referencia_id, incluir_descendientes, active
   }]
 }
 ```
@@ -552,7 +552,7 @@ Este inventario describe los consumidores comprobados en el repositorio y la ram
 - `saveAccessRole()` consulta por nombre e identificador mediante `findRecordsByFields()`; la generación del siguiente `rol_id` comprueba colisiones mediante búsquedas exactas sucesivas. No descarga la tabla `Roles` completa para esas validaciones.
 - `saveAccessPermission()` consulta módulo, permiso y código por sus claves; genera `permiso_id` mediante búsqueda exacta, sin cargar todos los permisos.
 - Las escrituras Core usadas por esos CRUD (`insertRecord()`, `updateRecord()` y `deleteRecord()`) validan encabezados sin cargar filas, localizan por identificador y recuperan solo las filas candidatas. Las restricciones compuestas `uniqueFields` se verifican con búsquedas puntuales dentro del mismo bloqueo. `updateRecordByFields()` utiliza el mismo mecanismo.
-- `saveAccessUserConfiguration()` recupera únicamente los módulos y roles vinculados a la persona o enviados en la operación. Conserva las relaciones previas de módulos inactivos/no disponibles. El catálogo `TiposAmbito` se consulta completo porque es un catálogo cerrado de cuatro tipos.
+- `saveAccessUserConfiguration()` recupera únicamente los módulos y roles vinculados a la persona o enviados en la operación. Conserva las relaciones previas de módulos inactivos/no disponibles. Consulta el catálogo completo `TiposAmbito` para validar la semántica y proyectar `entidad_referencia` al contexto Core. Los cuatro tipos base son obligatorios; los identificadores adicionales solo pueden reutilizar entidades de referencia que Core interpreta (SEDE, ESTRUCTURA_ORG o LOCAL).
 - La protección de continuidad del administrador global consulta `ACCESOS`, `ROL_ADMIN`, sus cuatro permisos administrativos, las relaciones correspondientes, las cuentas candidatas y los ámbitos `TOTAL`. No requiere el snapshot administrativo completo.
 - `saveAccessUserRole()`, `saveRolePermissions()`, `saveAccessScopes()` y `saveAccessUserConfiguration()` conservan la sincronización compuesta protegida por bloqueo. `syncRecordsByKey()` localiza filas por cada campo de `parentMatch` con `TextFinder`, intersecta los números de fila y recupera las filas candidatas en ventanas acotadas; no materializa la hoja completa para claves padre textuales. Para padres no textuales mantiene el lector anterior por compatibilidad.
 - `validateAccessManagementIntegrity()` sigue siendo la operación explícita que carga y valida el snapshot integral de las nueve tablas de seguridad. Los listados completos de catálogos de una pestaña se mantienen bajo demanda para presentar esa pestaña, no como requisito previo de cada mutación.
@@ -606,3 +606,15 @@ No se actualizó ningún despliegue productivo. Core v11 permanece publicada; Co
 ## Nota de publicación de la extensión
 
 `getOrBuildCachedValue` está incluida en la biblioteca SUNARP Core v11, ya publicada. Core v12 conserva ese contrato y añade lecturas proyectadas por bloques más amplios; el manifiesto del Gestor en esta rama referencia la versión 12, pendiente de publicar. Resta sincronizar ambos proyectos Apps Script y validar la integración en el despliegue de pruebas. No se debe modificar el despliegue productivo.
+
+
+### 10.5 Mantenimiento centralizado de Seguridad
+
+El módulo `Seguridad` de Módulos de mantenimiento es el único propietario de los CRUD de `Roles`, `Modulos`, `TiposAmbito` y `Operaciones`. Administración de accesos conserva únicamente su consumo como catálogos de referencia para permisos, asignaciones y configuración de ámbitos.
+
+- `SecurityMaintenanceService.js` lee los cuatro catálogos físicos en una consulta agrupada, cacheada por las generaciones de esas fuentes.
+- El acceso a la lectura y a todas las mutaciones exige `_accessIsGlobalAdministrator_()`: `ROL_ADMIN` asignado en `ACCESOS`, ámbito `TOTAL` exclusivo y los cuatro permisos administrativos existentes.
+- Las altas, ediciones, cambios de estado y eliminaciones usan los CRUD públicos de SUNARP Core y `_accessRunAudited_()`. Las tablas de relación se inspeccionan antes de desactivar o borrar.
+- `Operaciones` conserva estrictamente sus dos encabezados (`operacion_id, nombre`) y no tiene cambio de estado. Las relaciones con `Permisos` bloquean el borrado.
+- Los identificadores existentes no se modifican. El código del módulo es inmutable tras el alta. Los elementos esenciales (ROL_ADMIN, módulos centrales, cuatro tipos base y operaciones usadas por el control administrativo) están protegidos.
+- Los tipos de ámbito adicionales solo admiten las entidades de referencia que Core ya sabe interpretar; no se permiten entidades nuevas, referencias ambiguas ni semánticas que amplíen el alcance.

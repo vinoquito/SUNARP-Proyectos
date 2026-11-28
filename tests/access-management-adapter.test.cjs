@@ -282,8 +282,8 @@ test('la actualización independiente de Tipos de ámbito compara el identificad
   const end = accessSource.indexOf('function getAccessUsers(', start);
   const implementation = accessSource.slice(start, end);
   assert.match(implementation, /_accessText_\(tabId\)\.toLowerCase\(\)/);
-  assert.match(implementation, /tab === 'scopetypes'/);
-  assert.doesNotMatch(implementation, /tab === 'scopeTypes'/);
+  assert.doesNotMatch(implementation, /tab === 'roles'|tab === 'operations'|tab === 'scopetypes'/);
+  assert.doesNotMatch(implementation, /saveAccessRole|setAccessRoleStatus/);
 });
 
 test('el historial sin filtros y por rango temporal usa la cola indexada con total exacto y orden por fecha', () => {
@@ -1258,8 +1258,7 @@ test('asignar un rol consulta solo la cuenta, módulo, rol y relaciones necesari
 test('las mutaciones administrativas ya no acceden al snapshot diferido auth.securityData', () => {
   for (const [startName, endName] of [
     ['function _accessRecordUser_(', 'function saveAccessUser('],
-    ['function saveAccessUserRole(', 'function saveAccessRole('],
-    ['function saveAccessRole(', 'function saveAccessPermission('],
+    ['function saveAccessUserRole(', 'function saveAccessPermission('],
     ['function saveAccessPermission(', 'function saveRolePermissions('],
     ['function saveRolePermissions(', 'function saveAccessScopes('],
     ['function saveAccessScopes(', 'function saveAccessUserConfiguration('],
@@ -1688,12 +1687,11 @@ test('la búsqueda de persona muestra un loader transparente dentro del formular
   assert.match(viewSource, /\.access-element-loader\s*\{/);
 });
 
-test('los formularios de rol y permiso no permiten ingresar IDs, códigos ni estados manualmente', () => {
-  const roleStart = accessUiSource.indexOf('function openRoleModal(row)');
-  const roleEnd = accessUiSource.indexOf('function renderPermissions(host)', roleStart);
-  const roleForm = accessUiSource.slice(roleStart, roleEnd);
-  assert.match(roleForm, /previewIdentifier\('ROL_'/);
-  assert.doesNotMatch(roleForm, /createField\('Estado'/);
+test('Administración de accesos consume Roles como referencia y ya no incluye su formulario administrativo', () => {
+  assert.doesNotMatch(accessUiSource, /function openRoleModal\(row\)|function renderRoles\(host\)/);
+  assert.doesNotMatch(accessSource, /function saveAccessRole\(|function setAccessRoleStatus\(/);
+  assert.match(accessUiSource, /activeRoles\(\)/);
+  assert.match(accessUiSource, /createSelect\(\s*roleOptions/);
 
   const permissionStart = accessUiSource.indexOf('function openPermissionModal(row)');
   const permissionEnd = accessUiSource.indexOf('function renderAssignments(host)', permissionStart);
@@ -1709,18 +1707,14 @@ test('la administración incluye filtro de módulo, catálogo de operaciones y s
   assert.match(accessUiSource, /'Selecciona un módulo'/);
   assert.match(accessUiSource, /label: 'Todos los módulos'/);
   assert.match(accessUiSource, /moduleSelect\.addEventListener\('change', renderPermissionTable\)/);
-  assert.doesNotMatch(accessUiSource.slice(
-    accessUiSource.indexOf('function renderPermissions(host)'),
-    accessUiSource.indexOf('function renderOperations(host)')
-  ), /filters:\s*\[/);
-  assert.match(accessUiSource, /function renderOperations\(host\)/);
-  assert.match(accessUiSource, /operations: renderOperations/);
-  assert.match(accessUiSource, /function renderScopeTypes\(host\)/);
-  assert.match(accessUiSource, /scopeTypes: renderScopeTypes/);
-  assert.match(accessUiSource, /Buscar operación/);
+  assert.doesNotMatch(accessUiSource, /function renderOperations\(host\)|function renderScopeTypes\(host\)/);
+  assert.doesNotMatch(accessUiSource, /operations: renderOperations|scopeTypes: renderScopeTypes/);
+  assert.doesNotMatch(accessUiSource, /Buscar operación/);
+  assert.match(accessUiSource, /state\.data\.operations = result\.operations \|\| \[\]/);
   assert.match(accessUiSource, /permission\.operacion_nombre \|\| permission\.operacion_id/);
   assert.match(accessUiSource, /row\.operacion_nombre \|\| row\.operacion_id/);
   assert.match(accessSource, /function _accessScopeType_\(data, typeId\)/);
+  assert.match(accessSource, /function _accessScopeTypeIsInterpretable_\(item\)/);
   assert.match(accessSource, /function migrateAccessManagementSchema\(\)/);
   assert.match(accessSource, /typeIdsByName/);
   assert.match(accessUiSource, /Seleccionar todo el bloque/);
@@ -1730,7 +1724,7 @@ test('la administración incluye filtro de módulo, catálogo de operaciones y s
 
 test('las actualizaciones usan loader local y el acceso inicial loader global blanco', () => {
   assert.match(accessUiSource, /function refreshCurrentTabData\(showNotification\)/);
-  assert.match(accessUiSource, /getAccessManagementTabData', 'roles'/);
+  assert.doesNotMatch(accessUiSource, /getAccessManagementTabData', 'roles'/);
   assert.match(accessUiSource, /getAccessManagementTabData', 'permissions'/);
   assert.match(accessUiSource, /getAccessManagementTabData', 'assignments'/);
   assert.match(accessUiSource, /state\.table\.refresh\(\)/);
@@ -1742,19 +1736,28 @@ test('las actualizaciones usan loader local y el acceso inicial loader global bl
 });
 
 
-test('TiposAmbito es un catálogo cerrado con cuatro tipos y semántica fija', () => {
+test('TiposAmbito admite IDs adicionales solo con entidades y reglas interpretables por Core', () => {
   const sandbox = createAdapterSandbox(makeSecurityData());
   const data = makeSecurityData();
   assert.doesNotThrow(() => sandbox._accessValidateSnapshot_(data));
 
   const extraType = makeSecurityData({
     tiposAmbito: data.tiposAmbito.concat([{
-      tipo_ambito_id: 'REGIONAL', nombre: 'Regional', descripcion: 'No soportado',
+      tipo_ambito_id: 'REGIONAL', nombre: 'Regional', descripcion: 'Ámbito de sede',
       entidad_referencia: 'SEDE', requiere_referencia: true,
       permite_descendientes: false, active: true
     }])
   });
-  assert.throws(() => sandbox._accessValidateSnapshot_(extraType), /tipo no admitido/i);
+  assert.doesNotThrow(() => sandbox._accessValidateSnapshot_(extraType));
+
+  const unsupportedType = makeSecurityData({
+    tiposAmbito: data.tiposAmbito.concat([{
+      tipo_ambito_id: 'PERSONA', nombre: 'Persona', descripcion: 'No interpretable',
+      entidad_referencia: 'PERSONA', requiere_referencia: true,
+      permite_descendientes: false, active: true
+    }])
+  });
+  assert.throws(() => sandbox._accessValidateSnapshot_(unsupportedType), /semántica admitida/i);
 
   const alteredSemantics = makeSecurityData({
     tiposAmbito: data.tiposAmbito.map(item => item.tipo_ambito_id === 'TOTAL'
@@ -1820,9 +1823,31 @@ test('la migración transforma columnas antiguas sin perder referencias y no alt
 });
 
 
+test('los flujos de asignación resuelven tipos de ámbito por entidad y no por ID fijo', () => {
+  const saveScopesStart = accessSource.indexOf('function saveAccessScopes(payload)');
+  const saveScopesEnd = accessSource.indexOf('function saveAccessUserConfiguration(payload)', saveScopesStart);
+  const saveScopes = accessSource.slice(saveScopesStart, saveScopesEnd);
+  assert.match(saveScopes, /const typeConfig = _accessScopeType_\(data, type\)/);
+  assert.match(saveScopes, /const entity = _accessUpper_\(typeConfig\.entidad_referencia\)/);
+  assert.doesNotMatch(saveScopes, /!\['TOTAL', 'SEDE', 'ESTRUCTURA_ORG', 'LOCAL'\]\.includes\(type\)/);
+  assert.doesNotMatch(saveScopes, /if \(type === 'SEDE'\)/);
+
+  const userConfigStart = accessSource.indexOf('function saveAccessUserConfiguration(payload)');
+  const userConfigEnd = accessSource.indexOf('function _accessLoadSecurityRecords_(', userConfigStart);
+  const userConfig = accessSource.slice(userConfigStart, userConfigEnd);
+  assert.match(userConfig, /const entity = _accessUpper_\(typeConfig\.entidad_referencia\)/);
+  assert.doesNotMatch(userConfig, /if \(scope\.tipo_ambito_id === 'SEDE'\)/);
+  assert.doesNotMatch(userConfig, /if \(scope\.tipo_ambito_id === 'ESTRUCTURA_ORG'\)/);
+
+  const migrationStart = accessSource.indexOf('function _accessMigrationEnsureScopeTypes_');
+  const migrationEnd = accessSource.indexOf('function migrateAccessManagementSchema()', migrationStart);
+  assert.match(accessSource.slice(migrationStart, migrationEnd), /_accessScopeTypeIsInterpretable_\(scopeTypeRecord\)/);
+  assert.doesNotMatch(accessSource.slice(migrationStart, migrationEnd), /ACCESS_SCOPE_TYPE_IDS\.includes\(id\)/);
+});
+
 test('la actualización de Asignación de permisos usa claves reales de la instantánea de seguridad', () => {
   const start = accessSource.indexOf("if (tab === 'assignments')");
-  const end = accessSource.indexOf("if (tab === 'operations')", start);
+  const end = accessSource.indexOf("throw new Error('La pestaña solicitada", start);
   assert.ok(start >= 0 && end > start);
   const endpoint = accessSource.slice(start, end);
   assert.match(endpoint, /_accessLoadPermissionCatalogs_\(\)/);
@@ -1904,7 +1929,7 @@ test('el contexto de autorización se cachea por identidad y depende de todas la
   assert.match(source, /Authorization context cache/);
   assert.match(source, /access-auth-context:v1:/);
   assert.match(source, /_accessDirectorySource_\(sheets\.people\)/);
-  for (const sheet of ['users', 'modules', 'roles', 'userRoles', 'permissions', 'rolePermissions', 'scopes']) {
+  for (const sheet of ['users', 'modules', 'roles', 'userRoles', 'permissions', 'rolePermissions', 'scopes', 'scopeTypes']) {
     assert.match(source, new RegExp('_accessSecuritySource_\\(sheets\\.' + sheet + '\\)'));
   }
   assert.match(source, /_accessBuildAuthContext_\(email\),\s*3600\s*\)/);
@@ -2089,17 +2114,13 @@ test('el editor de usuarios solicita catálogos de ámbito de forma diferida y u
   assert.match(editor, /state\.data\.scopeCatalogsLoaded = true/);
 });
 
-test('CRUD de roles y permisos consulta únicamente las claves necesarias, sin cargar catálogos completos', () => {
-  const roleStart = accessSource.indexOf('function saveAccessRole(');
-  const roleEnd = accessSource.indexOf('function saveAccessPermission(', roleStart);
-  const permissionStart = roleEnd;
+test('los catálogos de Roles se administran fuera de Administración de accesos y Permisos conserva sus referencias', () => {
+  assert.doesNotMatch(accessSource, /function saveAccessRole\(|function setAccessRoleStatus\(/);
+  const permissionStart = accessSource.indexOf('function saveAccessPermission(');
   const permissionEnd = accessSource.indexOf('function saveRolePermissions(', permissionStart);
-  assert.ok(roleStart >= 0 && roleEnd > roleStart && permissionEnd > permissionStart);
-  const roleCrud = accessSource.slice(roleStart, roleEnd);
+  assert.ok(permissionStart >= 0 && permissionEnd > permissionStart);
   const permissionCrud = accessSource.slice(permissionStart, permissionEnd);
-  assert.doesNotMatch(roleCrud, /_accessLoadSecurityRecords_\s*\(/);
   assert.doesNotMatch(permissionCrud, /_accessLoadSecurityRecords_\s*\(/);
-  assert.match(roleCrud, /_accessFindSecurityRecords_\s*\(\s*rolesSheet\s*,\s*'nombre'/);
   assert.match(permissionCrud, /_accessGenerateUniqueIdentifierFromSource_/);
 });
 
@@ -2409,7 +2430,7 @@ test('Nueva cuenta abre el formulario sin esperar los catálogos organizacionale
 
 test('Nueva cuenta monta el formulario antes de mostrar la alerta del contenedor de búsqueda', () => {
   const start = accessUiSource.indexOf('function openUserModal(row) {');
-  const end = accessUiSource.indexOf('function renderRoles(host)', start);
+  const end = accessUiSource.indexOf('function renderPermissions(host)', start);
   const implementation = accessUiSource.slice(start, end);
   const mountIndex = implementation.indexOf('saveButton = openFormModal(');
   const alertIndex = implementation.indexOf('if (initialDocumentAlert) {');

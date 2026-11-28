@@ -104,10 +104,41 @@ function _accessFlag_(value) {
   return value === true || ['TRUE', '1', 'SI', 'SÍ', 'YES'].includes(_accessUpper_(value));
 }
 
+const ACCESS_SCOPE_ENTITY_RULES = Object.freeze({
+  NINGUNA: Object.freeze({ requiresReference: false, allowsDescendants: false }),
+  SEDE: Object.freeze({ requiresReference: true, allowsDescendants: false }),
+  ESTRUCTURA_ORG: Object.freeze({ requiresReference: true, allowsDescendants: true }),
+  LOCAL: Object.freeze({ requiresReference: true, allowsDescendants: false })
+});
+
 function _accessScopeType_(data, typeId) {
   const id = _accessUpper_(typeId);
-  if (!ACCESS_SCOPE_TYPE_IDS.includes(id)) return null;
-  return (data.tiposAmbito || []).find(item => _accessUpper_(item.tipo_ambito_id) === id && _accessCatalogIsActive_(item)) || null;
+  return (data.tiposAmbito || []).find(item =>
+    _accessUpper_(item.tipo_ambito_id) === id && _accessCatalogIsActive_(item)
+  ) || null;
+}
+
+function _accessScopeTypeIsInterpretable_(item) {
+  const entity = _accessUpper_(item && item.entidad_referencia);
+  const rule = ACCESS_SCOPE_ENTITY_RULES[entity];
+  if (!rule) return false;
+  const id = _accessUpper_(item && item.tipo_ambito_id);
+  const essentialRules = {
+    TOTAL: { entity: 'NINGUNA', requiresReference: false, descendants: false },
+    SEDE: { entity: 'SEDE', requiresReference: true, descendants: false },
+    ESTRUCTURA_ORG: { entity: 'ESTRUCTURA_ORG', requiresReference: true, descendants: true },
+    LOCAL: { entity: 'LOCAL', requiresReference: true, descendants: false }
+  };
+  const essential = essentialRules[id];
+  if (essential && (
+    entity !== essential.entity ||
+    _accessFlag_(item.requiere_referencia) !== essential.requiresReference ||
+    _accessFlag_(item.permite_descendientes) !== essential.descendants
+  )) return false;
+  if (entity === 'NINGUNA' && id !== 'TOTAL') return false;
+  if (_accessFlag_(item.requiere_referencia) !== rule.requiresReference) return false;
+  if (_accessFlag_(item.permite_descendientes) && !rule.allowsDescendants) return false;
+  return true;
 }
 
 const ACCESS_MANAGEMENT_FIELDS = Object.freeze({
@@ -497,6 +528,30 @@ function _accessLoadAuthorizationData_(personaId) {
         ]
       }
     ));
+    const tiposAmbito = ambitosAcceso.length
+      ? measure('scopeTypes', () => _accessLoadSecurityRecords_(s.scopeTypes, ACCESS_MANAGEMENT_FIELDS.scopeTypes))
+      : [];
+    const scopesWithSemantics = ambitosAcceso.map(scope => {
+      const scopeType = _accessScopeType_({ tiposAmbito }, scope.tipo_ambito_id);
+      if (!scopeType || !_accessScopeTypeIsInterpretable_(scopeType)) {
+        throw new Error('El ámbito activo ' + _accessUpper_(scope.tipo_ambito_id) + ' no tiene un tipo activo con semántica reconocida por SUNARP Core.');
+      }
+      const referenceId = _accessText_(scope.referencia_id);
+      const requiresReference = _accessFlag_(scopeType.requiere_referencia);
+      const includesDescendants = _accessFlag_(scope.incluir_descendientes);
+      if (requiresReference && !referenceId) {
+        throw new Error('El ámbito activo ' + _accessUpper_(scope.tipo_ambito_id) + ' requiere referencia_id.');
+      }
+      if (!requiresReference && referenceId) {
+        throw new Error('El ámbito activo ' + _accessUpper_(scope.tipo_ambito_id) + ' debe tener referencia_id vacío.');
+      }
+      if (includesDescendants && !_accessFlag_(scopeType.permite_descendientes)) {
+        throw new Error('El ámbito activo ' + _accessUpper_(scope.tipo_ambito_id) + ' no admite descendientes.');
+      }
+      return Object.assign({}, scope, {
+        entidad_referencia: _accessUpper_(scopeType.entidad_referencia)
+      });
+    });
     const roleIds = [...new Set(usuarioRol.map(item => _accessText_(item.rol_id)).filter(Boolean))];
     const roles = measure('roles', () => _accessFindSecurityRecordsByFilters_(
       s.roles, { rol_id: roleIds, active: true }, 'rol_id',
@@ -543,9 +598,9 @@ function _accessLoadAuthorizationData_(personaId) {
       usuarioRol,
       permisos,
       rolPermiso,
-      ambitosAcceso,
+      ambitosAcceso: scopesWithSemantics,
       operaciones: [],
-      tiposAmbito: []
+      tiposAmbito
     };
   } catch (error) {
     console.error('[AccessManagement] Authorization data load failed:', JSON.stringify({
@@ -639,29 +694,32 @@ function _accessValidateSnapshot_(data) {
       throw new Error('Operaciones contiene un registro sin operacion_id o nombre.');
     }
   });
-  const scopeTypeIds = new Set(data.tiposAmbito.map(row => _accessUpper_(row.tipo_ambito_id)));
-  const allowedScopeTypeIds = new Set(ACCESS_SCOPE_TYPE_IDS);
+  const scopeTypeById = new Map();
   data.tiposAmbito.forEach(item => {
     const id = _accessUpper_(item.tipo_ambito_id);
-    if (!allowedScopeTypeIds.has(id)) throw new Error('TiposAmbito contiene un tipo no admitido por el modelo: ' + id + '.');
+    if (!id) throw new Error('TiposAmbito contiene un registro sin tipo_ambito_id.');
+    if (scopeTypeById.has(id)) throw new Error('TiposAmbito contiene el identificador duplicado ' + id + '.');
+    if (!_accessScopeTypeIsInterpretable_(item)) {
+      throw new Error('La configuración de TiposAmbito para ' + id + ' no coincide con una semántica admitida por SUNARP Core.');
+    }
+    scopeTypeById.set(id, item);
   });
-  const scopeTypeRules = {
-    TOTAL: { entity: 'NINGUNA', reference: false, descendants: false },
-    SEDE: { entity: 'SEDE', reference: true, descendants: false },
-    ESTRUCTURA_ORG: { entity: 'ESTRUCTURA_ORG', reference: true, descendants: true },
-    LOCAL: { entity: 'LOCAL', reference: true, descendants: false }
-  };
   ACCESS_SCOPE_TYPE_IDS.forEach(id => {
-    if (!scopeTypeIds.has(id)) throw new Error('TiposAmbito no contiene el tipo obligatorio ' + id + '.');
-    const row = data.tiposAmbito.find(item => _accessUpper_(item.tipo_ambito_id) === id);
-    const expected = scopeTypeRules[id];
-    if (!_accessCatalogIsActive_(row) ||
+    const row = scopeTypeById.get(id);
+    const expected = {
+      TOTAL: { entity: 'NINGUNA', reference: false, descendants: false },
+      SEDE: { entity: 'SEDE', reference: true, descendants: false },
+      ESTRUCTURA_ORG: { entity: 'ESTRUCTURA_ORG', reference: true, descendants: true },
+      LOCAL: { entity: 'LOCAL', reference: true, descendants: false }
+    }[id];
+    if (!row || !_accessCatalogIsActive_(row) ||
         _accessUpper_(row.entidad_referencia) !== expected.entity ||
         _accessFlag_(row.requiere_referencia) !== expected.reference ||
         _accessFlag_(row.permite_descendientes) !== expected.descendants) {
       throw new Error('La configuración de TiposAmbito para ' + id + ' no coincide con el modelo admitido.');
     }
   });
+  const scopeTypeIds = new Set(scopeTypeById.keys());
 
   data.usuarioRol.forEach(item => {
     if (!userIds.has(_accessText_(item.persona_id))) throw new Error('UsuarioRol referencia una cuenta inexistente en Usuarios.');
@@ -697,7 +755,10 @@ function _accessValidateSnapshot_(data) {
     if (!moduleIds.has(_accessText_(item.modulo_id))) throw new Error('AmbitosAcceso referencia un módulo inexistente.');
     const typeId = _accessUpper_(item.tipo_ambito_id);
     if (!scopeTypeIds.has(typeId)) throw new Error('AmbitosAcceso referencia un tipo_ambito_id inexistente.');
-    const typeConfig = _accessScopeType_(data, typeId);
+    const typeConfig = scopeTypeById.get(typeId);
+    if (_accessIsActive_(item.active) && !_accessCatalogIsActive_(typeConfig)) {
+      throw new Error('AmbitosAcceso activo referencia un tipo de ámbito inactivo: ' + typeId + '.');
+    }
     const referenceId = _accessText_(item.referencia_id);
     const requiresReference = _accessFlag_(typeConfig.requiere_referencia);
     if (requiresReference && !referenceId) {
@@ -827,7 +888,8 @@ function _accessGetAuthContext_() {
     _accessSecuritySource_(sheets.userRoles),
     _accessSecuritySource_(sheets.permissions),
     _accessSecuritySource_(sheets.rolePermissions),
-    _accessSecuritySource_(sheets.scopes)
+    _accessSecuritySource_(sheets.scopes),
+    _accessSecuritySource_(sheets.scopeTypes)
   ];
   if (typeof SUNARPCore.getOrBuildCachedValue === 'function') {
     const identityKey = String(email).trim().toLowerCase();
@@ -985,6 +1047,7 @@ function refreshCurrentUserAuthorizationCache() {
     _accessSecuritySource_(s.permissions),
     _accessSecuritySource_(s.rolePermissions),
     _accessSecuritySource_(s.scopes),
+    _accessSecuritySource_(s.scopeTypes),
     getIntranetDataSource('APP_DATA', 'Menu', 1)
   ];
 
@@ -1855,79 +1918,6 @@ function saveAccessUserRole(payload) {
 }
 
 
-function saveAccessRole(payload) {
-  const auth = _accessRequirePermission_('ROLES_ADMINISTRAR');
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('No se recibieron los datos del rol.');
-  const action = _accessText_(payload.action).toLowerCase();
-  const name = _accessText_(payload.nombre || payload.name);
-  const description = _accessText_(payload.descripcion || payload.description);
-  if (!['create', 'edit'].includes(action)) throw new Error('La operación del rol no es válida.');
-  if (!name) throw new Error('Ingresa el nombre del rol.');
-
-  const rolesSheet = ACCESS_MANAGEMENT_CONFIG.sheets.roles;
-  const originalId = action === 'edit' ? _accessUpper_(payload.rol_id_original || payload.originalRoleId || payload.rol_id) : '';
-  const existingMatches = action === 'edit'
-    ? _accessFindSecurityRecords_(rolesSheet, 'rol_id', [originalId], ACCESS_MANAGEMENT_FIELDS.roles)
-    : [];
-  if (action === 'edit' && existingMatches.length !== 1) throw new Error('No se encontró un único rol para actualizar.');
-  const existing = existingMatches[0] || null;
-  const duplicateNames = _accessFindSecurityRecords_(
-    rolesSheet,
-    'nombre',
-    [name],
-    ACCESS_MANAGEMENT_FIELDS.roles,
-    { matchCase: false, projectionFields: ['rol_id', 'nombre'] }
-  );
-  if (duplicateNames.some(row => _accessText_(row.rol_id) !== originalId &&
-      _accessText_(row.nombre).toLowerCase() === name.toLowerCase())) {
-    throw new Error('Ya existe un rol con ese nombre.');
-  }
-
-  const roleId = action === 'create'
-    ? _accessGenerateUniqueIdentifierFromSource_(
-        rolesSheet, 'ROL_', name, 'rol_id', ACCESS_MANAGEMENT_FIELDS.roles, 50
-      )
-    : originalId;
-  const active = action === 'create' ? true : _accessIsActive_(existing.active);
-  const nextRole = { rol_id: roleId, nombre: name, descripcion: description, active };
-  const data = _accessLoadAdministratorContinuityData_();
-  const after = _accessCopyData_(data);
-  if (roleId === ACCESS_MANAGEMENT_CONFIG.adminRoleId) {
-    if (action === 'edit') {
-      const index = after.roles.findIndex(row => _accessText_(row.rol_id) === originalId);
-      if (index >= 0) after.roles[index] = Object.assign({}, after.roles[index], nextRole);
-    } else {
-      after.roles.push(nextRole);
-    }
-  }
-  _accessAssertAdministratorContinuity_(data, after);
-
-  return _accessRunAudited_(auth, {
-    accion: action === 'create' ? 'CREAR_ROL' : 'EDITAR_ROL',
-    modulo: ACCESS_MANAGEMENT_CONFIG.moduleCodes.accesses,
-    tipo_entidad: 'ROL',
-    registro_id: roleId,
-    registro_nombre: name,
-    detalle: 'Administración de rol.',
-    datos_antes: existing || null
-  }, () => {
-    const sheet = ACCESS_MANAGEMENT_CONFIG.sheets.roles;
-    const source = _accessSecuritySource_(sheet);
-    const record = _accessAddMetadata_(sheet, nextRole, action === 'create', auth);
-    if (action === 'create') {
-      SUNARPCore.insertRecord(source, record, { idField: 'rol_id' });
-    } else {
-      const updates = Object.assign({}, record);
-      delete updates.rol_id;
-      SUNARPCore.updateRecord(source, 'rol_id', originalId, updates);
-    }
-    return {
-      value: { success: true, rol_id: roleId, message: action === 'create' ? 'Rol creado correctamente.' : 'Rol actualizado correctamente.' },
-      auditAfter: nextRole
-    };
-  });
-}
-
 function saveAccessPermission(payload) {
   const auth = _accessRequirePermission_('PERMISOS_ADMINISTRAR');
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('No se recibieron los datos del permiso.');
@@ -2136,9 +2126,14 @@ function saveAccessScopes(payload) {
     if (!_accessIsActive_(scope.active) ||
         _accessText_(scope.modulo_id) === moduleId) return;
     const type = _accessUpper_(scope.tipo_ambito_id);
+    const typeConfig = _accessScopeType_(data, type);
+    if (!typeConfig || !_accessScopeTypeIsInterpretable_(typeConfig)) {
+      throw new Error('Existe un ámbito activo con tipo no reconocido: ' + type + '.');
+    }
+    const entity = _accessUpper_(typeConfig.entidad_referencia);
     const referenceId = _accessText_(scope.referencia_id);
-    if (referenceId && referenceIdsByEntity[type]) {
-      referenceIdsByEntity[type].add(referenceId);
+    if (referenceId && referenceIdsByEntity[entity]) {
+      referenceIdsByEntity[entity].add(referenceId);
     }
   });
   const structures = _accessFindOrgCatalogByIds_(
@@ -2200,15 +2195,17 @@ function saveAccessScopes(payload) {
   data.ambitosAcceso.forEach(scope => {
     if (!_accessIsActive_(scope.active)) return;
     const type = _accessUpper_(scope.tipo_ambito_id);
+    const typeConfig = _accessScopeType_(data, type);
+    if (!typeConfig || !_accessScopeTypeIsInterpretable_(typeConfig)) {
+      throw new Error('AmbitosAcceso contiene un tipo de ámbito no reconocido o inactivo: ' + type + '.');
+    }
     const referenceId = _accessText_(scope.referencia_id);
-    if (!['TOTAL', 'SEDE', 'ESTRUCTURA_ORG', 'LOCAL'].includes(type)) {
-      throw new Error('AmbitosAcceso contiene un tipo de ámbito no reconocido: ' + type + '.');
-    }
-    if (type === 'TOTAL' && referenceId) {
-      throw new Error('Un ámbito TOTAL debe tener referencia_id vacío.');
-    }
-    if (type !== 'TOTAL' && !referenceId) {
+    const requiresReference = _accessFlag_(typeConfig.requiere_referencia);
+    if (requiresReference && !referenceId) {
       throw new Error('Un ámbito ' + type + ' requiere referencia_id.');
+    }
+    if (!requiresReference && referenceId) {
+      throw new Error('Un ámbito ' + type + ' debe tener referencia_id vacío.');
     }
   });
 
@@ -2221,18 +2218,23 @@ function saveAccessScopes(payload) {
 
   existingSpecific.forEach(scope => {
     const type = _accessUpper_(scope.tipo_ambito_id);
+    const typeConfig = _accessScopeType_(data, type);
+    if (!typeConfig || !_accessScopeTypeIsInterpretable_(typeConfig)) {
+      throw new Error('Existe un ámbito específico previo con tipo no reconocido: ' + type + '.');
+    }
+    const entity = _accessUpper_(typeConfig.entidad_referencia);
     const refId = _accessText_(scope.referencia_id);
     let siteId = '';
-    if (type === 'SEDE') siteId = refId;
-    if (type === 'ESTRUCTURA_ORG') {
+    if (entity === 'SEDE') siteId = refId;
+    if (entity === 'ESTRUCTURA_ORG') {
       const structure = _accessFindBy_(structures, 'id', refId);
       siteId = _accessCatalogIsActive_(structure) ? _accessText_(structure.sede_id) : '';
     }
-    if (type === 'LOCAL') {
+    if (entity === 'LOCAL') {
       const local = _accessFindBy_(locals, 'id', refId);
       siteId = _accessCatalogIsActive_(local) ? _accessText_(local.sede_id) : '';
     }
-    if (!siteId) throw new Error('Existe un ámbito específico previo con referencia inválida. Corrige ese ámbito antes de continuar.');
+    if (entity === 'NINGUNA' || !siteId) throw new Error('Existe un ámbito específico previo con referencia inválida. Corrige ese ámbito antes de continuar.');
     siteIds.add(siteId);
   });
 
@@ -2732,26 +2734,33 @@ function saveAccessUserConfiguration(payload) {
         // Las asignaciones conservadas de módulos inactivos no participan
         // en la validación de los nuevos ámbitos.
         if (!ownerModule || !_accessIsActive_(ownerModule.active)) return;
-        if (scope.tipo_ambito_id === 'TOTAL') return;
+
+        const type = _accessUpper_(scope.tipo_ambito_id);
+        const typeConfig = _accessScopeType_(data, type);
+        if (!typeConfig || !_accessScopeTypeIsInterpretable_(typeConfig)) {
+          throw new Error('Existe un ámbito con tipo no reconocido: ' + type + '.');
+        }
+        const entity = _accessUpper_(typeConfig.entidad_referencia);
+        if (entity === 'NINGUNA') return;
 
         const referenceId = _accessText_(scope.referencia_id);
         let siteId = '';
 
-        if (scope.tipo_ambito_id === 'SEDE') {
+        if (entity === 'SEDE') {
           const site = _accessFindBy_(sites, 'id', referenceId);
           siteId = _accessCatalogIsActive_(site)
             ? _accessText_(site.id)
             : '';
         }
 
-        if (scope.tipo_ambito_id === 'ESTRUCTURA_ORG') {
+        if (entity === 'ESTRUCTURA_ORG') {
           const structure = _accessFindBy_(structures, 'id', referenceId);
           siteId = _accessCatalogIsActive_(structure)
             ? _accessText_(structure.sede_id)
             : '';
         }
 
-        if (scope.tipo_ambito_id === 'LOCAL') {
+        if (entity === 'LOCAL') {
           const local = _accessFindBy_(locals, 'id', referenceId);
           siteId = _accessCatalogIsActive_(local)
             ? _accessText_(local.sede_id)
@@ -3149,15 +3158,6 @@ function _getAccessManagementTabData_(tabId) {
     return { documentTypes };
   }
 
-  if (tab === 'roles') {
-    const auth = _accessRequirePermission_('ROLES_ADMINISTRAR');
-    const roles = _accessLoadSecurityRecords_(s.roles, ACCESS_MANAGEMENT_FIELDS.roles);
-    return { roles: roles.map(item => ({
-      rol_id: _accessText_(item.rol_id), nombre: _accessText_(item.nombre),
-      descripcion: _accessText_(item.descripcion), active: _accessIsActive_(item.active)
-    })) };
-  }
-
   if (tab === 'permissions') {
     const auth = _accessRequirePermission_('PERMISOS_ADMINISTRAR');
     const catalogs = _accessLoadPermissionCatalogs_();
@@ -3214,28 +3214,6 @@ function _getAccessManagementTabData_(tabId) {
     };
   }
 
-  if (tab === 'operations') {
-    const auth = _accessRequirePermission_('PERMISOS_ADMINISTRAR');
-    return { operations: _accessGetOperationCatalog_(
-      _accessLoadSecurityRecords_(s.operations, ACCESS_MANAGEMENT_FIELDS.operations)
-    ) };
-  }
-
-  if (tab === 'scopetypes') {
-    const auth = _accessRequirePermission_('AMBITOS_ACCESO_ADMINISTRAR');
-    return {
-      scopeTypes: _accessLoadSecurityRecords_(s.scopeTypes, ACCESS_MANAGEMENT_FIELDS.scopeTypes)
-        .filter(_accessCatalogIsActive_).map(item => ({
-          tipo_ambito_id: _accessUpper_(item.tipo_ambito_id),
-          nombre: _accessText_(item.nombre),
-          descripcion: _accessText_(item.descripcion),
-          entidad_referencia: _accessUpper_(item.entidad_referencia),
-          requiere_referencia: _accessFlag_(item.requiere_referencia),
-          permite_descendientes: _accessFlag_(item.permite_descendientes),
-          active: _accessCatalogIsActive_(item)
-        }))
-    };
-  }
   throw new Error('La pestaña solicitada no admite actualización independiente.');
 }
 
@@ -4207,7 +4185,6 @@ function _accessChangeStatus_(config) {
   const nextActive = _accessNormalizeActive_(config.active, 'El estado solicitado');
   const collectionField = {
     usuarios: 'users',
-    roles: 'roles',
     permisos: 'permissions'
   }[config.collection];
   const requiredHeaders = ACCESS_MANAGEMENT_FIELDS[collectionField];
@@ -4234,16 +4211,6 @@ function _accessChangeStatus_(config) {
     throw new Error('No puedes desactivar tu propia cuenta.');
   }
 
-  if (config.collection === 'roles' && !nextActive) {
-    const assignments = _accessFindSecurityRecords_(
-      ACCESS_MANAGEMENT_CONFIG.sheets.userRoles,
-      'rol_id',
-      [record.rol_id],
-      ACCESS_MANAGEMENT_FIELDS.userRoles
-    ).filter(item => _accessIsActive_(item.active));
-    if (assignments.length) throw new Error('No puedes desactivar un rol que tiene asignaciones activas.');
-  }
-
   const data = _accessLoadAdministratorContinuityData_();
   const after = _accessCopyData_(data);
   if (config.collection === 'usuarios') {
@@ -4252,13 +4219,6 @@ function _accessChangeStatus_(config) {
     );
     if (index >= 0) after.usuarios[index] = Object.assign({}, record, { active: nextActive });
     else after.usuarios.push(Object.assign({}, record, { active: nextActive }));
-  } else if (config.collection === 'roles' &&
-      _accessText_(record.rol_id) === ACCESS_MANAGEMENT_CONFIG.adminRoleId) {
-    const index = after.roles.findIndex(item =>
-      _accessText_(item.rol_id) === _accessText_(record.rol_id)
-    );
-    if (index >= 0) after.roles[index] = Object.assign({}, record, { active: nextActive });
-    else after.roles.push(Object.assign({}, record, { active: nextActive }));
   } else if (config.collection === 'permisos' &&
       ACCESS_MANAGEMENT_CONFIG.adminPermissionCodes.includes(_accessUpper_(record.codigo)) &&
       _accessText_(record.modulo_id) === _accessText_(data.modulos[0] && data.modulos[0].modulo_id)) {
@@ -4314,22 +4274,6 @@ function setAccessUserStatus(personaId, active) {
     activateAction: 'ACTIVAR_USUARIO',
     deactivateAction: 'DESACTIVAR_USUARIO',
     getName: (record, person) => [person && person.nombres, person && person.apellidos].map(_accessText_).filter(Boolean).join(' ')
-  });
-}
-
-
-function setAccessRoleStatus(roleId, active) {
-  return _accessChangeStatus_({
-    collection: 'roles',
-    sheet: ACCESS_MANAGEMENT_CONFIG.sheets.roles,
-    keyField: 'rol_id',
-    id: _accessUpper_(roleId),
-    active,
-    permission: 'ROLES_ADMINISTRAR',
-    entity: 'ROL',
-    activateAction: 'ACTIVAR_ROL',
-    deactivateAction: 'DESACTIVAR_ROL',
-    getName: record => record.nombre
   });
 }
 
@@ -4643,7 +4587,15 @@ function _accessMigrationEnsureScopeTypes_(spreadsheet, markWriteStarted) {
     }
     if (!id) throw new Error('TiposAmbito contiene un registro sin tipo_ambito_id en la fila ' + (index + 2) + '.');
     if (existing.has(id)) throw new Error('TiposAmbito contiene el identificador duplicado ' + id + '.');
-    if (!ACCESS_SCOPE_TYPE_IDS.includes(id)) throw new Error('TiposAmbito contiene una categoría no admitida: ' + id + '.');
+    const scopeTypeRecord = {
+      tipo_ambito_id: id,
+      entidad_referencia: _accessUpper_(values[indexes.get('entidad_referencia')]),
+      requiere_referencia: values[indexes.get('requiere_referencia')],
+      permite_descendientes: values[indexes.get('permite_descendientes')]
+    };
+    if (!_accessScopeTypeIsInterpretable_(scopeTypeRecord)) {
+      throw new Error('TiposAmbito contiene una categoría o semántica no admitida por SUNARP Core: ' + id + '.');
+    }
     existing.set(id, index + 2);
   });
 
@@ -4743,28 +4695,70 @@ function migrateAccessManagementSchema() {
     const scopes = _accessMigrationReadSheet_(spreadsheet, ACCESS_MANAGEMENT_CONFIG.sheets.scopes, [
       'persona_id', 'modulo_id', 'referencia_id', 'incluir_descendientes', 'active'
     ]);
+    const scopeTypeCatalogById = new Map();
+    const scopeTypeIdsByName = new Map();
+    const scopeTypesSheet = spreadsheet.getSheetByName(ACCESS_MANAGEMENT_CONFIG.sheets.scopeTypes);
+    if (scopeTypesSheet && scopeTypesSheet.getLastColumn() && scopeTypesSheet.getLastRow()) {
+      const scopeTypes = _accessMigrationReadSheet_(spreadsheet, ACCESS_MANAGEMENT_CONFIG.sheets.scopeTypes, ACCESS_MANAGEMENT_FIELDS.scopeTypes);
+      scopeTypes.records.forEach(scopeTypeRow => {
+        const record = {
+          tipo_ambito_id: _accessUpper_(scopeTypeRow.get('tipo_ambito_id')),
+          nombre: scopeTypeRow.get('nombre'),
+          entidad_referencia: _accessUpper_(scopeTypeRow.get('entidad_referencia')),
+          requiere_referencia: scopeTypeRow.get('requiere_referencia'),
+          permite_descendientes: scopeTypeRow.get('permite_descendientes')
+        };
+        if (!record.tipo_ambito_id || !_accessScopeTypeIsInterpretable_(record)) {
+          throw new Error('TiposAmbito contiene una configuración no interpretable por SUNARP Core durante la migración.');
+        }
+        if (scopeTypeCatalogById.has(record.tipo_ambito_id)) {
+          throw new Error('TiposAmbito contiene el identificador duplicado ' + record.tipo_ambito_id + '.');
+        }
+        scopeTypeCatalogById.set(record.tipo_ambito_id, record);
+        const nameKey = _accessText_(record.nombre).toLocaleLowerCase();
+        if (nameKey) {
+          if (!scopeTypeIdsByName.has(nameKey)) scopeTypeIdsByName.set(nameKey, []);
+          scopeTypeIdsByName.get(nameKey).push(record.tipo_ambito_id);
+        }
+      });
+    }
+    ACCESS_SCHEMA_MIGRATION_SCOPE_ROWS.forEach(record => {
+      if (!scopeTypeCatalogById.has(record.tipo_ambito_id)) {
+        scopeTypeCatalogById.set(record.tipo_ambito_id, record);
+      }
+      const nameKey = _accessText_(record.nombre).toLocaleLowerCase();
+      if (nameKey && !scopeTypeIdsByName.has(nameKey)) scopeTypeIdsByName.set(nameKey, [record.tipo_ambito_id]);
+    });
     const scopePlan = _accessMigrationPrepareColumn_(
       scopes,
       'tipo_ambito_id',
       'tipo_ambito',
       (value, row) => {
         const token = _accessUpper_(value);
-        if (!ACCESS_SCOPE_TYPE_IDS.includes(token)) {
-          throw new Error('El tipo de ámbito "' + value + '" no pertenece al catálogo cerrado.');
+        let typeId = scopeTypeCatalogById.has(token) ? token : '';
+        if (!typeId) {
+          const matches = scopeTypeIdsByName.get(_accessText_(value).toLocaleLowerCase()) || [];
+          if (matches.length === 1) typeId = matches[0];
+          else if (matches.length > 1) throw new Error('El tipo de ámbito "' + value + '" es ambiguo en TiposAmbito.');
+        }
+        const typeConfig = scopeTypeCatalogById.get(typeId);
+        if (!typeConfig || !_accessScopeTypeIsInterpretable_(typeConfig)) {
+          throw new Error('El tipo de ámbito "' + value + '" no existe o no es interpretable por SUNARP Core.');
         }
         const referenceId = row.get('referencia_id');
         const includesDescendants = _accessFlag_(row.get('incluir_descendientes'));
-        const requiresReference = token !== 'TOTAL';
+        const requiresReference = _accessFlag_(typeConfig.requiere_referencia);
+        const allowsDescendants = _accessFlag_(typeConfig.permite_descendientes);
         if (requiresReference && !referenceId) {
-          throw new Error('La fila ' + row.rowNumber + ' de AmbitosAcceso requiere referencia_id para ' + token + '.');
+          throw new Error('La fila ' + row.rowNumber + ' de AmbitosAcceso requiere referencia_id para ' + typeId + '.');
         }
         if (!requiresReference && referenceId) {
-          throw new Error('La fila ' + row.rowNumber + ' de AmbitosAcceso tiene referencia_id en TOTAL.');
+          throw new Error('La fila ' + row.rowNumber + ' de AmbitosAcceso debe tener referencia_id vacío para ' + typeId + '.');
         }
-        if (includesDescendants && token !== 'ESTRUCTURA_ORG') {
-          throw new Error('La fila ' + row.rowNumber + ' de AmbitosAcceso intenta incluir descendientes en ' + token + '.');
+        if (includesDescendants && !allowsDescendants) {
+          throw new Error('La fila ' + row.rowNumber + ' de AmbitosAcceso intenta incluir descendientes en ' + typeId + '.');
         }
-        return token;
+        return typeId;
       }
     );
 

@@ -1,0 +1,479 @@
+<script>
+(function () {
+  'use strict';
+
+  const ROUTE = 'seguridad';
+  const definitions = [
+    { id: 'roles', label: 'Roles', singular: 'rol' },
+    { id: 'modules', label: 'Módulos del sistema', singular: 'módulo' },
+    { id: 'scopeTypes', label: 'Tipos de ámbito', singular: 'tipo de ámbito' },
+    { id: 'operations', label: 'Operaciones', singular: 'operación' }
+  ];
+  const state = {
+    initialized: false,
+    loaded: false,
+    loading: false,
+    loadPromise: null,
+    data: null,
+    tabs: null,
+    table: null,
+    activeTab: 'roles'
+  };
+
+  const $ = id => document.getElementById(id);
+
+  function rpc(method, ...args) {
+    return new Promise((resolve, reject) => {
+      const runner = google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(reject);
+      if (typeof runner[method] !== 'function') {
+        reject(new Error('No existe el servicio de Seguridad "' + method + '".'));
+        return;
+      }
+      runner[method](...args);
+    });
+  }
+
+  function notify(type, message) {
+    if (window.SUNARPUI && typeof SUNARPUI.notify === 'function') {
+      SUNARPUI.notify(type, message);
+    } else {
+      console[type === 'error' ? 'error' : 'log'](message);
+    }
+  }
+
+  function beginLoading(target, message) {
+    if (window.SUNARPUI && typeof SUNARPUI.beginSectionLoading === 'function') {
+      return SUNARPUI.beginSectionLoading(target, { message: message || 'Actualizando catálogos de Seguridad...' });
+    }
+    return function () {};
+  }
+
+  function element(tag, className, value) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (value !== undefined && value !== null) node.textContent = value;
+    return node;
+  }
+
+  function button(label, className, action, disabled) {
+    const node = element('button', className || 'sunarp-btn sunarp-btn--outline', label);
+    node.type = 'button';
+    node.disabled = disabled === true;
+    node.addEventListener('click', action);
+    return node;
+  }
+
+  function configFor(entity) {
+    return definitions.find(item => item.id === entity) || definitions[0];
+  }
+
+  function idField(entity) {
+    return {
+      roles: 'rol_id',
+      modules: 'modulo_id',
+      scopeTypes: 'tipo_ambito_id',
+      operations: 'operacion_id'
+    }[entity];
+  }
+
+  function recordIsProtected(entity, record) {
+    if (entity === 'roles') return record.rol_id === 'ROL_ADMIN';
+    if (entity === 'modules') return ['ACCESOS', 'MANTENIMIENTOS', 'INFORMACION_PERSONAL', 'DOCUMENTOS_NORMATIVOS', 'AUDITORIA'].includes(record.codigo);
+    if (entity === 'scopeTypes') return ['TOTAL', 'SEDE', 'ESTRUCTURA_ORG', 'LOCAL'].includes(record.tipo_ambito_id);
+    if (entity === 'operations') return ['VER', 'CREAR', 'EDITAR', 'CAMBIAR_ESTADO', 'PUBLICAR', 'ELIMINAR', 'ADMINISTRAR'].includes(record.operacion_id);
+    return false;
+  }
+
+  function destroyTable() {
+    if (state.table && typeof state.table.destroy === 'function') state.table.destroy();
+    state.table = null;
+  }
+
+  function createStatusCell(entity, record) {
+    const locked = recordIsProtected(entity, record);
+    const wrapper = element('div', 'maintenance-status-actions');
+    const status = element('span', 'maintenance-status', record.active ? 'Activo' : 'Inactivo');
+    wrapper.appendChild(status);
+    if (!locked) {
+      wrapper.appendChild(button(
+        record.active ? 'Desactivar' : 'Activar',
+        'sunarp-btn sunarp-btn--outline sunarp-btn--sm',
+        () => changeStatus(entity, record),
+        false
+      ));
+    }
+    return wrapper;
+  }
+
+  function createTable(host, entity) {
+    const data = state.data[entity] || [];
+    const commonActions = [
+      {
+        label: 'Editar',
+        icon: 'edit',
+        variant: 'outline',
+        onClick: row => openForm(entity, row)
+      },
+      {
+        label: 'Eliminar',
+        icon: 'delete',
+        variant: 'danger',
+        onClick: row => deleteRecord(entity, row)
+      }
+    ];
+    const columns = {
+      roles: [
+        { key: 'rol_id', label: 'Identificador' },
+        { key: 'nombre', label: 'Nombre' },
+        { key: 'descripcion', label: 'Descripción' },
+        { key: 'active', label: 'Estado', align: 'center', render: (value, row) => createStatusCell(entity, row) }
+      ],
+      modules: [
+        { key: 'modulo_id', label: 'Identificador' },
+        { key: 'codigo', label: 'Código' },
+        { key: 'nombre', label: 'Nombre' },
+        { key: 'descripcion', label: 'Descripción' },
+        { key: 'active', label: 'Estado', align: 'center', render: (value, row) => createStatusCell(entity, row) }
+      ],
+      scopeTypes: [
+        { key: 'tipo_ambito_id', label: 'Identificador' },
+        { key: 'nombre', label: 'Nombre' },
+        { key: 'descripcion', label: 'Descripción' },
+        { key: 'entidad_referencia', label: 'Entidad de referencia' },
+        { key: 'requiere_referencia', label: 'Requiere referencia', render: value => value ? 'Sí' : 'No' },
+        { key: 'permite_descendientes', label: 'Permite descendientes', render: value => value ? 'Sí' : 'No' },
+        { key: 'active', label: 'Estado', align: 'center', render: (value, row) => createStatusCell(entity, row) }
+      ],
+      operations: [
+        { key: 'operacion_id', label: 'Identificador' },
+        { key: 'nombre', label: 'Nombre' }
+      ]
+    }[entity];
+
+    state.table = SUNARPUI.createDataTable({
+      containerId: host.id,
+      mode: 'client',
+      data,
+      columns,
+      rowActions: commonActions,
+      search: true,
+      searchPlaceholder: 'Buscar ' + configFor(entity).singular + '...',
+      pageSize: 10,
+      pageSizeOptions: [10, 25, 50],
+      emptyMessage: 'No hay registros para mostrar.'
+    });
+  }
+
+  function renderTab() {
+    const panel = $('maintenanceSecurityPanel');
+    if (!panel || !state.data) return;
+    destroyTable();
+    panel.replaceChildren();
+
+    const entity = state.activeTab;
+    const definition = configFor(entity);
+    const heading = element('div', 'maintenance-section-heading');
+    const textHost = element('div');
+    textHost.appendChild(element('h2', '', definition.label));
+    const descriptions = {
+      roles: 'Administra los perfiles que se asignan de manera independiente por módulo.',
+      modules: 'Administra los módulos que forman parte del modelo central de autorización.',
+      scopeTypes: 'Administra tipos basados únicamente en entidades y reglas que SUNARP Core puede interpretar.',
+      operations: 'Administra las operaciones referenciadas por los permisos. Este catálogo no tiene columna de estado.'
+    };
+    textHost.appendChild(element('p', '', descriptions[entity]));
+    heading.appendChild(textHost);
+    heading.appendChild(button(
+      'Nuevo ' + definition.singular,
+      'sunarp-btn sunarp-btn--primary',
+      () => openForm(entity, null)
+    ));
+    const tableHost = element('div', 'maintenance-table-host');
+    tableHost.id = 'maintenanceSecurityTable';
+    panel.append(heading, tableHost);
+    createTable(tableHost, entity);
+  }
+
+  function renderTabs() {
+    if (state.tabs) state.tabs.destroy();
+    state.tabs = SUNARPUI.createTabs({
+      containerId: 'maintenanceSecurityTabs',
+      panelId: 'maintenanceSecurityPanel',
+      label: 'Seguridad',
+      tabs: definitions.map(item => ({ id: item.id, label: item.label })),
+      activeId: state.activeTab,
+      onChange: next => {
+        state.activeTab = next;
+        renderTab();
+      }
+    });
+    renderTab();
+  }
+
+  function loadData(force) {
+    if (!force && state.loaded && state.data) {
+      renderTabs();
+      return Promise.resolve(state.data);
+    }
+    if (state.loadPromise) return state.loadPromise;
+    const panel = $('maintenanceSecurityPanel');
+    const finish = force
+      ? beginLoading(panel, 'Actualizando los cuatro catálogos...')
+      : SUNARPUI.beginLoading();
+    state.loading = true;
+    state.loadPromise = rpc('getSecurityMaintenanceData')
+      .then(data => {
+        if (!data || !Array.isArray(data.roles) || !Array.isArray(data.modules) ||
+            !Array.isArray(data.scopeTypes) || !Array.isArray(data.operations)) {
+          throw new Error('La respuesta del servidor no contiene los cuatro catálogos de Seguridad.');
+        }
+        state.data = data;
+        state.loaded = true;
+        renderTabs();
+        return data;
+      })
+      .catch(error => {
+        state.data = null;
+        state.loaded = false;
+        if (panel) panel.replaceChildren(element('p', 'maintenance-error',
+          error && error.message || 'No se pudieron consultar los catálogos de Seguridad.'));
+        notify('error', error && error.message || 'No se pudieron consultar los catálogos de Seguridad.');
+        throw error;
+      })
+      .finally(() => {
+        state.loading = false;
+        state.loadPromise = null;
+        finish();
+      });
+    return state.loadPromise;
+  }
+
+  function makeField(labelText, value, options) {
+    const settings = options || {};
+    const wrapper = element('label', 'sunarp-form-field');
+    wrapper.appendChild(element('span', '', labelText));
+    let control;
+    if (settings.kind === 'textarea') {
+      control = element('textarea', 'sunarp-textarea');
+      control.rows = settings.rows || 3;
+      control.value = value || '';
+    } else if (settings.kind === 'select') {
+      control = element('select', 'sunarp-select');
+      (settings.options || []).forEach(optionData => {
+        const option = element('option', '', optionData.label);
+        option.value = optionData.value;
+        control.appendChild(option);
+      });
+      control.value = value || '';
+    } else {
+      control = element('input', 'sunarp-input');
+      control.type = settings.type || 'text';
+      control.value = value || '';
+    }
+    if (settings.required) control.required = true;
+    if (settings.readOnly) control.readOnly = true;
+    if (settings.disabled) control.disabled = true;
+    if (settings.maxLength) control.maxLength = settings.maxLength;
+    wrapper.appendChild(control);
+    if (settings.hint) wrapper.appendChild(element('small', 'access-field-hint', settings.hint));
+    return { wrapper, input: control };
+  }
+
+  function openForm(entity, record) {
+    const editing = Boolean(record);
+    const definition = configFor(entity);
+    const form = element('form', 'access-form');
+    form.addEventListener('submit', event => event.preventDefault());
+    const grid = element('div', 'sunarp-form-grid');
+    const fields = {};
+    const add = (key, label, value, settings) => {
+      const field = makeField(label, value, settings);
+      fields[key] = field.input;
+      grid.appendChild(field.wrapper);
+      return field.input;
+    };
+
+    const id = idField(entity);
+    const idPreview = editing ? record[id] : '';
+    add(id, 'Identificador generado', idPreview, {
+      required: true,
+      readOnly: true,
+      hint: editing ? 'El identificador existente es inmutable.' : 'El identificador se calcula en el servidor y no se modifica al editar.'
+    });
+
+    if (entity === 'roles') {
+      const name = add('nombre', 'Nombre del rol', record && record.nombre, { required: true, maxLength: 150 });
+      add('descripcion', 'Descripción', record && record.descripcion, { kind: 'textarea' });
+      if (!editing) name.addEventListener('input', () => { fields[id].value = 'ROL_' + token(name.value); });
+      if (!editing) fields[id].value = 'ROL_' + token(name.value);
+    } else if (entity === 'modules') {
+      const code = add('codigo', 'Código del módulo', record && record.codigo, {
+        required: true,
+        readOnly: editing,
+        maxLength: 60,
+        hint: 'Código único en mayúsculas; se usa para construir los códigos de permisos.'
+      });
+      const name = add('nombre', 'Nombre del módulo', record && record.nombre, { required: true, maxLength: 150 });
+      add('descripcion', 'Descripción', record && record.descripcion, { kind: 'textarea' });
+      const updateId = () => { fields[id].value = 'MOD_' + token(code.value); };
+      if (!editing) {
+        code.addEventListener('input', updateId);
+        updateId();
+      }
+    } else if (entity === 'scopeTypes') {
+      const name = add('nombre', 'Nombre del tipo de ámbito', record && record.nombre, { required: true, maxLength: 150 });
+      add('descripcion', 'Descripción', record && record.descripcion, { kind: 'textarea' });
+      const entityOptions = [];
+      if (editing && record.entidad_referencia === 'NINGUNA') {
+        entityOptions.push({ value: 'NINGUNA', label: 'NINGUNA — Sin referencia' });
+      }
+      entityOptions.push(
+        { value: 'SEDE', label: 'SEDE — Sede' },
+        { value: 'ESTRUCTURA_ORG', label: 'ESTRUCTURA_ORG — Estructura orgánica' },
+        { value: 'LOCAL', label: 'LOCAL — Local' }
+      );
+      const entitySelect = add('entidad_referencia', 'Entidad de referencia', record && record.entidad_referencia || 'ESTRUCTURA_ORG', {
+        kind: 'select',
+        options: entityOptions,
+        disabled: editing,
+        hint: 'Solo se admiten entidades cuya resolución ya implementa SUNARP Core.'
+      });
+      const required = add('requiere_referencia', 'Requiere referencia', record ? (record.requiere_referencia ? 'Sí' : 'No') : 'Sí', { readOnly: true });
+      const descendants = add('permite_descendientes', 'Permite descendientes', record ? (record.permite_descendientes ? 'true' : 'false') : 'false', {
+        kind: 'select',
+        options: [{ value: 'false', label: 'No' }, { value: 'true', label: 'Sí' }],
+        disabled: editing
+      });
+      const updateScopeFields = () => {
+        const usesStructure = entitySelect.value === 'ESTRUCTURA_ORG';
+        required.value = record ? (record.requiere_referencia ? 'Sí' : 'No') : 'Sí';
+        descendants.disabled = editing || !usesStructure;
+        if (!usesStructure && !editing) descendants.value = 'false';
+      };
+      entitySelect.addEventListener('change', updateScopeFields);
+      if (!editing) name.addEventListener('input', () => { fields[id].value = 'TIPO_AMBITO_' + token(name.value); });
+      if (!editing) fields[id].value = 'TIPO_AMBITO_' + token(name.value);
+      updateScopeFields();
+    } else if (entity === 'operations') {
+      const name = add('nombre', 'Nombre de la operación', record && record.nombre, { required: true, maxLength: 100 });
+      if (!editing) name.addEventListener('input', () => { fields[id].value = token(name.value); });
+      if (!editing) fields[id].value = token(name.value);
+      add('contract', 'Contrato físico', 'operacion_id, nombre', { readOnly: true });
+    }
+
+    form.appendChild(grid);
+    const footer = element('div', 'access-modal-actions');
+    footer.appendChild(button('Cancelar', 'sunarp-btn sunarp-btn--outline', () => SUNARPUI.closeModal()));
+    const save = button(editing ? 'Guardar cambios' : 'Crear', 'sunarp-btn sunarp-btn--primary', async () => {
+      if (!form.reportValidity() || save.disabled) return;
+      save.disabled = true;
+      const finish = beginLoading(form, 'Guardando cambios en Seguridad...');
+      try {
+        const payload = {
+          entity,
+          action: editing ? 'edit' : 'create',
+          id: editing ? record[id] : '',
+          nombre: fields.nombre ? fields.nombre.value.trim() : '',
+          descripcion: fields.descripcion ? fields.descripcion.value.trim() : ''
+        };
+        if (entity === 'modules') payload.codigo = fields.codigo.value.trim();
+        if (entity === 'scopeTypes') {
+          payload.entidad_referencia = fields.entidad_referencia.value;
+          payload.permite_descendientes = fields.permite_descendientes.value === 'true';
+        }
+        const result = await rpc('saveSecurityCatalogRecord', payload);
+        const collection = state.data[entity];
+        const key = idField(entity);
+        const index = collection.findIndex(item => item[key] === result.id);
+        if (index >= 0) collection[index] = result.record;
+        else collection.push(result.record);
+        document.dispatchEvent(new CustomEvent('sunarp:security-catalogs-changed', {
+          detail: { entity }
+        }));
+        SUNARPUI.closeModal();
+        renderTab();
+        notify('success', result.message || 'Registro guardado.');
+      } catch (error) {
+        notify('error', error && error.message || 'No se pudo guardar el registro.');
+      } finally {
+        finish();
+        if (save.isConnected) save.disabled = false;
+      }
+    });
+    footer.appendChild(save);
+    SUNARPUI.openModal({
+      title: (editing ? 'Editar ' : 'Nuevo ') + definition.singular,
+      content: form,
+      footer,
+      size: 'md'
+    });
+  }
+
+  function token(value) {
+    return String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+  }
+
+  async function changeStatus(entity, record) {
+    const id = record[idField(entity)];
+    const nextActive = !record.active;
+    const question = nextActive
+      ? '¿Deseas activar este registro?'
+      : '¿Deseas desactivar este registro? La operación se rechazará si hay referencias activas.';
+    if (!window.confirm(question)) return;
+    const finish = beginLoading($('maintenanceSecurityPanel'), 'Actualizando estado...');
+    try {
+      const result = await rpc('setSecurityCatalogStatus', entity, id, nextActive);
+      record.active = result.active;
+      document.dispatchEvent(new CustomEvent('sunarp:security-catalogs-changed', {
+        detail: { entity }
+      }));
+      renderTab();
+      notify('success', result.message || 'Estado actualizado.');
+    } catch (error) {
+      notify('error', error && error.message || 'No se pudo cambiar el estado.');
+    } finally {
+      finish();
+    }
+  }
+
+  async function deleteRecord(entity, record) {
+    const id = record[idField(entity)];
+    if (!window.confirm('¿Deseas eliminar "' + record.nombre + '" (' + id + ')? Se comprobarán todas las referencias antes de borrar.')) return;
+    const finish = beginLoading($('maintenanceSecurityPanel'), 'Comprobando referencias y eliminando...');
+    try {
+      await rpc('deleteSecurityCatalogRecord', entity, id);
+      state.data[entity] = state.data[entity].filter(item => item[idField(entity)] !== id);
+      document.dispatchEvent(new CustomEvent('sunarp:security-catalogs-changed', {
+        detail: { entity }
+      }));
+      renderTab();
+      notify('success', 'Registro eliminado correctamente.');
+    } catch (error) {
+      notify('error', error && error.message || 'No se pudo eliminar el registro.');
+    } finally {
+      finish();
+    }
+  }
+
+  function initialize() {
+    if (state.initialized) {
+      if (state.loaded) renderTabs();
+      else loadData(false).catch(() => {});
+      return;
+    }
+    state.initialized = true;
+    loadData(false).catch(() => {});
+  }
+
+  document.addEventListener('sunarp:navigate', event => {
+    if (event && event.detail && event.detail.route === ROUTE) initialize();
+  });
+})();
+</script>
