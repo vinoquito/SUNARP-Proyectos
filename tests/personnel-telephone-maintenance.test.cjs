@@ -240,9 +240,9 @@ test('carga de una sola vez los tres catálogos de Datos de personal en una cons
   );
   assert.equal(Object.keys(second.entities).join('|'), Object.keys(first.entities).join('|'));
   assert.equal(fixture.batches.length, 1);
-  assert.deepEqual(
-    fixture.batches[0].map(item => item.sheetName),
-    ['cargos', 'condicion_cargo', 'tipo_documento_identidad']
+  assert.equal(
+    fixture.batches[0].map(item => item.sheetName).join('|'),
+    'cargos|condicion_cargo|tipo_documento_identidad'
   );
   assert.ok(fixture.batches[0].every(item => item.valueMode === 'display'));
   assert.equal(fixture.sourceReads[0].ttl, 300);
