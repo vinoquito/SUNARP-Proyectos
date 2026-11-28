@@ -333,7 +333,7 @@ function _somGenerateIdentifier_(entity, payload, catalogs) {
       let tail = _somToken_(name.replace(/^zona\s+registral\s*/i, '')).replace(/^N_?/, '');
       base = 'ZR_' + tail;
     } else {
-      base = 'SEDE_' + _somToken_(name);
+      base = 'SEDE_' + _somToken_(name).replace(/^SEDE_/, '');
     }
   } else if (config.idKind === 'token') {
     base = _somToken_(name);
