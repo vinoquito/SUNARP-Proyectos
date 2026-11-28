@@ -116,12 +116,11 @@
    * Ambas pantallas comparten una sola instantánea de los seis catálogos.
    * Salir/entrar a una ruta y cambiar de pestaña solo vuelve a renderizar.
    */
-  function loadSnapshot() {
+  function loadSnapshot(route) {
     if (shared.data) return Promise.resolve(shared.data);
     if (shared.loadPromise) return shared.loadPromise;
 
-    const target = document.getElementById('maintenanceSedesPanel') ||
-      document.getElementById('maintenanceOrganizacionPanel');
+    const target = document.getElementById(groups[route].panelId);
     const finish = beginLoading(target, 'Consultando sedes y catálogos institucionales...');
     shared.loadPromise = rpc('getSiteOrganizationMaintenanceData')
       .then(function (data) {
@@ -576,7 +575,10 @@
     const blocked = currentRecord ? descendants(entity, currentRecord.id) : new Set();
     const options = [{ value: '', label: 'Sin elemento padre (nivel superior)' }]
       .concat(collection.filter(function (item) {
+        const isCurrentParent = currentRecord &&
+          String(item.id) === String(currentRecord.parent_id || '');
         return String(item.sede_id) === String(siteId) &&
+          (item.active !== false || isCurrentParent) &&
           (!currentRecord || !blocked.has(String(item.id)));
       }).map(function (item) {
         return { value: item.id, label: item.name };
@@ -790,7 +792,7 @@
       renderActiveTab(route);
       return;
     }
-    loadSnapshot().catch(function (error) {
+    loadSnapshot(route).catch(function (error) {
       console.error('[SiteOrganizationMaintenance] No se pudieron cargar los catálogos:', error);
     });
   }
