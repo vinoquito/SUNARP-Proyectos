@@ -15,6 +15,10 @@ const uiSource = fs.readFileSync(
   path.join(root, 'Backend/Gestor de intranet SUNARP/SiteOrganizationMaintenanceScripts.html'),
   'utf8'
 );
+const geographicSource = fs.readFileSync(
+  path.join(root, 'Backend/Gestor de intranet SUNARP/GeographicMaintenanceScripts.html'),
+  'utf8'
+);
 const indexSource = fs.readFileSync(
   path.join(root, 'Backend/Gestor de intranet SUNARP/Index.html'),
   'utf8'
@@ -593,3 +597,17 @@ test('el historial reconoce los cinco nuevos tipos de mantenimiento y la vista q
   assert.match(contractSource, /#### Convención de identificadores para nuevos registros/);
   assert.match(contractSource, /estructura_local.*relación/i);
 });
+
+test('GeographicMaintenance no intercepta los CRUD institucionales con vistas provisionales', () => {
+  assert.doesNotMatch(geographicSource, /stagedGroups|initializeStagedGroup/);
+  assert.doesNotMatch(geographicSource, /Este grupo está incorporado a la navegación/);
+  assert.doesNotMatch(geographicSource, /este mantenimiento se desarrollará en una etapa posterior/);
+  assert.match(
+    geographicSource,
+    /if \(route === 'ubicacion-geografica'\) geoInitialize\(\)/
+  );
+  for (const route of ['sedes-locales', 'organizacion-institucional']) {
+    assert.match(uiSource, new RegExp("'" + route + "'"));
+  }
+});
+
