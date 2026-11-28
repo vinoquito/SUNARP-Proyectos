@@ -390,13 +390,16 @@ function _somAssertUsableReference_(records, id, oldId, label) {
   }
 }
 
-function _somAssertSameSiteParent_(entity, parentId, siteId, catalogs, currentId) {
+function _somAssertSameSiteParent_(entity, parentId, siteId, catalogs, currentId, oldParentId) {
   const identifier = _somText_(parentId);
   if (!identifier) return;
   const parent = _somFindById_(catalogs[entity] || [], identifier);
   if (!parent) throw new Error('El elemento padre seleccionado ya no existe.');
   if (_somText_(parent.sede_id) !== _somText_(siteId)) {
     throw new Error('El elemento padre debe pertenecer a la misma sede.');
+  }
+  if (parent.active === false && identifier !== _somText_(oldParentId)) {
+    throw new Error('No puedes asociar un nuevo registro a un elemento padre inactivo.');
   }
   if (identifier === _somText_(currentId)) {
     throw new Error('Un registro no puede ser su propio elemento padre.');
@@ -442,7 +445,8 @@ function _somBuildNextRecord_(entity, payload, action, current, catalogs) {
       parentId,
       siteId,
       catalogs,
-      current && current.id
+      current && current.id,
+      current && current.parent_id
     );
 
     if (entity === 'locales') {
