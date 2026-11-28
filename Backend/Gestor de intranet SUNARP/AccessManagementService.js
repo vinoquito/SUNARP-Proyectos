@@ -4121,7 +4121,12 @@ function getAccessEntityHistory(payload) {
       'CARGOS',
       'CONDICION_CARGO',
       'TIPO_DOCUMENTO_IDENTIDAD',
-      'TIPO_TELEFONO'
+      'TIPO_TELEFONO',
+      'SEDE',
+      'TIPO_LOCAL',
+      'LOCAL',
+      'TIPO_ESTRUCTURA',
+      'ESTRUCTURA_ORG'
     ],
     GEOGRAFICO: ['DEPARTAMENTO', 'PROVINCIA', 'DISTRITO']
   };
