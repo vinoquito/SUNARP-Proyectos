@@ -23,6 +23,10 @@ const navigationSource = fs.readFileSync(
   path.join(root, 'Backend/Gestor de intranet SUNARP/Código.js'),
   'utf8'
 );
+const personnelMaintenanceUiSource = fs.readFileSync(
+  path.join(root, 'Backend/Gestor de intranet SUNARP/PersonnelTelephoneMaintenanceScripts.html'),
+  'utf8'
+);
 const accessSource = fs.readFileSync(
   path.join(root, 'Backend/Gestor de intranet SUNARP/AccessManagementService.js'),
   'utf8'
@@ -306,11 +310,11 @@ test('el shell conserva el control de permiso MANTENIMIENTOS_VER para padre e hi
   );
 });
 
-test('la ruta datos-personal coincide entre Menu, el evento de navegación y la vista', () => {
+test('la ruta datos-personal coincide entre Menu, el evento de navegación y su script propietario', () => {
   assert.match(navigationSource, /route: 'datos-personal'/);
-  assert.match(geoUiSource, /'datos-personal': \{/);
+  assert.match(personnelMaintenanceUiSource, /'datos-personal': \{/);
   assert.match(maintenanceViewSource, /data-app-view="datos-personal"/);
-  assert.doesNotMatch(geoUiSource, /datos-de-personal/);
+  assert.doesNotMatch(personnelMaintenanceUiSource, /datos-de-personal/);
   assert.doesNotMatch(maintenanceViewSource, /datos-de-personal/);
 });
 
@@ -333,10 +337,10 @@ test('los catálogos de personal del Directorio conservan dependencia de Global 
   );
 });
 
-test('la pantalla geográfica solo contiene tres pestañas CRUD y los otros grupos no exponen acciones CRUD simuladas', () => {
+test('la pantalla geográfica solo contiene sus tres pestañas CRUD y no intercepta los demás módulos', () => {
   assert.match(geoUiSource, /const geoTabs = \[\s*\{ id: 'departments', label: 'Departamentos' \},\s*\{ id: 'provinces', label: 'Provincias' \},\s*\{ id: 'districts', label: 'Distritos' \}/);
-  assert.match(geoUiSource, /function initializeStagedGroup\(route\)/);
-  assert.match(geoUiSource, /este mantenimiento se desarrollará en una etapa posterior/);
+  assert.doesNotMatch(geoUiSource, /stagedGroups|initializeStagedGroup/);
+  assert.doesNotMatch(geoUiSource, /este mantenimiento se desarrollará en una etapa posterior/);
   assert.match(geoUiSource, /SUNARPUI\.createTabs/);
   assert.match(geoUiSource, /SUNARPUI\.createDataTable/);
   assert.match(geoUiSource, /SUNARPUI\.openModal/);
